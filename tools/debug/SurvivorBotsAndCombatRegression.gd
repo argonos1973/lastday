@@ -2451,7 +2451,11 @@ func run() -> void:
 	mgr._chat_help_until.clear()
 	mgr._chat_pair_until.clear()
 	mgr._bot_chat_tick(elena_y)
-	var m2: Dictionary = mgr.chat_log.back()
+	var m2 := {}
+	for i in range(mgr.chat_log.size() - 1, -1, -1):
+		if int((mgr.chat_log[i] as Dictionary).get("from_id", 0)) == int(elena_y["bot_id"]) and str((mgr.chat_log[i] as Dictionary).get("kind", "")) == "help":
+			m2 = mgr.chat_log[i]
+			break
 	check(str(m2.get("kind", "")) == "help" and int(m2.get("to_id", 0)) == 902,
 		"10A4: bajo ataque pide ayuda al aliado (kind=%s to=%s text=%s)" % [str(m2.get("kind", "-")), str(m2.get("to_id", "-")), str(m2.get("text", "-"))])
 	elena_y["aggro_target"] = null
@@ -2811,6 +2815,112 @@ func run() -> void:
 	mgr.on_chat_received(902, 7, "Sami", "buenas, que tal")
 	check(not (eb.get("_chat_inbox", {}) as Dictionary).is_empty(),
 		"10E7: un saludo encola respuesta de conversacion, no orden")
+
+	# ==================== 10F: Peticiones entre actores ====================
+	# 10F1: el parser detecta peticiones de objeto y de auxilio
+	var r_food := mgr._chat_parse_request("¿tienes comida? me muero de hambre")
+	var r_water := mgr._chat_parse_request("necesito agua, estoy seco")
+	var r_band := mgr._chat_parse_request("pasame vendas si tienes")
+	var r_help := mgr._chat_parse_request("echame una mano, estoy herido")
+	var r_gun := mgr._chat_parse_request("dame un arma por favor")
+	var r_none := mgr._chat_parse_request("tienes suerte de estar vivo")
+	check(str(r_food.get("cmd","")) == "give" and str(r_food.get("arg","")) == "comida"
+		and str(r_water.get("cmd","")) == "give" and str(r_water.get("arg","")) == "agua"
+		and str(r_band.get("cmd","")) == "give" and str(r_band.get("arg","")).begins_with("venda")
+		and str(r_help.get("cmd","")) == "assist" and str(r_gun.get("cmd","")) == "give"
+		and r_none.is_empty(),
+		"10F1: parser de peticiones (food=%s/%s water=%s/%s band=%s/%s help=%s gun=%s none=%s)" % [
+			str(r_food.get("cmd","")), str(r_food.get("arg","")), str(r_water.get("cmd","")),
+			str(r_water.get("arg","")), str(r_band.get("cmd","")), str(r_band.get("arg","")),
+			str(r_help.get("cmd","")), str(r_gun.get("cmd","")), str(r_none)])
+
+	# 10F2: _chat_request_need detecta cada urgencia
+	eb["hunger"] = 10.0; eb["thirst"] = 80.0; eb["health"] = 100.0
+	eb["proxy"].set_meta("saved_inventory", [])
+	check(mgr._chat_request_need(eb) == "comida", "10F2a: hambriento sin comida pide comida")
+	eb["hunger"] = 80.0; eb["thirst"] = 6.0
+	check(mgr._chat_request_need(eb) == "agua", "10F2b: sediento sin bebida pide agua")
+	eb["thirst"] = 80.0; eb["health"] = 25.0
+	check(mgr._chat_request_need(eb) == "vendas", "10F2c: herido sin medicina pide vendas")
+	eb["health"] = 100.0
+	check(mgr._chat_request_need(eb) == "", "10F2d: sano y saciado no pide nada")
+
+	# 10F3: bot->bot — Elena pide comida a Carlos; si confia, la suelta y
+	# Elena va caminando a recogerla
+	var cb: Dictionary = mgr.bots[902]
+	var alb: Dictionary = mgr.bots[901]
+	eb["team_leader_id"] = 0
+	var rel_901 := mgr._chat_touch_rel(902, "bot_901", "Elena")
+	rel_901["trust"] = 0.7; rel_901["hostility"] = 0.0; rel_901["attacked"] = 0; rel_901["fear"] = 0.0
+	cb["proxy"].set_meta("saved_inventory", [
+		{"name": "Lata de judias abierta", "type": "food", "weight": 0.4, "quantity": 1, "use_value": 25.0},
+	])
+	alb["explore_target"] = Vector3.INF
+	var req0: int = mgr.chat_log.size()
+	mgr.on_chat_received(902, 901, "Elena", "tienes comida? me muero")
+	var cb_inv: Array = cb["proxy"].get_meta("saved_inventory", [])
+	check(cb_inv.is_empty(), "10F3a: Carlos suelta la lata para Elena (inv=%d)" % cb_inv.size())
+	check(alb["explore_target"] != Vector3.INF,
+		"10F3b: Elena camina a recoger la comida")
+	var req_reply := false
+	for i in range(req0, mgr.chat_log.size()):
+		var rm: Dictionary = mgr.chat_log[i]
+		if str(rm.get("kind","")) == "request" and int(rm.get("to_id",0)) == 901:
+			req_reply = true
+	check(req_reply, "10F3c: Carlos contesta a la peticion por chat")
+
+	# 10F4: auxilio humano — "ayudame" con confianza mueve al bot hacia ti
+	var h7 := Node3D.new()
+	world.add_child(h7)
+	h7.global_position = Vector3(33.0, 0.5, 44.0)
+	world.server_proxies[7] = h7
+	var rel7b := mgr._chat_touch_rel(902, "player_7", "Sami")
+	rel7b["trust"] = 0.6; rel7b["hostility"] = 0.0; rel7b["attacked"] = 0; rel7b["fear"] = 0.0
+	cb["explore_target"] = Vector3.INF
+	cb["aggro_target"] = null
+	cb["_s_predator"] = null
+	cb["_s_foe"] = null
+	mgr.on_chat_received(902, 7, "Sami", "ayudame, me atacan")
+	check(cb["explore_target"] == h7.global_position,
+		"10F4a: 'ayudame' mueve al bot hacia el jugador (tgt=%s)" % str(cb["explore_target"]))
+	world.server_proxies.erase(7)
+	h7.queue_free()
+
+	# 10F5: el arma propia no se regala — un solo arma no sale de su mochila
+	cb["proxy"].set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "use_value": 0.0},
+	])
+	mgr.on_chat_received(902, 901, "Elena", "dame un arma")
+	var cb_inv2: Array = cb["proxy"].get_meta("saved_inventory", [])
+	check(cb_inv2.size() == 1, "10F5: no se desarma ni por un aliado (inv=%d)" % cb_inv2.size())
+
+	# 10F6: el hostil no da nada ni acude
+	mgr.on_chat_received(903, 901, "Elena", "tienes comida?")
+	check(int(kb.get("team_leader_id", 0)) == 0 and kb.get("_meet_id", 0) == 0,
+		"10F6: el hostil ignora las peticiones")
+
+	# 10F7: las negativas no rebotan como peticiones nuevas (anti ping-pong)
+	check(mgr._chat_parse_request(mgr._chat_request_line(cb, "give", false, "distrust")).is_empty()
+		and mgr._chat_parse_request(mgr._chat_request_line(cb, "give", false, "nothing")).is_empty()
+		and mgr._chat_parse_request(mgr._chat_request_line(cb, "give", true, "")).is_empty()
+		and mgr._chat_parse_request(mgr._chat_request_line(cb, "assist", true, "")).is_empty(),
+		"10F7: las respuestas a peticiones no contienen keywords de peticion")
+
+	# 10F8: necesidad real -> emite peticion al aliado en _bot_chat_tick
+	cb["hunger"] = 10.0; cb["thirst"] = 80.0
+	cb["proxy"].set_meta("saved_inventory", [])
+	cb["_chat_cd"] = 0.0
+	cb["aggro_target"] = null
+	mgr._chat_pending = {}
+	mgr._chat_req_until.erase(902)
+	mgr._bot_chat_tick(cb)
+	var asked := false
+	for m in mgr.chat_log:
+		if int(m.get("from_id",0)) == 902 and str(m.get("kind","")) == "request":
+			asked = true
+	check(asked or not mgr._chat_pending.is_empty(),
+		"10F8: con hambre extrema pide comida por el chat (asked=%s pending=%s)" % [asked, str(mgr._chat_pending)])
+	cb["hunger"] = 80.0
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()

@@ -3547,6 +3547,7 @@ const BOT_CHAT_REPLY_CD := 7.0
 const BOT_CHAT_GREET_RANGE := 16.0
 const BOT_CHAT_GREET_CD := 200.0
 const BOT_CHAT_HELP_CD := 120.0
+const BOT_CHAT_REQ_CD := 90.0
 const BOT_CHAT_LOG_MAX := 24
 const BOT_CHAT_MAX_TURNS := 4
 const BOT_CHAT_SYSTEM_PROMPT := "Eres un superviviente en un mundo postapocaliptico (juego Last Day). Hablas por el chat del juego como una persona real: frases cortas, informales, en espanol, directas. Prohibido: emojis, comillas, roleplay con asteriscos, mencionar que eres IA. Responde SOLO con el texto del mensaje, maximo 140 caracteres."
@@ -3558,6 +3559,7 @@ var _chat_pair_until: Dictionary = {}       # "a:b" -> msec (enfriamiento de ini
 var _chat_greet_until: Dictionary = {}      # "a:b" -> msec (saludos, ventana larga)
 var _chat_turns: Dictionary = {}            # "a:b" -> int (corta el ping-pong bot-bot)
 var _chat_help_until: Dictionary = {}       # bot_id -> msec
+var _chat_req_until: Dictionary = {}        # bot_id -> msec (peticiones de recursos)
 
 func _chat_pair_key(a: int, b2: int) -> String:
 	return "%d:%d" % [mini(a, b2), maxi(a, b2)]
@@ -3607,6 +3609,12 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 		if not order.is_empty():
 			_chat_handle_order(tb, sender_id, sender_name, skey, str(order["cmd"]), str(order.get("arg", "")))
 			return
+	# Peticiones entre cualquiera ("tienes comida?", "necesito vendas",
+	# "ayudame"): el receptor decide si da, acude o se niega.
+	var req := _chat_parse_request(clean)
+	if not req.is_empty():
+		_chat_handle_request(tb, sender_id, sender_name, skey, sender_is_bot, str(req["cmd"]), str(req.get("arg", "")))
+		return
 	# Encolar respuesta (la ultima gana); los turnos cortan el ping-pong
 	var pk := _chat_pair_key(target_id, sender_id)
 	if not sender_is_bot or int(_chat_turns.get(pk, 0)) < BOT_CHAT_MAX_TURNS:
@@ -3646,15 +3654,15 @@ func _chat_classify(text: String) -> String:
 # equipo, faccion hostil). La respuesta sale al momento por el mismo chat.
 
 func _chat_parse_order(text: String) -> Dictionary:
-	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("?", " ").replace("!", " ").replace(",", " ").replace(".", " ") + " "
+	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("?", " ").replace("¿", " ").replace("!", " ").replace("¡", " ").replace(",", " ").replace(".", " ") + " "
 	# follow antes que come: "ven/vente conmigo" es seguir, no solo acercarse
 	for kw in ["sigueme", "siguenos", "ven conmigo", "vente conmigo", "venga conmigo", "acompaname", "unete a mi", "en mi equipo", "follow me"]:
 		if t.contains(kw):
 			return {"cmd": "follow"}
-	for kw in ["ataca", "matalo", "matela", "matadle", "encargate", "dispara a", "a por el", "a por ella", "defiendeme", "protegeme"]:
+	for kw in [" ataca ", "matalo", "matela", "matadle", "encargate", "dispara a", "a por el", "a por ella", "defiendeme", "protegeme"]:
 		if t.contains(kw):
 			return {"cmd": "attack"}
-	for kw in ["dame ", "pasame ", "tirame ", "comparte "]:
+	for kw in [" dame ", " pasame ", " tirame ", " comparte "]:
 		if t.contains(kw):
 			var arg := ""
 			for w in ["agua", "comida", "vendaje", "venda", "vendas", "botiquin", "arma", "pistola", "rifle", "fusil", "cuchillo", "hacha", "municion", "balas", "comer", "lata", "carne", "verduras", "medicina", "sed"]:
@@ -3897,7 +3905,7 @@ func _chat_order_line(b: Dictionary, cmd: String, ok: bool, why: String) -> Stri
 			"dismiss":
 				return "Entendido, sigo mi camino. Suerte." if warm else "De acuerdo, me voy."
 			"eat":
-				return "Si, me vendria bien un bocado." if warm else "Vale, como algo."
+				return "Si, me cae bien un bocado." if warm else "Vale, como algo."
 			"equip":
 				return "Buena idea, necesito mejor equipo." if warm else "Ire a ver que encuentro."
 			"give":
@@ -3935,6 +3943,174 @@ func _chat_handle_order(b: Dictionary, sender_id: int, sname: String, skey: Stri
 		_bot_chat_send(b, sender_id, sname, line, "order")
 	if ok:
 		record_social_event(int(b["bot_id"]), skey, sname, "help", 0.12, "chat_order_" + cmd)
+
+# ==================== PETICIONES ENTRE ACTORES ====================
+# "¿Tienes comida?", "necesito vendas", "echame una mano": lo piden bots a
+# bots, bots a humanos y humanos a bots. Distinto de la orden "dame": aqui se
+# suplica y el receptor decide segun relacion + personalidad. ATENCION: las
+# frases de respuesta no pueden contener las keywords de peticion/orden o
+# rebotarian como peticiones nuevas (ping-pong infinito entre bots).
+
+func _chat_parse_request(text: String) -> Dictionary:
+	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("?", " ").replace("¿", " ").replace("!", " ").replace("¡", " ").replace(",", " ").replace(".", " ") + " "
+	# Auxilio primero: "necesito ayuda" no es una peticion de objeto
+	for kw in ["ayudame", " ayuda", "necesito ayuda", "echame una mano", "echame un cable", "acorralado", "acorralada", "estoy herido", "estoy herida", "estoy malherido", "me tienen", "vienen a por mi", "protegeme", "cubreme"]:
+		if t.contains(kw):
+			return {"cmd": "assist"}
+	for kw in [" tienes ", " llevas ", " necesito ", " me falta ", " pasame ", " prestame ", " regalame ", " traeme ", " dame ", " compartes ", " comparte "]:
+		if t.contains(kw):
+			var arg := ""
+			for w in ["agua", "comida", "vendaje", "venda", "vendas", "botiquin", "arma", "pistola", "rifle", "fusil", "cuchillo", "hacha", "municion", "balas", "comer", "lata", "carne", "verduras", "medicina", "sed"]:
+				if t.contains(" " + w):
+					arg = w
+					break
+			# "tienes suerte"/"llevas razon" no piden objeto; "necesito/dame" sin
+			# nombre igualmente piden "algo comestible" por defecto mas abajo
+			if arg.is_empty() and kw in [" tienes ", " llevas ", " compartes ", " comparte "]:
+				continue
+			return {"cmd": "give", "arg": arg}
+	return {}
+
+# Que echa en falta el bot ahora mismo ("" = nada urgente).
+func _chat_request_need(b: Dictionary) -> String:
+	var proxy: Node3D = b["proxy"]
+	if float(b.get("hunger", 100.0)) < 18.0 and not _bot_has_edible_food(proxy, true):
+		return "comida"
+	if float(b.get("thirst", 100.0)) < 12.0 and not _bot_has_drink(proxy):
+		return "agua"
+	if float(b.get("health", 100.0)) < 35.0:
+		var has_med := false
+		for it in proxy.get_meta("saved_inventory", []):
+			if it is Dictionary and str(it.get("type", "")) == "medical":
+				has_med = true
+				break
+		if not has_med:
+			return "vendas"
+	var under_fire: bool = b.get("aggro_target") != null or _sensed_node(b, "_s_foe") != null or _sensed_node(b, "_s_predator") != null
+	if under_fire and _best_weapon_name(proxy).is_empty():
+		return "arma"
+	return ""
+
+# A quien pedirselo: el aliado de mas confianza; si no hay, el actor mas cercano.
+func _chat_req_recipient(b: Dictionary) -> Dictionary:
+	var ally := _chat_best_ally(b)
+	if not ally.is_empty():
+		return ally
+	var proxy: Node3D = b["proxy"]
+	var my_id := int(b["bot_id"])
+	var best := {}
+	var best_d := 65.0
+	for oid in bots.keys():
+		if oid == my_id:
+			continue
+		var ob: Dictionary = bots[oid]
+		var op: Node3D = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		if str(ob.get("faction", "")) == "hostile" and str(b.get("faction", "")) != "hostile":
+			continue
+		var rel := get_bot_relationship(my_id, "bot_%d" % oid)
+		if float(rel.get("hostility", 0.0)) > 0.4:
+			continue
+		var d := proxy.global_position.distance_to(op.global_position)
+		if d < best_d:
+			best_d = d
+			best = {"id": oid, "name": str(ob.get("name", str(oid)))}
+	var net = world.get("net") if world != null else null
+	if net != null and "players" in net:
+		for pid in net.players.keys():
+			var pdata: Dictionary = net.players[pid]
+			if int(pid) == int(net.get_my_id()) or is_bot_peer_id(int(pid)) or bool(pdata.get("is_ai_bot", false)) or bool(pdata.get("offline", false)):
+				continue
+			var pp := _find_actor_by_peer_id(int(pid))
+			if pp == null:
+				continue
+			var rel2 := get_bot_relationship(my_id, _actor_persist_key(int(pid)))
+			if float(rel2.get("hostility", 0.0)) > 0.4:
+				continue
+			var d2 := proxy.global_position.distance_to(pp.global_position)
+			if d2 < best_d:
+				best_d = d2
+				best = {"id": int(pid), "name": str(pdata.get("char_name", pdata.get("name", "Jugador")))}
+	return best
+
+func _chat_weapon_count(proxy: Node3D) -> int:
+	var n := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("type", "")) in ["weapon", "axe_tool"]:
+			n += 1
+	return n
+
+# Responder a una peticion: dar el objeto (cae al suelo; el que pide va a por
+# el), acudir al auxilio o negarse — todo segun la misma puerta de confianza.
+func _chat_handle_request(b: Dictionary, sender_id: int, sname: String, skey: String, sender_is_bot: bool, cmd: String, arg: String) -> void:
+	var bot_id := int(b["bot_id"])
+	var ok := false
+	var why := "distrust"
+	match cmd:
+		"give":
+			var gate := _chat_order_gate(b, sender_id, skey, "give")
+			ok = bool(gate.get("ok", false))
+			why = str(gate.get("why", ""))
+			if ok:
+				var want := _chat_give_match(arg) if not arg.is_empty() else ""
+				if want == "weapon" and _chat_weapon_count(b["proxy"]) <= 1:
+					ok = false
+					why = "keep_weapon" # nadie se desarma en un apocalipsis
+				else:
+					why = _chat_apply_order(b, sender_id, sname, "give", arg)
+					ok = why.is_empty()
+			if ok:
+				record_social_event(bot_id, skey, sname, "help", 0.15, "gave_" + (arg if not arg.is_empty() else "item"))
+				if sender_is_bot and bots.has(sender_id):
+					var rb: Dictionary = bots[sender_id]
+					rb["explore_target"] = (b["proxy"] as Node3D).global_position
+					rb["explore_dwell"] = 0.0
+					record_social_event(sender_id, "bot_%d" % bot_id, str(b.get("name", "")), "help", 0.2, "received_" + (arg if not arg.is_empty() else "item"))
+		"assist":
+			var gate2 := _chat_order_gate(b, sender_id, skey, "come")
+			ok = bool(gate2.get("ok", false))
+			why = str(gate2.get("why", ""))
+			if ok:
+				if sender_is_bot:
+					b["_meet_id"] = sender_id
+					b["sitting"] = false
+				else:
+					var sn := _find_actor_by_peer_id(sender_id)
+					if sn == null or not is_instance_valid(sn):
+						ok = false
+						why = "no_target"
+					else:
+						b["explore_target"] = sn.global_position
+						b["explore_dwell"] = 0.0
+						b["sitting"] = false
+	var line := _chat_request_line(b, cmd, ok, why)
+	if not line.is_empty():
+		_bot_chat_send(b, sender_id, sname, line, "request")
+
+func _chat_request_line(b: Dictionary, cmd: String, ok: bool, why: String) -> String:
+	var pers := _get_bot_personality(b)
+	var warm := float(pers.get("sociability", 0.5)) > 0.55 and float(pers.get("aggression", 0.35)) < 0.5
+	if ok:
+		if cmd == "assist":
+			return "Voy corriendo, aguanta ahi!" if warm else "Ya voy, no te muevas."
+		return "Toma, te lo dejo aqui." if warm else "Vale, te lo dejo en el suelo."
+	match why:
+		"hostile":
+			return "Pideselo a otro, tu y yo no somos socios."
+		"betrayed":
+			return "En serio? Me atacaste y ahora vienes a pedirme."
+		"scared":
+			return "No te acerques. Largo."
+		"busy":
+			return "No ves que estoy luchando por mi vida?!"
+		"keep_weapon":
+			return "Mi arma no la suelto, lo siento."
+		"nothing", "no_food":
+			return "No tengo nada, de verdad."
+		"no_target":
+			return "No encuentro a quien atacar."
+	return "Lo siento, tambien ando justo." if warm else "No tengo para repartir."
 
 func _chat_sanitize(text: String) -> String:
 	var raw := text.strip_edges()
@@ -4032,6 +4208,16 @@ func _bot_chat_tick(b: Dictionary) -> void:
 			_chat_help_until[my_id] = now + int(BOT_CHAT_HELP_CD * 1000.0)
 			_chat_dispatch(b, "help", int(ally["id"]), str(ally["name"]), _chat_threat_name(b))
 			return
+	# 2b) Pedir recursos (comida/agua/vendas/arma) al mejor aliado o al actor
+	#     mas cercano — los amistosos ruegan, los hostiles no piden nada
+	if not hostile and now >= int(_chat_req_until.get(my_id, 0)):
+		var need := _chat_request_need(b)
+		if not need.is_empty():
+			var rec := _chat_req_recipient(b)
+			if not rec.is_empty():
+				_chat_req_until[my_id] = now + int(BOT_CHAT_REQ_CD * 1000.0)
+				_chat_dispatch(b, "request", int(rec["id"]), str(rec["name"]), need)
+				return
 	var amb: Dictionary = b.get("_ambush", {})
 	if hostile and not amb.is_empty():
 		# 3) Susurro a un compinche cercano mientras se prepara el golpe
@@ -4208,6 +4394,19 @@ func _chat_fallback_line(b: Dictionary, kind: String, to_name: String, ctx: Stri
 		"taunt":
 			return str(["Mala suerte, %s. Entrega lo que llevas." % nm,
 				"Te veo, %s. Esa mochila me viene bien." % nm][int(b["bot_id"]) % 2])
+		"request":
+			match ctx:
+				"comida":
+					return str(["%s, tienes comida? Me estoy muriendo de hambre." % nm,
+						"Pasame algo de comer, %s, por favor." % nm][int(b["bot_id"]) % 2])
+				"agua":
+					return str(["%s, agua... me muero de sed." % nm,
+						"¿Tienes algo de beber, %s? Estoy seco." % nm][int(b["bot_id"]) % 2])
+				"vendas":
+					return "Estoy herido, %s, llevas vendas o un botiquin encima?" % nm
+				"arma":
+					return "Voy desarmado, %s. Te sobra un arma, un cuchillo, lo que sea?" % nm
+			return "%s, me hace falta %s. Tienes algo?" % [nm, ctx]
 		"reply":
 			return _chat_fallback_reply(b, intent, nm)
 	return ""
@@ -4291,6 +4490,8 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 			sit = "Preparas una emboscada contra %s junto a %s. Dale la orden en una frase susurrada." % [ctx, to_name]
 		"taunt":
 			sit = "Estas a punto de atacar a %s para robarle. Escribe una frase intimidante." % to_name
+		"request":
+			sit = "Te falta %s de verdad y le pides ayuda a %s. Escribele la peticion, breve y natural." % [ctx, to_name]
 		"reply":
 			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "threat": "te amenaza"}.get(intent, "te escribe")
 			sit = "%s %s. Su mensaje: \"%s\". Responde segun tu caracter y tu relacion con el." % [to_name, intent_txt, ctx]
