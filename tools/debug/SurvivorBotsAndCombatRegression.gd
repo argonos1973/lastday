@@ -2485,6 +2485,16 @@ func run() -> void:
 	var st_chat: Dictionary = mgr.get_full_web_status()
 	check((st_chat.get("chat_log", []) as Array).size() > 0, "10A10: status JSON expone chat_log")
 
+	# Hitos de evolucion: el primer chat queda registrado en la memoria
+	var ms_elena: Dictionary = mgr._ensure_bot_memory(901).get("milestones", {})
+	check(int(ms_elena.get("first_chat", 0)) > 0, "10A11: primer chat registra hito persistente")
+	var snap_el: Dictionary = {}
+	for bb2 in st_chat.get("bots", []):
+		if int((bb2 as Dictionary).get("bot_id", 0)) == 901:
+			snap_el = bb2
+	check((snap_el.get("base_personality", {}) as Dictionary).has("bravery") and not (snap_el.get("milestones", {}) as Dictionary).is_empty(),
+		"10A12: status expone base_personality + milestones")
+
 	OS.set_environment("GROQ_API_KEY", saved_key)
 	mgr._chat_pair_until.clear()
 	mgr._chat_greet_until.clear()

@@ -3317,6 +3317,8 @@ func _bot_social_update(b: Dictionary) -> void:
 			b["_meet_id"] = 0
 			var tn := str((bots.get(best_target, {}) as Dictionary).get("name", str(best_target)))
 			record_bot_event(my_id, "team_join", "bot_%d" % best_target, _poi_kind_near(proxy.global_position), proxy.global_position, "sigue a " + tn)
+			_record_milestone(my_id, "first_team")
+			_record_milestone(best_target, "first_lead")
 		elif meet_id > 0:
 			# Reencuentro: fijar la meta de exploracion en la posicion VIVA del
 			# aliado potencial (se reescribe cada ciclo, siguiendo su marcha)
@@ -3348,6 +3350,7 @@ func _bot_social_update(b: Dictionary) -> void:
 			if not victim.is_empty():
 				b["_ambush"] = victim
 				record_bot_event(my_id, "ambush_plan", "peer_%d" % int(victim.get("target_id", 0)), _poi_kind_near(proxy.global_position), proxy.global_position, "acecha a " + str(victim.get("target_name", "")))
+				_record_milestone(my_id, "first_ambush")
 	elif is_hostile and lid > 0 and is_bot_peer_id(lid) and bots.has(lid):
 		# Miembro de un lider hostil: copia su presa — el golpe es simultaneo
 		var lamb: Dictionary = bots[lid].get("_ambush", {})
@@ -3568,6 +3571,7 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 		and float(rel.get("trust", 0.0)) > 0.10:
 		tb["_meet_id"] = sender_id
 		tb["_soc_t"] = 0.0
+		_record_milestone(target_id, "first_rescue" if intent == "help" else "first_alliance")
 	# Encolar respuesta (la ultima gana); los turnos cortan el ping-pong
 	var pk := _chat_pair_key(target_id, sender_id)
 	if not sender_is_bot or int(_chat_turns.get(pk, 0)) < BOT_CHAT_MAX_TURNS:
@@ -3641,6 +3645,7 @@ func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, ki
 		chat_log.pop_front()
 	var pk := _chat_pair_key(my_id, to_id)
 	_chat_turns[pk] = int(_chat_turns.get(pk, 0)) + 1
+	_record_milestone(my_id, "first_chat")
 	if bots.has(to_id):
 		on_chat_received(to_id, my_id, sname, clean)
 	else:
@@ -6495,6 +6500,8 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["strategies"] = {}
 	if not mem.has("farm_plots") or not (mem["farm_plots"] is Array):
 		mem["farm_plots"] = []
+	if not mem.has("milestones") or not (mem["milestones"] is Dictionary):
+		mem["milestones"] = {}
 	if not mem.has("pending_goals") or not (mem["pending_goals"] is Array):
 		mem["pending_goals"] = []
 	if not mem.has("sessions"):
@@ -6822,6 +6829,16 @@ func record_zone_hazard(bot_id: int, pos: Vector3, kind: String, severity: float
 		_evolve_personality(bots[bot_id], "zone_hazard", severity)
 
 # Aprendizaje de estrategias exitosas y fallidas: ajusta preferencia en [0.15..2.0].
+# Primera vez que un comportamiento emerge — persiste para el panel de
+# evolucion (first_team, first_lead, first_ambush, first_farm,
+# first_harvest, first_chat, first_alliance, first_rescue).
+func _record_milestone(bot_id: int, key: String) -> void:
+	var mem := _ensure_bot_memory(bot_id)
+	var ms: Dictionary = mem["milestones"]
+	if not ms.has(key):
+		ms[key] = int(Time.get_unix_time_from_system())
+		mem["milestones"] = ms
+
 func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weight_delta: float = 0.12) -> void:
 	if strategy.is_empty():
 		return
@@ -6835,6 +6852,7 @@ func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weigh
 	else:
 		st["fail"] = int(st.get("fail", 0)) + 1
 		st["preference"] = snappedf(clampf(float(st.get("preference", 1.0)) - step * 1.25, 0.15, 2.0), 0.01)
+	st["last"] = int(Time.get_unix_time_from_system())
 	strats[strategy] = st
 	mem["strategies"] = strats
 
@@ -7358,7 +7376,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		var lp = sd.get("last_death_pos")
@@ -7385,7 +7403,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
@@ -7703,6 +7721,9 @@ func get_full_web_status() -> Dictionary:
 		snap["avg_life_seconds"] = int(alive_total / maxf(1.0, float(lives_n)))
 		snap["score"] = score
 		snap["stats"] = st
+		# Evolucion: rasgos base (para mostrar el delta) e hitos de conducta nueva
+		snap["base_personality"] = _default_personality_for_bot(bid)
+		snap["milestones"] = mem.get("milestones", {})
 		bots_out.append(snap)
 	# Puntos de interes fijos del mundo que no son objetivos de exploracion de
 	# los bots (p. ej. la base militar de la cumbre: esta a 56 m de altura y
@@ -8241,6 +8262,7 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 				mem["farm_plots"] = plots
 				observe_location(int(b["bot_id"]), "farm:%d:%d" % [int(fpos.x), int(fpos.z)], "farm", fpos, "visited")
 				record_bot_event(int(b["bot_id"]), "farm_plant", "self", "farm", fpos, "planta un bancal de semillas")
+				_record_milestone(int(b["bot_id"]), "first_farm")
 				if world.has_method("_save_world_change_silent"):
 					world._save_world_change_silent()
 			"harvest":
@@ -8261,6 +8283,7 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 					rec["ready_unix"] = 0.0
 					_bot_crop_broadcast("crop_harvested", fpos)
 					record_strategy_outcome(int(b["bot_id"]), "farming", true)
+					_record_milestone(int(b["bot_id"]), "first_harvest")
 					var fstats: Dictionary = mem.get("stats", {})
 					fstats["harvests"] = int(fstats.get("harvests", 0)) + 1
 					mem["stats"] = fstats

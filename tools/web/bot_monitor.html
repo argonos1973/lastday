@@ -342,6 +342,11 @@ function fmtDur(sec) {
   return `${s} s`;
 }
 
+function timeAgo(ts) {
+  const sec = Math.max(0, Math.floor(Date.now() / 1000 - Number(ts || 0)));
+  return "hace " + fmtDur(sec);
+}
+
 function barColor(val) {
   if (val >= 65) return "#52d18a";
   if (val >= 35) return "#e5a93c";
@@ -634,20 +639,27 @@ function renderBots(data) {
   for (const b of bots) {
     const col = BOT_COLORS[b.bot_id] || "#52d18a";
     const p = b.personality || {};
+    const base = b.base_personality || {};
     const d = b.last_qwen_decision || {};
     const inv = b.inventory || [];
     const rels = Object.values(b.relationships || {});
-    const strats = Object.entries(b.strategies || {});
+    const strats = Object.entries(b.strategies || {}).sort((a, c) => (Number(c[1].last || 0) - Number(a[1].last || 0)));
+    const milestones = Object.entries(b.milestones || {}).sort((a, c) => (Number(c[1]) - Number(a[1])));
     const locs = (b.known_locations || []).slice(0, 8);
     const mems = (b.recent_memories || []).slice().reverse();
 
     let traitsHtml = "";
     for (const [k, label] of Object.entries(TRAIT_LABELS)) {
-      const pct = Math.round((Number(p[k] || 0)) * 100);
+      const now = Number(p[k] || 0);
+      const pct = Math.round(now * 100);
+      const dv = now - Number(base[k] || now);
+      const dtxt = Math.abs(dv) >= 0.02
+        ? `<span style="color:${dv > 0 ? "var(--accent)" : "var(--danger)"};font-size:10px">${dv > 0 ? "▲" : "▼"}${dv > 0 ? "+" : ""}${dv.toFixed(2)}</span>`
+        : `<span style="color:var(--muted);font-size:10px">·</span>`;
       traitsHtml += `<div class="bar-row">
         <span>${esc(label)}</span>
         <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>
-        <span style="text-align:right;color:var(--muted)">${(Number(p[k] || 0)).toFixed(2)}</span>
+        <span style="text-align:right;color:var(--muted)">${now.toFixed(2)} ${dtxt}</span>
       </div>`;
     }
 
@@ -672,10 +684,24 @@ function renderBots(data) {
       : `<div class="empty-note">Sin interacciones registradas con jugadores aún</div>`;
 
     let stratHtml = strats.length
-      ? `<div class="pill-list">` + strats.map(([sk, sv]) =>
-          `<span class="item-tag"><b>${esc(sk)}</b>: ×${Number(sv.preference || 1).toFixed(2)} (${sv.success || 0}✓/${sv.fail || 0}✗)</span>`
-        ).join("") + `</div>`
+      ? `<div class="pill-list">` + strats.map(([sk, sv], si) => {
+          const age = sv.last ? timeAgo(Number(sv.last)) : "";
+          const hot = si === 0 && sv.last ? `<span class="badge ok" style="font-size:9px">activa ${esc(age)}</span>` : (sv.last ? ` <span style="color:var(--muted);font-size:10px">${esc(age)}</span>` : "");
+          return `<span class="item-tag"><b>${esc(sk)}</b>: ×${Number(sv.preference || 1).toFixed(2)} (${sv.success || 0}✓/${sv.fail || 0}✗)${hot}</span>`;
+        }).join("") + `</div>`
       : `<div class="empty-note">Aprendiendo estrategias en curso...</div>`;
+
+    const MILESTONE_LABELS = {
+      first_team: "🤝 Primer equipo", first_lead: "👑 Primera vez liderando",
+      first_ambush: "🗡️ Primera emboscada", first_farm: "🌱 Primer cultivo",
+      first_harvest: "🧺 Primera cosecha", first_chat: "💬 Primer chat",
+      first_alliance: "📣 Primera alianza respondida", first_rescue: "🚑 Primer rescate en marcha"
+    };
+    let mstHtml = milestones.length
+      ? `<div class="pill-list">` + milestones.map(([mk, ts]) =>
+          `<span class="item-tag">${MILESTONE_LABELS[mk] || esc(mk)} <span style="color:var(--muted)">${new Date(Number(ts) * 1000).toLocaleDateString()}</span></span>`
+        ).join("") + `</div>`
+      : `<div class="empty-note">Aún no ha descubierto comportamientos nuevos</div>`;
 
     let memHtml = mems.length
       ? `<table class="mini-table"><thead><tr><th>Evento</th><th>Actor / Zona</th><th>Detalle</th></tr></thead><tbody>` +
@@ -771,7 +797,10 @@ function renderBots(data) {
       <div class="section-label">Relaciones Sociales (Confianza / Hostilidad / Miedo)</div>
       ${relHtml}
 
-      <div class="section-label">Estrategias Aprendidas</div>
+      <div class="section-label">Evolución de Conducta (Hitos)</div>
+      ${mstHtml}
+
+      <div class="section-label">Estrategias Aprendidas (recientes primero)</div>
       ${stratHtml}
 
       <div class="section-label">Ubicaciones Conocidas (${b.known_locations_count || 0} — Sin Omnisciencia)</div>
