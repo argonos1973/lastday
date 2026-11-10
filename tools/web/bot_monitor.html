@@ -419,7 +419,7 @@ function renderSummary(data) {
     html += `<tr>
       <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)} · ⭐ ${b.score ?? 0} pts · vivo ${fmtDur(b.alive_seconds)} · ⌀ vida ${fmtDur(b.avg_life_seconds)}</span></td>
       <td>(${Math.round(p[0])}, ${Math.round(p[2])})<br/><span style="color:var(--muted)">y=${Number(p[1]||0).toFixed(1)}m</span></td>
-      <td>${esc(b.anim || "idle")} <span class="badge info">${esc(b.act || "?")}</span> ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· 🏠 Refugio" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
+      <td>${esc(b.anim || "idle")} <span class="badge info">${esc(b.act || "?")}</span> ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· ⛺ Refugio" : ""} ${!b.in_shelter && b.in_house ? "· 🏠 Casa" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
       <td>${(() => {
         const mates = (b.team_mates || []).map(m => m.name || m.id).join(", ");
         let t = "";

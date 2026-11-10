@@ -1068,12 +1068,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# Luz nocturna con antorcha (se apaga si se está ocultando en su refugio)
 	var is_night := _is_world_night()
+	_validate_shelter_claim(b)
 	var sh_pos: Vector3 = b["shelter_pos"]
 	var camp_pos: Vector3 = b["camp_spot"]
 	var hiding_in_shelter: bool = float(b["hide_timer"]) > 0.0 and sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 2.6
 	b["torch_lit"] = is_night and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
-	proxy.set_meta("in_built_shelter", sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 3.4)
+	proxy.set_meta("in_built_shelter", _bot_at_own_built_shelter(b, proxy.global_position))
 	proxy.set_meta("crouching", bool(b["crouching"]))
 	proxy.set_meta("prone", bool(b["prone"]))
 	proxy.set_meta("sprinting", str(b["anim"]) == "run")
@@ -1094,6 +1095,22 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["crouching"] = false
 			proxy.set_meta("crouching", false)
 			return
+
+	# 0b) Agua demasiado profunda: un superviviente no nada — si por lo que sea
+	# quedo dentro (empujon, reaparicion, hueco entre nodos del nav), sale a lo
+	# somero antes de cualquier otra decision.
+	if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(proxy.global_position)) > WADE_DEPTH:
+		b["drink_at"] = Vector3.INF
+		b["drinking_timer"] = 0.0
+		b["crouching"] = false
+		b["sitting"] = false
+		var esc := _bot_shoreward_goal(proxy.global_position)
+		if esc != Vector3.INF:
+			b["_act"] = "water_escape"
+			_move_bot_towards(b, esc, 6.5, delta, "run")
+		else:
+			b["anim"] = "idle"
+		return
 
 	# 1) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
 	var predator := _sensed_node(b, "_s_predator")
@@ -1214,13 +1231,17 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 					_move_bot_towards(b, b["drink_at"], 6.2, delta, "run")
 					return
 			else:
-				# En la orilla: se agacha a beber unos segundos y repone su sed
+				# En la orilla: se para a beber unos segundos y repone su sed.
+				# consume_anim="drink" (mismo canal que beber de la botella) hace
+				# que el puppet remoto reproduzca la animacion real de beber.
 				b["drink_walk_t"] = 0.0
 				b["drinking_timer"] = float(b["drinking_timer"]) + delta
-				b["crouching"] = true
+				b["crouching"] = false
 				b["sitting"] = false
-				b["anim"] = "drink"
-				if float(b["drinking_timer"]) >= 3.5:
+				b["anim"] = "idle"
+				b["consume_anim"] = "drink"
+				b["consume_anim_t"] = 0.5
+				if float(b["drinking_timer"]) >= 2.6:
 					b["drinking_timer"] = 0.0
 					b["drink_at"] = Vector3.INF
 					b["thirst"] = 100.0
@@ -2168,11 +2189,33 @@ func _is_near_any_lit_campfire(pos: Vector3, max_dist: float) -> bool:
 
 # Comprueba si el bot ya está dentro de un refugio construido o de una casa
 # cerrada/abierta donde lobos y osos tienen prohibido entrar.
+# El refugio construido puede desaparecer (demolido/robado por otro
+# superviviente): su id ya no existe en el mundo. Se libera solo el id — el
+# shelter_pos sigue siendo el solar reclamado donde el bot duerme y puede
+# volver a construir, pero ya no cuenta como "a cubierto" ni protege de lobos.
+func _validate_shelter_claim(b: Dictionary) -> void:
+	var sid := str(b.get("shelter_id", ""))
+	if sid.is_empty():
+		return
+	if _find_shelter_dict(sid).is_empty():
+		b["shelter_id"] = ""
+		var mm = b.get("_mem", {})
+		if mm is Dictionary and mm.has("shelter"):
+			(mm as Dictionary)["shelter"] = {}
+
+# True solo si el bot esta dentro de un refugio REALMENTE construido (el dict
+# del edificio sigue existiendo), no solo parado en su solar.
+func _bot_at_own_built_shelter(b: Dictionary, pos: Vector3) -> bool:
+	var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if sh_pos == Vector3.INF or pos.distance_to(sh_pos) >= 3.4:
+		return false
+	var sid := str(b.get("shelter_id", ""))
+	return not sid.is_empty() and not _find_shelter_dict(sid).is_empty()
+
 func _is_bot_wolf_protected(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var pos := proxy.global_position
-	var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
-	if sh_pos != Vector3.INF and pos.distance_to(sh_pos) < 3.4:
+	if _bot_at_own_built_shelter(b, pos):
 		return true
 	if world != null and world.has_method("_is_player_in_house") and world._is_player_in_house(pos):
 		return true
@@ -6441,10 +6484,31 @@ func _bot_cook_meat_at_fire(b: Dictionary) -> bool:
 # profunda bloquea el paso.
 const WADE_DEPTH := 0.55
 
-func _is_pos_blocked(pos: Vector3, margin: float = 0.45) -> bool:
+# Punto cercano con agua vadeable o seca para salir de una zona profunda donde
+# _is_pos_blocked no dejaria dar ni un paso. Sondea en anillos y devuelve la
+# primera orilla alcanzable o la posicion menos profunda hallada.
+func _bot_shoreward_goal(pos: Vector3) -> Vector3:
+	if world == null or not world.has_method("get_river_depth_at"):
+		return Vector3.INF
+	var depth0 := float(world.get_river_depth_at(pos))
+	var best := Vector3.INF
+	var best_depth := depth0
+	for r in [1.8, 3.6, 6.0]:
+		for i in range(16):
+			var dir := Vector3.RIGHT.rotated(Vector3.UP, TAU * float(i) / 16.0)
+			var cand: Vector3 = pos + dir * r
+			var dc := float(world.get_river_depth_at(cand))
+			if dc <= WADE_DEPTH:
+				return cand
+			if dc < best_depth - 0.02:
+				best_depth = dc
+				best = cand
+	return best
+
+func _is_pos_blocked(pos: Vector3, margin: float = 0.45, allow_deep: bool = false) -> bool:
 	if world == null:
 		return false
-	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > WADE_DEPTH:
+	if not allow_deep and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > WADE_DEPTH:
 		return true
 	if world.has_method("is_bot_blocked_at"):
 		return world.is_bot_blocked_at(pos, margin)
@@ -6452,8 +6516,8 @@ func _is_pos_blocked(pos: Vector3, margin: float = 0.45) -> bool:
 		return true
 	return false
 
-func _is_step_blocked(from_pos: Vector3, to_pos: Vector3) -> bool:
-	if _is_pos_blocked(to_pos, 0.42):
+func _is_step_blocked(from_pos: Vector3, to_pos: Vector3, allow_deep: bool = false) -> bool:
+	if _is_pos_blocked(to_pos, 0.42, allow_deep):
 		return true
 	if world != null and (world is Node3D) and (world as Node3D).get_world_3d() != null:
 		var space: PhysicsDirectSpaceState3D = (world as Node3D).get_world_3d().direct_space_state
@@ -6934,6 +6998,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 			depth_ahead = float(world.get_river_depth_at(probe))
 			if depth_ahead > depth_next:
 				ahead_xz = probe
+	var deep_now: bool = depth_cur > WADE_DEPTH
 	if not in_building_3d and (depth_next > WADE_DEPTH or (not nav_guided and depth_ahead > WADE_DEPTH)) and depth_cur <= WADE_DEPTH:
 		var surf_y := _ground_y(ahead_xz.x, ahead_xz.z, cur.y)
 		var ty := 0.375
@@ -6989,7 +7054,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var step := minf(spd * delta, d)
 	var chosen_dir := dir if in_building_3d else (sm if sm.length_squared() > 0.001 else dir)
 	var new_pos := cur + chosen_dir * step
-	var front_blocked := false if on_stair_segment else _is_step_blocked(cur, new_pos)
+	var front_blocked := false if on_stair_segment else _is_step_blocked(cur, new_pos, deep_now)
 	# Una puerta cerrada no es un muro: si el paso choca y hay una puerta
 	# cerrada al alcance, el bot la abre como un jugador y repatha ya libre.
 	if front_blocked and world != null and world.has_method("bot_try_open_door_at") and (world.bot_try_open_door_at(cur) or world.bot_try_open_door_at(next_goal)):
@@ -6998,14 +7063,14 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		b["anim"] = "idle"
 		return
 	# Si el paso frontal choca contra un obstaculo/agua, tantear angulos libres
-	if front_blocked and not _is_pos_blocked(cur, 0.25):
+	if front_blocked and not _is_pos_blocked(cur, 0.25, deep_now):
 		var sign_pref := float(b.get("avoid_sign", 1.0))
 		var steered := false
 		for deg in [28.0, -28.0, 56.0, -56.0, 88.0, -88.0, 125.0, -125.0]:
 			var ang := deg_to_rad(deg * sign_pref)
 			var cand_dir := dir.rotated(Vector3.UP, ang)
 			var cand_pos := cur + cand_dir * step
-			if not _is_step_blocked(cur, cand_pos):
+			if not _is_step_blocked(cur, cand_pos, deep_now):
 				chosen_dir = cand_dir
 				new_pos = cand_pos
 				steered = true
@@ -9214,7 +9279,9 @@ func get_full_web_status() -> Dictionary:
 			snap["energy"] = int(vst.energy)
 			snap["body_temperature"] = snappedf(vst.body_temperature, 0.1)
 			snap["wetness"] = snappedf(vst.wetness, 0.01)
-		snap["in_shelter"] = _is_bot_wolf_protected(b) if proxy != null and is_instance_valid(proxy) else false
+		_validate_shelter_claim(b)
+		snap["in_shelter"] = proxy != null and is_instance_valid(proxy) and _bot_at_own_built_shelter(b, proxy.global_position)
+		snap["in_house"] = (_is_bot_wolf_protected(b) and not bool(snap["in_shelter"])) if proxy != null and is_instance_valid(proxy) else false
 		snap["team_leader_id"] = int(b.get("team_leader_id", 0))
 		snap["follow_mode"] = str(b.get("follow_mode", "follow"))
 		# Equipo bot-bot autonomo: rol, compañeros y emboscada en curso para el

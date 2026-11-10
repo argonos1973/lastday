@@ -363,6 +363,35 @@ func run() -> void:
 		mgr._tick_bot(carlos, 0.1)
 	check(float(carlos["thirst"]) >= 99.0, "Bot bebe en la orilla y recupera la sed (thirst=%.0f)" % float(carlos["thirst"]))
 
+	# 9b) Mientras bebe en la orilla el avatar remoto recibe el clip real de
+	# beber ("drink" via consume_anim), no una postura estatica agachada.
+	carlos["thirst"] = 20.0
+	carlos["drink_at"] = carlos_proxy.global_position
+	carlos["drinking_timer"] = 0.0
+	carlos["consume_anim_t"] = 0.0
+	world.water_rect = Rect2(carlos_proxy.global_position.x - 2.0, carlos_proxy.global_position.z - 2.0, 4.0, 4.0)
+	world.water_depth = 0.3
+	mgr._tick_bot(carlos, 0.1)
+	check(str(mgr._bot_effective_net_anim(carlos)) == "drink" and not bool(carlos["crouching"]),
+		"Bebiendo en la orilla el avatar remoto muestra 'drink' de pie (anim=%s)" % str(mgr._bot_effective_net_anim(carlos)))
+
+	# 9c) Agua profunda real (>WADE_DEPTH): el bot no se queda plantado dentro —
+	# escapa hacia agua vadeable/seca aunque todo lo demas este profundo.
+	carlos["thirst"] = 20.0
+	carlos["drink_at"] = Vector3.INF
+	carlos["drinking_timer"] = 0.0
+	carlos["_speed"] = 0.0
+	carlos["_mdir"] = Vector3.ZERO
+	world.water_rect = Rect2(carlos_proxy.global_position.x - 2.0, carlos_proxy.global_position.z - 2.0, 4.0, 4.0)
+	world.water_depth = 1.2
+	var esc_from: Vector3 = carlos_proxy.global_position
+	mgr._tick_bot(carlos, 0.1)
+	var esc_moved: bool = carlos_proxy.global_position.distance_to(esc_from) > 0.01
+	check(str(carlos.get("_act", "")) == "water_escape" and esc_moved,
+		"Bot atrapado en agua profunda escapa a lo somero (act=%s moved=%s)" % [str(carlos.get("_act", "")), str(esc_moved)])
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	world.water_depth = 1.0
+
 	# --- 10) Hambre y sed a cero matan de verdad (muerte por inanicion) ---
 	carlos["hunger"] = 0.0
 	carlos["thirst"] = 0.0
