@@ -5,11 +5,11 @@ const CityExpansion = preload("res://scripts/CityExpansion.gd")
 const CityBlock = preload("res://scripts/CityBlock.gd")
 
 # Gestor de Supervivientes IA (bots con modelo, ropa, inventario y acciones reales):
-# - 2 cooperativos ("Elena", "Carlos") que pueden reclutarse al equipo del jugador ([F]),
-#   compartir fogata/refugio, recibir comida/agua, defender al compañero frente a lobos,
-#   osos y bandidos, y domar lobos.
-# - 1 bandido hostil ("Kael") que saquea tiendas militares, monta su refugio camuflado
-#   con fogata, doma lobos y ataca o tiende emboscadas a jugadores y aliados.
+# - Todos los supervivientes IA nacen HOSTILES hacia los jugadores: los cazan a
+#   la vista (melee o a distancia). Solo se vuelven amigables si el jugador los
+#   convence de confiar por chat/voz: tregua, regalos, explicaciones y, con la
+#   confianza suficiente, la orden "sigueme/unete" los pasa a aliados.
+# - Kael, el bandido del rifle, tambien puede ser convencido con esfuerzo.
 
 const BOT_CONFIGS := [
 	{
@@ -17,7 +17,7 @@ const BOT_CONFIGS := [
 		"client_id": "ai_bot_901",
 		"name": "Elena",
 		"preview_id": "elena",
-		"faction": "friendly",
+		"faction": "hostile",
 		"hair_style": "ponytail",
 		"beard_stage": 0,
 		"top_color": Color(0.5, 0.45, 0.2),
@@ -55,7 +55,7 @@ const BOT_CONFIGS := [
 		"client_id": "ai_bot_902",
 		"name": "Carlos",
 		"preview_id": "laura",
-		"faction": "friendly",
+		"faction": "hostile",
 		"hair_style": "long",
 		"beard_stage": 0,
 		"top_color": Color(0.6, 0.2, 0.3),
@@ -552,7 +552,13 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	var bot_id := int(cfg["bot_id"])
 	if bots.has(bot_id):
 		return
-	var spawn_pos: Vector3 = _random_bot_spawn(cfg, Vector3(_ensure_bot_memory(bot_id, cfg).get("last_death_pos", Vector3.INF)))
+	var mem0: Dictionary = _ensure_bot_memory(bot_id, cfg)
+	var spawn_pos: Vector3 = _random_bot_spawn(cfg, Vector3(mem0.get("last_death_pos", Vector3.INF)))
+	# Todos los bots nacen hostiles; solo respeta la memoria el que un jugador
+	# ya convencio antes (identity.allegiance == "friendly" lo grabo _set_bot_faction).
+	var eff_faction := str(cfg["faction"])
+	if str((mem0.get("identity", {}) as Dictionary).get("allegiance", "")) == "friendly":
+		eff_faction = "friendly"
 	var patrol: Array = []
 	for pt in cfg.get("patrol", []):
 		patrol.append(_sanitize_ground_point(pt as Vector3))
@@ -571,7 +577,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	proxy.set_meta("client_id", str(cfg["client_id"]))
 	proxy.set_meta("is_ai_bot", true)
 	proxy.set_meta("bot_name", str(cfg["name"]))
-	proxy.set_meta("bot_faction", str(cfg["faction"]))
+	proxy.set_meta("bot_faction", eff_faction)
 	proxy.set_meta("team_leader_id", 0)
 	proxy.set_meta("bot_follow_mode", "follow")
 	proxy.set_meta("protection_timer", 0.0)
@@ -612,7 +618,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"bot_id": bot_id,
 		"client_id": str(cfg["client_id"]),
 		"name": str(cfg["name"]),
-		"faction": str(cfg["faction"]), # "friendly" | "hostile"
+		"faction": eff_faction, # "friendly" | "hostile"
 		"proxy": proxy,
 		"cfg": cfg,
 		"pos": spawn_pos,
@@ -780,6 +786,27 @@ func _sync_bot_appearance_to_clients(b: Dictionary) -> void:
 			bool(cfg.get("top_camo", false)),
 			bool(cfg.get("bottom_camo", false))
 		)
+
+# Cambio de faccion en caliente (hostil -> aliado tras convencerlo): actualiza
+# el estado, los metas del proxy/avatar, la memoria persistente (allegiance) y
+# republica el bot para que los clientes vean el nuevo bando.
+func _set_bot_faction(b: Dictionary, new_faction: String) -> void:
+	if str(b.get("faction", "")) == new_faction:
+		return
+	b["faction"] = new_faction
+	var proxy: Node3D = b.get("proxy")
+	if proxy != null and is_instance_valid(proxy):
+		proxy.set_meta("bot_faction", new_faction)
+		if new_faction == "friendly":
+			b["aggro_target"] = null
+			b["aggro_timer"] = 0.0
+			b["crouching"] = false
+	var mem := _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
+	if mem.get("identity") is Dictionary:
+		(mem["identity"] as Dictionary)["allegiance"] = new_faction
+		(mem["identity"] as Dictionary)["faction"] = new_faction
+	_publish_bot_to_net_players(b)
+	_apply_local_avatar_metadata(b)
 
 func _apply_local_avatar_metadata(b: Dictionary) -> void:
 	if world == null or not ("remote_players" in world):
@@ -988,6 +1015,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["aggro_timer"] = maxf(0.0, float(b["aggro_timer"]) - delta)
 	if float(b["aggro_timer"]) <= 0.0:
 		b["aggro_target"] = null
+	b["_truce_t"] = maxf(0.0, float(b.get("_truce_t", 0.0)) - delta)
+	if float(b.get("_truce_t", 0.0)) <= 0.0:
+		b["_truce_peer"] = 0
 
 	# Supervivencia identica a la del jugador humano: SurvivalStats simula
 	# hambre, sed, energia, sueño, temperatura corporal, lluvia, vadeo, calor
@@ -2686,8 +2716,11 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
 				continue
 			var p3 := p as Node3D
+			var pid3 := _peer_id_for_actor(p3)
+			# Tregua vigente: el bot no retoma la ofensiva contra quien la acordo.
+			if pid3 > 0 and int(b.get("_truce_peer", 0)) == pid3 and float(b.get("_truce_t", 0.0)) > 0.0:
+				continue
 			if cautious_h:
-				var pid3 := _peer_id_for_actor(p3)
 				if pid3 > 0 and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid3)).get("fear", 0.0)) > 0.68:
 					continue
 			var heard := _can_bot_hear_actor(b, p3, proxy.global_position.distance_to(p3.global_position))
@@ -2699,8 +2732,10 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 		var local_p = world.get("player")
 		if local_p is Node3D and is_instance_valid(local_p) and local_p.get("is_dead") != true:
 			var lp3 := local_p as Node3D
+			var pid_l := _peer_id_for_actor(lp3)
+			var truce_l := pid_l > 0 and int(b.get("_truce_peer", 0)) == pid_l and float(b.get("_truce_t", 0.0)) > 0.0
 			var fear_local := cautious_h and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(1)).get("fear", 0.0)) > 0.68
-			if not fear_local:
+			if not fear_local and not truce_l:
 				var heard_l := _can_bot_hear_actor(b, lp3, proxy.global_position.distance_to(lp3.global_position))
 				var max_rl := minf(best_d, maxf(34.0 if heard_l else 0.0, _effective_human_sight(lp3, sight)))
 				var dl := proxy.global_position.distance_to(lp3.global_position)
@@ -3777,6 +3812,14 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 		tb["_meet_id"] = sender_id
 		tb["_soc_t"] = 0.0
 		_record_milestone(target_id, "first_rescue" if intent == "help" else "first_alliance")
+	# Regalo/oferta de objeto ("te doy pan", "toma esto"): solo humanos; exige
+	# cercania y retira el item del inventario del que ofrece. Vale para chat
+	# escrito y para voz transcrita (ambos entran por aqui).
+	if not sender_is_bot:
+		var gift := _chat_parse_gift(clean)
+		if not gift.is_empty():
+			_chat_handle_gift(tb, sender_id, sender_name, skey, str(gift.get("word", "")), clean)
+			return
 	# Ensenanzas del mundo (chat o voz): "aqui hay agua", "cuidado hay lobos",
 	# "recuerda este sitio" — va antes que las ordenes para que "bebe aqui"
 	# enseñe la fuente en vez de mandar beber de la botella.
@@ -3851,6 +3894,11 @@ func _chat_parse_order(text: String) -> Dictionary:
 	for kw in ["sigueme", "siguenos", "ven conmigo", "vente conmigo", "venga conmigo", "acompaname", "unete a mi", "en mi equipo", "follow me"]:
 		if t.contains(kw):
 			return {"cmd": "follow"}
+	# Tregua/parley: pacificar a un hostil antes de pedirle nada. Va antes que
+	# el resto de ordenes porque "alto/basta/hablemos" no es una orden de equipo.
+	for kw in [" alto ahi", " basta ", " tregua ", "deja de disparar", "dejen de disparar", "para de disparar", "no disparen", "no disparar", "guarda el arma", "guarden el arma", "guarda las armas", "baja el arma", "bajad el arma", "deja el arma", "dejen las armas", "no hace falta disparar", "no quiero pelea", "no vengo a pegar", "no vengo a disparar", "no soy tu enemigo", "no te hare dano", "no vengo a hacerte dano", "vengo en paz", "vengo en son de paz", "solo quiero hablar", "podemos hablar", "quiero hablar", "hablemos", "podemos negociar", "negociemos", "hablar contigo", "hablame", "habla conmigo", "confia en mi", "date cuenta", "soy de los tuyos", "no soy enemigo"]:
+		if t.contains(kw):
+			return {"cmd": "truce"}
 	for kw in [" ataca ", "matalo", "matela", "matadle", "encargate", "dispara a", "a por el", "a por ella", "defiendeme", "protegeme"]:
 		if t.contains(kw):
 			return {"cmd": "attack"}
@@ -3879,12 +3927,30 @@ func _chat_parse_order(text: String) -> Dictionary:
 			return {"cmd": "eat"}
 	return {}
 
+# Umbral de confianza para que un bot HOSTIL acepte unirse al jugador: depende
+# de su personalidad — Elena (cooperativa) se convence facil, Kael (paranoico)
+# exige mucho mas. trust en [-1,1]; se gana con chat positivo, regalos y
+# no devolver el fuego; se pierde atacandolo.
+func _convince_threshold(b: Dictionary) -> float:
+	var pers := _get_bot_personality(b)
+	return clampf(0.52 - float(pers.get("cooperation", 0.5)) * 0.24 + float(pers.get("distrust", 0.35)) * 0.16 - float(pers.get("sociability", 0.5)) * 0.06, 0.22, 0.85)
+
 # Umbral de obediencia por orden: compromiso mayor exige mas confianza.
 func _chat_order_gate(b: Dictionary, sender_id: int, skey: String, cmd: String) -> Dictionary:
 	if int(b.get("team_leader_id", 0)) == sender_id:
 		return {"ok": true, "why": "team"}
 	if str(b.get("faction", "")) == "hostile":
-		return {"ok": false, "why": "hostile"}
+		# Unico camino hostil->aliado: la orden de unirse con confianza suficiente.
+		if cmd == "follow":
+			var rel_h := get_bot_relationship(int(b["bot_id"]), skey)
+			var tr_h := float(rel_h.get("trust", 0.0))
+			var ho_h := float(rel_h.get("hostility", 0.0))
+			if tr_h >= _convince_threshold(b) and ho_h < 0.80:
+				return {"ok": true, "why": "conversion"}
+			return {"ok": false, "why": "wary" if tr_h > -0.10 else "hostile"}
+		var rel_h2 := get_bot_relationship(int(b["bot_id"]), skey)
+		var why_h := "wary" if float(rel_h2.get("trust", 0.0)) > 0.05 else "hostile"
+		return {"ok": false, "why": why_h}
 	var rel := get_bot_relationship(int(b["bot_id"]), skey)
 	if int(rel.get("attacked", 0)) >= 1 and float(rel.get("hostility", 0.0)) >= 0.5:
 		return {"ok": false, "why": "betrayed"}
@@ -3930,6 +3996,15 @@ func _chat_apply_order(b: Dictionary, sender_id: int, sname: String, cmd: String
 				record_social_event(bot_id, skey, sname, "ally", 0.15, "chat_order_follow")
 				_publish_bot_to_net_players(b)
 				_apply_local_avatar_metadata(b)
+				# Conversion: el hostil convencido baja el arma y pasa a aliado.
+				if str(b.get("faction", "")) == "hostile":
+					_set_bot_faction(b, "friendly")
+					var rel_cv := get_bot_relationship(bot_id, skey)
+					rel_cv["trust"] = maxf(float(rel_cv.get("trust", 0.0)), 0.62)
+					rel_cv["hostility"] = minf(float(rel_cv.get("hostility", 0.0)), 0.12)
+					rel_cv["fear"] = minf(float(rel_cv.get("fear", 0.0)), 0.30)
+					_record_milestone(bot_id, "converted")
+					record_social_event(bot_id, skey, sname, "ally", 0.45, "converted_friendly")
 		"stay":
 			if int(b.get("team_leader_id", 0)) == sender_id:
 				b["follow_mode"] = "stay"
@@ -4108,6 +4183,8 @@ func _chat_order_line(b: Dictionary, cmd: String, ok: bool, why: String) -> Stri
 	match why:
 		"hostile":
 			return "¿Órdenes? A mí no me mandas."
+		"wary":
+			return "Todavía no me fío de ti... pero reconozco que no vienes a por mí." if warm else "No me fío. Demuestra que no eres peligroso."
 		"betrayed":
 			return "Después de lo que me hiciste, olvídate."
 		"scared":
@@ -4124,7 +4201,51 @@ func _chat_order_line(b: Dictionary, cmd: String, ok: bool, why: String) -> Stri
 			return "¿Atacar a quién? No veo ningún peligro por aquí."
 	return "Oye, que apenas te conozco... ¿por qué iba a hacerte caso?" if warm else "No me fío de ti lo suficiente."
 
+# Linea especial cuando un HOSTIL acepta unirse: el momento de la conversion.
+func _chat_conversion_line(b: Dictionary) -> String:
+	var pers := _get_bot_personality(b)
+	var warm := float(pers.get("sociability", 0.5)) > 0.5
+	if warm:
+		return "Bajo la guardia: 'De acuerdo... pero si me fallas, no me lo perdono.'"
+	return "Te estudia en silencio y escupe al suelo: '...Está bien. Demuestra que puedo fiarme.'"
+
+# Tregua por chat/voz: el hostil deja de disparar al emisor durante un tiempo.
+# Exige proximidad (<=90 m) o combate activo contra el emisor; un agresor
+# reciente e iracundo (3+ ataques y hostilidad >=0.92) la rechaza.
+func _chat_handle_truce(b: Dictionary, sender_id: int, sname: String, skey: String) -> void:
+	var bot_id := int(b["bot_id"])
+	var proxy: Node3D = b["proxy"]
+	var snode := _find_actor_by_peer_id(sender_id)
+	var aggro: Node3D = b.get("aggro_target")
+	var fighting := aggro != null and is_instance_valid(aggro) and snode != null and is_instance_valid(snode) and aggro == snode
+	var near := snode != null and is_instance_valid(snode) and proxy.global_position.distance_to((snode as Node3D).global_position) <= 90.0
+	if not fighting and not near:
+		_bot_chat_send(b, sender_id, sname, "¿Tregua? Ni te veo ni te oigo desde ahí... acércate.", "order")
+		return
+	var rel := get_bot_relationship(bot_id, skey)
+	if int(rel.get("attacked", 0)) >= 3 and float(rel.get("hostility", 0.0)) >= 0.92:
+		_bot_chat_send(b, sender_id, sname, "No. Ya sabes lo que te espera si sigues aquí.", "order")
+		return
+	if fighting:
+		b["aggro_target"] = null
+		b["aggro_timer"] = 0.0
+	b["_truce_peer"] = sender_id
+	b["_truce_t"] = 75.0
+	b["sitting"] = false
+	b["sleeping"] = false
+	record_social_event(bot_id, skey, sname, "ally", 0.06, "truce")
+	var pers := _get_bot_personality(b)
+	var warm := float(pers.get("sociability", 0.5)) > 0.5
+	var line := "Está bien... bajo el arma, pero no te fíes de que soy de fiar." if warm else "Tregua. Pero si me disparas, no respondo."
+	if str(b.get("faction", "")) != "hostile":
+		line = "Tranquilo, no te estaba disparando." if warm else "No hacía falta, no te disparo."
+	_bot_chat_send(b, sender_id, sname, line, "order")
+
 func _chat_handle_order(b: Dictionary, sender_id: int, sname: String, skey: String, cmd: String, arg: String) -> void:
+	if cmd == "truce":
+		_chat_handle_truce(b, sender_id, sname, skey)
+		return
+	var faction_before := str(b.get("faction", ""))
 	var gate := _chat_order_gate(b, sender_id, skey, cmd)
 	var why := str(gate.get("why", ""))
 	var ok := bool(gate.get("ok", false))
@@ -4132,6 +4253,8 @@ func _chat_handle_order(b: Dictionary, sender_id: int, sname: String, skey: Stri
 		why = _chat_apply_order(b, sender_id, sname, cmd, arg)
 		ok = why.is_empty()
 	var line := _chat_order_line(b, cmd, ok, why)
+	if ok and faction_before == "hostile" and str(b.get("faction", "")) == "friendly":
+		line = _chat_conversion_line(b)
 	if not line.is_empty():
 		_bot_chat_send(b, sender_id, sname, line, "order")
 	if ok:
@@ -4304,6 +4427,146 @@ func _chat_request_line(b: Dictionary, cmd: String, ok: bool, why: String) -> St
 		"no_target":
 			return "No veo a nadie cerca a quien atacar."
 	return "Lo siento mucho, yo también voy muy justo." if warm else "No tengo nada de sobra para repartir."
+
+# ==================== REGALOS POR CHAT/VOZ ====================
+# "te doy pan", "toma esto", "aqui tienes vendas": el jugador ofrece un objeto
+# del inventario. El bot lo acepta — o lo rechaza si esta iracundo — y la
+# confianza sube. Funciona igual para chat escrito y voz transcrita porque
+# ambos llegan por on_chat_received.
+
+const GIFT_OFFER_WORDS := [" te doy ", " te paso ", " te regalo ", " toma ", " aqui tienes ", " para ti ", " aceptas ", " te dejo ", " ten esto ", " tenlo ", " cogelo ", " puedo darte ", " quiero darte ", " te ofrezco ", " te traigo "]
+const GIFT_ITEM_WORDS := ["piedra afilada", "piedra", "cantimplora", "botella", "agua", "sed", "bebe", "comida", "pan", "carne", "lata", "verduras", "fruta", "setas", "seta", "vendaje", "venda", "vendas", "botiquin", "medicina", "pastillas", "arma", "pistola", "rifle", "fusil", "escopeta", "cuchillo", "navaja", "hacha", "municion", "balas", "flechas", "arco", "antorcha", "linterna", "mecha", "cerillas", "matches", "ropa", "chaqueta", "abrigo", "botas", "zapatos", "gorra", "guantes", "mochila", "bateria", "pila", "pilas", "cuerda", "alambre", "clavos", "tablones", "tablon", "semillas", "azada", "pico", "pala", "cana", "cebo", "carnada", "manta", "soga", "caja"]
+const GIFT_WORD_TYPES := {
+	"agua": ["water"], "sed": ["water"], "bebe": ["water"],
+	"botella": ["water", "resource"], "cantimplora": ["water", "resource"],
+	"comida": ["food"], "pan": ["food"], "carne": ["food"], "lata": ["food"], "verduras": ["food"], "fruta": ["food"], "setas": ["food"], "seta": ["food"],
+	"vendaje": ["medical"], "venda": ["medical"], "vendas": ["medical"], "botiquin": ["medical"], "medicina": ["medical"], "pastillas": ["medical"],
+	"arma": ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "axe_tool", "tool_spear"], "pistola": ["weapon"], "rifle": ["weapon_rifle"], "fusil": ["weapon_rifle"], "escopeta": ["weapon"],
+	"cuchillo": ["weapon", "tool"], "navaja": ["weapon", "tool"], "hacha": ["weapon", "tool_axe", "axe_tool", "tool"],
+	"municion": ["ammo"], "balas": ["ammo"], "flechas": ["ammo_arrow", "ammo"], "arco": ["weapon_bow"],
+	"antorcha": ["tool_torch"], "linterna": ["tool_torch", "tool"], "mecha": ["tool_matches", "resource"], "cerillas": ["tool_matches", "resource"], "matches": ["tool_matches", "resource"],
+	"ropa": ["clothing"], "chaqueta": ["clothing"], "abrigo": ["clothing"], "botas": ["clothing"], "zapatos": ["clothing"], "gorra": ["clothing"], "guantes": ["clothing"],
+	"mochila": ["backpack"], "bateria": ["battery", "resource"], "pila": ["battery", "resource"], "pilas": ["battery", "resource"],
+	"cuerda": ["resource", "tool"], "alambre": ["resource"], "clavos": ["resource"], "tablones": ["resource"], "tablon": ["resource"], "semillas": ["resource", "tool_hoe"],
+	"azada": ["tool_hoe"], "pico": ["tool_pickaxe"], "pala": ["tool_shovel"], "cana": ["tool_fishing"], "cebo": ["resource"], "carnada": ["resource"],
+	"piedra": ["resource"], "piedra afilada": ["resource"],
+}
+
+func _chat_parse_gift(text: String) -> Dictionary:
+	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("?", " ").replace("¿", " ").replace("!", " ").replace("¡", " ").replace(",", " ").replace(".", " ") + " "
+	var offer := false
+	for kw in GIFT_OFFER_WORDS:
+		if t.contains(kw):
+			offer = true
+			break
+	if not offer:
+		return {}
+	for w in GIFT_ITEM_WORDS:
+		if t.contains(" " + w + " "):
+			return {"word": w}
+	# Sin item nombrado no es regalo: "te dejo en paz" sigue siendo una orden.
+	return {}
+
+# Match por nombre con limite de palabra ("pan" no casa con "pantalones") y,
+# en segunda pasada, por categoria de tipo.
+func _gift_name_match(word: String, item_name: String) -> bool:
+	var wl := word.to_lower()
+	if wl.is_empty():
+		return false
+	return (" " + item_name.to_lower() + " ").contains(" " + wl + " ")
+
+func _gift_word_match(word: String, item_name: String, item_type: String) -> bool:
+	if _gift_name_match(word, item_name):
+		return true
+	var types: Array = GIFT_WORD_TYPES.get(word.to_lower(), [])
+	return not types.is_empty() and types.has(item_type)
+
+# Busca el objeto ofrecido en el inventario del que habla: proxies de jugadores
+# remotos (saved_inventory del servidor) o el inventario local del host.
+func _find_gift_in_inventory(sender_id: int, word: String) -> Dictionary:
+	var cands: Array = []
+	var sp = null
+	if world != null and "server_proxies" in world and world.server_proxies.has(sender_id):
+		sp = world.server_proxies[sender_id]
+	var lp = world.get("player") if world != null else null
+	var net = world.get("net") if world != null else null
+	var my_id: int = net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1
+	if sp != null and sp.has_meta("saved_inventory"):
+		var sinv: Array = sp.get_meta("saved_inventory", [])
+		for i in range(sinv.size()):
+			var d = sinv[i]
+			if d is Dictionary:
+				cands.append({"name": str(d.get("name", "")), "type": str(d.get("type", "")), "weight": float(d.get("weight", 0.5)), "use_value": float(d.get("use_value", 0.0)), "qty": int(d.get("quantity", 1)), "remote": true, "idx": i})
+	elif lp != null and sender_id == my_id and lp.get("inventory") != null:
+		var litems: Array = lp.inventory.items
+		for i in range(litems.size()):
+			var it = litems[i]
+			if it == null:
+				continue
+			cands.append({"name": str(it.item_name), "type": str(it.item_type), "weight": float(it.weight), "use_value": float(it.use_value), "qty": int(it.quantity), "remote": false, "idx": i})
+	# Primera pasada: solo coincidencia por nombre; segunda: nombre o categoria.
+	for want_name in [true, false]:
+		for c in cands:
+			var hit := _gift_name_match(word, str(c["name"])) if want_name else _gift_word_match(word, str(c["name"]), str(c["type"]))
+			if hit:
+				return c
+	return {}
+
+func _gift_remove_from_sender(sender_id: int, found: Dictionary) -> void:
+	if bool(found.get("remote", false)):
+		if world != null and world.has_method("_saved_inventory_remove"):
+			world._saved_inventory_remove(sender_id, str(found["name"]), str(found["type"]), 1)
+		var net = world.get("net") if world != null else null
+		if net != null and net.is_connected and net.is_host and net.peer != null and net.peer_alive(sender_id) and net.has_method("bot_gift_taken"):
+			net.bot_gift_taken.rpc_id(sender_id, str(found["name"]), str(found["type"]))
+	else:
+		var lp = world.get("player") if world != null else null
+		if lp != null and lp.get("inventory") != null:
+			var litems: Array = lp.inventory.items
+			lp.inventory.remove_index(int(found["idx"]), 1)
+			var held_ref = lp.get("_held_item_reference")
+			if held_ref != null and not bool(lp.get("_held_item_external")) and not litems.has(held_ref):
+				lp._held_item_reference = null
+				lp.held_index = -1
+			if lp.has_method("_sync_held_item"):
+				lp._sync_held_item()
+			if world.has_method("_sync_local_player_inventory"):
+				world._sync_local_player_inventory()
+
+func _deliver_notice_to_sender(sender_id: int, msg: String) -> void:
+	if msg.is_empty() or world == null:
+		return
+	var net = world.get("net")
+	if net != null and net.is_connected and net.is_host and sender_id != net.get_my_id() and net.peer != null and net.peer_alive(sender_id) and net.has_method("notice_to_client"):
+		net.notice_to_client.rpc_id(sender_id, msg)
+	elif world.get("player") is Node and is_instance_valid(world.player):
+		world.player.notice.emit(msg)
+
+func _chat_handle_gift(b: Dictionary, sender_id: int, sname: String, skey: String, word: String, clean_text: String) -> void:
+	var bot_id := int(b["bot_id"])
+	var proxy: Node3D = b["proxy"]
+	var snode := _find_actor_by_peer_id(sender_id)
+	if snode == null or not is_instance_valid(snode) or proxy.global_position.distance_to((snode as Node3D).global_position) > 16.0:
+		_bot_chat_send(b, sender_id, sname, "¿Que me lo das desde ahí? Acércate primero.", "order")
+		return
+	if word.is_empty():
+		_bot_chat_send(b, sender_id, sname, "¿Qué es? Dime qué llevas encima.", "order")
+		return
+	var rel := get_bot_relationship(bot_id, skey)
+	if str(b.get("faction", "")) == "hostile" and float(rel.get("hostility", 0.0)) >= 0.95 and int(rel.get("attacked", 0)) >= 3:
+		_bot_chat_send(b, sender_id, sname, "¡Quita eso de ahí! ¡Te dije que no!", "order")
+		return
+	var found := _find_gift_in_inventory(sender_id, word)
+	if found.is_empty():
+		_bot_chat_send(b, sender_id, sname, "No veo que lleves nada de eso encima.", "order")
+		return
+	_gift_remove_from_sender(sender_id, found)
+	var msg := interact_with_bot(bot_id, sender_id, "give:%s|%s|%s|%s" % [str(found["name"]), str(found["type"]), str(found["weight"]), str(found["use_value"])])
+	_deliver_notice_to_sender(sender_id, msg)
+	# El bot reacciona en voz al regalo como a un mensaje de chat normal.
+	b["_chat_inbox"] = {"from_id": sender_id, "from_name": sname, "text": clean_text, "intent": "gift"}
+	b["_chat_reply_ready"] = 0
+	b["_soc_t"] = 0.0
 
 # ==================== ENSEÑANZAS (chat o voz) ====================
 # "aqui hay agua", "cuidado hay lobos", "registra esta casa": el que habla
@@ -4716,6 +4979,10 @@ func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, ki
 	if bots.has(to_id):
 		on_chat_received(to_id, my_id, sname, clean)
 	else:
+		# Ademas de la voz, el texto queda en el panel de chat del jugador.
+		var net = world.get("net") if world != null else null
+		if net != null and net.has_method("relay_actor_chat"):
+			net.relay_actor_chat(my_id, sname, clean, to_id, to_name)
 		_tts_enqueue_job(my_id, sname, to_id, to_name, clean)
 
 # Decide canal (Qwen si hay clave+cola libre; si no, plantilla) y aplica los
@@ -5104,22 +5371,28 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return ""
-	if str(b["faction"]) == "hostile":
-		return "%s es hostil y no quiere formar equipo." % str(b["name"])
-
 	var cur_leader := int(b.get("team_leader_id", 0))
 	var bname := str(b["name"])
 	var sender_key := _actor_persist_key(sender_id)
 	var sender_name := _actor_display_name(sender_id)
 	# Si el jugador le entrega un objeto, eso siempre suma confianza (incluso si
-	# antes había desconfianza), permitiendo reconciliarse con el bot.
+	# antes había desconfianza), permitiendo reconciliarse con el bot. Vale
+	# tambien para hostiles: es la via de conversión (un bandido iracundo la
+	# rechaza, pero un hostil neutral si la acepta).
 	if mode.begins_with("give:"):
-		var gname := mode.substr(5).get_slice("|", 0)
-		var gtype := mode.substr(5).get_slice("|", 1) if "|" in mode else "resource"
+		var gparts := mode.substr(5).split("|")
+		var gname := gparts[0] if gparts.size() > 0 else ""
+		var gtype := gparts[1] if gparts.size() > 1 else "resource"
 		if gname.is_empty():
 			return ""
+		if str(b["faction"]) == "hostile":
+			var rel_g := get_bot_relationship(bot_id, sender_key)
+			if float(rel_g.get("hostility", 0.0)) >= 0.95 and int(rel_g.get("attacked", 0)) >= 3:
+				return "%s aparta el objeto: '¡Quita eso de ahí! ¡Te dije que no!'." % bname
+		var gweight := float(gparts[2]) if gparts.size() > 2 else 0.5
+		var guse := float(gparts[3]) if gparts.size() > 3 else 0.0
 		var inv_give: Array = proxy.get_meta("saved_inventory", [])
-		var gitem := {"name": gname, "type": gtype, "quantity": 1, "weight": 0.5, "use_value": 0.0}
+		var gitem := {"name": gname, "type": gtype, "quantity": 1, "weight": gweight, "use_value": guse}
 		if not _bot_try_add_inventory_item(b, inv_give, gitem):
 			# Mochila llena: el objeto no se pierde — cae a los pies del bot
 			_bot_drop_to_ground(b, gitem)
@@ -5135,6 +5408,9 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 		_publish_bot_to_net_players(b)
 		_apply_local_avatar_metadata(b)
 		return "Le das %s a %s." % [gname, bname]
+
+	if str(b["faction"]) == "hostile":
+		return "%s es hostil y no quiere formar equipo." % bname
 
 	if cur_leader == 0 or cur_leader != sender_id:
 		var rel := get_bot_relationship(bot_id, sender_key)

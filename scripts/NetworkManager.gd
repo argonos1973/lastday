@@ -1381,6 +1381,14 @@ func backpack_give(item_dict: Dictionary) -> void:
 	if scene != null and scene.has_method("_net_backpack_give"):
 		scene._net_backpack_give(item_dict)
 
+# Host -> cliente: el servidor retiro un objeto del inventario porque el
+# jugador lo regalo a un bot superviviente por chat/voz.
+@rpc("authority", "reliable")
+func bot_gift_taken(item_name: String, item_type: String) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_bot_gift_taken"):
+		scene._net_bot_gift_taken(item_name, item_type)
+
 # Host → todos: contenido actualizado de la mochila tirada
 @rpc("authority", "reliable")
 func backpack_contents_synced(drop_id: String, contents: Array) -> void:

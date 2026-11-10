@@ -187,8 +187,13 @@ func run() -> void:
 
 	check(mgr.bots.size() == 3, "Se crean los 3 supervivientes IA (Elena, Carlos, Kael)")
 	check(mgr.bots.has(901) and mgr.bots.has(902) and mgr.bots.has(903), "IDs 901, 902 y 903 registrados")
-	check(str(mgr.bots[901]["faction"]) == "friendly" and str(mgr.bots[902]["faction"]) == "friendly" and str(mgr.bots[903]["faction"]) == "hostile",
-		"2 aliados cooperativos y 1 bandido hostil")
+	check(str(mgr.bots[901]["faction"]) == "hostile" and str(mgr.bots[902]["faction"]) == "hostile" and str(mgr.bots[903]["faction"]) == "hostile",
+		"Los 3 supervivientes IA nacen hostiles (se ganan la confianza por chat/voz)")
+	# Elena y Carlos ya fueron "convencidos" en sesiones previas: para el resto
+	# de la regresion se comportan como aliados (la conversion en si se prueba
+	# en BotConvinceRegression). Kael sigue hostil, como antes.
+	mgr._set_bot_faction(mgr.bots[901], "friendly")
+	mgr._set_bot_faction(mgr.bots[902], "friendly")
 	# Cada superviviente aparece aleatoriamente en una de las zonas de spawn
 	# de jugadores (_spawn_zones del mundo), no en un punto fijo.
 	var zones: Array = world.get("_spawn_zones")
@@ -2481,13 +2486,14 @@ func run() -> void:
 		"10A6: tras %d turnos el bot-bot deja de responderse" % int(mgr.BOT_CHAT_MAX_TURNS))
 	mgr._chat_turns.clear()
 
-	# Destinatario humano: el mensaje se encola como respuesta HABLADA (TTS) y NO por chat de texto
+	# Destinatario humano: el mensaje se encola como respuesta HABLADA (TTS) y
+	# ademas queda en el chat de texto del jugador
 	fnet.relay_log.clear()
 	mgr._tts_jobs.clear()
 	fnet.players[7] = {"char_name": "Remy", "name": "Remy", "is_ai_bot": false, "offline": false}
 	mgr._bot_chat_send(elena_y, 7, "Remy", "Ey Remy, vives cerca?", "greet")
-	check(fnet.relay_log.is_empty() and mgr._tts_jobs.size() == 1,
-		"10A7: respuesta a humano sale hablada (TTS) y no por relay_actor_chat")
+	check(fnet.relay_log.size() == 1 and mgr._tts_jobs.size() == 1,
+		"10A7: respuesta a humano sale hablada (TTS) y en el chat via relay_actor_chat")
 	for tk0 in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(mgr.VOICE_JOBS_DIR) + str(tk0) + ".json")
 	mgr._tts_jobs.clear()
@@ -2516,7 +2522,7 @@ func run() -> void:
 		"10A13: status expone el hilo de chat por bot (%d msgs)" % elena_thread.size())
 
 	# Bucle humano->bot->respuesta: el DM del jugador se encola y el bot
-	# contesta HABLADO (trabajo TTS) sin enviar chat de texto al HUD.
+	# contesta HABLADO (trabajo TTS) y en el chat de texto.
 	fnet.players[7] = {"char_name": "Remy", "name": "Remy", "is_ai_bot": false, "offline": false}
 	fnet.relay_log.clear()
 	mgr._tts_jobs.clear()
@@ -2528,8 +2534,8 @@ func run() -> void:
 	check(not (elena_y["_chat_inbox"] as Dictionary).is_empty(),
 		"10A14a: DM de humano encola respuesta del bot")
 	mgr._bot_chat_tick(elena_y)
-	check(fnet.relay_log.is_empty() and mgr._tts_jobs.size() == 1,
-		"10A14b: la respuesta del bot al humano se encola como voz TTS (no texto)")
+	check(fnet.relay_log.size() == 1 and mgr._tts_jobs.size() == 1,
+		"10A14b: la respuesta del bot al humano se encola como voz TTS y texto en chat")
 	for tk1 in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(mgr.VOICE_JOBS_DIR) + str(tk1) + ".json")
 	mgr._tts_jobs.clear()
@@ -2766,7 +2772,7 @@ func run() -> void:
 	var g_friend := mgr._chat_order_gate(eb, 7, "player_7", "follow")
 	check(bool(g_friend.get("ok", false)), "10E2a: un bot amistoso coopera y sigue a un desconocido (why=%s)" % str(g_friend.get("why","")))
 	var g_host := mgr._chat_order_gate(kb, 7, "player_7", "follow")
-	check(not bool(g_host.get("ok", true)) and str(g_host.get("why","")) == "hostile",
+	check(not bool(g_host.get("ok", true)) and str(g_host.get("why", "")) in ["wary", "hostile"],
 		"10E2b: el hostil rechaza las ordenes (why=%s)" % str(g_host.get("why","")))
 	var rel7 := mgr._chat_touch_rel(902, "player_7", "Sami")
 	rel7["attacked"] = 2
@@ -3091,7 +3097,7 @@ func run() -> void:
 	check(mgr._voice_resolve_named_bot("Hola Elena, me oyes?", 8, 902) == 0,
 		"10H8b: nombrar a Elena a 120 m no contesta (fuera de alcance)")
 
-	# 10H9: respuesta hablada TTS — el bot emite paquetes PCM por relay_actor_voice y cero texto
+	# 10H9: respuesta hablada TTS — el bot emite paquetes PCM por relay_actor_voice y texto en chat
 	for tk2 in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk2) + ".json")
 	mgr._tts_jobs.clear()
@@ -3099,8 +3105,8 @@ func run() -> void:
 	fnet.relay_log.clear()
 	fnet.voice_relay_log.clear()
 	mgr._bot_chat_send(vb, 8, "Profe", "Perfecto, aqui puedo beber. Gracias.", "teach")
-	check(fnet.relay_log.is_empty() and mgr._tts_jobs.size() == 1,
-		"10H9a: _bot_chat_send a humano crea trabajo TTS sin texto en HUD")
+	check(fnet.relay_log.size() == 1 and mgr._tts_jobs.size() == 1,
+		"10H9a: _bot_chat_send a humano crea trabajo TTS y texto en chat")
 	var tts_base := str(mgr._tts_jobs.keys()[0])
 	var pcm_reply := PackedByteArray()
 	pcm_reply.resize(2400)
@@ -3114,8 +3120,8 @@ func run() -> void:
 	for vr in fnet.voice_relay_log:
 		if int(vr.get("from_id", 0)) == 902 and int(vr.get("to_id", 0)) == 8:
 			total_voice_b += int(vr.get("bytes", 0))
-	check(total_voice_b == 2400 and fnet.relay_log.is_empty(),
-		"10H9b: el audio TTS llega al humano por relay_actor_voice (%d B) y 0 msgs de texto" % total_voice_b)
+	check(total_voice_b == 2400 and fnet.relay_log.size() == 1,
+		"10H9b: el audio TTS llega al humano por relay_actor_voice (%d B) y 1 msg de texto" % total_voice_b)
 	fnet.mp3_relay_log.clear()
 	mgr._bot_chat_send(vb, 8, "Profe", "Vale, me quedo aquí vigilando, tranquilo.", "order")
 	var tts_base_mp3 := str(mgr._tts_jobs.keys()[0])
@@ -3124,8 +3130,8 @@ func run() -> void:
 	mf.store_buffer(mp3_reply)
 	mf.close()
 	mgr._tts_poll_jobs()
-	check(fnet.mp3_relay_log.size() == 1 and int(fnet.mp3_relay_log[0].get("bytes", 0)) == 8 and fnet.relay_log.is_empty(),
-		"10H9c: clip MP3 neuronal 24kHz se entrega integro por relay_actor_voice_mp3 sin texto")
+	check(fnet.mp3_relay_log.size() == 1 and int(fnet.mp3_relay_log[0].get("bytes", 0)) == 8 and fnet.relay_log.size() == 2,
+		"10H9c: clip MP3 neuronal 24kHz se entrega integro por relay_actor_voice_mp3 y 2 msgs de texto")
 
 	world.server_proxies.erase(8)
 	h8.queue_free()
@@ -3143,28 +3149,8 @@ func run() -> void:
 	test_pup._puppet_step_player.free()
 	test_pup.free()
 
-	# 10I2: _try_open_bot_menu ([Z]) encuentra aliado reclutado hasta 35 m via net.players
-	world.hud = CanvasLayer.new()
-	world.add_child(world.hud)
-	world.player.is_dead = false
-	world.player.global_position = Vector3(10.0, 0.4, 10.0)
-	var pup_elena := Node3D.new()
-	world.add_child(pup_elena)
-	pup_elena.global_position = Vector3(32.0, 0.4, 10.0) # 22 m (> antiguo limite de 10 m)
-	pup_elena.set_meta("bot_id", 901)
-	pup_elena.set_meta("bot_name", "Elena")
-	pup_elena.set_meta("team_leader_id", 0) # meta local aun en 0, pero net.players ya tiene 1
-	world.remote_players[901] = pup_elena
-	fnet.players[901] = {"name": "Elena", "char_name": "Elena", "is_ai_bot": true, "team_leader_id": 1, "bot_follow_mode": "follow"}
-	check(world._try_open_bot_menu() and world._wolf_menu != null,
-		"10I2a: [Z] abre el menu de ordenes del aliado a 22 m sincronizando team_leader_id desde net.players")
-	if world._wolf_menu != null:
-		world._wolf_menu.queue_free()
-		world._wolf_menu = null
-	world.remote_players.erase(901)
-	pup_elena.queue_free()
-	world.hud.queue_free()
-	world.hud = null
+	# 10I2: el menu de ordenes [Z] ya no existe — la interaccion con bots es
+	# solo chat/voz (cubierto por BotConvinceRegression).
 
 	# 10I3: Kael desarmado no inicia ataques suicidas; armado con fusil si
 	var kb903: Dictionary = mgr.bots[903]
