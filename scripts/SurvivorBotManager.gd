@@ -3600,6 +3600,13 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 		tb["_meet_id"] = sender_id
 		tb["_soc_t"] = 0.0
 		_record_milestone(target_id, "first_rescue" if intent == "help" else "first_alliance")
+	# Ordenes directas del chat humano: "sigueme", "quedate", "dame agua"...
+	# Obedece segun relacion + personalidad y contesta al momento.
+	if not sender_is_bot:
+		var order := _chat_parse_order(clean)
+		if not order.is_empty():
+			_chat_handle_order(tb, sender_id, sender_name, skey, str(order["cmd"]), str(order.get("arg", "")))
+			return
 	# Encolar respuesta (la ultima gana); los turnos cortan el ping-pong
 	var pk := _chat_pair_key(target_id, sender_id)
 	if not sender_is_bot or int(_chat_turns.get(pk, 0)) < BOT_CHAT_MAX_TURNS:
@@ -3631,6 +3638,303 @@ func _chat_classify(text: String) -> String:
 		if t.contains(kw):
 			return "greet"
 	return "talk"
+
+# ==================== ORDENES POR CHAT ====================
+# El jugador da ordenes escritas ("sigueme", "quedate", "dame agua"...) y el bot
+# obedece — o no — segun su relacion (trust/hostility/fear), su personalidad
+# (cooperacion, desconfianza, agresion) y su situacion (bajo ataque, ya en otro
+# equipo, faccion hostil). La respuesta sale al momento por el mismo chat.
+
+func _chat_parse_order(text: String) -> Dictionary:
+	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("?", " ").replace("!", " ").replace(",", " ").replace(".", " ") + " "
+	# follow antes que come: "ven/vente conmigo" es seguir, no solo acercarse
+	for kw in ["sigueme", "siguenos", "ven conmigo", "vente conmigo", "venga conmigo", "acompaname", "unete a mi", "en mi equipo", "follow me"]:
+		if t.contains(kw):
+			return {"cmd": "follow"}
+	for kw in ["ataca", "matalo", "matela", "matadle", "encargate", "dispara a", "a por el", "a por ella", "defiendeme", "protegeme"]:
+		if t.contains(kw):
+			return {"cmd": "attack"}
+	for kw in ["dame ", "pasame ", "tirame ", "comparte "]:
+		if t.contains(kw):
+			var arg := ""
+			for w in ["agua", "comida", "vendaje", "venda", "vendas", "botiquin", "arma", "pistola", "rifle", "fusil", "cuchillo", "hacha", "municion", "balas", "comer", "lata", "carne", "verduras", "medicina", "sed"]:
+				if t.contains(" " + w):
+					arg = w
+					break
+			return {"cmd": "give", "arg": arg}
+	for kw in ["quedate", "quedate aqui", "espera aqui", "esperame", "quieto", "quieta", "no te muevas", "mantente", "guarda esto", "vigila aqui"]:
+		if t.contains(kw):
+			return {"cmd": "stay"}
+	for kw in ["vete", "largate", " largo ", "dejame en paz", "alejate", "dejame solo", "dejame sola", "sigue tu camino", "vete de aqui", "marchate"]:
+		if t.contains(kw):
+			return {"cmd": "dismiss"}
+	for kw in ["ven aqui", "ven aca", " vente ", "acercate", "venga aqui", "aproximate", "ven a por mi"]:
+		if t.contains(kw):
+			return {"cmd": "come"}
+	for kw in ["equipate", "busca equipo", "recoge equipo", "armate", "busca loot", "saquea", "busca suministros", "busca cosas"]:
+		if t.contains(kw):
+			return {"cmd": "equip"}
+	for kw in [" come ", " come algo", "comete", "alimentate", " bebe ", "bebe algo", "bebe agua", "hidratate"]:
+		if t.contains(kw):
+			return {"cmd": "eat"}
+	return {}
+
+# Umbral de obediencia por orden: compromiso mayor exige mas confianza.
+func _chat_order_gate(b: Dictionary, sender_id: int, skey: String, cmd: String) -> Dictionary:
+	if int(b.get("team_leader_id", 0)) == sender_id:
+		return {"ok": true, "why": "team"}
+	if str(b.get("faction", "")) == "hostile":
+		return {"ok": false, "why": "hostile"}
+	var rel := get_bot_relationship(int(b["bot_id"]), skey)
+	if int(rel.get("attacked", 0)) >= 1 and float(rel.get("hostility", 0.0)) >= 0.5:
+		return {"ok": false, "why": "betrayed"}
+	# Bajo fuego no acepta compromisos (puede quedarse, irse o defenderse)
+	if b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
+		if not cmd in ["stay", "dismiss", "attack"]:
+			return {"ok": false, "why": "busy"}
+	var pers := _get_bot_personality(b)
+	var score := float(rel.get("trust", 0.0)) * 0.75 \
+		+ float(pers.get("cooperation", 0.5)) * 0.30 \
+		+ float(pers.get("sociability", 0.5)) * 0.12 \
+		- float(pers.get("distrust", 0.35)) * 0.28 \
+		- float(rel.get("hostility", 0.0)) * 0.55 \
+		- float(pers.get("aggression", 0.35)) * 0.10 \
+		+ minf(int(rel.get("helped", 0)) * 0.05, 0.20)
+	var need := {"follow": 0.10, "come": 0.05, "stay": -0.10, "eat": -0.10,
+		"equip": -0.05, "dismiss": -0.20, "give": 0.30, "attack": 0.40}.get(cmd, 0.0)
+	if float(rel.get("fear", 0.0)) > 0.55 and cmd in ["follow", "come", "give"]:
+		return {"ok": false, "why": "scared"}
+	if score < need:
+		return {"ok": false, "why": "distrust"}
+	return {"ok": true, "why": "trust"}
+
+# Ejecuta la orden; devuelve "" si se aplico o el motivo del fallo.
+func _chat_apply_order(b: Dictionary, sender_id: int, sname: String, cmd: String, arg: String) -> String:
+	var proxy: Node3D = b["proxy"]
+	var bot_id := int(b["bot_id"])
+	var skey := _actor_persist_key(sender_id)
+	match cmd:
+		"follow":
+			var other := int(b.get("team_leader_id", 0))
+			if other != 0 and other != sender_id:
+				return "other_team"
+			if other != sender_id:
+				b["team_leader_id"] = sender_id
+				b["follow_mode"] = "follow"
+				b["sitting"] = false
+				b["sleeping"] = false
+				b["aggro_target"] = null
+				b["_meet_id"] = 0
+				proxy.set_meta("team_leader_id", sender_id)
+				proxy.set_meta("bot_follow_mode", "follow")
+				record_social_event(bot_id, skey, sname, "ally", 0.15, "chat_order_follow")
+				_publish_bot_to_net_players(b)
+				_apply_local_avatar_metadata(b)
+		"stay":
+			if int(b.get("team_leader_id", 0)) == sender_id:
+				b["follow_mode"] = "stay"
+				b["stay_pos"] = proxy.global_position
+				proxy.set_meta("bot_follow_mode", "stay")
+				_publish_bot_to_net_players(b)
+				_apply_local_avatar_metadata(b)
+			else:
+				b["explore_target"] = proxy.global_position
+				b["explore_dwell"] = 60.0
+			b["sitting"] = false
+		"come":
+			var node := _find_actor_by_peer_id(sender_id)
+			if node == null or not is_instance_valid(node):
+				return "no_target"
+			if int(b.get("team_leader_id", 0)) == sender_id:
+				b["follow_mode"] = "follow"
+				proxy.set_meta("bot_follow_mode", "follow")
+				_publish_bot_to_net_players(b)
+				_apply_local_avatar_metadata(b)
+			else:
+				b["explore_target"] = node.global_position
+				b["explore_dwell"] = 0.0
+				b["sitting"] = false
+		"dismiss":
+			if int(b.get("team_leader_id", 0)) == sender_id:
+				b["team_leader_id"] = 0
+				b["follow_mode"] = "follow"
+				proxy.set_meta("team_leader_id", 0)
+				proxy.set_meta("bot_follow_mode", "follow")
+				_publish_bot_to_net_players(b)
+				_apply_local_avatar_metadata(b)
+			else:
+				var node2 := _find_actor_by_peer_id(sender_id)
+				var away := Vector3.RIGHT
+				if node2 != null and is_instance_valid(node2):
+					var dv := proxy.global_position - node2.global_position
+					dv.y = 0.0
+					if dv.length() > 0.5:
+						away = dv.normalized()
+				b["explore_target"] = proxy.global_position + away * 80.0
+				b["explore_dwell"] = 0.0
+				b["_meet_id"] = 0
+		"eat":
+			var has_food := false
+			for it in proxy.get_meta("saved_inventory", []):
+				if it is Dictionary and str(it.get("type", "")) == "food" and int(it.get("quantity", 1)) > 0:
+					has_food = true
+					break
+			if not has_food:
+				return "no_food"
+			b["forced_eat"] = true
+			b["eat_cooldown"] = 0.0
+		"equip":
+			b["equip_mission"] = true
+			b["sense_t"] = 0.0
+		"give":
+			return _chat_give_item(b, arg)
+		"attack":
+			var foe := _chat_order_target(b, sender_id)
+			if foe == null:
+				return "no_target"
+			b["aggro_target"] = foe
+			b["aggro_timer"] = 20.0
+			b["sitting"] = false
+			b["sense_t"] = 0.0
+	return ""
+
+func _chat_give_match(arg: String) -> String:
+	if arg in ["agua", "sed"]:
+		return "drink"
+	if arg in ["venda", "vendas", "vendaje", "botiquin", "medicina"]:
+		return "medical"
+	if arg in ["arma", "pistola", "rifle", "fusil", "cuchillo", "hacha"]:
+		return "weapon"
+	if arg in ["municion", "balas"]:
+		return "ammo"
+	return "food"
+
+# Deja caer al suelo lo pedido (o lo primero comestible si no se concreta).
+func _chat_give_item(b: Dictionary, arg: String) -> String:
+	var proxy: Node3D = b["proxy"]
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var want := _chat_give_match(arg) if not arg.is_empty() else ""
+	var idx := -1
+	var backup := -1
+	for i in range(inv.size()):
+		var it = inv[i]
+		if not (it is Dictionary) or str(it.get("type", "")) == "backpack":
+			continue
+		var tp := str(it.get("type", ""))
+		if want.is_empty():
+			if tp in ["food", "drink", "medical"]:
+				idx = i
+				break
+			if backup < 0 and tp != "tool":
+				backup = i
+		elif tp == want or (want == "food" and tp == "drink"):
+			idx = i
+			break
+	if idx < 0:
+		idx = backup
+	if idx < 0:
+		return "nothing"
+	var item: Dictionary = (inv[idx] as Dictionary).duplicate(true)
+	var qty := int(item.get("quantity", 1))
+	if qty > 1:
+		inv[idx]["quantity"] = qty - 1
+		item["quantity"] = 1
+	else:
+		inv.remove_at(idx)
+	proxy.set_meta("saved_inventory", inv)
+	_bot_drop_to_ground(b, item)
+	_auto_equip_best_gear(b)
+	_publish_bot_to_net_players(b)
+	return ""
+
+# Objetivo de "ataca": el depredador/hostil mas cercano al bot o a quien ordena.
+func _chat_order_target(b: Dictionary, sender_id: int) -> Node3D:
+	if world == null or world.get_tree() == null:
+		return null
+	var proxy: Node3D = b["proxy"]
+	var snode := _find_actor_by_peer_id(sender_id)
+	var best: Node3D = null
+	var best_d := 34.0
+	for w in world.get_tree().get_nodes_in_group("wildlife"):
+		if not is_instance_valid(w) or bool(w.get("_is_dead")):
+			continue
+		if str(w.get("animal_type")) not in ["wolf", "bear"]:
+			continue
+		var d := proxy.global_position.distance_to(w.global_position)
+		if snode != null and is_instance_valid(snode):
+			d = minf(d, snode.global_position.distance_to(w.global_position) * 0.6)
+		if d < best_d:
+			best_d = d
+			best = w
+	for bid in bots.keys():
+		var ob: Dictionary = bots[bid]
+		if int(ob.get("bot_id", 0)) == int(b["bot_id"]):
+			continue
+		var op: Node3D = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		if str(ob.get("faction", "")) != "hostile" and ob.get("aggro_target") != snode:
+			continue
+		var d2 := proxy.global_position.distance_to(op.global_position)
+		if snode != null and is_instance_valid(snode):
+			d2 = minf(d2, snode.global_position.distance_to(op.global_position) * 0.6)
+		if d2 < best_d:
+			best_d = d2
+			best = op
+	return best
+
+func _chat_order_line(b: Dictionary, cmd: String, ok: bool, why: String) -> String:
+	var pers := _get_bot_personality(b)
+	var warm := float(pers.get("sociability", 0.5)) > 0.55 and float(pers.get("aggression", 0.35)) < 0.5
+	if ok:
+		match cmd:
+			"follow":
+				return "Vale, voy contigo. Tu mandas." if warm else "De acuerdo, te sigo. No me hagas arrepentirme."
+			"stay":
+				return "Me quedo aqui, tranquila." if warm else "Bien. Me quedo quieto."
+			"come":
+				return "Voy para alla, esperame." if warm else "Ya voy."
+			"dismiss":
+				return "Entendido, sigo mi camino. Suerte." if warm else "De acuerdo, me voy."
+			"eat":
+				return "Si, me vendria bien un bocado." if warm else "Vale, como algo."
+			"equip":
+				return "Buena idea, necesito mejor equipo." if warm else "Ire a ver que encuentro."
+			"give":
+				return "Toma, te lo dejo aqui." if warm else "Dale, quedatelo."
+			"attack":
+				return "Voy a por el!" if float(pers.get("aggression", 0.35)) > 0.5 else "De acuerdo, lo intento. Cubreme."
+	match why:
+		"hostile":
+			return "¿Ordenes? A mi no me mandas."
+		"betrayed":
+			return "Despues de lo que me hiciste, olvidate."
+		"scared":
+			return "Ni se te ocurra acercarte. Dejame en paz."
+		"busy":
+			return "¡Ahora no! Tengo problemas mas grandes."
+		"other_team":
+			return "Ya voy con otro. No le voy a dejar."
+		"no_food":
+			return "No tengo nada comestible encima."
+		"nothing":
+			return "No llevo nada que darte."
+		"no_target":
+			return "¿Atacar a quien? No veo ninguna amenaza cerca."
+	return "Ni te conozco. ¿Por que iba a hacerte caso?" if warm else "No me fio de ti lo suficiente."
+
+func _chat_handle_order(b: Dictionary, sender_id: int, sname: String, skey: String, cmd: String, arg: String) -> void:
+	var gate := _chat_order_gate(b, sender_id, skey, cmd)
+	var why := str(gate.get("why", ""))
+	var ok := bool(gate.get("ok", false))
+	if ok:
+		why = _chat_apply_order(b, sender_id, sname, cmd, arg)
+		ok = why.is_empty()
+	var line := _chat_order_line(b, cmd, ok, why)
+	if not line.is_empty():
+		_bot_chat_send(b, sender_id, sname, line, "order")
+	if ok:
+		record_social_event(int(b["bot_id"]), skey, sname, "help", 0.12, "chat_order_" + cmd)
 
 func _chat_sanitize(text: String) -> String:
 	var raw := text.strip_edges()

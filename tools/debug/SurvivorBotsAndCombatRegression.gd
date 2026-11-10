@@ -2719,6 +2719,99 @@ func run() -> void:
 	check(not mgr._bot_has_farm_tool(fb["proxy"]),
 		"10D5e: tras 2 usos la azada de piedra queda gastada")
 
+	# ==================== 10E: Ordenes por chat ====================
+	# 10E1: el parser detecta cada orden y no confunde "ven conmigo" (follow)
+	var o_follow := mgr._chat_parse_order("Oye, sígueme anda")
+	var o_stay := mgr._chat_parse_order("quédate aquí quieto")
+	var o_dismiss := mgr._chat_parse_order("mejor vete de aquí")
+	var o_give := mgr._chat_parse_order("dame agua si tienes")
+	var o_come := mgr._chat_parse_order("ven aquí rápido")
+	var o_ally := mgr._chat_parse_order("ven conmigo")
+	var o_atk := mgr._chat_parse_order("ataca a ese lobo")
+	var o_none := mgr._chat_parse_order("hola, ¿cómo va todo?")
+	check(str(o_follow.get("cmd","")) == "follow" and str(o_stay.get("cmd","")) == "stay"
+		and str(o_dismiss.get("cmd","")) == "dismiss" and str(o_give.get("cmd","")) == "give"
+		and str(o_give.get("arg","")) == "agua" and str(o_come.get("cmd","")) == "come"
+		and str(o_ally.get("cmd","")) == "follow" and str(o_atk.get("cmd","")) == "attack"
+		and o_none.is_empty(),
+		"10E1: parser de ordenes (follow=%s stay=%s dismiss=%s give=%s/%s come=%s ally=%s atk=%s none=%s)" % [
+			str(o_follow.get("cmd","")), str(o_stay.get("cmd","")), str(o_dismiss.get("cmd","")),
+			str(o_give.get("cmd","")), str(o_give.get("arg","")), str(o_come.get("cmd","")),
+			str(o_ally.get("cmd","")), str(o_atk.get("cmd","")), str(o_none)])
+
+	# 10E2: puerta de obediencia — el aliado sociable sigue a un desconocido,
+	# el hostil se niega siempre, quien te atacó te manda a paseo
+	var eb: Dictionary = mgr.bots[902]
+	var kb: Dictionary = mgr.bots[903]
+	eb["team_leader_id"] = 0
+	eb["aggro_target"] = null
+	var g_friend := mgr._chat_order_gate(eb, 7, "player_7", "follow")
+	check(bool(g_friend.get("ok", false)), "10E2a: un bot amistoso coopera y sigue a un desconocido (why=%s)" % str(g_friend.get("why","")))
+	var g_host := mgr._chat_order_gate(kb, 7, "player_7", "follow")
+	check(not bool(g_host.get("ok", true)) and str(g_host.get("why","")) == "hostile",
+		"10E2b: el hostil rechaza las ordenes (why=%s)" % str(g_host.get("why","")))
+	var rel7 := mgr._chat_touch_rel(902, "player_7", "Sami")
+	rel7["attacked"] = 2
+	rel7["hostility"] = 0.8
+	var g_bet := mgr._chat_order_gate(eb, 7, "player_7", "follow")
+	check(not bool(g_bet.get("ok", true)) and str(g_bet.get("why","")) == "betrayed",
+		"10E2c: tras atacarle no te obedece (why=%s)" % str(g_bet.get("why","")))
+
+	# 10E3: fin a fin — "sígueme" por chat une al equipo y responde "order"
+	rel7["attacked"] = 0
+	rel7["hostility"] = 0.0
+	rel7["trust"] = 0.6
+	var chat_n0: int = mgr.chat_log.size()
+	mgr.on_chat_received(902, 7, "Sami", "sígueme")
+	check(int(eb.get("team_leader_id", 0)) == 7 and str(eb.get("follow_mode","")) == "follow"
+		and int(eb["proxy"].get_meta("team_leader_id", 0)) == 7,
+		"10E3a: 'sígueme' vincula al bot a tu equipo")
+	var last_o := ""
+	for i in range(chat_n0, mgr.chat_log.size()):
+		var m: Dictionary = mgr.chat_log[i]
+		if str(m.get("kind","")) == "order" and int(m.get("to_id",0)) == 7:
+			last_o = str(m.get("text",""))
+	check(not last_o.is_empty(), "10E3b: responde al momento por el chat (%s)" % last_o)
+
+	# 10E4: compañero — "quédate" lo planta y "vete" lo libera
+	mgr.on_chat_received(902, 7, "Sami", "quédate aquí")
+	check(str(eb.get("follow_mode","")) == "stay" and eb.get("stay_pos") is Vector3,
+		"10E4a: 'quédate' lo deja vigilando")
+	mgr.on_chat_received(902, 7, "Sami", "vete")
+	check(int(eb.get("team_leader_id", -1)) == 0,
+		"10E4b: 'vete' disuelve el equipo")
+
+	# 10E5: "dame agua" con confianza — suelta un item; sin nada, se niega
+	rel7["trust"] = 0.6
+	eb["proxy"].set_meta("saved_inventory", [
+		{"name": "Botella de agua", "type": "drink", "weight": 0.6, "quantity": 2, "use_value": 0.0},
+	])
+	var gave := mgr._chat_apply_order(eb, 7, "Sami", "give", "agua")
+	var inv5: Array = eb["proxy"].get_meta("saved_inventory", [])
+	check(gave.is_empty() and inv5.size() == 1 and int(inv5[0].get("quantity",0)) == 1,
+		"10E5a: 'dame agua' deja caer una botella (ret=%s inv=%d)" % [gave, inv5.size()])
+	eb["proxy"].set_meta("saved_inventory", [])
+	var gave2 := mgr._chat_apply_order(eb, 7, "Sami", "give", "")
+	check(gave2 == "nothing", "10E5b: sin nada que dar contesta 'nothing'")
+
+	# 10E6: el hostil responde con negativa y NO se une
+	var chat_n1: int = mgr.chat_log.size()
+	mgr.on_chat_received(903, 7, "Sami", "sígueme")
+	check(int(kb.get("team_leader_id", 0)) == 0,
+		"10E6a: el hostil no entra en tu equipo")
+	var hostile_reply := ""
+	for i in range(chat_n1, mgr.chat_log.size()):
+		var mo: Dictionary = mgr.chat_log[i]
+		if str(mo.get("kind","")) == "order":
+			hostile_reply = str(mo.get("text",""))
+	check(not hostile_reply.is_empty(), "10E6b: el hostil te contesta negandose (%s)" % hostile_reply)
+
+	# 10E7: mensaje normal sin orden sigue el camino de conversacion habitual
+	eb["_chat_inbox"] = {}
+	mgr.on_chat_received(902, 7, "Sami", "buenas, que tal")
+	check(not (eb.get("_chat_inbox", {}) as Dictionary).is_empty(),
+		"10E7: un saludo encola respuesta de conversacion, no orden")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
