@@ -75,7 +75,7 @@ func _build_chunk(cell: Vector2i, quality: float) -> bool:
 		if preload("res://scripts/HighMountainZone.gd").blocks_vegetation(pos, -.22): continue
 		var verge: float = world._road_verge_growth(pos)
 		if verge <= 0.0 or density_sample > lerpf(.65,1.0,verge): continue
-		pos.y = world._get_exact_ground_y(pos.x,pos.z)+.008
+		pos.y = world._get_ground_height(pos)+.008
 		var rock_cell := Vector2i((Vector2(pos.x,pos.z)/world.LAKE_ROCK_GRID).floor())
 		if float(rock_surface.get(rock_cell,-INF)) > pos.y+.04: continue
 		height *= lerpf(.45,1.0,verge)

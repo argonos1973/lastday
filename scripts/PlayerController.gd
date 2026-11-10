@@ -1031,6 +1031,8 @@ var _water_step_timer := 0.0
 var _water_step_left := false
 var _water_ripple_shader: Shader
 var _water_droplet_mesh: SphereMesh
+var _water_fade_ramp_tex: GradientTexture1D
+var _water_ripple_torus: TorusMesh
 var _water_sink := 0.0
 var _water_notice_cooldown := 0.0
 var _water_query_timer := 0.0
@@ -1211,6 +1213,8 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	if is_instance_valid(rowing_boat) and not bool(rowing_boat.get("occupant_standing")) and not anim.to_lower().contains("dead"):
 		return
 	if is_dead:
+		if _puppet_step_player != null and _puppet_step_player.playing:
+			_puppet_step_player.stop()
 		# Still update position for dead puppets (corpse sync)
 		global_position = pos
 		rotation.y = rot
@@ -1224,6 +1228,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	_puppet_anim = anim
 	if anim.to_lower().find("dead") >= 0:
 		is_dead = true
+		_puppet_step_timer = 0.0
+		if _puppet_step_player != null and _puppet_step_player.playing:
+			_puppet_step_player.stop()
 		death_pose_time = 0.0
 		_puppet_death_remove_timer = 0.0
 		third_person_action_timer = 0.0
@@ -1695,6 +1702,8 @@ func _process(delta: float) -> void:
 		_update_backpack_socket()
 		_update_head_worn_items()
 		if is_dead:
+			if _puppet_step_player != null and _puppet_step_player.playing:
+				_puppet_step_player.stop()
 			_update_death_pose(delta)
 			if _puppet_naked_pending:
 				_puppet_naked_timer += delta
@@ -5207,13 +5216,13 @@ func _update_water_state(delta: float) -> void:
 			_water_step_timer = clampf(0.95 / water_speed, 0.28, 0.65)
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		_soaked_each_equipped(delta * (0.38 + _water_depth * 0.55))
-		_recalculate_warmth(false)
-		stats.wetness = _effective_wetness()
 		stats.energy = max(0.0, stats.energy - delta * 0.018 * (0.8 + _water_depth))
 		stats.body_temperature = max(32.0, stats.body_temperature - delta * 0.013 * (0.5 + wetness + _water_depth))
 		_stats_emit_timer += delta
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
+			_recalculate_warmth(false)
+			stats.wetness = _effective_wetness()
 			stats.changed.emit()
 		if _water_notice_cooldown <= 0.0:
 			notice.emit("Te mojas. La ropa fria te roba calor.")
@@ -8223,7 +8232,9 @@ func _spawn_water_splash(at_pos: Vector3, strength: float = 1.0, motion: Vector3
 	mat.gravity = Vector3(0, -9.8, 0)
 	mat.scale_min = 0.35
 	mat.scale_max = lerpf(0.85, 1.5, strength)
-	mat.color_ramp = _make_fade_ramp(0.03, 0.35)
+	if _water_fade_ramp_tex == null:
+		_water_fade_ramp_tex = _make_fade_ramp(0.03, 0.35)
+	mat.color_ramp = _water_fade_ramp_tex
 	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
 	mat.emission_sphere_radius = lerpf(0.045, 0.14, strength)
 	particles.visibility_aabb = AABB(Vector3(-3, -3, -3), Vector3(6, 6, 6))
@@ -8267,16 +8278,17 @@ void fragment() {
 	ALPHA = opacity * envelope * breakup;
 }
 """
+	if _water_ripple_torus == null:
+		_water_ripple_torus = TorusMesh.new()
+		_water_ripple_torus.inner_radius = 0.10
+		_water_ripple_torus.outer_radius = 0.13
+		_water_ripple_torus.rings = 64
+		_water_ripple_torus.ring_segments = 6
 	var ring_count := 3 if strength >= 0.65 else 2
 	for i in range(ring_count):
 		var ring := MeshInstance3D.new()
 		ring.name = "WaterRipple_%d" % i
-		var ring_mesh := TorusMesh.new()
-		ring_mesh.inner_radius = 0.10
-		ring_mesh.outer_radius = 0.13
-		ring_mesh.rings = 64
-		ring_mesh.ring_segments = 6
-		ring.mesh = ring_mesh
+		ring.mesh = _water_ripple_torus
 		var mat := ShaderMaterial.new()
 		mat.shader = _water_ripple_shader
 		var travel := lerpf(0.45, 1.65, strength) * (1.0 - float(i) * 0.12)

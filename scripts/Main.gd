@@ -1393,6 +1393,12 @@ func _process(delta: float) -> void:
 					rp_bot.set_meta("bot_faction", str(pdata_bot.get("bot_faction", "hostile" if int(pid) == 903 else "friendly")))
 					rp_bot.set_meta("team_leader_id", int(pdata_bot.get("team_leader_id", 0)))
 					rp_bot.set_meta("bot_follow_mode", str(pdata_bot.get("bot_follow_mode", "follow")))
+					if pdata_bot.has("health"):
+						rp_bot.set_meta("proxy_health", int(pdata_bot.get("health", 100)))
+					if pdata_bot.has("hunger"):
+						rp_bot.set_meta("saved_hunger", int(pdata_bot.get("hunger", 100)))
+					if pdata_bot.has("thirst"):
+						rp_bot.set_meta("saved_thirst", int(pdata_bot.get("thirst", 100)))
 					if not rp_bot.is_in_group("interactable"):
 						rp_bot.add_to_group("interactable")
 	# Network sync
@@ -5867,7 +5873,9 @@ func _try_open_bot_menu() -> bool:
 		return false
 	var my_id: int = net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1
 	var best: Node3D = null
-	var best_d := 10.0
+	var best_d := 35.0
+	var fallback_friendly: Node3D = null
+	var fallback_d := 12.0
 	var pools: Array = [remote_players.values()]
 	if not server_proxies.is_empty():
 		pools.append(server_proxies.values())
@@ -5875,15 +5883,27 @@ func _try_open_bot_menu() -> bool:
 		for rp in pool:
 			if not (rp is Node3D) or not is_instance_valid(rp):
 				continue
-			if not bool(rp.get_meta("is_ai_bot", false)) or bool(rp.get_meta("proxy_dead", false)):
+			var bid := int(rp.get_meta("bot_id", rp.get_meta("peer_id", 0)))
+			var is_bot := bool(rp.get_meta("is_ai_bot", false)) or SurvivorBotManagerScript.is_bot_peer_id(bid)
+			if not is_bot or bool(rp.get_meta("proxy_dead", false)) or rp.get("is_dead") == true:
 				continue
-			if int(rp.get_meta("team_leader_id", 0)) != my_id:
-				continue
+			var lid := int(rp.get_meta("team_leader_id", 0))
+			if lid == 0 and net != null and net.players.has(bid):
+				lid = int((net.players[bid] as Dictionary).get("team_leader_id", 0))
+				rp.set_meta("team_leader_id", lid)
 			var d: float = player.global_position.distance_to((rp as Node3D).global_position)
-			if d < best_d:
-				best_d = d
-				best = rp as Node3D
+			if lid == my_id:
+				if d < best_d:
+					best_d = d
+					best = rp as Node3D
+			elif str(rp.get_meta("bot_faction", "friendly" if bid != 903 else "hostile")) == "friendly" and (lid == 0 or SurvivorBotManagerScript.is_bot_peer_id(lid)):
+				if d < fallback_d:
+					fallback_d = d
+					fallback_friendly = rp as Node3D
 	if best == null:
+		best = fallback_friendly
+	if best == null:
+		player.notice.emit("No tienes ningún aliado cerca para darle órdenes [Z].")
 		return false
 	_open_bot_menu(best)
 	return true
@@ -14763,7 +14783,8 @@ func get_hud():
 
 #region API PÚBLICA DEL MUNDO
 func get_river_depth_at(world_pos: Vector3) -> float:
-	for segment in river_segments_data:
+	for si: int in _candidate_river_segs(world_pos, 0.0):
+		var segment: Dictionary = river_segments_data[si]
 		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
 		var yaw: float = float(segment["yaw"])
@@ -14807,7 +14828,8 @@ func _is_bot_river_ford(pos: Vector3) -> bool:
 func get_river_surface_y_at(world_pos: Vector3) -> float:
 	# El agua se construye en la altura Y del segmento; exponerla evita que los
 	# efectos de lanzamiento queden bajo el plano o flotando sobre lagos/ríos.
-	for segment in river_segments_data:
+	for si: int in _candidate_river_segs(world_pos, 0.0):
+		var segment: Dictionary = river_segments_data[si]
 		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
 		var yaw := deg_to_rad(float(segment["yaw"]))
@@ -17643,7 +17665,8 @@ func _is_near_house(pos: Vector3, margin: float) -> bool:
 
 func _is_near_river(pos: Vector3, margin: float) -> bool:
 	var p := Vector2(pos.x, pos.z)
-	for segment in river_segments_data:
+	for si: int in _candidate_river_segs(pos, margin):
+		var segment: Dictionary = river_segments_data[si]
 		var center: Vector3 = segment["center"]
 		var size: Vector2 = segment["size"]
 		var yaw: float = deg_to_rad(float(segment["yaw"]))
@@ -19969,37 +19992,21 @@ func _flush_prop_batches() -> void:
 		for it in group.items:
 			transforms.append(it.t)
 		var spatial := _spatial_instance_batches(transforms, 48.0, 1200)
-		var is_solid_rock := ("lake_boulder" in path) or ("lake_slab" in path)
 		for indices in spatial:
 			for sm in subs:
 				var mm := MultiMesh.new()
 				mm.transform_format = MultiMesh.TRANSFORM_3D
 				mm.mesh = sm.mesh
 				mm.instance_count = indices.size()
-				var rock_col_body: StaticBody3D = null
-				var rock_shape: Shape3D = null
-				if is_solid_rock and sm.mesh != null:
-					if not _rock_trimesh_cache.has(sm.mesh):
-						_rock_trimesh_cache[sm.mesh] = (sm.mesh as Mesh).create_trimesh_shape()
-					rock_shape = _rock_trimesh_cache[sm.mesh]
-					rock_col_body = StaticBody3D.new()
-					rock_col_body.name = "ShoreRockCol_%d" % flushed
 				for j in range(indices.size()):
 					var inst_xf: Transform3D = (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D)
 					mm.set_instance_transform(j, inst_xf)
-					if rock_col_body != null and rock_shape != null:
-						var cshape := CollisionShape3D.new()
-						cshape.shape = rock_shape
-						cshape.transform = inst_xf
-						rock_col_body.add_child(cshape)
 				var mmi := MultiMeshInstance3D.new()
 				mmi.name = "ShorePropMM_%d" % flushed
 				mmi.multimesh = mm
 				mmi.material_override = mat
 				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 				add_child(mmi)
-				if rock_col_body != null:
-					add_child(rock_col_body)
 				flushed += 1
 		await get_tree().process_frame
 	_prop_batch_items.clear()

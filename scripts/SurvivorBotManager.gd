@@ -837,8 +837,18 @@ func _publish_bot_to_net_players(b: Dictionary) -> void:
 		"bot_faction": str(b["faction"]),
 		"team_leader_id": int(b["team_leader_id"]),
 		"bot_follow_mode": str(b["follow_mode"]),
+		"health": int(b.get("health", 100)),
+		"hunger": int(b.get("hunger", 100)),
+		"thirst": int(b.get("thirst", 100)),
 		"last_seen": Time.get_ticks_msec(),
 	}
+	if net.is_host and net.is_connected and net.peer != null and net.has_method("sync_bot_team_state"):
+		var team_sig := "%d|%s|%d|%d|%d" % [int(b["team_leader_id"]), str(b["follow_mode"]), int(b.get("health", 100)) / 5, int(b.get("hunger", 100)) / 5, int(b.get("thirst", 100)) / 5]
+		if str(b.get("_last_team_sig", "")) != team_sig:
+			b["_last_team_sig"] = team_sig
+			for pid in net.snapshot_recipients():
+				if not is_bot_peer_id(pid):
+					net.sync_bot_team_state.rpc_id(pid, bot_id, int(b["team_leader_id"]), str(b["follow_mode"]), int(b.get("health", 100)), int(b.get("hunger", 100)), int(b.get("thirst", 100)))
 
 func tick(delta: float) -> void:
 	if world == null:
@@ -881,6 +891,12 @@ func _refresh_client_bot_avatars() -> void:
 				rp.set_meta("bot_faction", str(pdata.get("bot_faction", "friendly" if int(pid) != 903 else "hostile")))
 				rp.set_meta("team_leader_id", int(pdata.get("team_leader_id", 0)))
 				rp.set_meta("bot_follow_mode", str(pdata.get("bot_follow_mode", "follow")))
+				if pdata.has("health"):
+					rp.set_meta("proxy_health", int(pdata.get("health", 100)))
+				if pdata.has("hunger"):
+					rp.set_meta("saved_hunger", int(pdata.get("hunger", 100)))
+				if pdata.has("thirst"):
+					rp.set_meta("saved_thirst", int(pdata.get("thirst", 100)))
 				if not rp.is_in_group("interactable"):
 					rp.add_to_group("interactable")
 
@@ -1066,12 +1082,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var human_foe := _sensed_node(b, "_s_foe")
 	if human_foe != null:
 		b["_act"] = "foe"
-		# Herido grave (< 30 HP) o en huida: repliegue real. Con refugio va a
-		# ocultarse; sin refugio escapa en zigzag hasta perder la amenaza.
+		# Herido grave (< 30 HP), desarmado frente a enemigo armado o en huida:
+		# repliegue tactico real. Con refugio va a ocultarse; sin refugio escapa
+		# en zigzag hasta perder la amenaza o conseguir un arma.
 		var fleeing: bool = float(b["flee_until"]) > 0.0
 		if fleeing:
 			b["flee_until"] = maxf(0.0, float(b["flee_until"]) - delta)
-		if (float(b["health"]) < 30.0 or fleeing) and not _has_combat_edge(b, human_foe):
+		var unarmed_vs_armed: bool = _best_weapon_name(proxy).is_empty() and not str(human_foe.get_meta("saved_held_item", "")).is_empty()
+		if (float(b["health"]) < 30.0 or fleeing or unarmed_vs_armed) and not _has_combat_edge(b, human_foe):
 			if sh_pos != Vector3.INF:
 				b["hide_timer"] = 20.0
 				_move_bot_towards(b, sh_pos, 5.2, delta, "run")
@@ -2603,8 +2621,15 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 	var best: Node3D = null
 	var best_d := sight
 
-	# Si es hostil ("Kael"), busca jugadores humanos y bots aliados
+	# Si es hostil ("Kael"), busca jugadores humanos y bots aliados — pero NUNCA
+	# inicia un ataque suicida con las manos vacias ni se lanza a cuerpo a cuerpo
+	# contra alguien que ya le ha matado si no lleva arma a distancia.
 	if faction == "hostile":
+		if _best_weapon_name(proxy).is_empty():
+			return null
+		var has_ranged := _bot_has_ranged_weapon(proxy)
+		var pers_h := _get_bot_personality(b)
+		var cautious_h := not has_ranged and float(pers_h.get("survival_instinct", 0.7)) > float(pers_h.get("bravery", 0.5)) * 0.85
 		for p in world.get_tree().get_nodes_in_group("net_player_proxy"):
 			if not (p is Node3D) or p == proxy or not is_instance_valid(p):
 				continue
@@ -2613,6 +2638,10 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
 				continue
 			var p3 := p as Node3D
+			if cautious_h:
+				var pid3 := _peer_id_for_actor(p3)
+				if pid3 > 0 and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid3)).get("fear", 0.0)) > 0.68:
+					continue
 			var heard := _can_bot_hear_actor(b, p3, proxy.global_position.distance_to(p3.global_position))
 			var max_r := minf(best_d, maxf(34.0 if heard else 0.0, _effective_human_sight(p3, sight)))
 			var d := proxy.global_position.distance_to(p3.global_position)
@@ -2622,12 +2651,14 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 		var local_p = world.get("player")
 		if local_p is Node3D and is_instance_valid(local_p) and local_p.get("is_dead") != true:
 			var lp3 := local_p as Node3D
-			var heard_l := _can_bot_hear_actor(b, lp3, proxy.global_position.distance_to(lp3.global_position))
-			var max_rl := minf(best_d, maxf(34.0 if heard_l else 0.0, _effective_human_sight(lp3, sight)))
-			var dl := proxy.global_position.distance_to(lp3.global_position)
-			if dl < max_rl and (dl <= 10.0 or heard_l or _has_clear_shot(proxy.global_position, lp3.global_position)):
-				best_d = dl
-				best = lp3
+			var fear_local := cautious_h and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(1)).get("fear", 0.0)) > 0.68
+			if not fear_local:
+				var heard_l := _can_bot_hear_actor(b, lp3, proxy.global_position.distance_to(lp3.global_position))
+				var max_rl := minf(best_d, maxf(34.0 if heard_l else 0.0, _effective_human_sight(lp3, sight)))
+				var dl := proxy.global_position.distance_to(lp3.global_position)
+				if dl < max_rl and (dl <= 10.0 or heard_l or _has_clear_shot(proxy.global_position, lp3.global_position)):
+					best_d = dl
+					best = lp3
 	else:
 		# Aliado/cooperativo: ataca bandidos hostiles que se acerquen a él o a su líder
 		for other_id in bots.keys():
@@ -2975,10 +3006,14 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	# atacante es un jugador/bot, actualizar relación social (desconfianza/hostilidad/miedo).
 	record_zone_hazard(bot_id, proxy.global_position, _poi_kind_near(proxy.global_position), clampf(amount / 45.0, 0.08, 0.65))
 	if attacker_id > 0:
+		b["_last_attacker_id"] = attacker_id
+		b["_last_hit_weapon"] = weapon
 		var akey := _actor_persist_key(attacker_id)
 		var aname := _actor_display_name(attacker_id)
 		record_social_event(bot_id, akey, aname, "attack", clampf(amount / 35.0, 0.10, 0.80), "hit_" + weapon)
 	elif weapon in ["wolf_bite", "bear_bite"]:
+		b["_last_attacker_id"] = 0
+		b["_last_hit_weapon"] = weapon
 		_evolve_personality(b, "predator_hit", clampf(amount / 50.0, 0.1, 0.5))
 
 	# Si el atacante es un jugador o bot, responder a la agresión
@@ -3013,7 +3048,7 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 		world._net_player_hit_event(bot_id, hit_kind, proxy.global_position)
 
 	if hp <= 0.0:
-		_kill_bot(b, "melee" if weapon == "melee" else "")
+		_kill_bot(b, "melee" if weapon == "melee" else (weapon if not weapon.is_empty() else "combat"))
 
 # Muerte del superviviente por cualquier causa (impacto letal, mordisco,
 # inanicion o deshidratacion): marca el proxy, suelta el loot y sincroniza
@@ -3053,6 +3088,15 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 		spots.pop_front()
 	mem["death_spots"] = spots
 	record_zone_hazard(bot_id, dp, _poi_kind_near(dp), 0.75)
+	var killer_id := int(b.get("_last_attacker_id", 0))
+	if killer_id > 0:
+		var kkey := _actor_persist_key(killer_id)
+		var kname := _actor_display_name(killer_id)
+		record_social_event(bot_id, kkey, kname, "attack", 0.75, "killed_by_" + death_kind)
+		var krel := get_bot_relationship(bot_id, kkey)
+		krel["fear"] = snappedf(clampf(float(krel.get("fear", 0.0)) + 0.30, 0.0, 1.0), 0.001)
+		record_strategy_outcome(bot_id, "scavenge", false, 0.16)
+	b["_last_attacker_id"] = 0
 	record_bot_event(bot_id, "death", death_kind, _poi_kind_near(dp), dp, "died:" + death_kind)
 	_evolve_personality(b, "death", 0.6)
 	_ai_save_memory()
@@ -4178,6 +4222,8 @@ func _chat_teach_apply(b: Dictionary, sender_id: int, sname: String, skey: Strin
 		_:
 			observe_location(bid, "marked:" + grid.call(pos, 30.0), "wild", pos)
 	record_social_event(bid, skey, sname, "help", 0.25, "taught_" + kind)
+	_evolve_personality(b, "voice_taught", 0.25)
+	record_strategy_outcome(bid, "forage" if kind == "water" else "explore", true, 0.08)
 	# Y se lo cuenta al resto: un aliado cercano tambien aprende el dato
 	for oid in bots.keys():
 		if oid != bid:
@@ -7288,6 +7334,8 @@ func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 		_bot_drop_to_ground(b, entry) # mochila llena: la pieza cae a sus pies
 	proxy.set_meta("saved_inventory", inv)
 	_auto_equip_best_gear(b)
+	_evolve_personality(b, "craft_success", 0.22)
+	record_strategy_outcome(int(b["bot_id"]), "forage" if str(entry.get("type", "")) in ["food", "tool_hoe"] else "explore", true, 0.06)
 	_publish_bot_to_net_players(b)
 
 # Prioridad de cada receta para el bot: -1 = no le interesa / no puede usarla.
@@ -7562,6 +7610,18 @@ func _evolve_personality(b: Dictionary, event_kind: String, intensity: float = 0
 		"good_loot", "poi_discovered":
 			_adjust_trait(p, "curiosity", step * 0.45, float(base_p["curiosity"]))
 			_adjust_trait(p, "bravery", step * 0.20, float(base_p["bravery"]))
+		"craft_success":
+			_adjust_trait(p, "survival_instinct", step * 0.55, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "curiosity", step * 0.35, float(base_p["curiosity"]))
+			_adjust_trait(p, "bravery", step * 0.25, float(base_p["bravery"]))
+		"forage_success", "farm_harvest":
+			_adjust_trait(p, "survival_instinct", step * 0.65, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "cooperation", step * 0.30, float(base_p["cooperation"]))
+			_adjust_trait(p, "aggression", -step * 0.25, float(base_p["aggression"]))
+		"voice_taught", "team_formed":
+			_adjust_trait(p, "sociability", step * 0.80, float(base_p["sociability"]))
+			_adjust_trait(p, "cooperation", step * 0.85, float(base_p["cooperation"]))
+			_adjust_trait(p, "distrust", -step * 0.70, float(base_p["distrust"]))
 		"starving":
 			_adjust_trait(p, "survival_instinct", step * 0.85, float(base_p["survival_instinct"]))
 	b["personality"] = p

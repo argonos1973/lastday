@@ -3132,6 +3132,71 @@ func run() -> void:
 	vb["team_leader_id"] = 0
 	vb["follow_mode"] = "none"
 
+	# ==================== 10I: Pasos al morir, tecla Z, IA tactica y aprendizaje ====================
+	# 10I1: puppet_apply con anim "dead" detiene inmediatamente el audio de pasos en bucle
+	var test_pup := TestPlayer.new()
+	test_pup.is_puppet = true
+	test_pup._puppet_step_player = AudioStreamPlayer3D.new()
+	test_pup.puppet_apply(Vector3.ZERO, 0.0, "dead")
+	check(test_pup.is_dead and not test_pup._puppet_step_player.playing,
+		"10I1: puppet_apply('dead') marca is_dead y para _puppet_step_player")
+	test_pup._puppet_step_player.free()
+	test_pup.free()
+
+	# 10I2: _try_open_bot_menu ([Z]) encuentra aliado reclutado hasta 35 m via net.players
+	world.hud = CanvasLayer.new()
+	world.add_child(world.hud)
+	world.player.is_dead = false
+	world.player.global_position = Vector3(10.0, 0.4, 10.0)
+	var pup_elena := Node3D.new()
+	world.add_child(pup_elena)
+	pup_elena.global_position = Vector3(32.0, 0.4, 10.0) # 22 m (> antiguo limite de 10 m)
+	pup_elena.set_meta("bot_id", 901)
+	pup_elena.set_meta("bot_name", "Elena")
+	pup_elena.set_meta("team_leader_id", 0) # meta local aun en 0, pero net.players ya tiene 1
+	world.remote_players[901] = pup_elena
+	fnet.players[901] = {"name": "Elena", "char_name": "Elena", "is_ai_bot": true, "team_leader_id": 1, "bot_follow_mode": "follow"}
+	check(world._try_open_bot_menu() and world._wolf_menu != null,
+		"10I2a: [Z] abre el menu de ordenes del aliado a 22 m sincronizando team_leader_id desde net.players")
+	if world._wolf_menu != null:
+		world._wolf_menu.queue_free()
+		world._wolf_menu = null
+	world.remote_players.erase(901)
+	pup_elena.queue_free()
+	world.hud.queue_free()
+	world.hud = null
+
+	# 10I3: Kael desarmado no inicia ataques suicidas; armado con fusil si
+	var kb903: Dictionary = mgr.bots[903]
+	kb903["proxy"].set_meta("proxy_dead", false)
+	kb903["aggro_target"] = null
+	kb903["proxy"].global_position = Vector3(50.0, 0.4, 50.0)
+	world.player.global_position = Vector3(56.0, 0.4, 50.0)
+	kb903["proxy"].set_meta("saved_inventory", [])
+	check(mgr._find_combat_foe(kb903) == null,
+		"10I3a: Kael desarmado no inicia ataque suicida (busca arma primero)")
+	kb903["proxy"].set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 10.0, "durability": 100.0, "max_durability": 100.0}])
+	check(mgr._find_combat_foe(kb903) != null,
+		"10I3b: Kael armado con fusil si detecta y ataca al enemigo")
+
+	# 10I4: aprendizaje al morir en combate y evolucion por crafteo/ensenanza
+	var k_rel_pre := mgr.get_bot_relationship(903, "player_8")
+	var fear_pre := float(k_rel_pre.get("fear", 0.0))
+	kb903["proxy"].set_meta("proxy_health", 20.0)
+	kb903["health"] = 20.0
+	mgr.on_bot_damaged(903, 35.0, 8, "rifle")
+	var k_rel_post := mgr.get_bot_relationship(903, "player_8")
+	check(float(k_rel_post.get("fear", 0.0)) > fear_pre and str(mgr._ensure_bot_memory(903).get("last_death_cause", "")) == "rifle",
+		"10I4a: morir por rifle registra la causa real ('rifle') y sube el miedo al asesino (fear %.2f->%.2f)" % [fear_pre, float(k_rel_post.get("fear", 0.0))])
+	mgr._respawn_bot(kb903)
+	var soc0 := float(mgr._get_bot_personality(vb).get("sociability", 0.5))
+	mgr._evolve_personality(vb, "voice_taught", 0.5)
+	var soc1 := float(mgr._get_bot_personality(vb).get("sociability", 0.5))
+	check(soc1 >= soc0, "10I4b: aprender por voz evoluciona sociabilidad/cooperacion (%.3f->%.3f)" % [soc0, soc1])
+	for tk_end in mgr._tts_jobs.keys():
+		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
+	mgr._tts_jobs.clear()
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

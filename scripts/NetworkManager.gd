@@ -815,6 +815,8 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 				continue
 			var pdata: Dictionary = players[pid]
 			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""), pdata.get("is_aiming", false), pdata.get("has_rifle", false), pdata.get("sleeping", false), pdata.get("sitting", false), pdata.get("prone", false), pdata.get("crouching", false), pdata.get("torch_lit", false), pdata.get("flashlight_on", false), pdata.get("clothing_colors", []))
+			if bool(pdata.get("is_ai_bot", false)):
+				sync_bot_team_state.rpc_id(id, int(pid), int(pdata.get("team_leader_id", 0)), str(pdata.get("bot_follow_mode", "follow")), int(pdata.get("health", 100)), int(pdata.get("hunger", 100)), int(pdata.get("thirst", 100)))
 			# Send character appearance if available
 			if pdata.has("top_color"):
 				var Grooming = preload("res://scripts/CharacterGrooming.gd")
@@ -1976,6 +1978,30 @@ func receive_bot_voice_mp3(sender_id: int, sender_name: String, mp3_bytes: Packe
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_receive_bot_voice_mp3"):
 		scene._net_receive_bot_voice_mp3(sender_id, sender_name, mp3_bytes, target_id, target_name)
+
+# Sincroniza lider de equipo, modo de seguimiento y constantes vitales de un bot
+# para que la tecla [Z] y el panel de ordenes funcionen en clientes conectados.
+@rpc("authority", "reliable")
+func sync_bot_team_state(bot_id: int, leader_id: int, follow_mode: String, hp: int = 100, hunger: int = 100, thirst: int = 100) -> void:
+	if not players.has(bot_id):
+		players[bot_id] = {"is_ai_bot": true}
+	players[bot_id]["is_ai_bot"] = true
+	players[bot_id]["team_leader_id"] = leader_id
+	players[bot_id]["bot_follow_mode"] = follow_mode
+	players[bot_id]["health"] = hp
+	players[bot_id]["hunger"] = hunger
+	players[bot_id]["thirst"] = thirst
+	var scene := get_tree().current_scene
+	if scene != null and "remote_players" in scene and scene.remote_players.has(bot_id):
+		var rp = scene.remote_players[bot_id]
+		if rp is Node3D and is_instance_valid(rp):
+			rp.set_meta("is_ai_bot", true)
+			rp.set_meta("bot_id", bot_id)
+			rp.set_meta("team_leader_id", leader_id)
+			rp.set_meta("bot_follow_mode", follow_mode)
+			rp.set_meta("proxy_health", hp)
+			rp.set_meta("saved_hunger", hunger)
+			rp.set_meta("saved_thirst", thirst)
 
 @rpc("authority", "reliable")
 func receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
