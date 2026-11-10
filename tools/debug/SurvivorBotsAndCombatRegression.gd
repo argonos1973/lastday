@@ -803,6 +803,30 @@ func run() -> void:
 		"Herido, el bot usa la venda que fabrico (hp=%.0f)" % float(elena["health"]))
 	elena["health"] = 100.0
 
+	# Anti-acaparreo de ropa cortable: con 2 prendas sueltas en la mochila ya
+	# no recoge mas ropa para cortar, aunque siga necesitando trapos; pero una
+	# mejora real de equipo (piel > basico) siempre sigue interesando.
+	elena["health"] = 55.0
+	elena["_want_cache"] = {}
+	elena["clothing"] = "Camiseta,Pantalones,Zapatillas"
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+		{"name": "Pantalones", "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0},
+		{"name": "Camiseta", "type": "clothing", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+	])
+	check(not mgr._is_loot_desirable(elena, "Pantalones", "clothing"),
+		"Con 2 prendas pendientes de cortar no acapara mas ropa (bug 13 pantalones)")
+	check(mgr._is_loot_desirable(elena, "Pantalones de piel", "clothing"),
+		"Aun llevando repuestos, una mejora real (piel) sigue interesando")
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+		{"name": "Pantalones", "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0},
+	])
+	check(mgr._is_loot_desirable(elena, "Camiseta", "clothing"),
+		"Con solo 1 prenda pendiente aun puede recoger ropa para trapos")
+	elena["health"] = 100.0
+	elena["_want_cache"] = {}
+
 	# --- 22) Asesor estrategico externo (validacion + directivas, sin HTTP) ---
 	var d_hunt := mgr._ai_parse_decision("{\"action\":\"hunt\",\"poi_kind\":\"wild\",\"reason\":\"need meat\"}")
 	check(str(d_hunt.get("mode", "")) == "poi" and (d_hunt.get("only_kinds", []) as Array) == ["wild"],

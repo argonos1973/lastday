@@ -3378,16 +3378,22 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 	if tp == "backpack" or nm.begins_with("Mochila"):
 		return _backpack_tier(nm) > _backpack_tier(str(b["backpack"]))
 	if tp == "clothing":
-		# Ropa cortable (militar/camuflaje): interesa si el bot necesita trapos
-		if _bot_wants_craft_input(b, nm):
-			return true
 		if PlayerController.CLOTHING_SLOTS.has(nm):
 			var slot := str(PlayerController.CLOTHING_SLOTS[nm])
 			var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
 			var pr := int(CLOTHING_PRIORITY.get(nm, 0))
-			# Mejora real sobre lo que lleva puesto; y una vez aprendio, cualquier
-			# ropa decente (>=4) interesa como repuesto.
-			return pr > int(CLOTHING_PRIORITY.get(cur, 0)) or (bool(b.get("_mem", {}).get("gear_learned", false)) and pr >= 4)
+			# Mejora real sobre lo que lleva puesto: siempre interesa.
+			if pr > int(CLOTHING_PRIORITY.get(cur, 0)):
+				return true
+			# Tras aprender, ropa decente (>=4) vale como repuesto: maximo una
+			# por slot y sin acaparar prendas sueltas en la mochila.
+			if bool(b.get("_mem", {}).get("gear_learned", false)) and pr >= 4 and _bot_slot_spare_count(b["proxy"], slot) < 1 and _bot_spare_clothing_count(b["proxy"]) < 2:
+				return true
+		# Ropa cortable -> Trapos (Pantalones/Camiseta/militares...): solo si
+		# necesita trapos y no lleva ya prendas pendientes de cortar — dos
+		# piezas bastan para varios trapos; mas seria recoger por recoger.
+		if _bot_wants_craft_input(b, nm):
+			return _bot_spare_clothing_count(b["proxy"]) < 2
 	return false
 
 # Nivel de mochila para decidir si recogerla/equiparla mejora al bot:
@@ -5145,6 +5151,24 @@ func _bot_wants_craft_input(b: Dictionary, input_name: String) -> bool:
 			break
 	set[input_name] = wanted
 	return wanted
+
+# Ropa suelta en la mochila (lo puesto vive en b["clothing"]): repuestos o
+# prendas pendientes de cortar a trapos. Capa anti-acaparreo del loot.
+func _bot_spare_clothing_count(proxy: Node3D) -> int:
+	var total := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("type", "")) == "clothing":
+			total += int(it.get("quantity", 1))
+	return total
+
+# Repuestos de ropa para un slot concreto (p.ej. un segundo pantalon bueno).
+func _bot_slot_spare_count(proxy: Node3D, slot: String) -> int:
+	var total := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("type", "")) == "clothing":
+			if str(PlayerController.CLOTHING_SLOTS.get(str(it.get("name", "")), "")) == slot:
+				total += int(it.get("quantity", 1))
+	return total
 
 func _bot_pelt_count(proxy: Node3D) -> int:
 	var total := 0
