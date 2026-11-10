@@ -11992,44 +11992,12 @@ func _start_fishing_near_water() -> void:
 	_store_held_item()
 
 func get_interaction_text(viewer = null) -> String:
-	if not is_puppet or is_dead or bool(get_meta("proxy_dead", false)):
-		return ""
-	if not bool(get_meta("is_ai_bot", false)):
-		return ""
-	var bname := str(get_meta("bot_name", "Superviviente"))
-	var faction := str(get_meta("bot_faction", "friendly"))
-	if faction == "hostile":
-		return "%s (Bandido hostil)" % bname
-	var my_id := 1
-	var main := get_tree().current_scene if get_tree() != null else null
-	if main != null and main.get("net") != null and main.net.has_method("get_my_id"):
-		my_id = main.net.get_my_id()
-	var leader_id := int(get_meta("team_leader_id", 0))
-	var fmode := str(get_meta("bot_follow_mode", "follow"))
-	if leader_id == 0:
-		return "%s (Superviviente aliado) - [F] Formar equipo" % bname
-	elif leader_id == my_id:
-		var state_lbl := "Siguiéndote" if fmode == "follow" else "Vigilando posición"
-		var next_lbl := "Ordenar quedarse quieto" if fmode == "follow" else "Dejar libre / Sígueme"
-		return "%s [Equipo: %s] - [F] %s - [Z] Órdenes" % [bname, state_lbl, next_lbl]
-	return "%s (En equipo con otro superviviente)" % bname
+	# La interaccion directa [F] con bots esta desactivada: solo chat/voz.
+	return ""
 
 func interact(_player: Node) -> void:
-	if not is_puppet or is_dead or not bool(get_meta("is_ai_bot", false)):
-		return
-	var bot_id := int(get_meta("bot_id", get_meta("peer_id", 0)))
-	if bot_id <= 0:
-		return
-	var main := get_tree().current_scene if get_tree() != null else null
-	if main == null:
-		return
-	var net_node = main.get("net")
-	if net_node != null and net_node.is_connected and not net_node.is_host:
-		if net_node.has_method("command_survivor_bot"):
-			net_node.command_survivor_bot.rpc_id(1, bot_id, "toggle")
-	elif main.has_method("_net_command_survivor_bot"):
-		var my_id: int = net_node.get_my_id() if (net_node != null and net_node.has_method("get_my_id")) else 1
-		main._net_command_survivor_bot(bot_id, "toggle", my_id)
+	# Bots: la interaccion [F] esta desactivada (solo chat/voz).
+	return
 
 func _collect() -> void:
 	var target = _get_interaction_target()
@@ -12174,6 +12142,9 @@ func _find_nearby_feedable_player() -> Node3D:
 		if rp == null or not is_instance_valid(rp) or not (rp is Node3D):
 			continue
 		if bool(rp.get("is_dead")) or bool(rp.get_meta("proxy_dead", false)):
+			continue
+		# Los bots no se alimentan por [F]: solo chat/voz.
+		if bool(rp.get_meta("is_ai_bot", false)):
 			continue
 		var rpos: Vector3 = (rp as Node3D).global_position
 		if absf(rpos.y - global_position.y) > 2.0:
