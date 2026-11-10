@@ -3,6 +3,7 @@
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
 c3ac728|Los 3 supervivientes IA (Elena, Carlos y Kael) nacen ahora HOSTILES y te cazan a la vista; solo se vuelven aliados si los convences por chat o voz: súbeles la confianza con saludos, explicaciones y regalos ('te doy pan'), pídele tregua ('alto ahí') para que dejen de dispararte, y cuando confíen lo bastante ('sígueme') se unen a tu equipo — Kael, el del rifle, también se puede convencer; sus respuestas ya se ven en el chat además de habladas, y se quitan por completo la interacción directa [F] y el menú de órdenes [Z]
+5fa6c86|El monitor web de bots muestra ahora el nivel de sangre (0-100) de cada bot junto a salud, hambre y sed, con un indicador 🩸 cuando está sangrando
 147df1f|Los bots supervivientes vuelven a aliarse entre sí como antes, incluido Kael: las bandas de bandidos se forman de nuevo por convivencia, alianzas y ayudas por chat según su personalidad; entre bandidos solo hay recelo inicial, la hostilidad alta se reserva para el humano
 ca937fb|Beber del rio, los lagos y la fuente de la plaza con una sola pulsacion de F: el personaje bebe unos 4 tragos y puedes cancelar moviendote; antes habia que mantener F pulsado y el aviso pedia E por error
 5088b08|Barra de progreso general en la pantalla de carga con fases detalladas (terreno, casas, vegetacion, bosque, ciudad, montana, hojarasca, fauna) y generacion del mundo sin bloqueos de pantalla
