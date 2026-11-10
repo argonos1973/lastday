@@ -5129,6 +5129,7 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 		var best_w2 := _best_weapon_name(proxy)
 		if not best_w2.is_empty() and not bool(b["torch_lit"]):
 			b["held_item"] = best_w2
+			b["has_rifle"] = best_w2 == "Fusil de asalto" or best_w2 == "Rifle francotirador"
 			proxy.set_meta("saved_held_item", best_w2)
 		record_social_event(bot_id, sender_key, sender_name, "help", 0.35, "gave_" + gname)
 		_publish_bot_to_net_players(b)

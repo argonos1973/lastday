@@ -1403,10 +1403,16 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 			equip_clothing(new_items[ni], new_colors[ni], null, new_species[ni])
 		if _applied_appearance:
 			_apply_puppet_appearance()
-	# Update held item
-	if held_item != _puppet_held:
-		_puppet_held = held_item
-		_update_puppet_held_item(held_item)
+	# Update held item. has_rifle es el flag autoritativo de "va armado": si
+	# llega true pero held_item viene vacio o con otro nombre (bot que perdio
+	# el item del meta, datagram desincronizado), el puppet seguia con las
+	# animaciones de rifle y las manos vacias. El visual obedece al flag.
+	var vis_held := held_item
+	if _has_rifle and not (vis_held in ["Fusil de asalto", "Rifle francotirador"]):
+		vis_held = "Fusil de asalto"
+	if vis_held != _puppet_held:
+		_puppet_held = vis_held
+		_update_puppet_held_item(vis_held)
 	# Update backpack. Si el visual se perdio por cualquier rebuild (los
 	# puppets no tienen inventory/equipment y no pueden regenerarlo ahi),
 	# se reconstruye aqui aunque el nombre no haya cambiado.
