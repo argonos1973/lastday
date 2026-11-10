@@ -54,13 +54,15 @@ func consume_water(value: float) -> void:
 	thirst = min(max_stat, thirst + value)
 	changed.emit()
 
-func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false, carry_ratio := 0.0, jumping := false, on_bed := false, sun_exposure := 1.0, wind_speed := 0.0) -> void:
+func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: bool, warmth := 0.0, night := false, moving := false, sleeping := false, carry_ratio := 0.0, jumping := false, on_bed := false, sun_exposure := 1.0, wind_speed := 0.0, resting := false) -> void:
 	if dead or delta <= 0.0:
 		return
 	if not is_finite(ambient_temperature):
 		ambient_temperature = 20.0
 	survival_seconds += delta
-	var sleep_factor := 0.3 if sleeping else 1.0
+	# Descansar despierto (sentado, parapetado) gasta menos que la actividad
+	# normal; dormir sigue siendo lo mas economico.
+	var sleep_factor := 0.3 if sleeping else (0.55 if resting else 1.0)
 	var sprint_multiplier := 3.0 if sprinting else 1.0
 	var move_multiplier := 2.0 if moving else 1.0
 	if sleeping:
@@ -93,7 +95,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 			sleep_mult *= 1.4
 		if night:
 			sleep_mult *= 3.0
-		sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult)
+		sleep = max(0.0, sleep - sleep_decay * delta * sleep_mult * sleep_factor)
 
 	# Wet clothes dry faster when it's warm, slower when cold
 	var dry_rate: float = 0.012 + max(0.0, (ambient_temperature - 10.0)) * 0.004

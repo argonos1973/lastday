@@ -1402,8 +1402,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		_bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9))
 	# De noche solo se mueve a buscar recursos quien lleva luz propia (antorcha
 	# encendida o al menos en la mochila): sin ver no hay busqueda posible.
+	# Excepcion de supervivencia: con hambre/sed de muerte segura (los umbrales
+	# que ya lo sacan de la cama en _bot_should_wake) sale igualmente — mejor
+	# arriesgar la oscuridad que morir quieto.
 	var has_night_light := bool(b["torch_lit"]) or _bot_has_item(proxy, "Antorcha")
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light) or (not starving_or_parched and (is_night or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
+	var desperate_needs := (float(b["hunger"]) < 14.0 and not _bot_has_edible_food(proxy, true)) or (float(b["thirst"]) < 10.0 and not _bot_has_drink(proxy))
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light and not desperate_needs) or (not starving_or_parched and (is_night or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -7333,7 +7337,8 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var carry_ratio := clampf(float(inv_n) / 30.0, 0.0, 1.0)
 	var sun := 1.0 - (float(dc.get("weather_darkness")) if dc != null else 0.0)
 	var wind := float(obs.get("wind_speed", 0.0))
-	st.tick(delta, sprinting, ambient_temp, sheltered, shelter_warmth, is_night, moving, sleeping, carry_ratio, false, false, sun, wind)
+	var resting := bool(b.get("sitting", false)) or str(b.get("_act", "")) == "rest"
+	st.tick(delta, sprinting, ambient_temp, sheltered, shelter_warmth, is_night, moving, sleeping, carry_ratio, false, false, sun, wind, resting)
 	if sleeping:
 		st.do_sleep(delta, false)
 	if st.dead:

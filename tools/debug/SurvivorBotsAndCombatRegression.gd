@@ -270,9 +270,41 @@ func run() -> void:
 	mgr._tick_bot(kael, 0.1)
 	check(bool(kael["torch_lit"]) and str(kael["_act"]) != "rest",
 		"De noche con antorcha si puede moverse a buscar (act=%s torch=%s)" % [str(kael["_act"]), str(kael["torch_lit"])])
+	# ...pero con hambre de muerte segura sale igualmente aunque no vea nada:
+	# el instinto de supervivencia pesa mas que la oscuridad.
+	kael_proxy.set_meta("saved_inventory", (kael_proxy.get_meta("saved_inventory", []) as Array).filter(func(it): return str(it.get("name", "")) != "Antorcha"))
+	kael["torch_lit"] = false
+	kael["hunger"] = 8.0
+	kael["sleeping"] = false
+	mgr._tick_bot(kael, 0.1)
+	check(str(kael["_act"]) != "rest",
+		"De noche sin luz pero muriendose de hambre sale a buscar igual (act=%s)" % str(kael["_act"]))
+	# Y parapetado (sitting/act=rest) gasta menos hambre/sed que en pie.
+	var kvs: SurvivalStats = kael["vstats"]
+	kael["sitting"] = true
+	kael["_act"] = "rest"
+	kael["anim"] = "sit"
+	kael["sleeping"] = false
+	kael["hunger"] = 80.0
+	kael["thirst"] = 80.0
+	kvs.sleep = 80.0
+	mgr._bot_survival_tick(kael, 10.0)
+	var drain_rest := 80.0 - float(kael["hunger"])
+	kael["sitting"] = false
+	kael["_act"] = "explore"
+	kael["anim"] = "idle"
+	kael["hunger"] = 80.0
+	mgr._bot_survival_tick(kael, 10.0)
+	var drain_idle := 80.0 - float(kael["hunger"])
+	check(drain_rest > 0.0 and drain_rest < drain_idle * 0.75,
+		"Descansando el hambre baja mas despacio que en pie (%.3f vs %.3f)" % [drain_rest, drain_idle])
 	dc.time_of_day = 14.0
 	kael["hide_timer"] = 0.0
 	kael["hunger"] = 80.0
+	kael["thirst"] = 80.0
+	kael["sitting"] = false
+	kael["_act"] = ""
+	kael["anim"] = "idle"
 
 	# --- 4) Doma de lobos por parte de un Superviviente IA ---
 	var wild_w := WildlifeControllerScript.new()
