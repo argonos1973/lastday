@@ -2494,6 +2494,9 @@ func run() -> void:
 			snap_el = bb2
 	check((snap_el.get("base_personality", {}) as Dictionary).has("bravery") and not (snap_el.get("milestones", {}) as Dictionary).is_empty(),
 		"10A12: status expone base_personality + milestones")
+	var elena_thread: Array = snap_el.get("chat_log", [])
+	check(not elena_thread.is_empty() and elena_thread.all(func(m): return int(m.get("from_id", 0)) == 901 or int(m.get("to_id", 0)) == 901),
+		"10A13: status expone el hilo de chat por bot (%d msgs)" % elena_thread.size())
 
 	# 10B: refugios — vinculo persistente, saqueo del alijo y desmontaje por palos
 	var sb: Dictionary = mgr.bots[902]

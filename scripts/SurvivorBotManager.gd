@@ -7813,12 +7813,16 @@ func get_full_web_status() -> Dictionary:
 			+ float(st.get("animals_gutted", 0)) * 5.0
 			- float(mem.get("deaths", 0)) * 75.0
 		))
-		# Ultimo mensaje de chat emitido por este bot (para la tarjeta del panel)
-		for m in range(chat_log.size() - 1, -1, -1):
-			var cm: Dictionary = chat_log[m]
-			if int(cm.get("from_id", 0)) == int(bid):
+		# Chat del bot: ultimo mensaje emitido + su hilo completo (como emisor
+		# y como destinatario) para la seccion de conversaciones de la tarjeta.
+		var own_chat: Array = []
+		for cm in chat_log:
+			if int(cm.get("from_id", 0)) == bid or int(cm.get("to_id", 0)) == bid:
+				own_chat.append(cm)
+			if int(cm.get("from_id", 0)) == bid:
 				snap["chat"] = {"to": str(cm.get("to", "")), "kind": str(cm.get("kind", "")), "text": str(cm.get("text", "")), "ts": int(cm.get("ts", 0))}
-				break
+		if not own_chat.is_empty():
+			snap["chat_log"] = own_chat.slice(-8)
 		snap["alive_seconds"] = int(life_sec)
 		snap["alive_total_seconds"] = int(alive_total)
 		# Media de tiempo de vida: total acumulado entre vidas (muertes + la

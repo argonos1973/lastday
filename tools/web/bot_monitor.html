@@ -713,6 +713,21 @@ function renderBots(data) {
         </tr>`).join("") + `</tbody></table>`
       : `<div class="empty-note">Sin eventos recientes</div>`;
 
+    const bchat = (b.chat_log || []).slice().reverse();
+    let bchatHtml = bchat.length
+      ? bchat.map(m => {
+          const k = CHAT_KIND[m.kind] || CHAT_KIND.talk;
+          const out = Number(m.from_id) === Number(b.bot_id);
+          const hh = m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : "--:--";
+          return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:11px">
+            <span style="color:var(--muted)">${hh}</span>
+            <span class="badge ${k[1]}" style="font-size:9px">${k[0]}</span>
+            <b>${esc(out ? b.name : m.from)}</b> <span style="color:var(--muted)">→</span> <b>${esc(out ? m.to : b.name)}</b>
+            <div style="color:#cdd6c4">${esc(m.text)}</div>
+          </div>`;
+        }).join("")
+      : `<div class="empty-note">Aún no ha hablado con nadie</div>`;
+
     let locHtml = locs.length
       ? `<div class="pill-list">` + locs.map(l =>
           `<span class="item-tag">${esc(l.id)} (${l.source === "shared" ? "🤝" : "👁️"} r=${Number(l.risk || 0).toFixed(1)})</span>`
@@ -809,6 +824,9 @@ function renderBots(data) {
 
       <div class="section-label">Recuerdos Recientes</div>
       ${memHtml}
+
+      <div class="section-label">💬 Chats de ${esc(b.name)} (${bchat.length})</div>
+      ${bchatHtml}
 
       <div class="section-label">Ropa Equipada e Inventario (${inv.length})</div>
       <div style="color:var(--muted);font-size:11px;margin-bottom:5px;">Ropa: ${esc(b.clothing || "Ninguna")}</div>
