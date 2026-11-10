@@ -800,6 +800,11 @@ function renderBots(data) {
         <span style="text-align:right">${b.hp}%</span>
       </div>
       <div class="bar-row">
+        <span>Sangre${Number(b.bleeding || 0) > 0 ? " 🩸" : ""}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.blood ?? 100}%;background:#c0392b"></div></div>
+        <span style="text-align:right">${b.blood ?? "—"}%</span>
+      </div>
+      <div class="bar-row">
         <span>Hambre</span>
         <div class="bar-track"><div class="bar-fill" style="width:${b.hunger}%;background:${barColor(b.hunger)}"></div></div>
         <span style="text-align:right">${b.hunger}%</span>

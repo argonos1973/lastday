@@ -9298,6 +9298,8 @@ func get_full_web_status() -> Dictionary:
 		if vst != null:
 			snap["sleep"] = int(vst.sleep)
 			snap["energy"] = int(vst.energy)
+			snap["blood"] = int(vst.blood)
+			snap["bleeding"] = snappedf(vst.bleeding, 0.01)
 			snap["body_temperature"] = snappedf(vst.body_temperature, 0.1)
 			snap["wetness"] = snappedf(vst.wetness, 0.01)
 		_validate_shelter_claim(b)
