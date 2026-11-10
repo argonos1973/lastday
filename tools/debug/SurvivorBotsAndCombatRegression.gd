@@ -2495,6 +2495,73 @@ func run() -> void:
 	check((snap_el.get("base_personality", {}) as Dictionary).has("bravery") and not (snap_el.get("milestones", {}) as Dictionary).is_empty(),
 		"10A12: status expone base_personality + milestones")
 
+	# 10B: refugios — vinculo persistente, saqueo del alijo y desmontaje por palos
+	var sb: Dictionary = mgr.bots[902]
+	sb["proxy"].set_meta("proxy_dead", false)
+	sb["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	sb["pos"] = sb["proxy"].global_position
+	sb["shelter_id"] = ""
+	sb["shelter_pos"] = Vector3.INF
+	sb["_salvage"] = {}
+	sb["_s_raid_shelter"] = {}
+	sb["_unreachable"] = []
+	sb["team_leader_id"] = 0
+	sb["sleeping"] = false
+	sb["rot"] = 0.0
+	world._built_shelters.clear() # aislar del resto de secciones
+
+	# 10B1: al construir, id unico + el refugio queda en mem.shelter
+	sb["proxy"].set_meta("saved_inventory", [
+		{"name": "Palo", "type": "material", "weight": 0.3, "quantity": 5, "use_value": 0.0},
+		{"name": "Cuerda", "type": "resource", "weight": 0.2, "quantity": 1, "use_value": 0.0},
+	])
+	mgr._bot_build_shelter(sb, Vector3(60.0, 0.4, 60.0))
+	var built_id := str(sb.get("shelter_id", ""))
+	var mem_sh2: Dictionary = mgr._ensure_bot_memory(902).get("shelter", {})
+	check(built_id.begins_with("bot_shelter_902_") and str(mem_sh2.get("id", "")) == built_id and not mgr._find_shelter_dict(built_id).is_empty(),
+		"10B1: construye con id unico y recuerda el refugio (id=%s)" % built_id)
+
+	# 10B2: refugio ajeno con alijo -> roba lo util y lo desmonta por los palos
+	world._built_shelters.append({
+		"id": "player_shelter_777", "pos": Vector3(9.0, 0.4, 9.0), "yaw": 0.0,
+		"contents": [{"name": "Lata de guiso", "type": "food", "weight": 0.5, "quantity": 2, "use_value": 35.0}],
+	})
+	sb["shelter_id"] = "" # pierde el vinculo (como tras morir): ahora quiere palos
+	sb["shelter_pos"] = Vector3.INF
+	var raid_sh2 := mgr._find_nearby_raidable_shelter(sb, 30.0)
+	check(str(raid_sh2.get("id", "")) == "player_shelter_777",
+		"10B2a: detecta el refugio ajeno para saquear/desmontar")
+	mgr._bot_raid_shelter(sb, raid_sh2)
+	check(mgr._bot_try_dismantle_shelter(sb, raid_sh2) and not (sb.get("_salvage", {}) as Dictionary).is_empty(),
+		"10B2b: refugio vacio tras el saqueo -> arma el desmontaje de 3 s")
+	mgr._bot_dismantle_shelter_exec(sb, "player_shelter_777")
+	check(mgr._find_shelter_dict("player_shelter_777").is_empty(),
+		"10B2c: el refugio desaparece del registro mundial")
+	check(mgr._bot_item_count(sb["proxy"], "Palo") >= 11 or (world._dropped_items as Array).size() > 0,
+		"10B2d: recupera los 11 palos del desmontaje")
+	check(int(mgr._ensure_bot_memory(902).get("milestones", {}).get("first_dismantle", 0)) > 0,
+		"10B2e: hito first_dismantle registrado")
+
+	# 10B3: refugio con camo NO se desmonta (misma regla que el jugador)
+	world._built_shelters.append({"id": "player_shelter_888", "pos": Vector3(7.0, 0.4, 7.0), "yaw": 0.0, "contents": [], "camo_covered": true})
+	check(not mgr._bot_wants_salvage(sb, mgr._find_shelter_dict("player_shelter_888")),
+		"10B3: refugio con camo no es desmontable para el bot")
+
+	# 10B4: asentado -> no desmonta refugios ajenos vacios (no le hacen falta palos)
+	sb["shelter_id"] = built_id
+	world._built_shelters.append({"id": "player_shelter_889", "pos": Vector3(6.0, 0.4, 6.0), "yaw": 0.0, "contents": []})
+	check(not mgr._bot_wants_salvage(sb, mgr._find_shelter_dict("player_shelter_889")),
+		"10B4: con refugio propio no desmonta ajenos vacios")
+
+	# 10B5: mem.shelter apuntando a un refugio inexistente se olvida al reaparecer
+	mgr._ensure_bot_memory(902)["shelter"] = {"id": "bot_shelter_ghost_0", "pos": [0.0, 0.4, 0.0]}
+	mgr._respawn_bot(sb)
+	sb = mgr.bots[902]
+	check((mgr._ensure_bot_memory(902).get("shelter", {}) as Dictionary).is_empty(),
+		"10B5: al reaparecer olvida el refugio que ya no existe")
+	sb["_salvage"] = {}
+	world._built_shelters.clear()
+
 	OS.set_environment("GROQ_API_KEY", saved_key)
 	mgr._chat_pair_until.clear()
 	mgr._chat_greet_until.clear()

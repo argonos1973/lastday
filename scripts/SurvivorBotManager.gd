@@ -724,6 +724,20 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	var mem: Dictionary = _ensure_bot_memory(bot_id, cfg)
 	bot_state["_mem"] = mem
 	bot_state["personality"] = (mem.get("personality", {}) as Dictionary)
+	# Recuerda su refugio si aun existe y no le pilla absurdamente lejos; si no,
+	# lo olvida — queda como estructura huerfana saqueable/desmontable.
+	var mem_sh: Dictionary = mem.get("shelter", {})
+	var sh_sid := str(mem_sh.get("id", ""))
+	var sh_mpos := mem_sh.get("pos", [])
+	var sh_restored := false
+	if not sh_sid.is_empty() and sh_mpos is Array and (sh_mpos as Array).size() >= 3 and not _find_shelter_dict(sh_sid).is_empty():
+		var sp2 := Vector3(float((sh_mpos as Array)[0]), float((sh_mpos as Array)[1]), float((sh_mpos as Array)[2]))
+		if Vector2(spawn_pos.x - sp2.x, spawn_pos.z - sp2.z).length() <= 220.0:
+			bot_state["shelter_id"] = sh_sid
+			bot_state["shelter_pos"] = sp2
+			sh_restored = true
+	if not sh_restored:
+		mem["shelter"] = {}
 	# Al aparecer, el bot solo conoce su entorno inmediato y su patrulla inicial
 	_observe_nearby_world(bot_state)
 	for pt in patrol:
@@ -1206,8 +1220,21 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_move_bot_towards(b, lpos, 4.4, delta, "run")
 		return
 
-	# 5a) Saqueo de refugios ajenos: si detecta un refugio de otro jugador/bot
-	# con objetos utiles en su alijo, se acerca y los roba como haria un humano.
+	# 5a) Saqueo y desmontaje de refugios ajenos: roba lo util y si el refugio
+	# le sirve como material lo desmonta (3 s) para llevarse los 11 palos.
+	var salv: Dictionary = b.get("_salvage", {})
+	if not salv.is_empty():
+		b["_act"] = "salvage"
+		b["sitting"] = false
+		b["crouching"] = true
+		b["anim"] = "forage"
+		salv["t"] = float(salv.get("t", 0.0)) + delta
+		b["_salvage"] = salv
+		if float(salv["t"]) >= 3.0:
+			b["_salvage"] = {}
+			b["_s_raid_shelter"] = {}
+			_bot_dismantle_shelter_exec(b, str(salv.get("id", "")))
+		return
 	var raid_sh: Dictionary = b.get("_s_raid_shelter", {})
 	if not raid_sh.is_empty():
 		b["_act"] = "raid_shelter"
@@ -1217,7 +1244,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var d_raid := Vector2(proxy.global_position.x - rpos.x, proxy.global_position.z - rpos.z).length()
 		if d_raid <= 2.4:
 			_bot_raid_shelter(b, raid_sh)
-			b["_s_raid_shelter"] = {}
+			if not _bot_try_dismantle_shelter(b, raid_sh):
+				b["_s_raid_shelter"] = {}
 		else:
 			_move_bot_towards(b, rpos, 4.4, delta, "run")
 		return
@@ -4476,11 +4504,16 @@ func _bot_build_shelter(b: Dictionary, pos: Vector3) -> void:
 				_consume_bot_item(proxy, pelt_nm, 1)
 				used += 1
 	var has_camo := _consume_bot_item(proxy, "Tela de camuflaje", 1)
-	var sh_id := "bot_shelter_%d" % int(b["bot_id"])
+	# Id unico por construccion: el refugio viejo queda en pie (huerfano
+	# saqueable) si el bot levanta otro lejos tras reaparecer.
+	var sh_id := "bot_shelter_%d_%d" % [int(b["bot_id"]), int(Time.get_unix_time_from_system())]
 	var yaw := float(b["rot"])
 	b["shelter_id"] = sh_id
 	b["shelter_pos"] = pos
 	b["no_fire_spot"] = false
+	# El refugio es suyo y lo recuerda — sobrevive a la muerte dentro de la
+	# misma sesion de mundo (el alijo tambien se conserva).
+	_ensure_bot_memory(int(b["bot_id"]))["shelter"] = {"id": sh_id, "pos": [pos.x, pos.y, pos.z]}
 	if world.has_method("_spawn_player_shelter_with_id"):
 		world._spawn_player_shelter_with_id(sh_id, pos, yaw, has_pelts, has_camo)
 	var net = world.get("net")
@@ -4551,10 +4584,9 @@ func _find_nearby_raidable_shelter(b: Dictionary, radius: float) -> Dictionary:
 		if not (sh is Dictionary):
 			continue
 		var sid := str(sh.get("id", ""))
-		if sid.is_empty() or sid == own_id or (not leader_sh.is_empty() and sid == leader_sh):
-			continue
-		var contents = sh.get("contents", [])
-		if not (contents is Array) or (contents as Array).is_empty():
+		# El alijo propio y el del lider son sagrados (el lider puede tener
+		# varios refugios: ids unicos, compara por prefijo).
+		if sid.is_empty() or sid == own_id or (not leader_sh.is_empty() and sid.begins_with(leader_sh)):
 			continue
 		var spos := _shelter_entry_pos(sh)
 		if _is_goal_blacklisted(b, spos):
@@ -4563,11 +4595,13 @@ func _find_nearby_raidable_shelter(b: Dictionary, radius: float) -> Dictionary:
 		if d > best_d:
 			continue
 		var has_wanted := false
-		for cd in contents:
-			if cd is Dictionary and _is_loot_desirable(b, str(cd.get("name", "")), str(cd.get("type", "resource"))):
-				has_wanted = true
-				break
-		if has_wanted:
+		var contents = sh.get("contents", [])
+		if contents is Array:
+			for cd in contents:
+				if cd is Dictionary and _is_loot_desirable(b, str(cd.get("name", "")), str(cd.get("type", "resource"))):
+					has_wanted = true
+					break
+		if has_wanted or _bot_wants_salvage(b, sh):
 			best_d = d
 			best = sh
 	return best
@@ -4616,7 +4650,77 @@ func _bot_raid_shelter(b: Dictionary, sh_entry: Dictionary) -> int:
 			b["has_rifle"] = best_w == "Fusil de asalto" or best_w == "Rifle francotirador"
 			proxy.set_meta("saved_held_item", best_w)
 		record_bot_event(int(b["bot_id"]), "raid_shelter", sid, "shelter", _shelter_entry_pos(sh), "stolen:%d" % stolen)
+		_record_milestone(int(b["bot_id"]), "first_raid")
 	return stolen
+
+# Quiere desmontar un refugio ajeno: sin casa propia aprovecha los palos para
+# levantar otra lejos; los hostiles desmontan por negacion. Igual que el
+# jugador, no se desmonta si lleva camo ni forro de pieles.
+func _bot_wants_salvage(b: Dictionary, sh: Dictionary) -> bool:
+	if bool(sh.get("camo_covered", false)) or bool(sh.get("pelt_lined", false)):
+		return false
+	if str(b.get("shelter_id", "")).is_empty():
+		return true
+	return str(b.get("faction", "")) == "hostile"
+
+# Si el refugio cumple las reglas de desmontaje del jugador, lo vacia (lo que
+# no le sirve cae al suelo como drops reales) y arma el temporizador de 3 s.
+func _bot_try_dismantle_shelter(b: Dictionary, sh_entry: Dictionary) -> bool:
+	var sid := str(sh_entry.get("id", ""))
+	var sh := _find_shelter_dict(sid)
+	if sh.is_empty() or not _bot_wants_salvage(b, sh):
+		return false
+	var contents: Array = sh.get("contents", [])
+	for cd in contents:
+		if cd is Dictionary:
+			_bot_drop_to_ground(b, {"name": str(cd.get("name", "")), "type": str(cd.get("type", "resource")), "weight": float(cd.get("weight", 0.3)), "quantity": maxi(1, int(cd.get("quantity", cd.get("qty", 1)))), "use_value": float(cd.get("use_value", cd.get("use", 0.0)))})
+	if not contents.is_empty():
+		_commit_shelter_contents(sid, [])
+	b["_salvage"] = {"id": sid, "t": 0.0}
+	return true
+
+# Replica server-side del _execute_shelter_dismantle del jugador: quita el
+# modelo y el registro, suelta los 11 palos (a mochila o al suelo) y lo
+# transmite a los clientes conectados.
+func _bot_dismantle_shelter_exec(b: Dictionary, sh_id: String) -> void:
+	var sh := _find_shelter_dict(sh_id)
+	if sh.is_empty() or world == null:
+		return
+	var proxy: Node3D = b["proxy"]
+	var sticks := {"name": "Palo", "type": "material", "weight": 0.3, "quantity": 11, "use_value": 0.0}
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	if not _bot_try_add_inventory_item(b, inv, sticks):
+		_bot_drop_to_ground(b, sticks)
+	var stick_names := ["PlayerShelter_%s" % sh_id, "PlayerShelter_%s_SupportA" % sh_id, "PlayerShelter_%s_SupportB" % sh_id,
+		"PlayerShelter_%s_Net" % sh_id, "PlayerShelter_%s_PeltLining" % sh_id, "PlayerShelter_%s_CamoNet" % sh_id]
+	for i in range(9):
+		stick_names.append("PlayerShelter_%s_Roof_%d" % [sh_id, i])
+	for sn in stick_names:
+		var sn_node := world.get_node_or_null(sn)
+		if sn_node != null:
+			sn_node.queue_free()
+	if "_built_shelters" in world:
+		for i in range(world._built_shelters.size() - 1, -1, -1):
+			if world._built_shelters[i] is Dictionary and str(world._built_shelters[i].get("id", "")) == sh_id:
+				world._built_shelters.remove_at(i)
+	if "world_actions_by_id" in world and world.world_actions_by_id.has(sh_id):
+		var act = world.world_actions_by_id[sh_id]
+		if act != null and is_instance_valid(act):
+			if world.has_method("_hide_action_visual"):
+				world._hide_action_visual(act)
+			act.mark_depleted()
+		world.world_actions_by_id.erase(sh_id)
+	if "_depleted_action_ids" in world and not world._depleted_action_ids.has(sh_id):
+		world._depleted_action_ids.append(sh_id)
+	var net = world.get("net")
+	if net != null and net.is_host and net.peer != null:
+		for pid in net.players.keys():
+			if int(pid) != int(net.get_my_id()) and not is_bot_peer_id(int(pid)) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
+				net.shelter_dismantled.rpc_id(int(pid), sh_id)
+	if world.has_method("_save_world_change_silent"):
+		world._save_world_change_silent()
+	_record_milestone(int(b["bot_id"]), "first_dismantle")
+	record_bot_event(int(b["bot_id"]), "shelter_dismantle", sh_id, "shelter", _shelter_entry_pos(sh), "desmonta refugio por los palos")
 
 func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	var sid := str(b.get("shelter_id", ""))
@@ -6502,6 +6606,8 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["farm_plots"] = []
 	if not mem.has("milestones") or not (mem["milestones"] is Dictionary):
 		mem["milestones"] = {}
+	if not mem.has("shelter") or not (mem["shelter"] is Dictionary):
+		mem["shelter"] = {}
 	if not mem.has("pending_goals") or not (mem["pending_goals"] is Array):
 		mem["pending_goals"] = []
 	if not mem.has("sessions"):
@@ -7376,7 +7482,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		var lp = sd.get("last_death_pos")
@@ -7403,7 +7509,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
