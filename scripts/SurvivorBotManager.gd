@@ -3849,7 +3849,8 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 	# Un grito de ayuda o una propuesta de alianza mueve al aliado hacia el
 	# emisor: mismo iman social que los reencuentros (26 m -> equipo).
 	var hostile_me := str(tb.get("faction", "")) == "hostile"
-	if (intent == "help" or intent == "alliance") and sender_is_bot and not hostile_me \
+	var sender_hostile := sender_is_bot and str((bots.get(sender_id, {}) as Dictionary).get("faction", "")) == "hostile"
+	if (intent == "help" or intent == "alliance") and sender_is_bot and (not hostile_me or sender_hostile) \
 		and int(tb.get("team_leader_id", 0)) == 0 and int(tb.get("_meet_id", 0)) == 0 \
 		and float(rel.get("trust", 0.0)) > 0.10:
 		tb["_meet_id"] = sender_id
@@ -8350,6 +8351,18 @@ func get_bot_relationship(bot_id: int, actor_key: String) -> Dictionary:
 		return rels[actor_key]
 	return {"id": actor_key, "name": actor_key, "trust": 0.0, "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0}
 
+# Hostilidad inicial de una relacion nueva: el hostil desconfia de los humanos
+# (0.65), pero entre bandidos solo hay recelo (0.30) — por encima de la puerta
+# de convivencia de _bot_social_update (0.40) ninguna banda llegaria a fraguar.
+func _rel_initial_hostility(bot_id: int, actor_key: String) -> float:
+	if str((_ensure_bot_memory(bot_id).get("identity", {}) as Dictionary).get("faction", "")) != "hostile":
+		return 0.0
+	if actor_key.begins_with("bot_"):
+		var oid := int(actor_key.get_slice("_", 1))
+		if str((_ensure_bot_memory(oid).get("identity", {}) as Dictionary).get("faction", "")) == "hostile":
+			return 0.30
+	return 0.65
+
 # Registra interacciones sociales reales (ayuda o ataque) con jugadores u otros bots.
 func record_social_event(bot_id: int, actor_key: String, actor_name: String, kind: String, intensity: float = 0.25, detail: String = "") -> void:
 	if actor_key.is_empty() or actor_key == "world":
@@ -8363,7 +8376,7 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 		"id": actor_key,
 		"name": actor_name if not actor_name.is_empty() else actor_key,
 		"trust": base_trust,
-		"hostility": 0.65 if str(mem.get("identity", {}).get("faction", "")) == "hostile" else 0.0,
+		"hostility": _rel_initial_hostility(bot_id, actor_key),
 		"fear": 0.0,
 		"helped": 0,
 		"attacked": 0,
@@ -8981,6 +8994,14 @@ func _ai_load_memory() -> void:
 		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if sd.has(field):
 				mem[field] = sd[field]
+		# Migracion: las relaciones bot<->bot creadas sin agresion arrastran la
+		# hostilidad 0.65 del init viejo (pensado para humanos) y eso bloquea la
+		# puerta de convivencia de _bot_social_update. Los rencores de verdad
+		# (attacked>0) se respetan; el resto baja al recelo de bandido.
+		for akey in (mem.get("relationships", {}) as Dictionary).keys():
+			var rel2 = mem["relationships"][akey]
+			if rel2 is Dictionary and str(akey).begins_with("bot_") and int(rel2.get("attacked", 0)) == 0:
+				rel2["hostility"] = minf(float(rel2.get("hostility", 0.0)), 0.30)
 		_compact_known_locations(mem)
 		var lp = sd.get("last_death_pos")
 		if lp is Array and (lp as Array).size() >= 3:

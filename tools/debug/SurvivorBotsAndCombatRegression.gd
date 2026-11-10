@@ -2228,14 +2228,74 @@ func run() -> void:
 	check(int(elena_y["team_leader_id"]) == 0 and int(carlos_y["team_leader_id"]) == 0,
 		"10y6: con desconfianza mutua no se forma equipo")
 	kael_y["proxy"].global_position = Vector3(106.0, 0.4, 100.0)
+	# Elena vuelve a hostil para probar la banda bandido<->bandido (su spawn la
+	# dejo amistosa para otras secciones); se restaura al final.
+	mgr._set_bot_faction(elena_y, "hostile")
 	mgr._ensure_bot_memory(903)["relationships"]["bot_901"] = {"id": "bot_901", "name": "Elena", "trust": 0.9, "hostility": 0.0, "fear": 0.0, "helped": 9, "attacked": 0}
 	mgr._ensure_bot_memory(901)["relationships"]["bot_903"] = {"id": "bot_903", "name": "Kael", "trust": 0.9, "hostility": 0.0, "fear": 0.0, "helped": 9, "attacked": 0}
 	kael_y["_soc_t"] = 0.0
 	elena_y["_soc_t"] = 0.0
 	mgr._bot_social_update(kael_y)
 	mgr._bot_social_update(elena_y)
+	var kl := int(kael_y["team_leader_id"])
+	var el := int(elena_y["team_leader_id"])
+	check((kl == 901) != (el == 903),
+		"10y7: dos bandidos con confianza SI forman equipo, incluso Kael (lids %d/%d)" % [kl, el])
+	# ...pero las facciones siguen sin mezclarse: un hostil y un convertido no.
+	kael_y["team_leader_id"] = 0
+	kael_y["proxy"].set_meta("team_leader_id", 0)
+	elena_y["team_leader_id"] = 0
+	elena_y["proxy"].set_meta("team_leader_id", 0)
+	mgr._set_bot_faction(kael_y, "friendly")
+	kael_y["_soc_t"] = 0.0
+	elena_y["_soc_t"] = 0.0
+	mgr._bot_social_update(kael_y)
+	mgr._bot_social_update(elena_y)
 	check(int(kael_y["team_leader_id"]) == 0 and int(elena_y["team_leader_id"]) == 0,
-		"10y7: bandido y superviviente nunca forman equipo aunque confien")
+		"10y7b: convertido y hostil nunca forman equipo aunque confien")
+	mgr._set_bot_faction(kael_y, "hostile")
+
+	# La relacion nueva entre bandidos nace con recelo (0.30), no con la
+	# hostilidad antihumano 0.65 que bloqueaba la puerta de convivencia.
+	mgr._ensure_bot_memory(901)["relationships"].erase("bot_902")
+	mgr._ensure_bot_memory(903)["relationships"].erase("bot_901")
+	mgr._ensure_bot_memory(903)["relationships"].erase("client_sami_77")
+	mgr.record_social_event(903, "bot_901", "Elena", "ally", 0.05, "convive")
+	mgr.record_social_event(903, "client_sami_77", "Sami", "ally", 0.05, "convive")
+	var rel_bot: Dictionary = mgr.get_bot_relationship(903, "bot_901")
+	var rel_hum: Dictionary = mgr.get_bot_relationship(903, "client_sami_77")
+	check(float(rel_bot.get("hostility", 9.0)) <= 0.40,
+		"10y7c: rel nueva bandido-bandido por debajo de la puerta de convivencia (h=%.2f)" % float(rel_bot.get("hostility", -1.0)))
+	check(float(rel_hum.get("hostility", 0.0)) >= 0.60,
+		"10y7d: rel nueva bandido-humano sigue recelosa (h=%.2f)" % float(rel_hum.get("hostility", -1.0)))
+
+	# End-to-end del bug reportado: dos bandidos juntos SIN relaciones previas
+	# acaban formando equipo a base de convivir.
+	mgr._ensure_bot_memory(901)["relationships"].erase("bot_903")
+	mgr._ensure_bot_memory(901)["relationships"].erase("bot_902")
+	mgr._ensure_bot_memory(902)["relationships"].erase("bot_901")
+	mgr._ensure_bot_memory(902)["relationships"].erase("bot_903")
+	mgr._ensure_bot_memory(903)["relationships"].erase("bot_902")
+	kael_y["team_leader_id"] = 0
+	kael_y["proxy"].set_meta("team_leader_id", 0)
+	elena_y["team_leader_id"] = 0
+	elena_y["proxy"].set_meta("team_leader_id", 0)
+	carlos_y["proxy"].global_position = Vector3(-500.0, 0.4, -500.0)
+	var band_formed := false
+	for i in range(30):
+		kael_y["_soc_t"] = 0.0
+		elena_y["_soc_t"] = 0.0
+		mgr._bot_social_update(kael_y)
+		mgr._bot_social_update(elena_y)
+		if int(kael_y["team_leader_id"]) > 0 or int(elena_y["team_leader_id"]) > 0:
+			band_formed = true
+			break
+	check(band_formed, "10y7e: convivir sin agresiones acaba formando la banda")
+	kael_y["team_leader_id"] = 0
+	kael_y["proxy"].set_meta("team_leader_id", 0)
+	mgr._set_bot_faction(elena_y, "friendly")
+	elena_y["team_leader_id"] = 0
+	elena_y["proxy"].set_meta("team_leader_id", 0)
 
 	# Emboscada: Kael elige a la presa cargada y sola (Elena con 5 latas)
 	kael_y["_ambush_cd_until"] = 0.0
