@@ -718,6 +718,12 @@ func _ready() -> void:
 		net.player_connected.connect(_on_remote_player_connected)
 		net.player_disconnected.connect(_on_remote_player_disconnected)
 		_setup_server_console()
+		# Reloj de mundo tambien en el dedicado (sin los nodos visuales
+		# Sun/WorldEnvironment, que solo existen con graficos): sin el los
+		# bots no saben que es de noche y el monitor web cae al 14:00 fijo.
+		day_cycle = DayNightCycleScript.new()
+		day_cycle.name = "DayNightCycle"
+		add_child(day_cycle)
 		# Each server boot is a fresh world: drops, doors, loot, corpses and
 		# player records only live for the session. Delete the previous save
 		# before the world-state preload so clean quits and crashes alike

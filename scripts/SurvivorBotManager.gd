@@ -1400,7 +1400,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# mismo antes de seguir — igual que haría un jugador humano.
 	if _bot_is_freezing(b) and not _is_near_any_lit_campfire(proxy.global_position, 8.0) and _bot_item_count(proxy, "Palo") >= 2 and _bot_item_count(proxy, "Piedra") >= 2:
 		_bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9))
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (not starving_or_parched and (is_night or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
+	# De noche solo se mueve a buscar recursos quien lleva luz propia (antorcha
+	# encendida o al menos en la mochila): sin ver no hay busqueda posible.
+	var has_night_light := bool(b["torch_lit"]) or _bot_has_item(proxy, "Antorcha")
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light) or (not starving_or_parched and (is_night or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -1438,6 +1441,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["health"] = healed
 			proxy.set_meta("proxy_health", healed)
 			proxy.set_meta("saved_health", healed)
+		return
+	elif wants_camp:
+		# Quiere acampar pero no hay refugio alcanzable (de noche sin luz, por
+		# ejemplo): se parapeta donde esta — duerme si puede, si no, sentado.
+		b["_act"] = "rest"
+		if not _bot_try_start_sleep(b, is_night):
+			b["sitting"] = true
+			b["crouching"] = str(b["faction"]) == "hostile"
+			proxy.set_meta("crouching", bool(b["crouching"]))
+			b["anim"] = "sit"
 		return
 
 	# 6b) Crafteo: sin urgencias, fabrica con los mismos RECIPES que un jugador

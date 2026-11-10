@@ -251,8 +251,28 @@ func run() -> void:
 	mgr._tick_bot(kael, 0.2)
 	check(not bool(kael["torch_lit"]) and bool(kael["sitting"]),
 		"Al ocultarse en su refugio apaga la antorcha y se sienta/agacha a resguardo")
+	# De noche sin antorcha no sale a buscar recursos: aunque pase hambre
+	# vuelve a su refugio (rest) en vez de explorar. Con antorcha si puede.
+	var k_no_torch: Array = (kael_proxy.get_meta("saved_inventory", []) as Array).filter(func(it): return str(it.get("name", "")) != "Antorcha")
+	kael_proxy.set_meta("saved_inventory", k_no_torch)
+	kael["hunger"] = 15.0
+	kael["thirst"] = 80.0
+	kael["hide_timer"] = 0.0
+	kael["sleeping"] = false
+	kael_proxy.global_position = kael["shelter_pos"] + Vector3(20.0, 0.0, 0.0)
+	kael["pos"] = kael_proxy.global_position
+	mgr._tick_bot(kael, 0.1)
+	check(str(kael["_act"]) == "rest" and not bool(kael["torch_lit"]),
+		"De noche sin antorcha no busca recursos: vuelve al refugio (act=%s)" % str(kael["_act"]))
+	k_no_torch.append({"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0})
+	kael_proxy.set_meta("saved_inventory", k_no_torch)
+	kael["sleeping"] = false
+	mgr._tick_bot(kael, 0.1)
+	check(bool(kael["torch_lit"]) and str(kael["_act"]) != "rest",
+		"De noche con antorcha si puede moverse a buscar (act=%s torch=%s)" % [str(kael["_act"]), str(kael["torch_lit"])])
 	dc.time_of_day = 14.0
 	kael["hide_timer"] = 0.0
+	kael["hunger"] = 80.0
 
 	# --- 4) Doma de lobos por parte de un Superviviente IA ---
 	var wild_w := WildlifeControllerScript.new()
