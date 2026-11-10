@@ -626,7 +626,8 @@ function renderMap(data) {
 const CHAT_KIND = {
   greet: ["saludo", "ok"], help: ["ayuda", "err"], alliance: ["alianza", "info"],
   whisper: ["susurro", "warn"], taunt: ["provocación", "warn"], reply: ["respuesta", "info"], talk: ["chat", "info"],
-  order: ["orden", "ok"], request: ["petición", "warn"]
+  order: ["orden", "ok"], request: ["petición", "warn"],
+  teach: ["lección", "ok"], voice: ["voz", "info"]
 };
 function renderChat(data) {
   const log = data.chat_log || [];

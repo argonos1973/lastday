@@ -4343,6 +4343,12 @@ func _net_bot_hear_chat(sender_id: int, sender_name: String, text: String, targe
 	survivor_bot_mgr.on_chat_received(target_peer_id, sender_id, sender_name, text)
 	return true
 
+# DM de voz dirigido a un bot: el PCM 8-bit 12 kHz se acumula en la IA, que lo
+# transcribe con el demonio STT local y lo procesa como chat (ordenes/peticiones).
+func _net_bot_hear_voice(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_peer_id: int, _target_name: String = "") -> void:
+	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("on_voice_received"):
+		survivor_bot_mgr.on_voice_received(target_peer_id, sender_id, sender_name, pcm_bytes)
+
 func _net_receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	var my_id: int = net.get_my_id() if net != null else 1
 	var is_self: bool = sender_id == my_id

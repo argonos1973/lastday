@@ -2971,6 +2971,107 @@ func run() -> void:
 		"10G5b: fusion conserva risk max y visitas (risk=%f visits=%d)" % [max_risk, tot_visits])
 	mgr._memory.erase(777)
 
+	# ==================== 10H: Voz humano->bot + ensenanzas ====================
+	# 10H1: parser de ensenanzas — cada categoria, y que una peticion no lo es
+	check(str(mgr._chat_parse_teach("aqui hay agua, puedes beber").get("kind", "")) == "water",
+		"10H1a: 'aqui hay agua' -> water")
+	check(str(mgr._chat_parse_teach("cuidado, hay lobos por aqui").get("kind", "")) == "danger",
+		"10H1b: 'cuidado hay lobos' -> danger")
+	check(str(mgr._chat_parse_teach("recuerda este sitio").get("kind", "")) == "marked",
+		"10H1c: 'recuerda este sitio' -> marked")
+	check(str(mgr._chat_parse_teach("en esa casa hay loot").get("kind", "")) == "loot",
+		"10H1d: 'en esa casa hay loot' -> loot")
+	check(mgr._chat_parse_teach("tienes comida?").is_empty(),
+		"10H1e: 'tienes comida?' es peticion, no ensenanza")
+
+	# 10H2: enseñar agua por chat -> known_locations + drink_at si tiene sed
+	var vb: Dictionary = mgr.bots[902]
+	vb["thirst"] = 20.0
+	vb["drink_at"] = Vector3.INF
+	vb["drink_giveup"] = 60.0
+	var h8 := Node3D.new()
+	world.add_child(h8)
+	h8.global_position = vb["proxy"].global_position + Vector3(4.0, 0.0, 4.0)
+	world.server_proxies[8] = h8
+	var pre_teacher := mgr._chat_touch_rel(902, "player_8", "Profe")
+	pre_teacher["trust"] = 0.5; pre_teacher["hostility"] = 0.0; pre_teacher["attacked"] = 0
+	var pre_log := mgr.chat_log.size()
+	mgr.on_chat_received(902, 8, "Profe", "aqui hay agua, bebe de esta fuente")
+	var vkl: Dictionary = vb["_mem"]["known_locations"]
+	var water_keys := 0
+	for wk in vkl.keys():
+		if str(wk).begins_with("water:"):
+			water_keys += 1
+	check(water_keys >= 1, "10H2a: ensenanza de agua registra la fuente (n=%d)" % water_keys)
+	check(vb["drink_at"] != Vector3.INF,
+		"10H2b: bot con sed apunta a la fuente ensenada (drink_at=%s)" % str(vb["drink_at"]))
+	check(mgr.chat_log.size() > pre_log and str(mgr.chat_log.back().get("kind", "")) == "teach",
+		"10H2c: el bot confirma la leccion por chat")
+
+	# 10H3: _known_water_pos encuentra la fuente ensenada
+	vb["drink_at"] = Vector3.INF
+	var kw := mgr._known_water_pos(vb)
+	check(kw != Vector3.INF and kw.distance_to(h8.global_position) < 5.0,
+		"10H3: _known_water_pos resuelve la fuente conocida (p=%s)" % str(kw))
+
+	# 10H4: ensenanza de peligro -> zona de riesgo en memoria
+	var pre_danger := 0
+	for dk in vkl.keys():
+		if float((vkl[dk] as Dictionary).get("risk", 0.0)) > 0.0:
+			pre_danger += 1
+	mgr.on_chat_received(902, 8, "Profe", "cuidado, hay lobos por aqui")
+	var post_danger := 0
+	for dk2 in vkl.keys():
+		if float((vkl[dk2] as Dictionary).get("risk", 0.0)) > 0.0:
+			post_danger += 1
+	check(post_danger >= pre_danger, "10H4: 'cuidado lobos' marca zona de riesgo (n=%d->%d)" % [pre_danger, post_danger])
+
+	# 10H5: escritor WAV — cabecera RIFF valida
+	var wpath := ProjectSettings.globalize_path("user://voice_test_reg.wav")
+	check(mgr._voice_write_wav(wpath, PackedByteArray([128, 130, 100, 128]), 12000), "10H5a: _voice_write_wav escribe")
+	var wf := FileAccess.open(wpath, FileAccess.READ)
+	var hdr_ok := false
+	if wf != null:
+		var hdr := wf.get_buffer(12)
+		hdr_ok = hdr.size() == 12 and hdr.slice(0, 4).get_string_from_ascii() == "RIFF" and hdr.slice(8, 12).get_string_from_ascii() == "WAVE"
+		wf.close()
+	DirAccess.remove_absolute(wpath)
+	check(hdr_ok, "10H5b: WAV tiene cabecera RIFF/WAVE")
+
+	# 10H6: puerta de alcance — la voz lejana no se acumula, la cercana si
+	var pcm600 := PackedByteArray()
+	pcm600.resize(600)
+	pcm600.fill(128)
+	h8.global_position = vb["proxy"].global_position + Vector3(200.0, 0.0, 0.0)
+	mgr.on_voice_received(902, 8, "Profe", pcm600)
+	check(not mgr._voice_bufs.has("8_902"), "10H6a: voz a 200 m no llega al bot")
+	check(mgr._voice_far_notice.has(8), "10H6b: aviso 'demasiado lejos' registrado")
+	h8.global_position = vb["proxy"].global_position + Vector3(3.0, 0.0, 0.0)
+	mgr.on_voice_received(902, 8, "Profe", pcm600)
+	check(mgr._voice_bufs.has("8_902") and (mgr._voice_bufs["8_902"]["pcm"] as PackedByteArray).size() == 600,
+		"10H6c: voz a 3 m se acumula en el buffer")
+
+	# 10H7: pipeline trabajo->transcripcion->chat — el demonio deja el .txt
+	mgr._voice_bufs.erase("8_902")
+	var jobdir := ProjectSettings.globalize_path(mgr.VOICE_JOBS_DIR)
+	DirAccess.make_dir_recursive_absolute(jobdir)
+	mgr._voice_jobs["v_test_h7"] = {"bot_id": 902, "sender_id": 8, "sender_name": "Profe", "born": Time.get_ticks_msec()}
+	var jf := FileAccess.open(jobdir + "v_test_h7.txt", FileAccess.WRITE)
+	jf.store_string("sigueme")
+	jf.close()
+	mgr._voice_poll_jobs()
+	var saw_voice := false
+	for mvo in mgr.chat_log:
+		if str(mvo.get("kind", "")) == "voice" and str(mvo.get("text", "")) == "sigueme":
+			saw_voice = true
+	check(saw_voice, "10H7a: transcripcion de voz registrada en el hilo")
+	check(int(vb.get("team_leader_id", 0)) == 8,
+		"10H7b: 'sigueme' por voz ejecuta la orden (leader=%d)" % int(vb.get("team_leader_id", 0)))
+	world.server_proxies.erase(8)
+	h8.queue_free()
+	vb["team_leader_id"] = 0
+	vb["follow_mode"] = "none"
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

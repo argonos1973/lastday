@@ -1997,6 +1997,13 @@ func send_voice_packet(pcm_bytes: PackedByteArray, target_peer_id: int = 0, grou
 	var target_name := str(tdata.get("char_name", ""))
 	if target_name.is_empty():
 		target_name = str(tdata.get("name", "Jugador"))
+	# Destinatario bot: el audio se acumula y transcribe en la IA (STT local);
+	# no existe peer ENet real al que reenviar.
+	if bool(tdata.get("is_ai_bot", false)):
+		var scene_v := get_tree().current_scene
+		if scene_v != null and scene_v.has_method("_net_bot_hear_voice"):
+			scene_v._net_bot_hear_voice(sender, sender_name, pcm_bytes, target_peer_id, target_name)
+		return
 	if not is_dedicated_server and target_peer_id == my_uid:
 		receive_voice_packet(sender, sender_name, pcm_bytes, target_peer_id, target_name, "")
 	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):

@@ -848,6 +848,7 @@ func tick(delta: float) -> void:
 	if net != null and net.is_connected and not net.is_host:
 		_refresh_client_bot_avatars()
 		return
+	_voice_tick(delta)
 	for bot_id in bots.keys():
 		_tick_bot(bots[bot_id], delta)
 	_ai_tick(delta)
@@ -1128,6 +1129,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
 			if float(b["drink_scan"]) <= 0.0:
 				b["drink_at"] = _nearest_water_pos(proxy.global_position, b)
+				if b["drink_at"] == Vector3.INF:
+					b["drink_at"] = _known_water_pos(b) # fuente enseñada por chat/voz
 				b["drink_walk_t"] = 0.0
 				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
 		if b["drink_at"] != Vector3.INF:
@@ -3602,6 +3605,18 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 		tb["_meet_id"] = sender_id
 		tb["_soc_t"] = 0.0
 		_record_milestone(target_id, "first_rescue" if intent == "help" else "first_alliance")
+	# Ensenanzas del mundo (chat o voz): "aqui hay agua", "cuidado hay lobos",
+	# "recuerda este sitio" — va antes que las ordenes para que "bebe aqui"
+	# enseñe la fuente en vez de mandar beber de la botella.
+	var teach := _chat_parse_teach(clean)
+	if not teach.is_empty():
+		var snode := _find_actor_by_peer_id(sender_id)
+		var spos := tproxy.global_position
+		if snode != null and is_instance_valid(snode):
+			spos = snode.global_position
+		_chat_teach_apply(tb, sender_id, sender_name, skey, str(teach["kind"]), spos)
+		_bot_chat_send(tb, sender_id, sender_name, _chat_teach_line(tb, str(teach["kind"])), "teach")
+		return
 	# Ordenes directas del chat humano: "sigueme", "quedate", "dame agua"...
 	# Obedece segun relacion + personalidad y contesta al momento.
 	if not sender_is_bot:
@@ -4111,6 +4126,212 @@ func _chat_request_line(b: Dictionary, cmd: String, ok: bool, why: String) -> St
 		"no_target":
 			return "No encuentro a quien atacar."
 	return "Lo siento, tambien ando justo." if warm else "No tengo para repartir."
+
+# ==================== ENSEÑANZAS (chat o voz) ====================
+# "aqui hay agua", "cuidado hay lobos", "registra esta casa": el que habla
+# transmite conocimiento del mundo. Se guarda en known_locations y, si es
+# agua, el bot la usa de verdad cuando tiene sed (_known_water_pos).
+
+func _chat_parse_teach(text: String) -> Dictionary:
+	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("?", " ").replace("¿", " ").replace("!", " ").replace("¡", " ").replace(",", " ").replace(".", " ") + " "
+	for kw in ["cuidado", "peligro", "peligrosa", "hay lobos", "hay un oso", "zona mala", "aqui matan", "aqui te atacan", "aqui disparan"]:
+		if t.contains(kw):
+			return {"kind": "danger"}
+	for kw in ["hay agua", "aqui se bebe", "bebe aqui", "bebe de ", "puedes beber", "esta fuente", "este rio", "agua aqui", "de esta fuente", "en la fuente", "bebe en "]:
+		if t.contains(kw):
+			return {"kind": "water"}
+	for kw in ["hay comida", "hay loot", "botin aqui", "saquea esto", "registra esta", "en esa casa", "en esa tienda", "hay suministros", "aqui hay cosas"]:
+		if t.contains(kw):
+			return {"kind": "loot"}
+	for kw in ["puedes dormir", "refugiate", "refugio aqui", "monta aqui", "acampa aqui", "este sitio es seguro", "aqui estas seguro", "aqui estas segura"]:
+		if t.contains(kw):
+			return {"kind": "camp"}
+	for kw in ["recuerda este sitio", "recuerda esto", "apunta este lugar", "marca este punto"]:
+		if t.contains(kw):
+			return {"kind": "marked"}
+	return {}
+
+# Aplica la ensenanza: registra el lugar en la memoria del bot y, si es agua,
+# le sirve de verdad cuando tenga sed (fallback de _nearest_water_pos).
+func _chat_teach_apply(b: Dictionary, sender_id: int, sname: String, skey: String, kind: String, pos: Vector3) -> void:
+	var bid := int(b["bot_id"])
+	var grid := func(p: Vector3, cell: float) -> String: return "%d:%d" % [int(p.x / cell), int(p.z / cell)]
+	match kind:
+		"water":
+			observe_location(bid, "water:" + grid.call(pos, 30.0), "water", pos)
+			if float(b.get("thirst", 100.0)) < 45.0:
+				b["drink_at"] = pos
+				b["drink_giveup"] = 0.0
+				b["drink_scan"] = 0.0
+		"loot":
+			observe_location(bid, "loot:" + grid.call(pos, 30.0), "loot", pos)
+		"danger":
+			record_zone_hazard(bid, pos, "taught", 0.4)
+		"camp":
+			observe_location(bid, "camp:" + grid.call(pos, 30.0), "camp", pos)
+		_:
+			observe_location(bid, "marked:" + grid.call(pos, 30.0), "wild", pos)
+	record_social_event(bid, skey, sname, "help", 0.25, "taught_" + kind)
+	# Y se lo cuenta al resto: un aliado cercano tambien aprende el dato
+	for oid in bots.keys():
+		if oid != bid:
+			observe_location(oid, "taught:%d:%d" % [int(pos.x / 30.0), int(pos.z / 30.0)], kind if kind != "danger" else "wild", pos, "shared")
+
+func _chat_teach_line(b: Dictionary, kind: String) -> String:
+	var pers := _get_bot_personality(b)
+	var warm := float(pers.get("sociability", 0.5)) > 0.55 and float(pers.get("aggression", 0.35)) < 0.5
+	match kind:
+		"water":
+			return "Perfecto, aqui puedo beber. Gracias." if warm else "Anotado, agua aqui."
+		"danger":
+			return "Entendido, me mantengo lejos de esta zona." if warm else "Recibido, ojo con este sitio."
+		"loot":
+			return "Apuntado, me pasare a revisarlo." if warm else "Ok, lo registro."
+		"camp":
+			return "Buen sitio para descansar, gracias." if warm else "Vale, campamento aqui."
+	return "Lo apunto en mi mapa." if warm else "Anotado."
+
+func _known_water_pos(b: Dictionary) -> Vector3:
+	var mem: Dictionary = b.get("_mem", {})
+	var known: Dictionary = mem.get("known_locations", {})
+	var proxy: Node3D = b["proxy"]
+	var best := Vector3.INF
+	var best_d := 420.0
+	for lid in known.keys():
+		if str(lid).get_slice(":", 0) != "water":
+			continue
+		var e = known[lid]
+		if not (e is Dictionary):
+			continue
+		var ep = e.get("pos", null)
+		if not (ep is Array) or (ep as Array).size() < 3:
+			continue
+		var p := Vector3(float(ep[0]), float(ep[1]), float(ep[2]))
+		var d := proxy.global_position.distance_to(p)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+# ==================== VOZ HUMANO -> BOT (STT local) ====================
+# El jugador abre el DM de voz hacia el bot (como con otro jugador): el PCM
+# 8-bit u8 12 kHz se acumula, un silencio de 1.4 s cierra la frase, se escribe
+# un WAV en user://voice_jobs/ y el demonio faster-whisper del host escribe
+# <base>.txt. Solo se oye a quemarropa (BOT_VOICE_RANGE) — la voz es fisica.
+
+const BOT_VOICE_RANGE := 28.0
+const BOT_VOICE_GAP_MSEC := 1400
+const BOT_VOICE_MAX_BYTES := 240000 # ~20 s a 12 kHz u8
+const VOICE_JOBS_DIR := "user://voice_jobs/"
+
+var _voice_bufs: Dictionary = {}      # "sid_bid" -> {pcm, last, sid, bid, sname}
+var _voice_jobs: Dictionary = {}      # basename -> {bot_id, sender_id, sender_name, born}
+var _voice_far_notice: Dictionary = {} # sid -> msec
+
+func on_voice_received(target_id: int, sender_id: int, sender_name: String, pcm: PackedByteArray) -> void:
+	if not bots.has(target_id) or pcm.is_empty():
+		return
+	var tb: Dictionary = bots[target_id]
+	var proxy: Node3D = tb.get("proxy")
+	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
+		return
+	var snode := _find_actor_by_peer_id(sender_id)
+	if snode == null or not is_instance_valid(snode):
+		return
+	if proxy.global_position.distance_to(snode.global_position) > BOT_VOICE_RANGE:
+		var nowm0 := Time.get_ticks_msec()
+		var last_notice := int(_voice_far_notice.get(sender_id, -1))
+		if last_notice < 0 or nowm0 - last_notice > 10000:
+			_voice_far_notice[sender_id] = nowm0
+			var net0 = world.get("net") if world != null else null
+			if net0 != null and net0.has_method("relay_actor_chat"):
+				net0.relay_actor_chat(target_id, str(tb.get("name", "?")), "(esta demasiado lejos — no te oye)", sender_id, sender_name)
+		return
+	var key := "%d_%d" % [sender_id, target_id]
+	var entry: Dictionary = _voice_bufs.get(key, {"pcm": PackedByteArray(), "last": 0, "sid": sender_id, "bid": target_id, "sname": sender_name})
+	var buf: PackedByteArray = entry["pcm"]
+	buf.append_array(pcm)
+	if buf.size() > BOT_VOICE_MAX_BYTES:
+		buf = buf.slice(buf.size() - BOT_VOICE_MAX_BYTES)
+	entry["pcm"] = buf
+	entry["last"] = Time.get_ticks_msec()
+	_voice_bufs[key] = entry
+
+# En tick(): cierra frases por silencio y recoge transcripciones del demonio.
+func _voice_tick(_delta: float) -> void:
+	var nowm := Time.get_ticks_msec()
+	for k in _voice_bufs.keys():
+		var e: Dictionary = _voice_bufs[k]
+		if nowm - int(e.get("last", 0)) > BOT_VOICE_GAP_MSEC:
+			_voice_bufs.erase(k)
+			_voice_enqueue_job(e)
+	if not _voice_jobs.is_empty():
+		_voice_poll_jobs()
+
+func _voice_enqueue_job(e: Dictionary) -> void:
+	var pcm: PackedByteArray = e["pcm"]
+	if pcm.size() < 1200:
+		return
+	var base := "v_%d_%d_%d" % [int(e["sid"]), int(e["bid"]), Time.get_ticks_msec() % 100000000]
+	var dir := ProjectSettings.globalize_path(VOICE_JOBS_DIR)
+	DirAccess.make_dir_recursive_absolute(dir)
+	if not _voice_write_wav(dir + base + ".wav", pcm, 12000):
+		return
+	_voice_jobs[base] = {"bot_id": int(e["bid"]), "sender_id": int(e["sid"]), "sender_name": str(e["sname"]), "born": Time.get_ticks_msec()}
+
+func _voice_poll_jobs() -> void:
+	var dir := ProjectSettings.globalize_path(VOICE_JOBS_DIR)
+	var nowm := Time.get_ticks_msec()
+	for base in _voice_jobs.keys():
+		var job: Dictionary = _voice_jobs[base]
+		var txt_path: String = dir + str(base) + ".txt"
+		var wav_path: String = dir + str(base) + ".wav"
+		var text := ""
+		var done := FileAccess.file_exists(txt_path)
+		if done:
+			var f := FileAccess.open(txt_path, FileAccess.READ)
+			if f != null:
+				text = f.get_as_text().strip_edges()
+				f.close()
+		elif nowm - int(job.get("born", 0)) > 8000:
+			done = true # el demonio no respondio — soltar el trabajo
+		if not done:
+			continue
+		_voice_jobs.erase(base)
+		DirAccess.remove_absolute(txt_path)
+		DirAccess.remove_absolute(wav_path)
+		if text.is_empty():
+			continue
+		var bid := int(job["bot_id"])
+		var sid := int(job["sender_id"])
+		var sname := str(job.get("sender_name", "?"))
+		chat_log.append({"ts": int(Time.get_unix_time_from_system()), "from_id": sid, "from": sname,
+			"to_id": bid, "to": _actor_display_name(bid), "kind": "voice", "text": text})
+		while chat_log.size() > BOT_CHAT_LOG_MAX:
+			chat_log.pop_front()
+		on_chat_received(bid, sid, sname, text)
+
+# WAV/RIFF PCM unsigned-8 mono — lo justo para que faster-whisper lo lea.
+func _voice_write_wav(path: String, pcm_u8: PackedByteArray, rate: int = 12000) -> bool:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return false
+	f.store_buffer("RIFF".to_ascii_buffer())
+	f.store_32(36 + pcm_u8.size())
+	f.store_buffer("WAVE".to_ascii_buffer())
+	f.store_buffer("fmt ".to_ascii_buffer())
+	f.store_32(16)
+	f.store_16(1)  # PCM
+	f.store_16(1)  # mono
+	f.store_32(rate)
+	f.store_32(rate)
+	f.store_16(1)  # block align
+	f.store_16(8)  # bits
+	f.store_buffer("data".to_ascii_buffer())
+	f.store_32(pcm_u8.size())
+	f.store_buffer(pcm_u8)
+	f.close()
+	return true
 
 func _chat_sanitize(text: String) -> String:
 	var raw := text.strip_edges()
@@ -7196,7 +7417,7 @@ func _observe_nearby_world(b: Dictionary) -> void:
 # Prefijos de "zona" (no un edificio concreto): se fusionan en un radio amplio.
 # Los canonicos (house/city/military/tower) solo fusionan dentro del mismo
 # edificio: la puerta, la primera planta y el tejado son UN sitio, no tres.
-const LOC_SOFT_PREFIXES := ["wild", "patrol", "gunshot", "danger", "fight", "death", "heard", "zone", "water", "blood"]
+const LOC_SOFT_PREFIXES := ["wild", "patrol", "gunshot", "danger", "fight", "death", "heard", "zone", "water", "blood", "camp", "loot", "marked", "taught"]
 const LOC_MERGE_POI_DIST := 4.0
 const LOC_MERGE_ZONE_DIST := 18.0
 
