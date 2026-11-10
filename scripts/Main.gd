@@ -13821,7 +13821,7 @@ func _handle_farm_plot(action, actor) -> void:
 			_save_world_change_silent()
 			_net_notify_crop_state(action, "crop_harvested")
 		_:
-			if not actor.inventory.has_item_name("Azada") and not actor.inventory.has_item_name("Pala"):
+			if not actor.inventory.has_item_name("Azada") and not actor.inventory.has_item_name("Pala") and not actor.inventory.has_item_name("Azada de piedra"):
 				actor.notice.emit("Necesitas una azada o una pala para preparar la tierra.")
 				return
 			var _farm_held = actor.get_held_item() if actor.has_method("get_held_item") else null

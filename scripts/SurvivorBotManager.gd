@@ -5996,7 +5996,7 @@ func _best_weapon_name(proxy: Node3D) -> String:
 func _best_melee_weapon(proxy: Node3D) -> String:
 	var order := ["Lanza de hueso", "Lanza", "Hacha de piedra", "Hacha",
 		"Cuchillo de hueso", "Cuchillo de piedra", "Cuchillo", "Palo afilado",
-		"Pico", "Martillo", "Azada", "Pala"]
+		"Pico", "Martillo", "Azada", "Pala", "Azada de piedra"]
 	for w in order:
 		if _bot_item_count(proxy, w) > 0:
 			return w
@@ -6462,6 +6462,10 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 		if nw <= cur * 1.03 and spear_bonus == 0.0:
 			return -1.0
 		return clampf(4.5 + (nw - cur) / 40.0 + spear_bonus, 0.0, 7.0)
+	# Azada de piedra crafteable: puerta barata al huerto cuando no ha
+	# encontrado una azada/pala de verdad (solo ~2 plantados).
+	if oname == "Azada de piedra":
+		return 6.1 if _bot_wants_farm_tool(b) else -1.0
 	if oname == "Cuerda":
 		return 6.8 if _bot_item_count(proxy, "Cuerda") < 1 else 2.0
 	if oname == "Trapos":
@@ -8204,7 +8208,7 @@ func _bot_release_gather_claim(b: Dictionary, st: Dictionary) -> void:
 
 func _bot_has_farm_tool(proxy: Node3D) -> bool:
 	for it in proxy.get_meta("saved_inventory", []):
-		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala"] and float(it.get("durability", 1.0)) > 0.0:
+		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala", "Azada de piedra"] and float(it.get("durability", 1.0)) > 0.0:
 			return true
 	return false
 
@@ -8299,7 +8303,7 @@ func _bot_consume_one_item(proxy: Node3D, item_name: String) -> bool:
 
 func _bot_wear_farm_tool(proxy: Node3D) -> void:
 	for it in proxy.get_meta("saved_inventory", []):
-		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala"]:
+		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala", "Azada de piedra"]:
 			it["durability"] = float(it.get("durability", 100.0)) - 4.0
 			proxy.set_meta("saved_inventory", proxy.get_meta("saved_inventory", []))
 			return
@@ -8423,7 +8427,7 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 	var has_tool := _bot_has_farm_tool(proxy)
 	var tool_name := ""
 	for it in proxy.get_meta("saved_inventory", []):
-		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala"] and float(it.get("durability", 1.0)) > 0.0:
+		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala", "Azada de piedra"] and float(it.get("durability", 1.0)) > 0.0:
 			tool_name = str(it["name"])
 			break
 	var cur := proxy.global_position

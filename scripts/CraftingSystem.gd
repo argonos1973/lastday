@@ -31,6 +31,11 @@ const RECIPES := [
 		"label": "Atar piedra a un palo para fabricar hacha de piedra"
 	},
 	{
+		"inputs": { "Palo": 1, "Piedra": 1, "Cuerda": 1 },
+		"output": { "name": "Azada de piedra", "type": "tool_hoe", "weight": 1.0, "use_value": 0.0, "durability": 8.0, "max_durability": 8.0 },
+		"label": "Atar piedra a un palo para fabricar azada de piedra (2 usos)"
+	},
+	{
 		"inputs": { "Palo afilado": 1, "Cuerda": 1 },
 		"output": { "name": "Caña de pescar", "type": "tool_fishing", "weight": 0.4, "use_value": 0.0, "durability": 3.0, "max_durability": 3.0 },
 		"label": "Unir cuerda y palo afilado para crear una caña (3 usos)"
@@ -585,7 +590,7 @@ static func _pelt_output(out: Dictionary, pelt_species: String) -> Dictionary:
 	return downgraded
 
 static func _is_tool(item_name: String) -> bool:
-	return item_name in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra", "Azada", "Pala", "Martillo", "Pico", "Cerillas"]
+	return item_name in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra", "Azada", "Azada de piedra", "Pala", "Martillo", "Pico", "Cerillas"]
 
 # Returns true if 'have' can substitute for 'needed' in a recipe (e.g. Hacha for Cuchillo)
 static func _is_substitute(needed: String, have: String) -> bool:

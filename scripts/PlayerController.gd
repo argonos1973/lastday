@@ -4228,6 +4228,8 @@ func _fit_held_prop_to_palm(item) -> void:
 		match str(item.item_name):
 			"Azada":
 				length = 0.95
+			"Azada de piedra":
+				length = 0.85
 			"Pala":
 				length = 1.08
 	elif item_type in ["clothing", "backpack"]:

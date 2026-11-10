@@ -2691,6 +2691,34 @@ func run() -> void:
 	fb["proxy"].set_meta("saved_inventory", [])
 	world._planted_crops.clear()
 
+	# 10D5: Azada de piedra crafteable — puerta barata al huerto, ~2 usos
+	var azada_recipe := {}
+	for r in CraftingSystem.RECIPES:
+		if str(r.get("output", {}).get("name", "")) == "Azada de piedra":
+			azada_recipe = r
+	check(not azada_recipe.is_empty(), "10D5a: existe la receta de azada de piedra")
+	fb["proxy"].set_meta("saved_inventory", [
+		{"name": "Palo", "type": "material", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.5, "quantity": 1, "use_value": 0.0},
+		{"name": "Cuerda", "type": "resource", "weight": 0.2, "quantity": 1, "use_value": 0.0},
+	])
+	check(mgr._bot_recipe_score(fb, azada_recipe) > 0.0,
+		"10D5b: sin azada la receta interesa al bot")
+	mgr._bot_apply_craft(fb, azada_recipe)
+	var hoe_inv: Array = fb["proxy"].get_meta("saved_inventory", [])
+	var hoe_dur := 0.0
+	for it in hoe_inv:
+		if str(it.get("name", "")) == "Azada de piedra":
+			hoe_dur = float(it.get("durability", 0.0))
+	check(mgr._bot_has_farm_tool(fb["proxy"]) and is_equal_approx(hoe_dur, 8.0),
+		"10D5c: fabrica la azada (durabilidad %f = ~2 usos)" % hoe_dur)
+	check(mgr._bot_recipe_score(fb, azada_recipe) < 0.0,
+		"10D5d: ya con azada no fabrica otra")
+	mgr._bot_wear_farm_tool(fb["proxy"])
+	mgr._bot_wear_farm_tool(fb["proxy"])
+	check(not mgr._bot_has_farm_tool(fb["proxy"]),
+		"10D5e: tras 2 usos la azada de piedra queda gastada")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
