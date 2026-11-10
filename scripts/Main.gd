@@ -5359,6 +5359,7 @@ func _update_remote_players() -> void:
 			rp.puppet_set_flashlight(remote_flashlight_on)
 		if is_offline:
 			# Snap to exact position for offline characters
+			rp.set_meta("puppet_move_speed", 0.0)
 			if anim.begins_with("dead"):
 				if rp.has_method("puppet_apply"):
 					rp.puppet_apply(target_pos, target_rot, anim)
@@ -5374,6 +5375,7 @@ func _update_remote_players() -> void:
 				rp.rotation.y = target_rot
 		else:
 			# Smooth interpolation for active players
+			rp.set_meta("puppet_move_speed", 0.0)
 			if rp.get("is_dead") == true or anim.begins_with("dead"):
 				if rp.has_method("puppet_apply"):
 					rp.puppet_apply(target_pos, target_rot, anim)
@@ -5388,13 +5390,14 @@ func _update_remote_players() -> void:
 					# Teleport/desync grande o cola residual: asentar directo.
 					smooth_pos = target_pos
 				else:
-					smooth_pos = rp.global_position.lerp(target_pos, 0.25)
-				var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.25)
+					smooth_pos = rp.global_position.lerp(target_pos, 0.45)
+				var smooth_rot: float = lerp_angle(rp.rotation.y, target_rot, 0.45)
 				# La locomoción obedece al desplazamiento real del puppet: el
 				# sender frena en seco y ya manda "idle" mientras el puppet aun
 				# recorre el arrastre del lerp — sin corregirlo el personaje se
 				# ve deslizarse por el suelo en pose idle.
 				var tick_speed: float = rp.global_position.distance_to(smooth_pos) / 0.05
+				rp.set_meta("puppet_move_speed", tick_speed)
 				var eff_anim := _puppet_effective_anim(rp, anim, tick_speed)
 				if rp.has_method("puppet_apply"):
 					rp.puppet_apply(smooth_pos, smooth_rot, eff_anim)

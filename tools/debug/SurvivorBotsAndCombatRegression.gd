@@ -3213,6 +3213,100 @@ func run() -> void:
 	world.player.third_person_action_animation = ""
 	world.player.third_person_action_timer = 0.0
 
+	# ==================== 10J: Animaciones de bots, huida de frente, mapa sin muertos y evolucion por muertes ====================
+	# 10J1: Al huir de un animal, el bot gira de frente hacia la direccion de huida (nunca corre de espaldas mirando al lobo)
+	var fb_flee: Dictionary = mgr.bots[901]
+	fb_flee["proxy"].set_meta("proxy_dead", false)
+	fb_flee["proxy"].set_meta("saved_inventory", [{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 10.0}])
+	fb_flee["shelter_pos"] = Vector3.INF
+	fb_flee["proxy"].global_position = Vector3(10.0, 0.375, 10.0)
+	fb_flee["pos"] = fb_flee["proxy"].global_position
+	var wolf_flee := Node3D.new()
+	world.add_child(wolf_flee)
+	wolf_flee.global_position = Vector3(10.0, 0.375, 18.0) # lobo al +Z
+	# Inicializar el bot mirando e inercia directo hacia el lobo (+Z)
+	fb_flee["rot"] = atan2(0.0, -1.0) # PI = mirando hacia +Z
+	fb_flee["_mdir"] = Vector3(0.0, 0.0, 1.0)
+	var pos_pre_flee: Vector3 = fb_flee["proxy"].global_position
+	mgr._handle_predator_encounter(fb_flee, wolf_flee, 0.1)
+	var disp_flee: Vector3 = fb_flee["proxy"].global_position - pos_pre_flee
+	disp_flee.y = 0.0
+	var facing_flee := Vector3(-sin(float(fb_flee["rot"])), 0.0, -cos(float(fb_flee["rot"])))
+	check(disp_flee.length() > 0.25 and disp_flee.normalized().dot(facing_flee.normalized()) > 0.75,
+		"10J1a: Al huir del lobo el bot mira en el sentido en que corre (dot=%.2f > 0.75, nunca de espaldas)" % disp_flee.normalized().dot(facing_flee.normalized()))
+	wolf_flee.queue_free()
+
+	# 10J2: Velocidad y animaciones cerca del humano (sprint de compañero, sneak_walk agachado, no comer caminando)
+	var lead_p := Node3D.new()
+	world.add_child(lead_p)
+	lead_p.global_position = Vector3(26.0, 0.375, 10.0)
+	lead_p.set_meta("sprinting", true)
+	fb_flee["proxy"].global_position = Vector3(20.0, 0.375, 10.0) # a 6.0 m del humano
+	fb_flee["pos"] = fb_flee["proxy"].global_position
+	fb_flee["crouching"] = false
+	fb_flee["_speed"] = 0.0
+	mgr._tick_teammate_behavior(fb_flee, lead_p, 0.1)
+	check(str(fb_flee["anim"]) == "run" and float(fb_flee["_speed"]) >= 5.0,
+		"10J2a: Bot aliado cerca del humano corre con velocidad real de sprint (anim=%s, spd=%.2f)" % [str(fb_flee["anim"]), float(fb_flee["_speed"])])
+	fb_flee["crouching"] = true
+	fb_flee["anim"] = "walk"
+	check(mgr._bot_effective_net_anim(fb_flee) == "sneak_walk",
+		"10J2b: Bot agachado en movimiento sincroniza 'sneak_walk' en lugar de pose estatica 'sneak'")
+	fb_flee["crouching"] = false
+	fb_flee["consume_anim"] = "eat"
+	fb_flee["consume_anim_t"] = 1.2
+	fb_flee["anim"] = "walk"
+	check(mgr._bot_effective_net_anim(fb_flee) == "walk",
+		"10J2c: _bot_effective_net_anim no pisa 'walk' con 'eat' mientras el bot camina")
+	fb_flee["consume_anim_t"] = 0.0
+	lead_p.queue_free()
+
+	# 10J3: En el preview del mapa (get_full_web_status + bot_monitor.html) no aparecen los bots muertos
+	var b902_dead: Dictionary = mgr.bots[902]
+	b902_dead["team_leader_id"] = 901
+	b902_dead["explore_target"] = Vector3(120.0, 0.0, 120.0)
+	mgr._kill_bot(b902_dead, "wolf_bite")
+	var web_st_10j: Dictionary = mgr.get_full_web_status()
+	var dead_snap: Dictionary = {}
+	for bs in web_st_10j.get("bots", []):
+		if int(bs.get("bot_id", 0)) == 902:
+			dead_snap = bs
+			break
+	check(bool(dead_snap.get("dead", false)) and (dead_snap.get("explore_target", []) as Array).is_empty() and int(dead_snap.get("team_leader_id", -1)) == 0,
+		"10J3a: Bot muerto figura con dead=true, sin explore_target ni equipo activo en get_full_web_status")
+	var html_src := FileAccess.get_file_as_string("res://tools/web/bot_monitor.html")
+	check(html_src.contains("isBotDead(b)") and html_src.contains("if (isBotDead(b)) continue;"),
+		"10J3b: bot_monitor.html filtra los bots muertos en renderMap para que no aparezcan en el preview del mapa")
+	mgr._respawn_bot(b902_dead)
+
+	# 10J4: Aprendizaje y evolucion por muertes (hidratacion, forrajeo, depredadores, frio, combate y persistencia)
+	var b_evo: Dictionary = mgr.bots[902]
+	var mem_evo: Dictionary = mgr._ensure_bot_memory(902, b_evo.get("cfg", {}))
+	mem_evo["death_lessons"] = {}
+	mgr._record_death_lesson(b_evo, mem_evo, "dehydrated")
+	mgr._record_death_lesson(b_evo, mem_evo, "starved")
+	mgr._record_death_lesson(b_evo, mem_evo, "wolf_bite")
+	mgr._record_death_lesson(b_evo, mem_evo, "hypothermia")
+	mgr._record_death_lesson(b_evo, mem_evo, "rifle")
+	var dl_map: Dictionary = mem_evo.get("death_lessons", {})
+	var adapts_evo: Array = mgr._bot_death_adaptations(mem_evo)
+	check(int(dl_map.get("dehydrated", 0)) == 1 and int(dl_map.get("starved", 0)) == 1 and int(dl_map.get("predator", 0)) == 1 and int(dl_map.get("cold", 0)) == 1 and int(dl_map.get("combat", 0)) == 1 and adapts_evo.size() == 5,
+		"10J4a: El bot aprende lecciones especificas de cada causa de muerte y genera las 5 adaptaciones evolutivas (n=%d)" % adapts_evo.size())
+	var tmp_mem_path := "user://test_bot_death_lessons_mem.json"
+	mgr.memory_path = tmp_mem_path
+	mgr.force_memory_io = true
+	mgr._ai_save_memory()
+	var mgr_reload := SurvivorBotManagerScript.new()
+	mgr_reload.memory_path = tmp_mem_path
+	mgr_reload.force_memory_io = true
+	mgr_reload._ai_load_memory()
+	var loaded_dl: Dictionary = mgr_reload._ensure_bot_memory(902).get("death_lessons", {})
+	check(int(loaded_dl.get("predator", 0)) == 1 and int(loaded_dl.get("dehydrated", 0)) == 1 and int(loaded_dl.get("combat", 0)) == 1,
+		"10J4b: death_lessons persiste en disco entre sesiones (_ai_save_memory / _ai_load_memory)")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_mem_path))
+	mgr_reload.free()
+	mgr.memory_path = SurvivorBotManagerScript.AI_MEMORY_PATH
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()

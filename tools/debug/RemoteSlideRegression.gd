@@ -76,6 +76,14 @@ func run() -> void:
 	fp._puppet_current_anim = "external/RifleWalkExternal"
 	check(main._puppet_effective_anim(fp, "external/RifleAimIdleExternal", 3.0) == "external/RifleWalkExternal",
 		"aim-idle synced while moving keeps the rifle walk")
+	# Agachado (bots/player): sneak-walk nunca se degrada a walk/run de pie.
+	fp._puppet_current_anim = "sneak_walk"
+	check(main._puppet_effective_anim(fp, "sneak", 1.5) == "sneak_walk",
+		"crouch-idle keeps sneak walk while the puppet glides")
+	check(main._puppet_effective_anim(fp, "sneak_walk", 2.5) == "sneak_walk",
+		"synced sneak_walk passes through while moving")
+	check(main._puppet_effective_anim(fp, "idle", 2.5) == "sneak_walk",
+		"idle while gliding keeps prior sneak walk, not standing walk")
 
 	# --- _update_remote_players: frenada de sprint completa ---
 	# El sender paró: manda pos fija + idle. El puppet va ~1.5 m atrás.

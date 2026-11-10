@@ -471,12 +471,26 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 	var staged_originals: Array = []
 	for item in original_items:
 		var copy = item.duplicate_stack()
+		# duplicate_stack() quita equipped_slot a propósito; la copia staged debe
+		# conservarlo o la ropa/mochila puesta cuenta como carga y el crafteo
+		# falla con "no hay espacio" aunque sobren bolsillos.
+		if item.has_meta("equipped_slot"):
+			copy.set_meta("equipped_slot", str(item.get_meta("equipped_slot")))
 		staged.items.append(copy)
 		staged_originals.append(copy)
 	var consumed_pelts: Dictionary = {}
 	for input_name in recipe["inputs"]:
 		var needed: int = recipe["inputs"][input_name]
-		for item in staged.items.duplicate():
+		# Consumir primero las copias sin equipar: la prenda puesta solo alimenta
+		# la receta cuando no queda ninguna de repuesto.
+		var candidates: Array = []
+		for item in staged.items:
+			if str(item.get_meta("equipped_slot", "")).is_empty():
+				candidates.append(item)
+		for item in staged.items:
+			if not str(item.get_meta("equipped_slot", "")).is_empty():
+				candidates.append(item)
+		for item in candidates:
 			if needed <= 0:
 				break
 			if not _matches_input(input_name, item):

@@ -149,9 +149,12 @@ func run() -> void:
 	world._backpack_action = bp_action
 	var before_take: int = player.inventory.items.size()
 	world._backpack_take(0)
-	check(player.inventory.items.size() == before_take + 1, "Coger moves the packed stack into the inventory")
-	check((bp_action.get_meta("contents", []) as Array).size() == 1, "Contents shrink after Coger")
-	check((world._dropped_items[0].get("contents", []) as Array).size() == 1, "Persisted entry follows the take")
+	check(player.inventory.items.size() == before_take + 1, "Coger moves one packed unit into the inventory")
+	# La transferencia es de a una unidad: Piedra tenía qty 2, queda qty 1 y la
+	# entrada no desaparece — el contenido sigue teniendo 2 entradas.
+	var take_contents: Array = bp_action.get_meta("contents", [])
+	check(take_contents.size() == 2 and int(take_contents[0].get("quantity", 0)) == 1, "Contents keep the stack with one unit less")
+	check((world._dropped_items[0].get("contents", []) as Array).size() == 2, "Persisted entry follows the take")
 
 	# Panel K: meter un objeto del inventario dentro de la mochila tirada.
 	var palo_idx := -1
@@ -161,11 +164,20 @@ func run() -> void:
 			break
 	check(palo_idx >= 0, "Inventory still has a Palo to store")
 	if palo_idx >= 0:
-		var before_store: int = player.inventory.items.size()
+		var palo_units_before := 0
+		for it in player.inventory.items:
+			if it != null and str(it.item_name) == "Palo":
+				palo_units_before += int(it.quantity)
+		var stash_entries_before: int = (bp_action.get_meta("contents", []) as Array).size()
 		world._backpack_store(palo_idx)
-		check(player.inventory.items.size() == before_store - 1, "Meter removes the item from the inventory")
-		check((bp_action.get_meta("contents", []) as Array).size() == 2, "Contents grow after Meter")
-		check((world._dropped_items[0].get("contents", []) as Array).size() == 2, "Persisted entry follows the store")
+		var palo_units_after := 0
+		for it in player.inventory.items:
+			if it != null and str(it.item_name) == "Palo":
+				palo_units_after += int(it.quantity)
+		check(palo_units_before - palo_units_after == 1, "Meter moves exactly one unit out of the inventory")
+		# Sin Palo previo en el alijo la unidad entra como entrada nueva.
+		check((bp_action.get_meta("contents", []) as Array).size() == stash_entries_before + 1, "Contents grow after Meter")
+		check((world._dropped_items[0].get("contents", []) as Array).size() == stash_entries_before + 1, "Persisted entry follows the store")
 
 	# Round-trip de serialización: el contenido sobrevive a to_dict/from_dict.
 	var bp_with_contents = ItemScript.create("Mochila pequena", "backpack", 0.8, 1, 0.0)

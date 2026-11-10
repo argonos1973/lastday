@@ -461,7 +461,9 @@ function renderMap(data) {
   for (const pl of (data.players || [])) {
     ext = Math.max(ext, Math.abs(pl.pos[0]), Math.abs(pl.pos[2]));
   }
+  const isBotDead = b => !!(b && (b.dead || String(b.anim || "").startsWith("dead") || b.act === "dead" || Number(b.hp ?? b.health ?? 100) <= 0));
   for (const b of (data.bots || [])) {
+    if (isBotDead(b)) continue;
     if (b.pos) ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2]));
     if (b.explore_target && b.explore_target.length >= 3) ext = Math.max(ext, Math.abs(b.explore_target[0]), Math.abs(b.explore_target[2]));
     if (b.shelter_pos && b.shelter_pos.length >= 3) ext = Math.max(ext, Math.abs(b.shelter_pos[0]), Math.abs(b.shelter_pos[2]));
@@ -540,8 +542,9 @@ function renderMap(data) {
     ctx.textAlign = "left";
   }
 
-  // Bots, shelters, targets
+  // Bots, shelters, targets (solo bots vivos en el preview del mapa)
   for (const b of (data.bots || [])) {
+    if (isBotDead(b)) continue;
     const col = BOT_COLORS[b.bot_id] || "#52d18a";
     const pos = b.pos || [0,0,0];
     const [bx, bz] = toScreen(pos[0], pos[2]);
@@ -584,13 +587,13 @@ function renderMap(data) {
   for (const b2 of (data.bots || [])) actorById[b2.bot_id] = b2;
   for (const pl2 of (data.players || [])) actorById[pl2.id] = pl2;
   for (const b of (data.bots || [])) {
-    if (!b.pos || b.pos.length < 3) continue;
+    if (isBotDead(b) || !b.pos || b.pos.length < 3) continue;
     const [bx, bz] = toScreen(b.pos[0], b.pos[2]);
     if (b.team_role === "leader") {
       const lcol = BOT_COLORS[b.bot_id] || "#52d18a";
       for (const m of (b.team_mates || [])) {
         const mb = actorById[m.id];
-        if (!mb || !mb.pos || mb.pos.length < 3) continue;
+        if (!mb || isBotDead(mb) || !mb.pos || mb.pos.length < 3) continue;
         const [mx, mz] = toScreen(mb.pos[0], mb.pos[2]);
         ctx.strokeStyle = lcol;
         ctx.globalAlpha = 0.55;
@@ -605,7 +608,7 @@ function renderMap(data) {
     const amb = b.ambush || {};
     if (amb.target_id) {
       const tv = actorById[amb.target_id];
-      if (tv && tv.pos && tv.pos.length >= 3) {
+      if (tv && !isBotDead(tv) && tv.pos && tv.pos.length >= 3) {
         const [ax, az] = toScreen(tv.pos[0], tv.pos[2]);
         ctx.strokeStyle = "#d94a4a";
         ctx.setLineDash([3, 3]);
@@ -714,13 +717,21 @@ function renderBots(data) {
       first_ambush: "🗡️ Primera emboscada", first_farm: "🌱 Primer cultivo",
       first_harvest: "🧺 Primera cosecha", first_chat: "💬 Primer chat",
       first_alliance: "📣 Primera alianza respondida", first_rescue: "🚑 Primer rescate en marcha",
-      first_dismantle: "🪓 Primer refugio desmontado", first_raid: "🎒 Primer alijo saqueado"
+      first_dismantle: "🪓 Primer refugio desmontado", first_raid: "🎒 Primer alijo saqueado",
+      learned_hydration: "💧 Aprendió a buscar agua antes", learned_foraging: "🍄 Aprendió a forrajear antes",
+      learned_predator_evasion: "🐺 Aprendió a detectar depredadores lejos",
+      learned_combat_tactics: "🛡️ Aprendió repliegue táctico en combate",
+      learned_shelter_warmth: "🔥 Aprendió a priorizar calor y refugio"
     };
-    let mstHtml = milestones.length
+    const adapts = b.adaptations || [];
+    const adaptHtml = adapts.length
+      ? `<div class="pill-list" style="margin-bottom:6px">` + adapts.map(a => `<span class="item-tag" style="border-color:rgba(82,209,138,.45);color:#b9f5d0">${esc(a)}</span>`).join("") + `</div>`
+      : "";
+    let mstHtml = adaptHtml + (milestones.length
       ? `<div class="pill-list">` + milestones.map(([mk, ts]) =>
           `<span class="item-tag">${MILESTONE_LABELS[mk] || esc(mk)} <span style="color:var(--muted)">${new Date(Number(ts) * 1000).toLocaleDateString()}</span></span>`
         ).join("") + `</div>`
-      : `<div class="empty-note">Aún no ha descubierto comportamientos nuevos</div>`;
+      : (adapts.length ? "" : `<div class="empty-note">Aún no ha descubierto comportamientos nuevos</div>`));
 
     let memHtml = mems.length
       ? `<table class="mini-table"><thead><tr><th>Evento</th><th>Actor / Zona</th><th>Detalle</th></tr></thead><tbody>` +

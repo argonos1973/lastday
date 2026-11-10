@@ -746,7 +746,9 @@ func _spawn_bot(cfg: Dictionary) -> void:
 			observe_location(bot_id, pid, "wild", pt as Vector3, "observed")
 	# Prudencia aprendida: si murio por depredadores o inanicion, durante los
 	# primeros minutos de su nueva vida evita la zona donde cayo.
-	bot_state["caution_until"] = 240.0 if str(mem.get("last_death_cause", "")) in ["wolf_bite", "bear_bite", "starved", "dehydrated", "hypothermia"] else 0.0
+	var pred_lessons_spawn := int((mem.get("death_lessons", {}) as Dictionary).get("predator", 0))
+	var base_caution := 240.0 if str(mem.get("last_death_cause", "")) in ["wolf_bite", "bear_bite", "starved", "dehydrated", "hypothermia"] else 0.0
+	bot_state["caution_until"] = base_caution + float(pred_lessons_spawn) * 60.0
 	_publish_bot_to_net_players(bot_state)
 	_sync_bot_appearance_to_clients(bot_state)
 	# Si estamos en singleplayer o host con render, crear su avatar visual inmediatamente
@@ -871,8 +873,8 @@ func tick(delta: float) -> void:
 		_status_accum = 0.0
 		_ai_save_live_status()
 	_sync_accum += delta
-	if _sync_accum >= 0.10:
-		_sync_accum = fmod(_sync_accum, 0.10)
+	if _sync_accum >= 0.05:
+		_sync_accum = fmod(_sync_accum, 0.05)
 		_broadcast_bots()
 
 func _refresh_client_bot_avatars() -> void:
@@ -902,16 +904,19 @@ func _refresh_client_bot_avatars() -> void:
 
 func _bot_effective_net_anim(b: Dictionary) -> String:
 	var raw := str(b.get("anim", "idle"))
-	if raw == "dead":
-		return "dead"
+	if raw.begins_with("dead"):
+		return raw
 	if bool(b.get("sleeping", false)):
 		return "sleep"
-	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw in ["idle", "walk"]:
+	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw == "idle":
 		return str(b.get("consume_anim", "eat"))
 	if bool(b.get("sitting", false)) or raw == "sit":
 		return "sit"
-	if bool(b.get("crouching", false)) and raw in ["walk", "idle"]:
-		return "sneak"
+	if bool(b.get("crouching", false)):
+		if raw in ["walk", "run"]:
+			return "sneak_walk"
+		if raw == "idle":
+			return "sneak"
 	if bool(b.get("has_rifle", false)):
 		if raw == "run":
 			return "riflerun"
@@ -943,15 +948,16 @@ func _broadcast_bots() -> void:
 					bool(b["sleeping"]), bool(b["sitting"]), bool(b["prone"]), bool(b["crouching"]),
 					bool(b["torch_lit"]), bool(b["flashlight_on"]), b["clothing_colors"]
 				)
-		elif (net == null or not net.is_connected) and world.has_method("_update_remote_players"):
-			world._update_remote_players()
+	if (net == null or not net.is_connected) and world.has_method("_update_remote_players"):
+		world._update_remote_players()
 
 func _tick_bot(b: Dictionary, delta: float) -> void:
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
 		return
 	if bool(proxy.get_meta("proxy_dead", false)):
-		b["anim"] = "dead"
+		if not str(b.get("anim", "")).begins_with("dead"):
+			b["anim"] = "dead"
 		b["_act"] = "dead"
 		b["torch_lit"] = false
 		b["is_aiming"] = false
@@ -1010,7 +1016,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["sense_t"] = float(b.get("sense_t", 0.0)) - delta
 	if float(b["sense_t"]) <= 0.0:
 		b["sense_t"] = 0.21 + fmod(float(b["bot_id"]) * 0.037, 0.08)
-		b["_s_predator"] = _find_threatening_predator(b, 30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0)
+		var pred_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("predator", 0))
+		var pred_bonus := minf(12.0, float(pred_lessons) * 4.0)
+		b["_s_predator"] = _find_threatening_predator(b, (30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0) + pred_bonus)
 		b["_s_foe"] = _find_combat_foe(b)
 		b["_s_leader"] = _resolve_team_leader(b)
 		var has_wolf := _bot_has_tamed_wolf(b)
@@ -1089,10 +1097,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if fleeing:
 			b["flee_until"] = maxf(0.0, float(b["flee_until"]) - delta)
 		var unarmed_vs_armed: bool = _best_weapon_name(proxy).is_empty() and not str(human_foe.get_meta("saved_held_item", "")).is_empty()
-		if (float(b["health"]) < 30.0 or fleeing or unarmed_vs_armed) and not _has_combat_edge(b, human_foe):
+		var combat_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("combat", 0))
+		var retreat_hp := 30.0 + minf(15.0, float(combat_lessons) * 5.0)
+		if (float(b["health"]) < retreat_hp or fleeing or unarmed_vs_armed) and not _has_combat_edge(b, human_foe):
 			if sh_pos != Vector3.INF:
 				b["hide_timer"] = 20.0
-				_move_bot_towards(b, sh_pos, 5.2, delta, "run")
+				_move_bot_towards(b, sh_pos, 6.0, delta, "run")
 				if proxy.global_position.distance_to(sh_pos) < 1.8:
 					b["crouching"] = true
 					b["sitting"] = true
@@ -1108,7 +1118,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
 			var side := Vector3(-away_dir.z, 0.0, away_dir.x)
-			_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.5).normalized() * 8.0, 5.0, delta, "run")
+			_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.5).normalized() * 8.0, 6.0, delta, "run")
 			return
 		_engage_foe(b, human_foe, delta)
 		return
@@ -1126,7 +1136,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if not gut_ok or gdist > 60.0 or not _bot_wants_animal_loot(b, proxy):
 			b["gut_target"] = null
 		elif gdist > 2.4:
-			_move_bot_towards(b, gut.global_position, 4.6, delta, "run")
+			_move_bot_towards(b, gut.global_position, 6.2, delta, "run")
 			return
 		else:
 			b["gut_t"] = float(b["gut_t"]) + delta
@@ -1140,7 +1150,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# siguiendo ordenes de equipo o la sed es critica de verdad)
 	var leader := _sensed_node(b, "_s_leader")
 	b["drink_giveup"] = maxf(0.0, float(b.get("drink_giveup", 0.0)) - delta)
-	var thirsty_line := 32.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0)
+	var thirst_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
+	var thirsty_line := 32.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(18.0, float(thirst_lessons) * 6.0)
 	if float(b["thirst"]) < thirsty_line and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0):
 		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
@@ -1170,7 +1181,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 					b["drink_walk_t"] = 0.0
 					b["drink_giveup"] = 12.0
 				else:
-					_move_bot_towards(b, b["drink_at"], 4.6, delta, "run")
+					_move_bot_towards(b, b["drink_at"], 6.2, delta, "run")
 					return
 			else:
 				# En la orilla: se agacha a beber unos segundos y repone su sed
@@ -1238,7 +1249,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if d_loot <= 2.1 and absf(proxy.global_position.y - lpos.y) <= 1.8:
 			_collect_loot_entry(b, loot_action)
 		else:
-			_move_bot_towards(b, lpos, 4.4, delta, "run")
+			_move_bot_towards(b, lpos, 6.2, delta, "run")
 		return
 
 	# 5a) Saqueo y desmontaje de refugios ajenos: roba lo util y si el refugio
@@ -1268,7 +1279,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			if not _bot_try_dismantle_shelter(b, raid_sh):
 				b["_s_raid_shelter"] = {}
 		else:
-			_move_bot_towards(b, rpos, 4.4, delta, "run")
+			_move_bot_towards(b, rpos, 6.2, delta, "run")
 		return
 
 	# 5b) Materiales de campamento: si faltan palos para el refugio/fogata y no
@@ -1332,7 +1343,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["_act"] = "stash"
 			b["sitting"] = false
 			b["crouching"] = false
-			_move_bot_towards(b, sh_pos, 4.2, delta, "run" if d_own_sh > 12.0 else "walk")
+			_move_bot_towards(b, sh_pos, 6.2 if d_own_sh > 12.0 else 4.0, delta, "run" if d_own_sh > 12.0 else "walk")
 			return
 	# Helándose: si no hay fuego encendido al alcance, arma una hoguera aquí
 	# mismo antes de seguir — igual que haría un jugador humano.
@@ -1744,8 +1755,10 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	b["consume_anim_t"] = maxf(0.0, float(b.get("consume_anim_t", 0.0)) - _delta)
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
-	# Vendarse si tiene poca salud o sangrado
-	if float(b["health"]) < 72.0 and float(b["eat_cooldown"]) <= 0.0:
+	# Vendarse si tiene poca salud o sangrado (si aprendio de muertes en combate, se venda antes)
+	var d_lessons: Dictionary = b.get("_mem", {}).get("death_lessons", {})
+	var bandage_line := 72.0 + minf(12.0, float(int(d_lessons.get("combat", 0))) * 4.0)
+	if float(b["health"]) < bandage_line and float(b["eat_cooldown"]) <= 0.0:
 		for i in range(inv.size()):
 			var it = inv[i]
 			if it is Dictionary and str(it.get("name", "")) == "Venda" and int(it.get("quantity", 1)) > 0:
@@ -1761,7 +1774,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 				break
 	# Comer si tiene hambre o necesita recuperar vida. Si ya murio de inanicion
 	# aprendio a no apurar: come antes de llegar al limite.
-	var hunger_line := 60.0 + (16.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0)
+	var hunger_line := 60.0 + (16.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(16.0, float(int(d_lessons.get("starved", 0))) * 6.0)
 	# Orden directa del líder "come": come la mejor comida aunque no tenga hambre
 	var force_eat := bool(b.get("forced_eat", false))
 	if force_eat:
@@ -1839,7 +1852,8 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			b["consume_anim_t"] = 1.6
 			break
 	# Beber de botellas/cantimplora que lleve encima
-	if float(b["thirst"]) < 55.0 and float(b["eat_cooldown"]) <= 0.0:
+	var bottle_thirst_line := 55.0 + (10.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(15.0, float(int(d_lessons.get("dehydrated", 0))) * 5.0)
+	if float(b["thirst"]) < bottle_thirst_line and float(b["eat_cooldown"]) <= 0.0:
 		for i in range(inv.size()):
 			var it = inv[i]
 			if not (it is Dictionary):
@@ -1964,9 +1978,6 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 	var dist := proxy.global_position.distance_to(ppos)
 	var to_pred := ppos - proxy.global_position
 	to_pred.y = 0.0
-	if to_pred.length_squared() > 0.001:
-		b["rot"] = atan2(-to_pred.x, -to_pred.z)
-		proxy.rotation.y = float(b["rot"])
 
 	var weapon := _best_weapon_name(proxy)
 	var is_rifle := weapon == "Fusil de asalto" or weapon == "Rifle francotirador"
@@ -1976,6 +1987,9 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 	# lobos/osos no pueden entrar) y el depredador está fuera, un humano NO sale
 	# corriendo a sus fauces: dispara desde seguro o aguanta a resguardo.
 	if _is_bot_wolf_protected(b) and dist > melee_reach + 0.5:
+		if to_pred.length_squared() > 0.001:
+			b["rot"] = atan2(-to_pred.x, -to_pred.z)
+			proxy.rotation.y = float(b["rot"])
 		_command_bot_wolf_against(b, predator)
 		var pick_safe := _pick_fight_weapon(b, dist)
 		var skind := str(pick_safe.get("kind", "melee"))
@@ -2014,15 +2028,21 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 	b["has_rifle"] = is_rifle
 	proxy.set_meta("saved_held_item", weapon)
 
-	# Si lleva fusil y está a > 4 m, dispara al depredador retrocediendo para mantener distancia
+	# Si lleva fusil y está a > 4 m, dispara al depredador; entre disparos si
+	# el depredador está muy cerca (< 8.5 m) corre alejándose de frente (nunca
+	# caminando de espaldas) y solo se gira al instante de disparar.
 	if is_rifle and dist > 3.6:
+		var ready_shot := float(b["shoot_cooldown"]) <= 0.15
+		if dist < 8.5 and to_pred.length_squared() > 0.01 and not ready_shot:
+			b["is_aiming"] = false
+			var back_goal := proxy.global_position - to_pred.normalized() * 6.0
+			_move_bot_towards(b, back_goal, 6.2, delta, "run")
+			return
 		b["is_aiming"] = true
-		if dist < 8.5 and to_pred.length_squared() > 0.01:
-			var back_goal := proxy.global_position - to_pred.normalized() * 5.0
-			_move_bot_towards(b, back_goal, 3.6, delta, "walk")
+		b["anim"] = "idle"
+		if to_pred.length_squared() > 0.001:
 			b["rot"] = atan2(-to_pred.x, -to_pred.z)
-		else:
-			b["anim"] = "idle"
+			proxy.rotation.y = float(b["rot"])
 		if float(b["shoot_cooldown"]) <= 0.0:
 			b["shoot_cooldown"] = 0.95 if weapon == "Fusil de asalto" else 1.65
 			var dmg := 68.0 if weapon == "Fusil de asalto" else 145.0
@@ -2039,7 +2059,9 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 		# Paso lateral ágil mientras golpea para no quedarse quieto bajo las fauces
 		var side := Vector3(-to_pred.z, 0.0, to_pred.x).normalized() if to_pred.length_squared() > 0.01 else Vector3.RIGHT
 		_move_bot_towards(b, proxy.global_position + side * 2.2, 3.4, delta, "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION)
-		b["rot"] = atan2(-to_pred.x, -to_pred.z)
+		if to_pred.length_squared() > 0.001:
+			b["rot"] = atan2(-to_pred.x, -to_pred.z)
+			proxy.rotation.y = float(b["rot"])
 		if float(b["attack_cooldown"]) <= 0.0:
 			b["attack_cooldown"] = 0.55
 			var m_dmg := _weapon_melee_damage(weapon)
@@ -2051,7 +2073,7 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 				_bot_start_gutting(b, predator)
 	else:
 		# Acorralado: cierra el último tramo para poder defenderse
-		_move_bot_towards(b, ppos, 4.9, delta, "run")
+		_move_bot_towards(b, ppos, 6.2, delta, "run")
 
 # Como un humano, el bot no caza depredadores sin arma de fuego: huye a un
 # lugar seguro (su refugio, una fogata encendida o una casa) o en zigzag.
@@ -2062,6 +2084,14 @@ func _flee_predator(b: Dictionary, predator: Node3D, delta: float) -> void:
 	_command_bot_wolf_against(b, predator)
 	b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 9.0)
 	var dist := proxy.global_position.distance_to(predator.global_position)
+	var away := proxy.global_position - predator.global_position
+	away.y = 0.0
+	var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
+	# Limpiar inercia previa si apuntaba hacia el depredador para no dar ni un
+	# paso hacia atras mientras gira a escapar.
+	var cur_mdir: Vector3 = b.get("_mdir", Vector3.ZERO)
+	if cur_mdir.dot(away_dir) < 0.15:
+		b["_mdir"] = away_dir
 	# Antorcha encendida: mantiene a los lobos a raya (wary_torch en WildlifeController)
 	if str(predator.get("animal_type")) == "wolf" and _bot_has_item(proxy, "Antorcha"):
 		b["torch_lit"] = true
@@ -2080,23 +2110,21 @@ func _flee_predator(b: Dictionary, predator: Node3D, delta: float) -> void:
 		var to_pr := predator.global_position - proxy.global_position
 		if to_sh.length() < 3.5 or to_sh.normalized().dot(to_pr.normalized()) < 0.35:
 			b["hide_timer"] = 10.0
-			_move_bot_towards(b, sh_pos, 5.2, delta, "run")
+			_move_bot_towards(b, sh_pos, 6.5, delta, "run")
 			return
 	var refuge := _nearest_safe_refuge(b, 95.0, predator.global_position)
 	if refuge != Vector3.INF:
 		if proxy.global_position.distance_to(refuge) < 3.5:
 			b["hide_timer"] = 8.0
-		_move_bot_towards(b, refuge, 5.2, delta, "run")
+		_move_bot_towards(b, refuge, 6.5, delta, "run")
 		return
-	var away := proxy.global_position - predator.global_position
-	away.y = 0.0
-	var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
 	b["strafe_timer"] = float(b["strafe_timer"]) + delta
 	if float(b["strafe_timer"]) > 1.1:
 		b["strafe_dir"] = -float(b["strafe_dir"])
 		b["strafe_timer"] = 0.0
 	var side := Vector3(-away_dir.z, 0.0, away_dir.x)
-	_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.45).normalized() * 9.0, 5.2, delta, "run")
+	var flee_dir := (away_dir + side * float(b["strafe_dir"]) * 0.45).normalized()
+	_move_bot_towards(b, proxy.global_position + flee_dir * 9.0, 6.5, delta, "run")
 
 func _is_near_any_lit_campfire(pos: Vector3, max_dist: float) -> bool:
 	if world == null or not ("_lit_campfires" in world):
@@ -2309,7 +2337,9 @@ func _bot_should_hunt_prey(b: Dictionary) -> bool:
 	var hunger := float(b["hunger"])
 	if _is_world_night() and hunger >= 24.0:
 		return false
-	if hunger < 62.0 or not _bot_has_edible_food(proxy, hunger < 28.0):
+	var starved_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("starved", 0))
+	var hunt_hunger_line := 62.0 + minf(15.0, float(starved_lessons) * 5.0)
+	if hunger < hunt_hunger_line or not _bot_has_edible_food(proxy, hunger < 28.0):
 		return true
 	if str(_ai_active_directive(b).get("action", "")) == "hunt":
 		return true
@@ -2378,9 +2408,6 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 	var dist := proxy.global_position.distance_to(ppos)
 	var to_prey := ppos - proxy.global_position
 	to_prey.y = 0.0
-	if to_prey.length_squared() > 0.001:
-		b["rot"] = atan2(-to_prey.x, -to_prey.z)
-		proxy.rotation.y = float(b["rot"])
 
 	var pick := _pick_fight_weapon(b, dist)
 	var wkind := str(pick.get("kind", "melee"))
@@ -2402,10 +2429,16 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 		b["crouching"] = stalk_crouch
 		proxy.set_meta("crouching", stalk_crouch)
 		if dist > 30.0:
-			_move_bot_towards(b, ppos, 2.8 if stalk_crouch else 4.4, delta, "walk" if stalk_crouch else "run")
+			_move_bot_towards(b, ppos, 2.8 if stalk_crouch else 6.2, delta, "walk" if stalk_crouch else "run")
 		else:
 			b["anim"] = "idle"
+			if to_prey.length_squared() > 0.001:
+				b["rot"] = atan2(-to_prey.x, -to_prey.z)
+				proxy.rotation.y = float(b["rot"])
 		if dist <= 45.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+			if to_prey.length_squared() > 0.001:
+				b["rot"] = atan2(-to_prey.x, -to_prey.z)
+				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 0.95 if weapon == "Fusil de asalto" else 1.65
 			var dmg := 68.0 if weapon == "Fusil de asalto" else 145.0
 			_bot_fire_rifle_at(b, prey, dmg)
@@ -2416,10 +2449,16 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 		b["crouching"] = stalk_crouch
 		proxy.set_meta("crouching", stalk_crouch)
 		if dist > 22.0:
-			_move_bot_towards(b, ppos, 2.7 if stalk_crouch else 4.2, delta, "walk" if stalk_crouch else "run")
+			_move_bot_towards(b, ppos, 2.7 if stalk_crouch else 6.2, delta, "walk" if stalk_crouch else "run")
 		else:
 			b["anim"] = "idle"
+			if to_prey.length_squared() > 0.001:
+				b["rot"] = atan2(-to_prey.x, -to_prey.z)
+				proxy.rotation.y = float(b["rot"])
 		if dist <= 34.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+			if to_prey.length_squared() > 0.001:
+				b["rot"] = atan2(-to_prey.x, -to_prey.z)
+				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 1.55 if weapon == "Arco reforzado" else 1.9
 			_bot_fire_bow(b, prey, weapon)
 		return
@@ -2429,10 +2468,16 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 		b["crouching"] = stalk_crouch
 		proxy.set_meta("crouching", stalk_crouch)
 		if dist > 16.0:
-			_move_bot_towards(b, ppos, 2.7 if stalk_crouch else 4.5, delta, "walk" if stalk_crouch else "run")
+			_move_bot_towards(b, ppos, 2.7 if stalk_crouch else 6.2, delta, "walk" if stalk_crouch else "run")
 		else:
 			b["anim"] = "idle"
+			if to_prey.length_squared() > 0.001:
+				b["rot"] = atan2(-to_prey.x, -to_prey.z)
+				proxy.rotation.y = float(b["rot"])
 		if dist <= 22.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+			if to_prey.length_squared() > 0.001:
+				b["rot"] = atan2(-to_prey.x, -to_prey.z)
+				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 2.6 if wkind == "bola" else 2.1
 			_bot_fire_thrown(b, prey, weapon, wkind == "bola")
 		return
@@ -2442,6 +2487,9 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 	if dist <= melee_reach:
 		b["crouching"] = false
 		proxy.set_meta("crouching", false)
+		if to_prey.length_squared() > 0.001:
+			b["rot"] = atan2(-to_prey.x, -to_prey.z)
+			proxy.rotation.y = float(b["rot"])
 		b["anim"] = "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
 		if float(b["attack_cooldown"]) <= 0.0:
 			b["attack_cooldown"] = 0.55
@@ -2460,7 +2508,7 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 		# La presa ya arrancó o está trabada: esprintar tras ella hasta alcanzarla
 		b["crouching"] = false
 		proxy.set_meta("crouching", false)
-		_move_bot_towards(b, ppos, 5.1, delta, "run")
+		_move_bot_towards(b, ppos, 6.5, delta, "run")
 
 func _find_tameable_wolf(b: Dictionary, max_dist: float) -> Node3D:
 	if world == null or world.get_tree() == null:
@@ -2712,9 +2760,6 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	var dist := proxy.global_position.distance_to(fpos)
 	var to_foe := fpos - proxy.global_position
 	to_foe.y = 0.0
-	if to_foe.length_squared() > 0.001:
-		b["rot"] = atan2(-to_foe.x, -to_foe.z)
-		proxy.rotation.y = float(b["rot"])
 
 	# Un superviviente usa el mismo arsenal que un jugador: elige el arma
 	# segun la distancia — fusil, arco con flechas, arrojadiza o cuerpo a cuerpo.
@@ -2731,17 +2776,20 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		# si esta en rango de tiro, no se queda quieto — zigzaguea lateralmente
 		# entre disparos para no ser un blanco facil.
 		if dist > 26.0:
-			_move_bot_towards(b, fpos, 4.2, delta, "run")
+			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
 			if float(b["strafe_timer"]) > 1.4:
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
 			var side := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
-			_move_bot_towards(b, proxy.global_position + side * float(b["strafe_dir"]) * 3.0, 3.2, delta, "walk")
+			_move_bot_towards(b, proxy.global_position + side * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
 		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+			if to_foe.length_squared() > 0.001:
+				b["rot"] = atan2(-to_foe.x, -to_foe.z)
+				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 1.15 if weapon == "Fusil de asalto" else 1.85
 			var dmg := 26.0 if weapon == "Fusil de asalto" else 48.0
 			_bot_fire_rifle_at(b, foe, dmg)
@@ -2754,35 +2802,37 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			b["strafe_timer"] = 0.0
 		var side2 := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
 		var zig_goal := fpos + side2 * float(b["strafe_dir"]) * 5.0
-		_move_bot_towards(b, zig_goal, 4.6, delta, "run")
+		_move_bot_towards(b, zig_goal, 6.4, delta, "run")
 		return
 
 	# Arco: consume una flecha por disparo, como un jugador. A distancia media
-	# se mueve en zigzag; si el rival se cierra (< 9.5 m) retrocede disparando;
+	# se mueve en zigzag; si el rival se cierra (< 9.5 m) retrocede corriendo;
 	# de muy cerca cambia a melee porque el arco no sirve.
 	if wkind == "bow" and dist > 4.5 and dist <= 46.0:
 		b["is_aiming"] = true
 		if dist > 30.0:
-			_move_bot_towards(b, fpos, 4.0, delta, "run")
-		elif dist < 9.5 and to_foe.length_squared() > 0.01:
-			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 5.0, 3.5, delta, "walk")
-			b["rot"] = atan2(-to_foe.x, -to_foe.z)
-			proxy.rotation.y = float(b["rot"])
+			_move_bot_towards(b, fpos, 6.4, delta, "run")
+		elif dist < 9.5 and to_foe.length_squared() > 0.01 and float(b["shoot_cooldown"]) > 0.15:
+			b["is_aiming"] = false
+			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 5.0, 6.2, delta, "run")
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
 			if float(b["strafe_timer"]) > 1.5:
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
 			var sideb := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
-			_move_bot_towards(b, proxy.global_position + sideb * float(b["strafe_dir"]) * 3.0, 3.2, delta, "walk")
+			_move_bot_towards(b, proxy.global_position + sideb * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
 		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+			if to_foe.length_squared() > 0.001:
+				b["rot"] = atan2(-to_foe.x, -to_foe.z)
+				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 1.55 if weapon == "Arco reforzado" else 1.9
 			_bot_fire_bow(b, foe, weapon)
 		return
 	if wkind == "bow" and dist > 46.0:
-		_move_bot_towards(b, fpos, 4.4, delta, "run")
+		_move_bot_towards(b, fpos, 6.4, delta, "run")
 		return
 
 	# Arrojadizas (lanzas, palo afilado, boleadoras): un lanzamiento cada pocos
@@ -2790,29 +2840,34 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	if wkind in ["thrown", "bola"] and dist > 4.5 and dist <= 38.0:
 		b["is_aiming"] = true
 		if dist > 26.0:
-			_move_bot_towards(b, fpos, 4.2, delta, "run")
-		elif dist < 8.5 and to_foe.length_squared() > 0.01:
-			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 4.5, 3.5, delta, "walk")
-			b["rot"] = atan2(-to_foe.x, -to_foe.z)
-			proxy.rotation.y = float(b["rot"])
+			_move_bot_towards(b, fpos, 6.4, delta, "run")
+		elif dist < 8.5 and to_foe.length_squared() > 0.01 and float(b["shoot_cooldown"]) > 0.15:
+			b["is_aiming"] = false
+			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 4.5, 6.2, delta, "run")
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
 			if float(b["strafe_timer"]) > 1.6:
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
 			var sidet := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
-			_move_bot_towards(b, proxy.global_position + sidet * float(b["strafe_dir"]) * 3.0, 3.4, delta, "walk")
+			_move_bot_towards(b, proxy.global_position + sidet * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
 		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+			if to_foe.length_squared() > 0.001:
+				b["rot"] = atan2(-to_foe.x, -to_foe.z)
+				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 2.6 if wkind == "bola" else 2.1
 			_bot_fire_thrown(b, foe, weapon, wkind == "bola")
 		return
 	if wkind in ["thrown", "bola"] and dist > 38.0:
-		_move_bot_towards(b, fpos, 4.5, delta, "run")
+		_move_bot_towards(b, fpos, 6.4, delta, "run")
 		return
 
 	b["is_aiming"] = false
 	var reach := 3.6
 	if dist <= reach:
+		if to_foe.length_squared() > 0.001:
+			b["rot"] = atan2(-to_foe.x, -to_foe.z)
+			proxy.rotation.y = float(b["rot"])
 		b["anim"] = "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
 		if float(b["attack_cooldown"]) <= 0.0:
 			b["attack_cooldown"] = 0.68
@@ -2822,7 +2877,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			_apply_bot_damage_to_target(b, foe, melee_dmg * 0.45, "melee")
 			_reduce_bot_item_durability(proxy, melee_w, 1.5)
 	else:
-		_move_bot_towards(b, fpos, 4.7, delta, "run")
+		_move_bot_towards(b, fpos, 6.5, delta, "run")
 
 func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 	var proxy: Node3D = b["proxy"]
@@ -3097,6 +3152,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 		krel["fear"] = snappedf(clampf(float(krel.get("fear", 0.0)) + 0.30, 0.0, 1.0), 0.001)
 		record_strategy_outcome(bot_id, "scavenge", false, 0.16)
 	b["_last_attacker_id"] = 0
+	_record_death_lesson(b, mem, death_kind)
 	record_bot_event(bot_id, "death", death_kind, _poi_kind_near(dp), dp, "died:" + death_kind)
 	_evolve_personality(b, "death", 0.6)
 	_ai_save_memory()
@@ -3104,10 +3160,16 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	proxy.remove_from_group("net_player_proxy")
 	proxy.add_to_group("interactable")
 	b["anim"] = "dead_melee" if death_kind == "melee" else "dead"
+	b["_act"] = "dead"
 	b["torch_lit"] = false
 	b["is_aiming"] = false
 	b["crouching"] = false
 	b["sitting"] = false
+	b["explore_target"] = Vector3.INF
+	b["_ambush"] = {}
+	b["_meet_id"] = 0
+	b["team_leader_id"] = 0
+	proxy.set_meta("team_leader_id", 0)
 	b["respawn_timer"] = 0.0
 	if world.has_method("_release_dead_owner_wolves"):
 		world._release_dead_owner_wolves(bot_id, str(b["client_id"]), proxy, false)
@@ -3119,6 +3181,70 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	if world.has_method("_net_player_death_broadcast"):
 		world._net_player_death_broadcast(bot_id, proxy.global_position, float(b["rot"]), death_kind)
 	_publish_bot_to_net_players(b)
+
+# Aprendizaje especifico por causa de muerte: cada muerte deja una adaptacion
+# conductual concreta (sed, hambre, depredadores, combate o frio) que modifica
+# umbrales de reaccion, radios de alerta, estrategias y rasgos en siguientes vidas.
+func _record_death_lesson(b: Dictionary, mem: Dictionary, death_kind: String) -> void:
+	var bid := int(b.get("bot_id", 901))
+	var lessons: Dictionary = mem.get("death_lessons", {})
+	var p := _get_bot_personality(b)
+	var base_p := _default_personality_for_bot(bid, b.get("cfg", {}))
+	var cat := "combat"
+	match death_kind:
+		"dehydrated":
+			cat = "dehydrated"
+			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "curiosity", 0.03, float(base_p["curiosity"]))
+			record_strategy_outcome(bid, "forage", true, 0.14)
+			_record_milestone(bid, "learned_hydration")
+		"starved":
+			cat = "starved"
+			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "curiosity", 0.03, float(base_p["curiosity"]))
+			record_strategy_outcome(bid, "forage", true, 0.16)
+			record_strategy_outcome(bid, "hunt", true, 0.12)
+			_record_milestone(bid, "learned_foraging")
+		"wolf_bite", "bear_bite":
+			cat = "predator"
+			_adjust_trait(p, "survival_instinct", 0.05, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "bravery", -0.03, float(base_p["bravery"]))
+			record_strategy_outcome(bid, "fortify_camp", true, 0.14)
+			_record_milestone(bid, "learned_predator_evasion")
+		"hypothermia", "exhausted":
+			cat = "cold"
+			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
+			record_strategy_outcome(bid, "fortify_camp", true, 0.15)
+			_record_milestone(bid, "learned_shelter_warmth")
+		_:
+			cat = "combat"
+			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
+			_adjust_trait(p, "distrust", 0.04, float(base_p["distrust"]))
+			record_strategy_outcome(bid, "explore_military", true, 0.12)
+			_record_milestone(bid, "learned_combat_tactics")
+	lessons[cat] = int(lessons.get(cat, 0)) + 1
+	mem["death_lessons"] = lessons
+	b["personality"] = p
+
+func _bot_death_adaptations(mem: Dictionary) -> Array:
+	var lessons: Dictionary = mem.get("death_lessons", {})
+	var out: Array = []
+	var deh := int(lessons.get("dehydrated", 0))
+	if deh > 0:
+		out.append("💧 Hidratación preventiva (+%d%% umbral de sed)" % mini(18, deh * 6))
+	var stv := int(lessons.get("starved", 0))
+	if stv > 0:
+		out.append("🍄 Forrajeo temprano (+%d%% umbral de hambre)" % mini(18, stv * 6))
+	var prd := int(lessons.get("predator", 0))
+	if prd > 0:
+		out.append("🐺 Alerta anti-depredadores (+%d m radio de detección)" % mini(12, prd * 4))
+	var cmb := int(lessons.get("combat", 0))
+	if cmb > 0:
+		out.append("🛡 Táctica de combate (repliegue a <%d HP)" % (30 + mini(15, cmb * 5)))
+	var cld := int(lessons.get("cold", 0))
+	if cld > 0:
+		out.append("🔥 Prioridad térmica (abrigo y fogata temprana)")
+	return out
 
 func _bot_has_drink(proxy: Node3D) -> bool:
 	return _bot_drink_count(proxy) > 0
@@ -3208,9 +3334,11 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 	var dist := cur.distance_to(lpos)
 	var step_wp := _resolve_building_interior_waypoint(b, cur, lpos)
 	var separated_by_structure: bool = step_wp != lpos or absf(cur.y - lpos.y) > 1.3
-	if dist > 3.2 or separated_by_structure:
-		var spd := 5.2 if (dist > 8.5 and not bool(b["crouching"])) else 3.8
-		var clip := "run" if (dist > 8.5 and not bool(b["crouching"])) else "walk"
+	if dist > 3.0 or separated_by_structure:
+		var leader_sprinting: bool = bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true)
+		var should_run: bool = not bool(b["crouching"]) and (dist > 5.2 or (dist > 3.2 and leader_sprinting))
+		var spd := 6.8 if should_run else 4.2
+		var clip := "run" if should_run else "walk"
 		_move_bot_towards(b, lpos, spd, delta, clip)
 	else:
 		# Cerca del líder en la misma planta: si hay un botín útil muy a mano (< 8 m), recogerlo
@@ -6490,8 +6618,11 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		nav_guided = true
 	elif (flat_dist > 3.5 or direct_blocked) and bot_nav_ref != null:
 		var path: Array = b["path"]
-		if path.is_empty() or float(b["path_timer"]) <= 0.0:
+		var prev_pgoal: Vector3 = b.get("_path_goal", Vector3.INF) if b.get("_path_goal") is Vector3 else Vector3.INF
+		var goal_shifted: bool = prev_pgoal == Vector3.INF or Vector2(goal.x - prev_pgoal.x, goal.z - prev_pgoal.z).length() > 2.5
+		if path.is_empty() or float(b["path_timer"]) <= 0.0 or goal_shifted:
 			b["path"] = bot_nav_ref.find_path(cur, goal)
+			b["_path_goal"] = goal
 			b["path_idx"] = 0
 			b["path_timer"] = 1.8
 			path = b["path"]
@@ -6556,20 +6687,27 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		av.y = 0.0
 		if av.length_squared() > 0.001:
 			dir = (dir + av.normalized() * 0.55).normalized()
-	# Suavizado de rumbo y aceleracion (mas agil en rellanos de escalera/puertas)
+	# Suavizado de rumbo y aceleracion: en giros > ~75° (p.ej. darse la vuelta
+	# para huir de un animal) asentar el rumbo directo evita que sm + (dir - sm)
+	# se anule o siga apuntando hacia la amenaza al normalizarse.
 	var sm: Vector3 = b.get("_mdir", Vector3.ZERO)
-	var turn_rate := 18.0 if in_building_3d else 7.0
-	sm = sm + (dir - sm) * minf(1.0, delta * turn_rate)
-	if sm.length_squared() > 0.001:
-		sm = sm.normalized()
+	if sm.length_squared() < 0.001 or sm.dot(dir) < 0.25:
+		sm = dir
+	else:
+		var turn_rate := 18.0 if in_building_3d else 10.0
+		sm = (sm + (dir - sm) * minf(1.0, delta * turn_rate)).normalized()
 	b["_mdir"] = sm
 	var on_stair_segment: bool = in_building_3d and absf(next_goal.y - cur.y) > 0.25
-	var eff_speed := minf(speed, 3.2) if on_stair_segment else speed
+	var base_spd := maxf(speed, 6.2) if (anim_name == "run" and not on_stair_segment) else speed
+	var eff_speed := minf(base_spd, 3.2) if on_stair_segment else base_spd
 	# Sobrepeso: frena igual que al jugador humano (walk * (1 - carry * 0.2))
 	var carry_ratio := _bot_carry_ratio(b)
 	if carry_ratio > 0.0:
 		eff_speed *= 1.0 - carry_ratio * 0.2
-	var spd := move_toward(float(b.get("_speed", 0.0)), eff_speed * (0.45 if depth_cur > 0.12 else 1.0), delta * (11.0 if in_building_3d else 6.5))
+	var cur_spd := float(b.get("_speed", 0.0))
+	if anim_name == "run" and not on_stair_segment and cur_spd < 3.8:
+		cur_spd = 3.8
+	var spd := move_toward(cur_spd, eff_speed * (0.45 if depth_cur > 0.12 else 1.0), delta * 15.0)
 	b["_speed"] = spd
 	var step := minf(spd * delta, d)
 	var chosen_dir := dir if in_building_3d else (sm if sm.length_squared() > 0.001 else dir)
@@ -6612,7 +6750,11 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	proxy.global_position = new_pos
 	proxy.set_meta("saved_pos", new_pos)
 	b["pos"] = new_pos
-	b["rot"] = lerp_angle(float(b["rot"]), atan2(-chosen_dir.x, -chosen_dir.z), minf(1.0, delta * 8.0))
+	var target_yaw := atan2(-chosen_dir.x, -chosen_dir.z)
+	if absf(angle_difference(float(b["rot"]), target_yaw)) > 1.2:
+		b["rot"] = target_yaw
+	else:
+		b["rot"] = lerp_angle(float(b["rot"]), target_yaw, minf(1.0, delta * 15.0))
 	proxy.rotation.y = float(b["rot"])
 	var climbing_stairs_now: bool = on_stair_segment or (in_building_3d and absf(new_pos.y - cur.y) > delta * 0.16)
 	b["anim"] = ("stairs" if not bool(b.get("has_rifle", false)) else "walk") if climbing_stairs_now else anim_name
@@ -6729,11 +6871,15 @@ func _bot_skin_wet_factor(b: Dictionary) -> float:
 
 func _bot_is_freezing(b: Dictionary) -> bool:
 	var st: SurvivalStats = b.get("vstats")
-	return st != null and not st.dead and st.body_temperature < 35.2
+	var cold_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("cold", 0))
+	var thresh := 35.2 + minf(0.45, float(cold_lessons) * 0.15)
+	return st != null and not st.dead and st.body_temperature < thresh
 
 func _bot_is_exhausted(b: Dictionary) -> bool:
 	var st: SurvivalStats = b.get("vstats")
-	return st != null and not st.dead and st.sleep < 14.0
+	var cold_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("cold", 0))
+	var thresh := 14.0 + minf(9.0, float(cold_lessons) * 3.0)
+	return st != null and not st.dead and st.sleep < thresh
 
 func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var st: SurvivalStats = b.get("vstats")
@@ -7535,6 +7681,8 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["zone_yield"] = {}
 	if not mem.has("death_spots") or not (mem["death_spots"] is Array):
 		mem["death_spots"] = []
+	if not mem.has("death_lessons") or not (mem["death_lessons"] is Dictionary):
+		mem["death_lessons"] = {}
 	if not mem.has("events") or not (mem["events"] is Array):
 		mem["events"] = []
 	if not mem.has("events_summary") or not (mem["events_summary"] is Dictionary):
@@ -8488,7 +8636,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		_compact_known_locations(mem)
@@ -8541,7 +8689,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
@@ -8599,7 +8747,8 @@ func _ai_poi_memory_factor(b: Dictionary, pos: Vector3, kind: String) -> float:
 			var dx := pos.x - float(s.get("x", 0.0))
 			var dz := pos.z - float(s.get("z", 0.0))
 			if dx * dx + dz * dz < 2025.0:
-				factor *= 0.55
+				var dcnt := clampi(int(s.get("count", 1)), 1, 3)
+				factor *= pow(0.55, float(dcnt))
 				break
 	var known: Dictionary = mem.get("known_locations", {})
 	var pid := "%s:%d:%d" % [kind, int(pos.x), int(pos.z)]
@@ -8669,6 +8818,8 @@ func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
 		"known_locations_count": (mem.get("known_locations", {}) as Dictionary).size(),
 		"relationships": (mem.get("relationships", {}) as Dictionary).duplicate(true),
 		"strategies": (mem.get("strategies", {}) as Dictionary).duplicate(true),
+		"death_lessons": (mem.get("death_lessons", {}) as Dictionary).duplicate(true),
+		"adaptations": _bot_death_adaptations(mem),
 		"pending_goals": (mem.get("pending_goals", []) as Array).duplicate(true),
 		"groq_stats": {
 			"status": _ai_conn_status,
@@ -8731,6 +8882,9 @@ func get_ai_debug_report() -> String:
 			int(snap.get("known_locations_count", 0)),
 			(", ".join(m_parts) if not m_parts.is_empty() else "ninguno")
 		])
+		var adapts: Array = snap.get("adaptations", [])
+		if not adapts.is_empty():
+			lines.append("  Evolución por muertes: %s" % " · ".join(adapts))
 	return "\n".join(lines)
 
 func get_full_web_status() -> Dictionary:
@@ -8766,8 +8920,9 @@ func get_full_web_status() -> Dictionary:
 		snap["rot"] = snappedf(float(b.get("rot", 0.0)), 0.01)
 		snap["anim"] = str(b.get("anim", "idle"))
 		snap["act"] = str(b.get("_act", "?"))
-		snap["dead"] = bool(proxy.get_meta("proxy_dead", false)) if proxy != null and is_instance_valid(proxy) else false
-		snap["respawn_seconds"] = int(maxf(0.0, 180.0 - float(b.get("respawn_timer", 0.0)))) if bool(snap["dead"]) else 0
+		var is_b_dead: bool = (proxy != null and is_instance_valid(proxy) and bool(proxy.get_meta("proxy_dead", false))) or str(b.get("anim", "")).begins_with("dead") or float(b.get("health", 100.0)) <= 0.0
+		snap["dead"] = is_b_dead
+		snap["respawn_seconds"] = int(maxf(0.0, 180.0 - float(b.get("respawn_timer", 0.0)))) if is_b_dead else 0
 		snap["held_item"] = str(b.get("held_item", ""))
 		snap["clothing"] = str(b.get("clothing", ""))
 		snap["backpack"] = str(b.get("backpack", ""))
@@ -8863,9 +9018,11 @@ func get_full_web_status() -> Dictionary:
 		snap["avg_life_seconds"] = int(alive_total / maxf(1.0, float(lives_n)))
 		snap["score"] = score
 		snap["stats"] = st
-		# Evolucion: rasgos base (para mostrar el delta) e hitos de conducta nueva
+		# Evolucion: rasgos base (para mostrar el delta), hitos y adaptaciones por muertes
 		snap["base_personality"] = _default_personality_for_bot(bid)
 		snap["milestones"] = mem.get("milestones", {})
+		snap["death_lessons"] = mem.get("death_lessons", {})
+		snap["adaptations"] = _bot_death_adaptations(mem)
 		bots_out.append(snap)
 	# Puntos de interes fijos del mundo que no son objetivos de exploracion de
 	# los bots (p. ej. la base militar de la cumbre: esta a 56 m de altura y
@@ -8942,16 +9099,23 @@ func get_full_web_status() -> Dictionary:
 					"dead": bool((pr2 as Node3D).get_meta("proxy_dead", false)),
 					"offline": false,
 				})
-	# Equipos autonomos bot-bot para el panel: cada lider libre con miembros.
+	# Equipos autonomos bot-bot para el panel: cada lider libre con miembros (solo vivos).
 	var teams_out: Array = []
 	for tid in ids:
 		var tb: Dictionary = bots[tid]
+		var tpr: Node3D = tb.get("proxy")
+		if tpr != null and is_instance_valid(tpr) and bool(tpr.get_meta("proxy_dead", false)):
+			continue
 		if int(tb.get("team_leader_id", 0)) != 0:
 			continue
 		var members: Array = []
 		for oid in bots.keys():
-			if int(bots[oid].get("team_leader_id", 0)) == int(tid):
-				members.append({"id": int(oid), "name": str(bots[oid].get("name", str(oid)))})
+			var ob_m: Dictionary = bots[oid]
+			var opr_m: Node3D = ob_m.get("proxy")
+			if opr_m != null and is_instance_valid(opr_m) and bool(opr_m.get_meta("proxy_dead", false)):
+				continue
+			if int(ob_m.get("team_leader_id", 0)) == int(tid):
+				members.append({"id": int(oid), "name": str(ob_m.get("name", str(oid)))})
 		if not members.is_empty():
 			teams_out.append({"leader_id": int(tid), "leader": str(tb.get("name", str(tid))), "members": members})
 	return {
@@ -9024,7 +9188,8 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var hunger := float(b["hunger"])
 	var desperate := hunger < 24.0
 	var scarcity := bool(b.get("_mem", {}).get("scarcity", false))
-	var line := 58.0 + (14.0 if scarcity else 0.0)
+	var starved_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("starved", 0))
+	var line := 58.0 + (14.0 if scarcity else 0.0) + minf(18.0, float(starved_lessons) * 6.0)
 	var leader := _sensed_node(b, "_s_leader")
 	var allowed := hunger < line and (leader == null or desperate)
 	# De noche o oculto solo sale a comer si se esta muriendo de hambre:

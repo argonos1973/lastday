@@ -1281,7 +1281,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = _rifle_run_animation
 			elif lower.find("stair") >= 0 and not third_person_stairs_animation.is_empty():
 				target = third_person_stairs_animation
-			elif lower.find("sneak") >= 0 or (is_crouching and (lower == "walk" or lower == "idle")):
+			elif lower.find("sneak_walk") >= 0 or lower.find("sneakwalk") >= 0 or (is_crouching and (lower == "walk" or lower == "run")):
+				target = third_person_sneak_walk_animation if not third_person_sneak_walk_animation.is_empty() else third_person_sneak_animation
+			elif lower.find("sneak") >= 0 or (is_crouching and lower == "idle"):
 				target = third_person_sneak_animation
 			elif lower.find("run") >= 0:
 				target = _rifle_run_animation if (holding_rifle_now and not _rifle_run_animation.is_empty()) else third_person_run_animation
@@ -1691,8 +1693,21 @@ func _process(delta: float) -> void:
 				_puppet_current_anim = ""
 		if not is_dead:
 			if third_person_action_timer <= 0.0 and third_person_animation_player != null and not third_person_animation_player.current_animation.is_empty():
-				_loop_third_person_animation(third_person_animation_player.current_animation)
-				third_person_animation_player.speed_scale = 0.55 if is_crouching else 1.0
+				var cur_p_anim := third_person_animation_player.current_animation
+				_loop_third_person_animation(cur_p_anim)
+				var p_anim_l := _puppet_anim.to_lower()
+				var is_p_run := cur_p_anim == third_person_run_animation or cur_p_anim == _rifle_run_animation or p_anim_l.find("run") >= 0
+				var is_p_walk := not is_p_run and (cur_p_anim == third_person_walk_animation or cur_p_anim == _rifle_walk_animation or p_anim_l.find("walk") >= 0)
+				# La zancada agachada (bots acechando, jugador en cuclillas) se
+				# deslizaba: el clip va a speed_scale fijo 0.65 pero la velocidad
+				# real del puppet varía 2.0-3.4 m/s. Se escala por el
+				# desplazamiento medido — 2.0 m/s reproduce el 0.65 de antes.
+				var is_p_sneak_move := (is_crouching or p_anim_l.find("sneak") >= 0) and (is_p_walk or p_anim_l.find("sneak") >= 0)
+				if is_p_sneak_move:
+					var sneak_spd := float(get_meta("puppet_move_speed", 0.0))
+					third_person_animation_player.speed_scale = clampf(sneak_spd / 3.1, 0.4, 1.7) if sneak_spd > 0.4 else 0.65
+				else:
+					third_person_animation_player.speed_scale = 0.65 if is_crouching else (1.24 if is_p_run else (1.08 if is_p_walk else 1.0))
 			_update_puppet_ground_alignment(delta)
 			_update_rifle_visuals(delta)
 			_update_puppet_locomotion_audio(delta)
