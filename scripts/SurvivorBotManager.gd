@@ -6304,8 +6304,17 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 		"scavenge": (aggression * 1.25 + distrust * 1.05 + bravery * 0.40 - cooperation * 0.55) * float((strats.get("scavenge", {}) as Dictionary).get("preference", 1.0)),
 		"explore": (curiosity * 1.10 + sociability * 0.35 - need_heal * 0.6 - distrust * 0.25) * float((strats.get("explore", {}) as Dictionary).get("preference", 1.0)),
 		"rest": (need_heal * 1.55 + survival * 0.70 - bravery * 0.35) * float((strats.get("rest", {}) as Dictionary).get("preference", 1.0)),
-		"seek_ally": (sociability * 0.95 + cooperation * 0.95 - distrust * 0.85 - aggression * 0.50) * (1.15 if threat_present else 0.75),
+		# El cooperativo busca compañia incluso en paz; y quien ya trabajo con
+		# otro bot (vinculo previo) lo busca activamente para reagruparse.
+		"seek_ally": (sociability * 0.95 + cooperation * 0.95 - distrust * 0.85 - aggression * 0.50) * (1.15 if threat_present else 0.75 + cooperation * 0.35),
 	}
+	var bond_bonus := 0.0
+	for rk in (mem.get("relationships", {}) as Dictionary).keys():
+		var rv: Dictionary = mem["relationships"][rk]
+		if str(rk).begins_with("bot_") and (float(rv.get("trust", 0.0)) >= BOT_TEAM_FORM_TRUST or int(rv.get("helped", 0)) >= 2):
+			bond_bonus = 0.35
+			break
+	scores["seek_ally"] = float(scores["seek_ally"]) + bond_bonus
 	if threat_present and hp < 55.0 and survival > bravery:
 		scores["rest"] = float(scores["rest"]) + 0.9
 	if not risky_zone.is_empty():
