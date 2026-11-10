@@ -2251,6 +2251,76 @@ func run() -> void:
 	check(JSON.parse_string(JSON.stringify(st_json)) != null,
 		"10y14: el status completo serializa a JSON")
 
+	# 10z: iman social — un bot libre y sociable viaja a REUNIRSE con un aliado
+	# potencial dentro de BOT_TEAM_MEET_DIST en vez de vagar sin rumbo.
+	for bb in [elena_y, carlos_y, kael_y]:
+		bb["team_leader_id"] = 0
+		bb["proxy"].set_meta("team_leader_id", 0)
+		bb["_ambush"] = {}
+		bb["_soc_t"] = 0.0
+		bb["_meet_id"] = 0
+		bb["aggro_target"] = null
+		bb["explore_target"] = Vector3.INF
+		bb["explore_dwell"] = 0.0
+		bb["ai_directive"] = {}
+		bb["proxy"].set_meta("proxy_dead", false)
+		if not bb["proxy"].is_in_group("net_player_proxy"):
+			bb["proxy"].add_to_group("net_player_proxy")
+	mgr._ensure_bot_memory(901)["relationships"]["bot_902"] = {"id": "bot_902", "name": "Carlos", "trust": 0.0, "hostility": 0.0, "fear": 0.0, "helped": 2, "attacked": 0}
+	mgr._ensure_bot_memory(902)["relationships"]["bot_901"] = {"id": "bot_901", "name": "Elena", "trust": 0.5, "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0}
+	mgr._ensure_bot_memory(903)["relationships"].erase("bot_901")
+	mgr._ensure_bot_memory(903)["relationships"].erase("bot_902")
+	elena_y["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	carlos_y["proxy"].global_position = Vector3(200.0, 0.4, 0.0)
+	kael_y["proxy"].global_position = Vector3(-300.0, 0.4, -300.0)
+	mgr._bot_social_update(elena_y)
+	mgr._bot_social_update(carlos_y)
+	var et_z: Vector3 = elena_y["explore_target"]
+	check(int(elena_y["_meet_id"]) == 902 and et_z.distance_to(carlos_y["proxy"].global_position) < 1.0,
+		"10z1: Elena viaja a reunirse con Carlos (meet=%d, target=%s)" % [int(elena_y.get("_meet_id", 0)), str(et_z)])
+	check(int(carlos_y["_meet_id"]) == 901,
+		"10z2: Carlos tambien busca a Elena — convergencia mutua")
+
+	# Hostilidad mutua cancela el iman: no se acercan a quien temen
+	mgr._ensure_bot_memory(901)["relationships"]["bot_902"]["hostility"] = 0.9
+	elena_y["_meet_id"] = 0
+	elena_y["explore_target"] = Vector3.INF
+	elena_y["_soc_t"] = 0.0
+	mgr._bot_social_update(elena_y)
+	check(int(elena_y["_meet_id"]) == 0,
+		"10z3: con hostilidad alta no hay reencuentro")
+	mgr._ensure_bot_memory(901)["relationships"]["bot_902"]["hostility"] = 0.0
+
+	# Fuera del radio social no se busca a nadie
+	carlos_y["proxy"].global_position = Vector3(700.0, 0.4, 0.0)
+	elena_y["_meet_id"] = 0
+	elena_y["explore_target"] = Vector3.INF
+	elena_y["_soc_t"] = 0.0
+	mgr._bot_social_update(elena_y)
+	check(int(elena_y["_meet_id"]) == 0 and elena_y["explore_target"] == Vector3.INF,
+		"10z4: un aliado a >%d m queda fuera del iman" % int(mgr.BOT_TEAM_MEET_DIST))
+
+	# Una directiva con proposito (rest/return_home) no se pisa por el iman
+	carlos_y["proxy"].global_position = Vector3(200.0, 0.4, 0.0)
+	elena_y["ai_directive"] = {"mode": "pos", "pos": Vector3(50.0, 0.4, 50.0), "action": "rest", "until": Time.get_ticks_msec() + 60000}
+	elena_y["_meet_id"] = 0
+	elena_y["explore_target"] = Vector3.INF
+	elena_y["_soc_t"] = 0.0
+	mgr._bot_social_update(elena_y)
+	check(int(elena_y["_meet_id"]) == 0 and elena_y["explore_target"] == Vector3.INF,
+		"10z5: una orden activa (rest) frena el iman social")
+	elena_y["ai_directive"] = {}
+
+	# El status expone el reencuentro en curso para el panel web
+	elena_y["_meet_id"] = 902
+	var st_meet: Dictionary = mgr.get_full_web_status()
+	var meet_ok := false
+	for sb in st_meet.get("bots", []):
+		if int((sb as Dictionary).get("bot_id", 0)) == 901:
+			meet_ok = str((sb as Dictionary).get("meet", {}).get("target", "")) == "Carlos"
+	check(meet_ok, "10z6: status expone meet{target,dist} del reencuentro")
+	elena_y["_meet_id"] = 0
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

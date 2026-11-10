@@ -943,6 +943,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["sick_timer"] = maxf(0.0, float(b.get("sick_timer", 0.0)) - delta)
 	b["cook_cooldown"] = maxf(0.0, float(b["cook_cooldown"]) - delta)
 	b["_soc_t"] = maxf(0.0, float(b.get("_soc_t", 0.0)) - delta)
+	b["_meet_ev_t"] = maxf(0.0, float(b.get("_meet_ev_t", 0.0)) - delta)
 	b["aggro_timer"] = maxf(0.0, float(b["aggro_timer"]) - delta)
 	if float(b["aggro_timer"]) <= 0.0:
 		b["aggro_target"] = null
@@ -3143,6 +3144,9 @@ const BOT_TEAM_BREAK_TRUST := 0.08
 const BOT_TEAM_MAX_SIZE := 3
 const BOT_TEAM_FORM_DIST := 26.0
 const BOT_TEAM_GIVE_UP_DIST := 160.0
+# Radio del "iman social": dentro de el un bot libre y sociable viaja a
+# reunirse con un aliado potencial en vez de dejar el encuentro al azar.
+const BOT_TEAM_MEET_DIST := 450.0
 const BOT_AMBUSH_STRIKE_RANGED := 12.5
 const BOT_AMBUSH_STRIKE_MELEE := 6.0
 const BOT_AMBUSH_ABORT_DIST := 90.0
@@ -3180,6 +3184,17 @@ func _bot_team_role(b: Dictionary) -> String:
 			return "leader"
 	return ""
 
+# ¿Quiere este bot compañia? Los sociables/cooperativos viajan a reunirse con
+# un aliado potencial; un vinculo previo (confianza o ayudas) siempre tira.
+# Los bandidos se juntan por agresividad — una banda nace para dar el golpe.
+func _bot_wants_company(b: Dictionary, rel: Dictionary) -> bool:
+	if float(rel.get("trust", 0.0)) >= BOT_TEAM_FORM_TRUST or int(rel.get("helped", 0)) >= 2:
+		return true
+	var pers := _get_bot_personality(b)
+	if str(b.get("faction", "")) == "hostile":
+		return float(pers.get("aggression", 0.5)) + float(pers.get("sociability", 0.5)) >= 0.7
+	return float(pers.get("sociability", 0.5)) + float(pers.get("cooperation", 0.5)) >= 1.0
+
 # Llamado al escaneo de sentidos (~5 Hz); el trabajo real se cadencia a ~4 s
 # para no disparar eventos sociales ni reevaluar alianzas cada decima.
 func _bot_social_update(b: Dictionary) -> void:
@@ -3193,6 +3208,8 @@ func _bot_social_update(b: Dictionary) -> void:
 	var my_id := int(b["bot_id"])
 	var my_key := "bot_%d" % my_id
 	var lid := int(b.get("team_leader_id", 0))
+	if lid > 0:
+		b["_meet_id"] = 0 # ya esta en equipo: no busca a nadie
 
 	# 1) Mantener o romper el equipo actual (solo si el lider es otro bot;
 	#    los equipos reclutados por un humano se gestionan por ordenes)
@@ -3219,6 +3236,8 @@ func _bot_social_update(b: Dictionary) -> void:
 		var my_lead := _bot_lead_score(b)
 		var best_target := 0
 		var best_trust := -1.0
+		var meet_id := 0
+		var meet_dist := INF
 		for oid in bots.keys():
 			if oid == my_id:
 				continue
@@ -3228,7 +3247,11 @@ func _bot_social_update(b: Dictionary) -> void:
 			var op: Node3D = ob.get("proxy")
 			if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
 				continue
-			if proxy.global_position.distance_to(op.global_position) > BOT_TEAM_FORM_DIST:
+			var oid_lid := int(ob.get("team_leader_id", 0))
+			if oid_lid > 0 and not is_bot_peer_id(oid_lid):
+				continue # sigue a un humano: no es un aliado libre
+			var odist := proxy.global_position.distance_to(op.global_position)
+			if odist > BOT_TEAM_MEET_DIST:
 				continue
 			var okey := "bot_%d" % oid
 			var rel_out := get_bot_relationship(my_id, okey)
@@ -3236,7 +3259,15 @@ func _bot_social_update(b: Dictionary) -> void:
 			# Los bandidos parten con desconfianza alta entre ellos: su puerta
 			# de convivencia es mas laxa (una banda tarda mas en fraguarse).
 			var host_gate := 0.40 if my_faction == "hostile" else 0.05
-			if float(rel_out.get("hostility", 0.0)) <= host_gate and float(rel_in.get("hostility", 0.0)) <= host_gate:
+			var civil := float(rel_out.get("hostility", 0.0)) <= host_gate and float(rel_in.get("hostility", 0.0)) <= host_gate
+			if odist > BOT_TEAM_FORM_DIST:
+				# Iman social: lejos para convivir pero al alcance — un bot que
+				# quiere compañia viaja a reunirse con su aliado potencial.
+				if civil and _bot_wants_company(b, rel_out) and odist < meet_dist:
+					meet_dist = odist
+					meet_id = oid
+				continue
+			if civil:
 				record_social_event(my_id, okey, str(ob.get("name", okey)), "ally", 0.05, "convive")
 				record_social_event(oid, my_key, str(b.get("name", my_key)), "ally", 0.05, "convive")
 				rel_out = get_bot_relationship(my_id, okey)
@@ -3267,8 +3298,28 @@ func _bot_social_update(b: Dictionary) -> void:
 			proxy.set_meta("team_leader_id", best_target)
 			b["follow_mode"] = "follow"
 			b["sense_t"] = 0.0
+			b["_meet_id"] = 0
 			var tn := str((bots.get(best_target, {}) as Dictionary).get("name", str(best_target)))
 			record_bot_event(my_id, "team_join", "bot_%d" % best_target, _poi_kind_near(proxy.global_position), proxy.global_position, "sigue a " + tn)
+		elif meet_id > 0:
+			# Reencuentro: fijar la meta de exploracion en la posicion VIVA del
+			# aliado potencial (se reescribe cada ciclo, siguiendo su marcha)
+			# hasta entrar en radio de convivencia, donde crece la confianza.
+			var mb: Dictionary = bots.get(meet_id, {})
+			var mp: Node3D = mb.get("proxy")
+			var adir := _ai_active_directive(b)
+			var dir_busy := not adir.is_empty() and str(adir.get("action", "")) in ["return_home", "rest", "avoid_zone", "fortify_camp"]
+			if mp != null and is_instance_valid(mp) and not dir_busy and (b.get("_ambush", {}) as Dictionary).is_empty():
+				b["explore_target"] = mp.global_position
+				b["explore_dwell"] = 0.0
+				b["_meet_id"] = meet_id
+				if float(b.get("_meet_ev_t", 0.0)) <= 0.0:
+					b["_meet_ev_t"] = 70.0
+					record_bot_event(my_id, "team_seek", "bot_%d" % meet_id, _poi_kind_near(proxy.global_position), proxy.global_position, "busca a " + str(mb.get("name", meet_id)))
+			else:
+				b["_meet_id"] = 0
+		else:
+			b["_meet_id"] = 0
 
 	# 3) Coordinacion de emboscada: el lider hostil (o un hostil solo) elige la
 	#    presa; sus miembros reciben el mismo objetivo en su propio ciclo
@@ -7069,6 +7120,16 @@ func get_full_web_status() -> Dictionary:
 			if tid != int(bid):
 				mates.append({"id": tid, "name": str((bots.get(tid, {}) as Dictionary).get("name", str(tid)))})
 		snap["team_mates"] = mates
+		var mtid := int(b.get("_meet_id", 0))
+		if mtid > 0 and bots.has(mtid):
+			var mp2: Node3D = (bots[mtid] as Dictionary).get("proxy")
+			snap["meet"] = {
+				"target": str((bots[mtid] as Dictionary).get("name", str(mtid))),
+				"target_id": mtid,
+				"dist": int(proxy.global_position.distance_to(mp2.global_position)) if mp2 != null and is_instance_valid(mp2) else -1,
+			}
+		else:
+			snap["meet"] = {}
 		var amb: Dictionary = b.get("_ambush", {})
 		if not amb.is_empty():
 			var atgt := _find_actor_by_peer_id(int(amb.get("target_id", 0)))
