@@ -4291,8 +4291,8 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 		return true
 	if tp in ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "ammo", "ammo_arrow", "medical", "tool_matches"]:
 		return true
-	# Azada/Pala: herramienta de huerto — solo si el bot esta asentado (refugio,
-	# semillas o bancales propios); un nomada no carga hierro inutil.
+	# Azada/Pala: herramienta de huerto — interesa siempre (una por bot);
+	# no hace falta refugio para cultivar un bancal.
 	if tp in ["tool_hoe", "tool_shovel"]:
 		return _bot_wants_farm_tool(b)
 	# Semillas de arbusto o de cosecha: solo sirven si puede cultivarlas.
@@ -8209,21 +8209,14 @@ func _bot_has_farm_tool(proxy: Node3D) -> bool:
 	return false
 
 func _bot_wants_farm_tool(b: Dictionary) -> bool:
-	if _bot_has_farm_tool(b["proxy"]):
-		return false
-	if not (b.get("_mem", {}).get("farm_plots", []) as Array).is_empty():
-		return true
-	if _bot_item_count(b["proxy"], "Semillas") > 0:
-		return true
-	# Asentado con refugio propio: el huerto es su fuente estable de comida.
-	return not str(b.get("shelter_id", "")).is_empty()
+	# No hace falta refugio para cultivar: una azada/pala abre la via a una
+	# fuente de comida estable — como mucho una por bot (no acapara).
+	return not _bot_has_farm_tool(b["proxy"])
 
 func _bot_wants_seeds(b: Dictionary) -> bool:
-	if _bot_item_count(b["proxy"], "Semillas") >= 2:
-		return false
-	if _bot_has_farm_tool(b["proxy"]) or not (b.get("_mem", {}).get("farm_plots", []) as Array).is_empty():
-		return true
-	return not str(b.get("shelter_id", "")).is_empty()
+	# Las semillas pesan 0.05 y son la puerta del huerto: siempre interesan
+	# hasta tener para llenar el cupo de bancales (3).
+	return _bot_item_count(b["proxy"], "Semillas") < 3
 
 func _bot_farm_plots(b: Dictionary) -> Array:
 	var mem: Dictionary = b.get("_mem", {})
@@ -8279,7 +8272,8 @@ func _bot_find_farm_spot(b: Dictionary) -> Vector3:
 	var proxy: Node3D = b["proxy"]
 	var origin: Vector3 = b.get("shelter_pos", Vector3.INF)
 	if origin == Vector3.INF:
-		origin = proxy.global_position
+		# Sin refugio el huerto va junto al campamento (o donde este ahora).
+		origin = b.get("camp_spot", proxy.global_position)
 	for off in [Vector3(3.0, 0, 1.5), Vector3(-3.0, 0, 1.5), Vector3(1.5, 0, 3.0), Vector3(0, 0, -3.2), Vector3(-1.5, 0, -3.0), Vector3(3.6, 0, -1.8), Vector3(-3.6, 0, -1.8), Vector3(4.5, 0, 0), Vector3(-4.5, 0, 0), Vector3(0, 0, 4.5)]:
 		var cand: Vector3 = origin + off
 		if world != null and world.has_method("get_river_depth_at") and world.get_river_depth_at(cand) > 0.0:

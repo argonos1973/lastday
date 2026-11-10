@@ -2051,8 +2051,8 @@ func run() -> void:
 	farm_b["proxy"].set_meta("saved_inventory", [])
 	farm_b["shelter_id"] = ""
 	farm_b["shelter_pos"] = Vector3.INF
-	check(not mgr._is_loot_desirable(farm_b, "Pala", "tool_shovel"),
-		"SpawnReal 10x3: nomada sin semillas ni refugio ignora la pala")
+	check(mgr._is_loot_desirable(farm_b, "Pala", "tool_shovel"),
+		"SpawnReal 10x3: sin refugio la pala interesa (huerto sin asentarse)")
 	farm_b["shelter_id"] = "farm_sh"
 	farm_b["shelter_pos"] = Vector3(206.0, 0.4, 200.0)
 	farm_b["proxy"].set_meta("saved_inventory", [
@@ -2640,6 +2640,56 @@ func run() -> void:
 	check(int(d3.target_index) == 2,
 		"10C3: al calmarse elige el punto de patrulla mas lejano de la amenaza")
 	d3.queue_free()
+
+	# --- 10D) Huerto sin refugio: quiere azada/semillas, siembra y cosecha ---
+	var fb: Dictionary = mgr.bots[902]
+	fb["proxy"].set_meta("proxy_dead", false)
+	fb["proxy"].global_position = Vector3(150.0, 0.4, 150.0)
+	fb["pos"] = fb["proxy"].global_position
+	fb["shelter_id"] = ""
+	fb["shelter_pos"] = Vector3.INF
+	fb["hide_timer"] = 0.0
+	fb["sleeping"] = false
+	fb["hunger"] = 80.0
+	fb["_farm"] = {}
+	fb["proxy"].set_meta("saved_inventory", [])
+	mgr._ensure_bot_memory(902)["farm_plots"] = []
+	world._planted_crops.clear()
+
+	# 10D1: sin refugio ni herramienta ni bancales, igualmente quiere la azada
+	check(mgr._bot_wants_farm_tool(fb) and mgr._bot_wants_seeds(fb),
+		"10D1: sin refugio el bot quiere azada/pala y semillas")
+
+	# 10D2: con azada + semillas siembra un bancal (fase plant completa)
+	fb["proxy"].set_meta("saved_inventory", [
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "quantity": 1, "use_value": 0.0, "durability": 60.0, "max_durability": 60.0},
+		{"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 2, "use_value": 0.0},
+	])
+	fb["_farm"] = {"phase": "plant", "pos": fb["proxy"].global_position, "t": 9.0, "t_need": 4.0, "tool": "Azada"}
+	mgr._bot_try_farm(fb, 0.016)
+	var plots2: Array = mgr._ensure_bot_memory(902).get("farm_plots", [])
+	check(world._planted_crops.size() == 1 and plots2.size() == 1 and mgr._bot_item_count(fb["proxy"], "Semillas") == 1,
+		"10D2: siembra sin refugio -> bancal registrado y 1 semilla consumida")
+
+	# 10D3: la cosecha madura da Verduras al inventario
+	var cid2 := str((world._planted_crops[0] as Dictionary).get("id", ""))
+	var now2 := Time.get_unix_time_from_system()
+	world._planted_crops[0]["crop_state"] = "ready"
+	world._planted_crops[0]["ready_unix"] = now2 - 10.0
+	world._planted_crops[0]["updated_unix"] = now2 - 10.0
+	fb["_farm"] = {"phase": "harvest", "crop_id": cid2, "pos": fb["proxy"].global_position, "t": 9.0, "t_need": 1.25, "tool": ""}
+	mgr._bot_try_farm(fb, 0.016)
+	check(mgr._bot_item_count(fb["proxy"], "Verduras") == 3,
+		"10D3: cosecha madura -> 3 Verduras al inventario")
+
+	# 10D4: sin refugio el bancal se ancla al campamento, no al limite del mundo
+	fb["camp_spot"] = Vector3(150.0, 0.4, 150.0)
+	var spot2 := mgr._bot_find_farm_spot(fb)
+	check(spot2 == Vector3.INF or spot2.distance_to(fb["camp_spot"]) < 7.0,
+		"10D4: el bancal nace junto al campamento del bot")
+	fb["_farm"] = {}
+	fb["proxy"].set_meta("saved_inventory", [])
+	world._planted_crops.clear()
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
