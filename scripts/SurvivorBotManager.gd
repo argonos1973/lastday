@@ -1589,6 +1589,9 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 	var curiosity := float(pers.get("curiosity", 0.5))
 	var aggro_t := float(pers.get("aggression", 0.3))
 	var surv_t := float(pers.get("survival_instinct", 0.7))
+	# El hambre empuja hacia el monte: ahi estan la caza, las setas y la fruta,
+	# no en las ruinas que ya se saquearon.
+	var need_food := clampf((75.0 - float(b.get("hunger", 80.0))) / 55.0, 0.0, 1.0)
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	var best := Vector3.INF
@@ -1613,7 +1616,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			var w := 1.0
 			if hostile:
 				# El supervivista hostil pondera torre/militar/ciudad según agresividad y valentía
-				w = (2.4 + aggro_t * 0.8) if kind == "tower" else ((1.8 + bravery * 0.6) if kind in ["military", "city"] else 0.6)
+				w = (2.4 + aggro_t * 0.8) if kind == "tower" else ((1.8 + bravery * 0.6) if kind in ["military", "city"] else (0.6 + need_food * 0.9))
 			else:
 				if kind == "tower":
 					w = 0.25 + bravery * 0.45
@@ -1624,7 +1627,9 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 				elif kind == "city":
 					w = 1.25 + curiosity * 0.45
 				elif kind == "wild":
-					w = 0.9 + curiosity * 0.55
+					# Paridad con casa/ciudad: el bosque es un destino real, no
+					# el ultimo recurso — y con hambre gana a cualquier ruina.
+					w = 1.2 + curiosity * 0.55 + need_food * 0.85
 				else:
 					w = 0.85 + curiosity * 0.35
 			# Si ya conoce la ubicación por observación o comunicación aliada, tiene bono de certeza

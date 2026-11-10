@@ -2332,6 +2332,43 @@ func run() -> void:
 			avg_ok = int((sb as Dictionary).get("avg_life_seconds", -1)) >= 900
 	check(avg_ok, "10z7: avg_life_seconds = total/vidas (>=900 s con 3600 s y 3 muertes)")
 
+	# 10z8: el bosque es un destino real — un bot hambriento elige wild sobre
+	# una casa cercana (aqui caza, setas y fruta; la casa ya esta saqueada).
+	var sec_z: float = mgr._bot_explore_sector(elena_y)
+	var dir_z := Vector2(cos(sec_z), sin(sec_z))
+	var wild_poi_z := Vector3(dir_z.x * 160.0, 0.4, dir_z.y * 160.0)
+	var mem_z2 := mgr._ensure_bot_memory(901)
+	var old_vis: Array = mem_z2.get("visited", [])
+	var old_ds: Array = mem_z2.get("death_spots", [])
+	var old_kl: Dictionary = mem_z2.get("known_locations", {})
+	var old_zy: Dictionary = mem_z2.get("zone_yield", {})
+	mem_z2["visited"] = []
+	mem_z2["death_spots"] = []
+	mem_z2["known_locations"] = {}
+	mem_z2["zone_yield"] = {}
+	mgr._poi_cache = [
+		{"pos": wild_poi_z, "kind": "wild"},
+		{"pos": Vector3(-dir_z.x * 60.0, 0.4, -dir_z.y * 60.0), "kind": "house"},
+		{"pos": Vector3(0.0, 0.4, 140.0), "kind": "city"},
+	]
+	mgr._poi_cache_built = true
+	elena_y["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	elena_y["hunger"] = 15.0
+	elena_y["ai_directive"] = {}
+	var wild_hits_z := 0
+	for i in range(6):
+		if mgr._choose_explore_target(elena_y).distance_to(wild_poi_z) < 1.0:
+			wild_hits_z += 1
+	check(wild_hits_z >= 5,
+		"10z8: hambriento -> el bosque (wild) es el destino (hits=%d/6)" % wild_hits_z)
+	elena_y["hunger"] = 80.0
+	mem_z2["visited"] = old_vis
+	mem_z2["death_spots"] = old_ds
+	mem_z2["known_locations"] = old_kl
+	mem_z2["zone_yield"] = old_zy
+	mgr._poi_cache_built = false
+	mgr._poi_cache.clear()
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()
