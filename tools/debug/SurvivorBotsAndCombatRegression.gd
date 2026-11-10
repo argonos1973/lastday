@@ -3193,6 +3193,26 @@ func run() -> void:
 	mgr._evolve_personality(vb, "voice_taught", 0.5)
 	var soc1 := float(mgr._get_bot_personality(vb).get("sociability", 0.5))
 	check(soc1 >= soc0, "10I4b: aprender por voz evoluciona sociabilidad/cooperacion (%.3f->%.3f)" % [soc0, soc1])
+
+	# 10I5: mordisco de animal libera estado sentado/tumbado/carga y no pisa el golpe activo del jugador
+	world.player.is_dead = false
+	world.player.stats.health = 100.0
+	world.player.is_sitting = true
+	world.player.is_prone = true
+	world.player._sit_cooldown = 1.0
+	world.player._throw_charging = true
+	world.player.third_person_attack_animation = "attack_test"
+	world.player.third_person_action_animation = "attack_test"
+	world.player.third_person_action_timer = 0.40
+	world.player.apply_damage(12.0, "wolf_bite")
+	world.player._play_hit_reaction(false)
+	check(not world.player.is_sitting and not world.player.is_prone and not world.player._throw_charging,
+		"10I5a: mordisco de lobo libera sentado/tumbado/carga para que el jugador no quede clavado")
+	check(world.player.third_person_action_animation == "attack_test",
+		"10I5b: _play_hit_reaction no cancela el golpe cuerpo a cuerpo activo del jugador")
+	world.player.third_person_action_animation = ""
+	world.player.third_person_action_timer = 0.0
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()

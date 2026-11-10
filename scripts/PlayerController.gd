@@ -6982,14 +6982,17 @@ func _play_hit_reaction(play_impact_sound: bool = true) -> void:
 		return
 	if play_impact_sound:
 		_play_punch_impact_sound()
-	if is_moving or is_sprinting:
+	# Nunca pisar un ataque cuerpo a cuerpo, disparo de arco o movimiento activo
+	# del jugador: la reaccion de impacto es solo visual en reposo.
+	if is_moving or is_sprinting or _is_aiming or _throw_charging or _throw_aim_hold or third_person_action_timer > 0.0:
 		return
 	if third_person_hit_animation.is_empty() or not third_person_animation_player.has_animation(third_person_hit_animation):
 		return
 	# Route through the action-anim slot so the clip also travels in
 	# sync_player_state — remote puppets see the victim flinch too.
 	third_person_action_animation = third_person_hit_animation
-	third_person_action_timer = 0.28
+	third_person_action_timer = 0.22
+	third_person_animation_player.speed_scale = 1.0
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
 
 func _play_shot_reaction() -> void:
@@ -11254,6 +11257,10 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 
 
 #region ANIMACIÓN TERCERA PERSONA (PlayerAnimation)
+var _cached_foot_bones: Array[int] = []
+var _cached_hip_bone: int = -1
+var _cached_bones_skel: Skeleton3D = null
+
 func _compute_skeleton_ground_target_y(bob: float = 0.0) -> float:
 	var target_y := third_person_ground_offset + bob + _water_sink
 	if third_person_model == null:
@@ -11264,38 +11271,38 @@ func _compute_skeleton_ground_target_y(bob: float = 0.0) -> float:
 	var skel := _anim_skel_cache
 	if skel == null:
 		return target_y
-	var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
-	_restore_aim_pitch_pose(skel)
-	skel.force_update_all_bone_transforms()
-	_prev_anim_name = cur_anim
-	_bone_update_pending = false
-	var sitting_or_sleeping_clip := (not cur_anim.is_empty() and (cur_anim == third_person_sit_animation or cur_anim == third_person_sleep_animation))
-	if ((is_prone or is_sitting or is_sleeping) and third_person_action_timer <= 0.0 and not is_crouching) or sitting_or_sleeping_clip:
-		# Align by hip/pelvis bone — feet are off ground when sitting/sleeping/prone
-		var hip_model_y := 0.0
-		var found_hip := false
+	if _cached_bones_skel != skel:
+		_cached_bones_skel = skel
+		_cached_foot_bones.clear()
+		_cached_hip_bone = -1
 		for i in range(skel.get_bone_count()):
 			var bn := skel.get_bone_name(i)
-			if bn.find("Hips") >= 0 or bn.find("Pelvis") >= 0 or bn.find("Spine") >= 0:
-				var bone_world := skel.global_transform * skel.get_bone_global_pose(i).origin
-				hip_model_y = bone_world.y - third_person_model.global_position.y
-				found_hip = true
-				break
-		if found_hip:
+			if _cached_hip_bone < 0 and (bn.find("Hips") >= 0 or bn.find("Pelvis") >= 0 or bn.find("Spine") >= 0):
+				_cached_hip_bone = i
+			if bn.find("Foot") >= 0 or bn.find("Toe") >= 0:
+				_cached_foot_bones.append(i)
+	var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
+	if cur_anim != _prev_anim_name or _bone_update_pending:
+		_restore_aim_pitch_pose(skel)
+		skel.force_update_all_bone_transforms()
+		_prev_anim_name = cur_anim
+		_bone_update_pending = false
+	var sitting_or_sleeping_clip := (not cur_anim.is_empty() and (cur_anim == third_person_sit_animation or cur_anim == third_person_sleep_animation))
+	if ((is_prone or is_sitting or is_sleeping) and third_person_action_timer <= 0.0 and not is_crouching) or sitting_or_sleeping_clip:
+		if _cached_hip_bone >= 0:
+			var bone_world := skel.global_transform * skel.get_bone_global_pose(_cached_hip_bone).origin
+			var hip_model_y := bone_world.y - third_person_model.global_position.y
 			var has_rifle := _has_rifle_equipped()
 			var sit_pose := is_sitting or (not cur_anim.is_empty() and cur_anim == third_person_sit_animation)
 			var target_hip_ground_y := (0.85 if has_rifle else 0.25) if sit_pose else (0.2 if has_rifle else 0.15)
 			target_y = target_hip_ground_y - hip_model_y + _water_sink
 	else:
-		# Standing, crouching, walking, eating (plant), foraging (gather), drinking, etc.: align by lowest foot/toe
 		var min_foot_model_y := 1000000.0
-		for i in range(skel.get_bone_count()):
-			var bn := skel.get_bone_name(i)
-			if bn.find("Foot") >= 0 or bn.find("Toe") >= 0:
-				var bone_world := skel.global_transform * skel.get_bone_global_pose(i).origin
-				var foot_offset_y := bone_world.y - third_person_model.global_position.y
-				if foot_offset_y < min_foot_model_y:
-					min_foot_model_y = foot_offset_y
+		for bi in _cached_foot_bones:
+			var bone_world := skel.global_transform * skel.get_bone_global_pose(bi).origin
+			var foot_offset_y := bone_world.y - third_person_model.global_position.y
+			if foot_offset_y < min_foot_model_y:
+				min_foot_model_y = foot_offset_y
 		if min_foot_model_y < 999999.0:
 			target_y = 0.025 - min_foot_model_y + bob + _water_sink
 	return target_y
@@ -13468,6 +13475,18 @@ func apply_damage(amount: float, cause: String = "") -> void:
 			inventory.changed.emit()
 	stats.health = max(0.0, stats.health - amount)
 	if cause == "melee" or cause.ends_with("_bite") or cause == "rifle":
+		is_sitting = false
+		is_prone = false
+		_sit_cooldown = 0.0
+		_force_crouch = false
+		if _throw_charging or _throw_aim_hold:
+			_throw_charging = false
+			_throw_aim_hold = false
+			_throw_aim_frozen = false
+			_throw_anim_frozen = false
+			_g_holding = false
+			if third_person_animation_player != null:
+				third_person_animation_player.speed_scale = 1.0
 		if is_performing_interruptible_action():
 			cancel_active_action(false)
 		var dmg_scene := get_tree().current_scene if is_inside_tree() else null

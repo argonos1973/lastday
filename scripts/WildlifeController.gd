@@ -15,6 +15,7 @@ var _last_position := Vector3.ZERO
 var _current_path: Array = []
 var _path_index := 0
 var _path_recalc_timer := 0.0
+var _path_failed_empty := false
 var _route_waiting := false
 var _shore_escape_target: Variant = null
 var _debug_timer := 0.0
@@ -813,11 +814,12 @@ func _process_body(delta: float) -> void:
 	var direct_goal: Vector3 = target if _state == "chase_player" else (chase_live.global_position if chase_live != null else target)
 	var use_direct_chase := chase_live != null and global_position.distance_to(chase_live.global_position) < direct_chase_dist and _direct_route_allowed(direct_goal)
 	if not use_direct_chase:
-		if _current_path.is_empty() and speed > 0.0 and to_target.length() > 0.15:
+		if _current_path.is_empty() and not _path_failed_empty and speed > 0.0 and to_target.length() > 0.15:
 			_path_recalc_timer = 0.0
 		_path_recalc_timer -= delta
 		if _path_recalc_timer <= 0.0:
 			_current_path = _request_path(global_position, target)
+			_path_failed_empty = _current_path.is_empty()
 			_path_index = 0
 			_path_recalc_timer = 0.45 if (_prey_flee_timer > 0.0 or _state in ["flee", "wary", "seek_corpse", "chase_prey", "chase_player", "fight_wolf"]) else 1.2
 	if use_direct_chase:
@@ -1338,8 +1340,17 @@ func _wolf_ai(delta: float) -> Dictionary:
 					_face_towards(_player.global_position, delta * 7.0)
 					var flank_tangent := Vector3(-away_dir.z, 0.0, away_dir.x) * _get_flank_sign()
 					target = _player.global_position + (away_dir * 2.4 + flank_tangent * 1.6)
+					if not _is_position_allowed(target):
+						var alt_flank := _player.global_position + (away_dir * 2.4 - flank_tangent * 1.6)
+						var alt_back := _player.global_position + away_dir * 2.0
+						if _is_position_allowed(alt_flank):
+							target = alt_flank
+						elif _is_position_allowed(alt_back):
+							target = alt_back
+						else:
+							target = _player.global_position
 					if _bite_anim_timer > 0.0 and flat_dist <= 2.9:
-						speed = move_speed * 0.25 if flat_dist > 2.2 else 0.0
+						speed = move_speed * 0.25 if flat_dist > 2.2 else (move_speed * 0.9 if flat_dist < 1.35 else 0.0)
 						_play_animation_by_name("attack")
 					else:
 						speed = move_speed * (1.85 if flat_dist > 3.1 else 1.35)
@@ -1347,12 +1358,14 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					_face_towards(_player.global_position, delta * 6.0)
 					target = _player.global_position + away_dir * 2.2
+					if not _is_position_allowed(target):
+						target = _player.global_position
 					if _bite_anim_timer > 0.0 and flat_dist <= 2.9:
-						speed = 0.0
+						speed = move_speed * 0.9 if flat_dist < 1.5 else 0.0
 						_play_animation_by_name("attack")
 					else:
-						speed = move_speed * 0.85 if flat_dist > 2.4 else 0.0
-						_play_animation_by_name("walk" if flat_dist > 2.4 else "threaten")
+						speed = move_speed * 0.85 if (flat_dist > 2.4 or flat_dist < 1.5) else 0.0
+						_play_animation_by_name("walk" if (flat_dist > 2.4 or flat_dist < 1.5) else "threaten")
 				_chase_stuck_time = 0.0
 			else:
 				_play_animation_by_name("run")
