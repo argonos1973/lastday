@@ -1178,8 +1178,56 @@ func _exit_tree() -> void:
 		if vp is AudioStreamPlayer and is_instance_valid(vp):
 			(vp as AudioStreamPlayer).stop()
 	_voice_players.clear()
+	for bsid in _bot_mp3_players.keys():
+		var bvp = _bot_mp3_players[bsid]
+		if bvp is AudioStreamPlayer and is_instance_valid(bvp):
+			(bvp as AudioStreamPlayer).stop()
+	_bot_mp3_players.clear()
 	_voice_playbacks.clear()
 	_voice_speaking_timers.clear()
+
+var _bot_mp3_players: Dictionary = {}
+
+# Reproduccion de voz neuronal de alta calidad (MP3 24 kHz 16-bit) emitida por
+# un bot con atenuacion por distancia en el mundo 3D.
+func on_bot_voice_mp3_received(sender_id: int, sender_name: String, mp3_bytes: PackedByteArray, _target_id: int = 0, _target_name: String = "") -> void:
+	if mp3_bytes.is_empty() or not can_use_chat():
+		return
+	var net = get_node_or_null("/root/NetworkManager")
+	var my_id := int(net.get_my_id()) if net != null and net.has_method("get_my_id") else -1
+	if sender_id == my_id or (_target_id > 0 and _target_id != my_id):
+		return
+	if DisplayServer.get_name() == "headless":
+		_voice_speaking_timers[sender_id] = {"name": sender_name, "group": "", "time": 2.0}
+		return
+	var stream := AudioStreamMP3.new()
+	stream.data = mp3_bytes
+	stream.loop = false
+	var dur := maxf(0.8, float(stream.get_length()))
+	_voice_speaking_timers[sender_id] = {"name": sender_name, "group": "", "time": dur}
+	if voice_status_label != null and can_use_chat():
+		voice_status_label.visible = true
+	if _voice_players.has(sender_id) and is_instance_valid(_voice_players[sender_id]):
+		(_voice_players[sender_id] as AudioStreamPlayer).stop()
+	var mplayer: AudioStreamPlayer = _bot_mp3_players.get(sender_id)
+	if mplayer == null or not is_instance_valid(mplayer):
+		mplayer = AudioStreamPlayer.new()
+		mplayer.name = "BotVoiceMP3_%d" % sender_id
+		add_child(mplayer)
+		_bot_mp3_players[sender_id] = mplayer
+	var vol_db := 0.0
+	var sc := get_tree().current_scene
+	if sc != null and "player" in sc and "remote_players" in sc:
+		var lp = sc.get("player")
+		var rps = sc.get("remote_players")
+		if lp is Node3D and is_instance_valid(lp) and rps is Dictionary and (rps as Dictionary).has(sender_id):
+			var rp = (rps as Dictionary)[sender_id]
+			if rp is Node3D and is_instance_valid(rp):
+				var d := (lp as Node3D).global_position.distance_to((rp as Node3D).global_position)
+				vol_db = clampf(-maxf(0.0, d - 4.0) * 0.45, -14.0, 0.0)
+	mplayer.volume_db = vol_db
+	mplayer.stream = stream
+	mplayer.play()
 
 func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, _target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	if pcm_bytes.is_empty() or not can_use_chat():

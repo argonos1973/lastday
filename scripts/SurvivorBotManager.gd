@@ -3553,7 +3553,7 @@ const BOT_CHAT_HELP_CD := 120.0
 const BOT_CHAT_REQ_CD := 90.0
 const BOT_CHAT_LOG_MAX := 24
 const BOT_CHAT_MAX_TURNS := 4
-const BOT_CHAT_SYSTEM_PROMPT := "Eres un superviviente en un mundo postapocaliptico (juego Last Day). Hablas por el chat del juego como una persona real: frases cortas, informales, en espanol, directas. Prohibido: emojis, comillas, roleplay con asteriscos, mencionar que eres IA. Responde SOLO con el texto del mensaje, maximo 140 caracteres."
+const BOT_CHAT_SYSTEM_PROMPT := "Eres un superviviente real en un mundo postapocaliptico (Last Day) y hablas EN VOZ ALTA. Habla como una persona espanola real en mitad del campo: natural, coloquial, con pausas breves (comas, puntos suspensivos), muletillas humanas ocasionales (oye, mira, vale, bueno, escucha) y SIEMPRE con ortografia y tildes espanolas correctas (qué, dónde, cómo, está, aquí, ahí, allá, más, tú, mí, sí) para que tu voz suene 100% humana al pronunciarse. Prohibido: sonar robotico o formal, emojis, comillas, roleplay con asteriscos, abreviaturas de chat (q, tb, pq), mencionar que eres IA. Responde SOLO con lo que dices en voz alta, 1 o 2 frases cortas, maximo 130 caracteres."
 
 var _chat_http: HTTPRequest = null
 var _chat_pending: Dictionary = {}          # peticion Qwen en vuelo {bot_id,to_id,to_name,kind,intent}
@@ -3914,42 +3914,43 @@ func _chat_order_target(b: Dictionary, sender_id: int) -> Node3D:
 func _chat_order_line(b: Dictionary, cmd: String, ok: bool, why: String) -> String:
 	var pers := _get_bot_personality(b)
 	var warm := float(pers.get("sociability", 0.5)) > 0.55 and float(pers.get("aggression", 0.35)) < 0.5
+	var fem := int(b.get("bot_id", 0)) == 901
 	if ok:
 		match cmd:
 			"follow":
-				return "Vale, voy contigo. Tu mandas." if warm else "De acuerdo, te sigo. No me hagas arrepentirme."
+				return "Vale, voy contigo... tú mandas." if warm else "De acuerdo, te sigo. No me hagas arrepentirme."
 			"stay":
-				return "Me quedo aqui, tranquila." if warm else "Bien. Me quedo quieto."
+				return ("Vale, me quedo aquí vigilando, tranquila." if fem else "Vale, me quedo aquí vigilando, tranquilo.") if warm else "Bien, me quedo quieto aquí."
 			"come":
-				return "Voy para alla, esperame." if warm else "Ya voy."
+				return "Voy para allá, espérame un segundo." if warm else "Ya voy para allá."
 			"dismiss":
-				return "Entendido, sigo mi camino. Suerte." if warm else "De acuerdo, me voy."
+				return "Entendido, sigo por mi cuenta. Cuídate ahí fuera." if warm else "De acuerdo, me marcho."
 			"eat":
-				return "Si, me cae bien un bocado." if warm else "Vale, como algo."
+				return "Sí, la verdad es que me vendría bien comer algo." if warm else "Vale, como algo rápido."
 			"equip":
-				return "Buena idea, necesito mejor equipo." if warm else "Ire a ver que encuentro."
+				return "Buena idea, voy a ver si encuentro mejor equipo." if warm else "Iré a mirar qué encuentro por ahí."
 			"give":
-				return "Toma, te lo dejo aqui." if warm else "Dale, quedatelo."
+				return "Claro, toma... te lo dejo aquí en el suelo." if warm else "Ahí lo tienes, quédatelo."
 			"attack":
-				return "Voy a por el!" if float(pers.get("aggression", 0.35)) > 0.5 else "De acuerdo, lo intento. Cubreme."
+				return "¡Voy a por él!" if float(pers.get("aggression", 0.35)) > 0.5 else "Vale, vamos a por él... cúbreme."
 	match why:
 		"hostile":
-			return "¿Ordenes? A mi no me mandas."
+			return "¿Órdenes? A mí no me mandas."
 		"betrayed":
-			return "Despues de lo que me hiciste, olvidate."
+			return "Después de lo que me hiciste, olvídate."
 		"scared":
-			return "Ni se te ocurra acercarte. Dejame en paz."
+			return "Ni se te ocurra acercarte... déjame en paz."
 		"busy":
-			return "¡Ahora no! Tengo problemas mas grandes."
+			return "¡Ahora no, que estoy en medio de una pelea!"
 		"other_team":
-			return "Ya voy con otro. No le voy a dejar."
+			return "Ya voy con gente, no les voy a dejar tirados."
 		"no_food":
-			return "No tengo nada comestible encima."
+			return "Ojalá, pero no llevo nada de comer encima."
 		"nothing":
-			return "No llevo nada que darte."
+			return "Lo siento, ahora mismo no llevo nada que darte."
 		"no_target":
-			return "¿Atacar a quien? No veo ninguna amenaza cerca."
-	return "Ni te conozco. ¿Por que iba a hacerte caso?" if warm else "No me fio de ti lo suficiente."
+			return "¿Atacar a quién? No veo ningún peligro por aquí."
+	return "Oye, que apenas te conozco... ¿por qué iba a hacerte caso?" if warm else "No me fío de ti lo suficiente."
 
 func _chat_handle_order(b: Dictionary, sender_id: int, sname: String, skey: String, cmd: String, arg: String) -> void:
 	var gate := _chat_order_gate(b, sender_id, skey, cmd)
@@ -4113,24 +4114,24 @@ func _chat_request_line(b: Dictionary, cmd: String, ok: bool, why: String) -> St
 	var warm := float(pers.get("sociability", 0.5)) > 0.55 and float(pers.get("aggression", 0.35)) < 0.5
 	if ok:
 		if cmd == "assist":
-			return "Voy corriendo, aguanta ahi!" if warm else "Ya voy, no te muevas."
-		return "Toma, te lo dejo aqui." if warm else "Vale, te lo dejo en el suelo."
+			return "¡Aguanta ahí, que voy corriendo!" if warm else "Ya voy para allá, no te muevas."
+		return "Toma, te lo dejo aquí mismo." if warm else "Vale, ahí te lo dejo en el suelo."
 	match why:
 		"hostile":
-			return "Pideselo a otro, tu y yo no somos socios."
+			return "Pídeselo a otro, tú y yo no somos amigos."
 		"betrayed":
-			return "En serio? Me atacaste y ahora vienes a pedirme."
+			return "¿En serio? Me atacaste antes y ahora vienes a pedirme."
 		"scared":
-			return "No te acerques. Largo."
+			return "No te acerques más... largo de aquí."
 		"busy":
-			return "No ves que estoy luchando por mi vida?!"
+			return "¡¿Pero no ves que estoy peleando por mi vida?!"
 		"keep_weapon":
-			return "Mi arma no la suelto, lo siento."
+			return "Lo siento, pero es la única arma que tengo."
 		"nothing", "no_food":
-			return "No tengo nada, de verdad."
+			return "No me queda nada encima, de verdad."
 		"no_target":
-			return "No encuentro a quien atacar."
-	return "Lo siento, tambien ando justo." if warm else "No tengo para repartir."
+			return "No veo a nadie cerca a quien atacar."
+	return "Lo siento mucho, yo también voy muy justo." if warm else "No tengo nada de sobra para repartir."
 
 # ==================== ENSEÑANZAS (chat o voz) ====================
 # "aqui hay agua", "cuidado hay lobos", "registra esta casa": el que habla
@@ -4187,14 +4188,14 @@ func _chat_teach_line(b: Dictionary, kind: String) -> String:
 	var warm := float(pers.get("sociability", 0.5)) > 0.55 and float(pers.get("aggression", 0.35)) < 0.5
 	match kind:
 		"water":
-			return "Perfecto, aqui puedo beber. Gracias." if warm else "Anotado, agua aqui."
+			return "Genial, así ya sé dónde venir a beber. Muchas gracias." if warm else "Vale, me quedo con que aquí hay agua."
 		"danger":
-			return "Entendido, me mantengo lejos de esta zona." if warm else "Recibido, ojo con este sitio."
+			return "Vale, gracias por avisar... tendré cuidado por esta zona." if warm else "Entendido, andaré con ojo por aquí."
 		"loot":
-			return "Apuntado, me pasare a revisarlo." if warm else "Ok, lo registro."
+			return "Perfecto, luego me acerco a echar un vistazo." if warm else "Vale, me lo apunto para registrarlo."
 		"camp":
-			return "Buen sitio para descansar, gracias." if warm else "Vale, campamento aqui."
-	return "Lo apunto en mi mapa." if warm else "Anotado."
+			return "Sí, parece buen sitio para descansar... gracias." if warm else "Vale, buen sitio para acampar."
+	return "Me quedo con el sitio, gracias por avisar." if warm else "Vale, me acuerdo del lugar."
 
 func _known_water_pos(b: Dictionary) -> Vector3:
 	var mem: Dictionary = b.get("_mem", {})
@@ -4405,37 +4406,51 @@ func _tts_enqueue_job(bot_id: int, bot_name: String, to_id: int, to_name: String
 func _tts_poll_jobs() -> void:
 	var dir := ProjectSettings.globalize_path(VOICE_JOBS_DIR)
 	var nowm := Time.get_ticks_msec()
+	var net = world.get("net") if world != null else null
 	for base in _tts_jobs.keys():
 		var job: Dictionary = _tts_jobs[base]
+		var mp3_path: String = dir + str(base) + ".mp3"
 		var pcm_path: String = dir + str(base) + ".pcm"
 		var json_path: String = dir + str(base) + ".json"
+		var has_mp3 := FileAccess.file_exists(mp3_path)
+		var has_pcm := FileAccess.file_exists(pcm_path)
+		var done := has_mp3 or has_pcm
+		var mp3 := PackedByteArray()
 		var pcm := PackedByteArray()
-		var done := FileAccess.file_exists(pcm_path)
-		if done:
+		if has_mp3:
+			mp3 = FileAccess.get_file_as_bytes(mp3_path)
+		if has_pcm:
 			pcm = FileAccess.get_file_as_bytes(pcm_path)
-		elif nowm - int(job.get("born", 0)) > 8000:
+		elif not done and nowm - int(job.get("born", 0)) > 8000:
 			done = true
 		if not done:
 			continue
 		_tts_jobs.erase(base)
+		DirAccess.remove_absolute(mp3_path)
 		DirAccess.remove_absolute(pcm_path)
 		DirAccess.remove_absolute(json_path)
+		var bid := int(job["bot_id"])
+		var bname := str(job.get("bot_name", "Bot"))
+		var tid := int(job["to_id"])
+		var tname := str(job.get("to_name", ""))
+		# Prioridad: MP3 24 kHz 16-bit wideband en un unico RPC fiable
+		if not mp3.is_empty() and net != null and net.has_method("relay_actor_voice_mp3"):
+			net.relay_actor_voice_mp3(bid, bname, mp3, tid, tname)
+			continue
 		if pcm.is_empty():
 			continue
-		var bid := int(job["bot_id"])
-		# Si ese mismo bot seguia hablando a ese jugador, sustituir por la nueva frase
 		for i in range(_tts_streams.size() - 1, -1, -1):
 			var s0: Dictionary = _tts_streams[i]
-			if int(s0.get("bot_id", 0)) == bid and int(s0.get("to_id", 0)) == int(job["to_id"]):
+			if int(s0.get("bot_id", 0)) == bid and int(s0.get("to_id", 0)) == tid:
 				_tts_streams.remove_at(i)
 		_tts_streams.append({
 			"bot_id": bid,
-			"bot_name": str(job.get("bot_name", "Bot")),
-			"to_id": int(job["to_id"]),
-			"to_name": str(job.get("to_name", "")),
+			"bot_name": bname,
+			"to_id": tid,
+			"to_name": tname,
 			"pcm": pcm,
 			"offset": 0,
-			"budget": float(TTS_PACKET_SAMPLES * 3), # prebuffer inicial de 150 ms
+			"budget": float(TTS_PACKET_SAMPLES * 3),
 		})
 
 func _tts_stream_tick(delta: float) -> void:
@@ -4744,39 +4759,39 @@ func _chat_zone_name(pos: Vector3) -> String:
 
 func _chat_fallback_line(b: Dictionary, kind: String, to_name: String, ctx: String = "", intent: String = "") -> String:
 	var proxy: Node3D = b["proxy"]
-	var nm := to_name if not to_name.is_empty() else "tu"
+	var nm := to_name if not to_name.is_empty() else "tú"
 	var pers := _get_bot_personality(b)
 	match kind:
 		"greet":
 			if float(pers.get("sociability", 0.5)) > 0.7:
-				return str(["Ey %s, que tal por ahi." % nm, "Buenas %s, me alegro de ver a alguien vivo." % nm][int(b["bot_id"]) % 2])
-			return "Hum. %s." % nm
+				return str(["Oye %s, ¿qué tal todo por ahí?" % nm, "Buenas %s, me alegro de ver a alguien con vida." % nm][int(b["bot_id"]) % 2])
+			return "Ey, %s." % nm
 		"help":
 			var threat := ctx if not ctx.is_empty() else "algo"
-			return str(["%s encima! %s, ven, estoy en %s!" % [threat, nm, _chat_zone_name(proxy.global_position)],
-				"Ayuda! Me ataca %s, en %s!" % [threat, _chat_zone_name(proxy.global_position)]][int(b["bot_id"]) % 2])
+			return str(["¡Tengo %s encima! ¡%s, ven rápido, estoy en %s!" % [threat, nm, _chat_zone_name(proxy.global_position)],
+				"¡Ayuda! ¡Me ataca %s aquí en %s!" % [threat, _chat_zone_name(proxy.global_position)]][int(b["bot_id"]) % 2])
 		"alliance":
-			return str(["%s, nos juntamos? Dos pares de ojos ven mas." % nm,
-				"Equipo, %s? Solo no se llega lejos." % nm][int(b["bot_id"]) % 2])
+			return str(["Oye %s, ¿vamos juntos? Dos pares de ojos ven más que uno." % nm,
+				"¿Hacemos equipo, %s? Solo no se llega muy lejos por aquí." % nm][int(b["bot_id"]) % 2])
 		"whisper":
-			return str(["Quieto. Espera a que se acerque.",
-				"No te muevas, casi lo tenemos."][int(b["bot_id"]) % 2])
+			return str(["Quieto... espera a que se acerque un poco más.",
+				"No hagas ruido, ya casi lo tenemos."][int(b["bot_id"]) % 2])
 		"taunt":
-			return str(["Mala suerte, %s. Entrega lo que llevas." % nm,
-				"Te veo, %s. Esa mochila me viene bien." % nm][int(b["bot_id"]) % 2])
+			return str(["Mala suerte, %s... suelta todo lo que llevas." % nm,
+				"Te he visto, %s. Esa mochila me viene de perlas." % nm][int(b["bot_id"]) % 2])
 		"request":
 			match ctx:
 				"comida":
-					return str(["%s, tienes comida? Me estoy muriendo de hambre." % nm,
-						"Pasame algo de comer, %s, por favor." % nm][int(b["bot_id"]) % 2])
+					return str(["Oye %s, ¿tienes algo de comida? Me estoy muriendo de hambre." % nm,
+						"Pásame algo de comer, %s, por favor." % nm][int(b["bot_id"]) % 2])
 				"agua":
-					return str(["%s, agua... me muero de sed." % nm,
+					return str(["%s, necesito agua... me muero de sed." % nm,
 						"¿Tienes algo de beber, %s? Estoy seco." % nm][int(b["bot_id"]) % 2])
 				"vendas":
-					return "Estoy herido, %s, llevas vendas o un botiquin encima?" % nm
+					return "Estoy herido, %s... ¿llevas vendas o un botiquín encima?" % nm
 				"arma":
-					return "Voy desarmado, %s. Te sobra un arma, un cuchillo, lo que sea?" % nm
-			return "%s, me hace falta %s. Tienes algo?" % [nm, ctx]
+					return "Voy desarmado, %s. ¿Te sobra un arma, un cuchillo o lo que sea?" % nm
+			return "%s, me hace falta %s. ¿Tienes algo por ahí?" % [nm, ctx]
 		"reply":
 			return _chat_fallback_reply(b, intent, nm)
 	return ""
@@ -4786,15 +4801,15 @@ func _chat_fallback_reply(b: Dictionary, intent: String, nm: String) -> String:
 	match intent:
 		"help":
 			if hostile:
-				return "Problema tuyo."
-			return "Aguanta, voy para alla."
+				return "Eso es problema tuyo."
+			return "¡Aguanta ahí, que voy para allá!"
 		"alliance":
-			return "Prefiero ir solo." if (hostile or float(_get_bot_personality(b).get("distrust", 0.3)) > 0.6) else "Me apunto. Ven a buscarme."
+			return "Prefiero ir por mi cuenta." if (hostile or float(_get_bot_personality(b).get("distrust", 0.3)) > 0.6) else "Por mí vale, vamos juntos."
 		"greet":
-			return "Buenas %s." % nm
+			return "Buenas, %s. ¿Todo bien?" % nm
 		"threat":
-			return "Vale, tranquilo." if float(_get_bot_personality(b).get("bravery", 0.5)) < 0.4 else "No me busques."
-	return "Te leo, %s." % nm
+			return "Vale, tranquilo..." if float(_get_bot_personality(b).get("bravery", 0.5)) < 0.4 else "No me busques las cosquillas."
+	return "Dime, %s, te escucho." % nm
 
 func _chat_ensure_http() -> void:
 	if _chat_http != null and is_instance_valid(_chat_http):

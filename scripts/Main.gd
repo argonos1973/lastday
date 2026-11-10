@@ -4362,6 +4362,10 @@ func _net_receive_voice_packet(sender_id: int, sender_name: String, pcm_bytes: P
 	if hud != null and hud.has_method("on_voice_packet_received"):
 		hud.on_voice_packet_received(sender_id, sender_name, pcm_bytes, target_id, target_name, group_id)
 
+func _net_receive_bot_voice_mp3(sender_id: int, sender_name: String, mp3_bytes: PackedByteArray, target_id: int = 0, target_name: String = "") -> void:
+	if hud != null and hud.has_method("on_bot_voice_mp3_received"):
+		hud.on_bot_voice_mp3_received(sender_id, sender_name, mp3_bytes, target_id, target_name)
+
 func _show_player_chat_bubble(actor: Node3D, sender_name: String, text: String) -> void:
 	if net != null and net.is_dedicated_server:
 		return

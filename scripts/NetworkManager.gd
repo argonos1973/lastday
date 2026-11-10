@@ -1956,6 +1956,27 @@ func relay_actor_voice(sender_id: int, sender_name: String, pcm_bytes: PackedByt
 	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):
 		receive_voice_packet.rpc_id(target_peer_id, sender_id, sender_name, pcm_bytes, target_peer_id, target_name, "")
 
+# Relay de voz neuronal MP3 (24 kHz 16-bit wideband) de un bot hacia un humano:
+# llega integra en un unico RPC fiable sin el ruido de cuantizacion de 8-bit.
+func relay_actor_voice_mp3(sender_id: int, sender_name: String, mp3_bytes: PackedByteArray, target_peer_id: int, target_name: String = "") -> void:
+	if mp3_bytes.is_empty() or mp3_bytes.size() > 260000 or target_peer_id <= 0:
+		return
+	if not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
+		return
+	if target_name.is_empty():
+		target_name = str(players[target_peer_id].get("char_name", players[target_peer_id].get("name", "Jugador")))
+	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+	if not is_dedicated_server and target_peer_id == my_uid:
+		receive_bot_voice_mp3(sender_id, sender_name, mp3_bytes, target_peer_id, target_name)
+	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):
+		receive_bot_voice_mp3.rpc_id(target_peer_id, sender_id, sender_name, mp3_bytes, target_peer_id, target_name)
+
+@rpc("authority", "reliable")
+func receive_bot_voice_mp3(sender_id: int, sender_name: String, mp3_bytes: PackedByteArray, target_id: int = 0, target_name: String = "") -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_receive_bot_voice_mp3"):
+		scene._net_receive_bot_voice_mp3(sender_id, sender_name, mp3_bytes, target_id, target_name)
+
 @rpc("authority", "reliable")
 func receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	chat_message_received.emit(sender_id, sender_name, text, target_id, target_name, group_id)

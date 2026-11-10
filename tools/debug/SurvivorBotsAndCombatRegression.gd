@@ -33,6 +33,7 @@ class FakeNet extends Node:
 	var authoritative_weather := {}
 	var relay_log: Array = []
 	var voice_relay_log: Array = []
+	var mp3_relay_log: Array = []
 	func get_my_id() -> int:
 		return 1
 	func peer_alive(_pid: int) -> bool:
@@ -43,6 +44,8 @@ class FakeNet extends Node:
 		relay_log.append({"from_id": sender_id, "from": sender_name, "to_id": target_peer_id, "to": target_name, "text": text})
 	func relay_actor_voice(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_peer_id: int, target_name: String = "") -> void:
 		voice_relay_log.append({"from_id": sender_id, "from": sender_name, "to_id": target_peer_id, "to": target_name, "bytes": pcm_bytes.size()})
+	func relay_actor_voice_mp3(sender_id: int, sender_name: String, mp3_bytes: PackedByteArray, target_peer_id: int, target_name: String = "") -> void:
+		mp3_relay_log.append({"from_id": sender_id, "from": sender_name, "to_id": target_peer_id, "to": target_name, "bytes": mp3_bytes.size()})
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _create_body() -> void:
@@ -3113,6 +3116,16 @@ func run() -> void:
 			total_voice_b += int(vr.get("bytes", 0))
 	check(total_voice_b == 2400 and fnet.relay_log.is_empty(),
 		"10H9b: el audio TTS llega al humano por relay_actor_voice (%d B) y 0 msgs de texto" % total_voice_b)
+	fnet.mp3_relay_log.clear()
+	mgr._bot_chat_send(vb, 8, "Profe", "Vale, me quedo aquí vigilando, tranquilo.", "order")
+	var tts_base_mp3 := str(mgr._tts_jobs.keys()[0])
+	var mp3_reply := PackedByteArray([0xFF, 0xFB, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00])
+	var mf := FileAccess.open(jobdir + tts_base_mp3 + ".mp3", FileAccess.WRITE)
+	mf.store_buffer(mp3_reply)
+	mf.close()
+	mgr._tts_poll_jobs()
+	check(fnet.mp3_relay_log.size() == 1 and int(fnet.mp3_relay_log[0].get("bytes", 0)) == 8 and fnet.relay_log.is_empty(),
+		"10H9c: clip MP3 neuronal 24kHz se entrega integro por relay_actor_voice_mp3 sin texto")
 
 	world.server_proxies.erase(8)
 	h8.queue_free()
