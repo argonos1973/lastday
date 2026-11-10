@@ -149,3 +149,4 @@ bd0b881|Sin nieve en montañas y carretera de la cima libre: las rocas miden su 
 f454180|Eliminado el personaje generico "Superviviente": siempre se usa el personaje del servidor o uno de la pantalla de inicio
 27f011d|Ordenes de supervivientes con la tecla Z (la O queda solo para el lobo), los bots beben en la fuente de la ciudad y ya recogen las mochilas del pueblo
 616a326|Los bots y jugadores remotos que caminan agachados ya no se deslizan: nueva animacion sneak_walk, velocidad de zancada sincronizada con el movimiento real y seguimiento mas pegado
+51e0662|Los jugadores remotos y bots con rifle ya no aparecen desarmados: el modelo del arma obedece al estado armado aunque el objeto en mano no llegue sincronizado
