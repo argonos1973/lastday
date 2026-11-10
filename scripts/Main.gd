@@ -4335,6 +4335,14 @@ func _net_sync_chat_group(group_id: String, group_name: String, _member_ids: Arr
 	if hud != null and hud.has_method("on_chat_group_synced"):
 		hud.on_chat_group_synced(group_id, group_name)
 
+# Un humano (u otro bot) envia un DM a un bot: la IA lo "oye" aqui.
+# Devuelve true si el destinatario es un bot vivo gestionado por el manager.
+func _net_bot_hear_chat(sender_id: int, sender_name: String, text: String, target_peer_id: int) -> bool:
+	if survivor_bot_mgr == null or not SurvivorBotManagerScript.is_bot_peer_id(target_peer_id):
+		return false
+	survivor_bot_mgr.on_chat_received(target_peer_id, sender_id, sender_name, text)
+	return true
+
 func _net_receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	var my_id: int = net.get_my_id() if net != null else 1
 	var is_self: bool = sender_id == my_id

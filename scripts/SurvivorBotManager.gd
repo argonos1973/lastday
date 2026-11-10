@@ -653,6 +653,9 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"hide_timer": 0.0,
 		"team_leader_id": 0, # 0 = libre, >0 = peer_id del jugador líder (1 en SP/host)
 		"follow_mode": "follow", # "follow" | "stay" | "guard"
+		"_chat_cd": 0.0,
+		"_chat_reply_ready": 0,
+		"_chat_inbox": {},
 		"stay_pos": spawn_pos,
 		"aggro_target": null,
 		"aggro_timer": 0.0,
@@ -944,6 +947,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["cook_cooldown"] = maxf(0.0, float(b["cook_cooldown"]) - delta)
 	b["_soc_t"] = maxf(0.0, float(b.get("_soc_t", 0.0)) - delta)
 	b["_meet_ev_t"] = maxf(0.0, float(b.get("_meet_ev_t", 0.0)) - delta)
+	b["_chat_cd"] = maxf(0.0, float(b.get("_chat_cd", 0.0)) - delta)
 	b["aggro_timer"] = maxf(0.0, float(b["aggro_timer"]) - delta)
 	if float(b["aggro_timer"]) <= 0.0:
 		b["aggro_target"] = null
@@ -3350,6 +3354,9 @@ func _bot_social_update(b: Dictionary) -> void:
 		if not lamb.is_empty() and int(lamb.get("target_id", 0)) != int(am.get("target_id", -1)):
 			b["_ambush"] = lamb.duplicate()
 
+	# 4) Chat: respuestas, gritos de ayuda, alianzas, saludos y susurros
+	_bot_chat_tick(b)
+
 # Reune a todo el equipo de la victima (lider + miembros) contra el agresor:
 # el equivalente bot de un grito de ayuda. Se llama desde _net_damage_player.
 func rally_bot_team(victim_id: int, attacker: Node3D) -> void:
@@ -3493,6 +3500,504 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	b["crouching"] = true
 	_move_bot_towards(b, target.global_position, 2.9, delta, "walk")
 	return true
+
+# --- Chat entre bots y con humanos ------------------------------------------
+# Los bots hablan por el chat del juego como supervivientes reales: bot->humano
+# llega al panel de chat del jugador (NetworkManager.relay_actor_chat),
+# humano->bot lo "oye" la IA via _net_bot_hear_chat, y bot->bot recorre el
+# mismo canal internamente. El texto lo redacta Qwen con la personalidad del
+# bot (peticion aparte en _chat_http para no robar la cola de decisiones); si
+# no hay clave/cuota salen plantillas locales. El chat produce conducta real:
+# pedir ayuda mueve al aliado a socorrer y proponer alianza hace que ambos
+# converjan via _meet_id hasta formar equipo.
+const BOT_CHAT_CD := 26.0
+const BOT_CHAT_PAIR_CD := 70.0
+const BOT_CHAT_REPLY_CD := 7.0
+const BOT_CHAT_GREET_RANGE := 16.0
+const BOT_CHAT_GREET_CD := 200.0
+const BOT_CHAT_HELP_CD := 120.0
+const BOT_CHAT_LOG_MAX := 24
+const BOT_CHAT_MAX_TURNS := 4
+const BOT_CHAT_SYSTEM_PROMPT := "Eres un superviviente en un mundo postapocaliptico (juego Last Day). Hablas por el chat del juego como una persona real: frases cortas, informales, en espanol, directas. Prohibido: emojis, comillas, roleplay con asteriscos, mencionar que eres IA. Responde SOLO con el texto del mensaje, maximo 140 caracteres."
+
+var _chat_http: HTTPRequest = null
+var _chat_pending: Dictionary = {}          # peticion Qwen en vuelo {bot_id,to_id,to_name,kind,intent}
+var chat_log: Array = []                    # [{ts,from_id,from,to_id,to,kind,text}] para el monitor
+var _chat_pair_until: Dictionary = {}       # "a:b" -> msec (enfriamiento de iniciados)
+var _chat_greet_until: Dictionary = {}      # "a:b" -> msec (saludos, ventana larga)
+var _chat_turns: Dictionary = {}            # "a:b" -> int (corta el ping-pong bot-bot)
+var _chat_help_until: Dictionary = {}       # bot_id -> msec
+
+func _chat_pair_key(a: int, b2: int) -> String:
+	return "%d:%d" % [mini(a, b2), maxi(a, b2)]
+
+func _chat_pair_ok(a: int, b2: int, now: int) -> bool:
+	return now >= int(_chat_pair_until.get(_chat_pair_key(a, b2), 0))
+
+# Llega un mensaje al bot (humano o bot): registra el efecto social, encola la
+# respuesta y, si procede, desencadena conducta (socorrer / ir a unirse).
+func on_chat_received(target_id: int, sender_id: int, sender_name: String, text: String) -> void:
+	var clean := text.strip_edges().substr(0, 160)
+	if clean.is_empty() or not bots.has(target_id) or target_id == sender_id:
+		return
+	var tb: Dictionary = bots[target_id]
+	var tproxy: Node3D = tb.get("proxy")
+	if tproxy == null or not is_instance_valid(tproxy) or bool(tproxy.get_meta("proxy_dead", false)):
+		return
+	var sender_is_bot := bots.has(sender_id)
+	var skey := ("bot_%d" % sender_id) if sender_is_bot else _actor_persist_key(sender_id)
+	var intent := _chat_classify(clean)
+	var rel := _chat_touch_rel(target_id, skey, sender_name)
+	match intent:
+		"help":
+			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + 0.02, -1.0, 1.0), 0.001)
+		"alliance":
+			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + 0.04, -1.0, 1.0), 0.001)
+			rel["hostility"] = snappedf(maxf(0.0, float(rel.get("hostility", 0.0)) - 0.03), 0.001)
+		"greet":
+			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + 0.02, -1.0, 1.0), 0.001)
+			rel["hostility"] = snappedf(maxf(0.0, float(rel.get("hostility", 0.0)) - 0.02), 0.001)
+		"threat":
+			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) + 0.06, 0.0, 1.0), 0.001)
+			rel["fear"] = snappedf(clampf(float(rel.get("fear", 0.0)) + 0.05, 0.0, 1.0), 0.001)
+	# Un grito de ayuda o una propuesta de alianza mueve al aliado hacia el
+	# emisor: mismo iman social que los reencuentros (26 m -> equipo).
+	var hostile_me := str(tb.get("faction", "")) == "hostile"
+	if (intent == "help" or intent == "alliance") and sender_is_bot and not hostile_me \
+		and int(tb.get("team_leader_id", 0)) == 0 and int(tb.get("_meet_id", 0)) == 0 \
+		and float(rel.get("trust", 0.0)) > 0.10:
+		tb["_meet_id"] = sender_id
+		tb["_soc_t"] = 0.0
+	# Encolar respuesta (la ultima gana); los turnos cortan el ping-pong
+	var pk := _chat_pair_key(target_id, sender_id)
+	if not sender_is_bot or int(_chat_turns.get(pk, 0)) < BOT_CHAT_MAX_TURNS:
+		tb["_chat_inbox"] = {"from_id": sender_id, "from_name": sender_name, "text": clean, "intent": intent}
+
+func _chat_touch_rel(bot_id: int, skey: String, sname: String) -> Dictionary:
+	var mem := _ensure_bot_memory(bot_id)
+	var rels: Dictionary = mem["relationships"]
+	if not rels.has(skey) or not (rels[skey] is Dictionary):
+		var pers: Dictionary = mem.get("personality", _default_personality_for_bot(bot_id))
+		rels[skey] = {"id": skey, "name": sname, "trust": clampf((float(pers.get("sociability", 0.5)) - float(pers.get("distrust", 0.35))) * 0.25, -0.35, 0.35), "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0}
+	var rel: Dictionary = rels[skey]
+	if not sname.is_empty():
+		rel["name"] = sname
+	return rel
+
+func _chat_classify(text: String) -> String:
+	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u") + " "
+	for kw in ["ayuda", "auxilio", "socorro", "me atacan", "me pega", "me mata", "ven rapido", "ven ya", "un lobo me", "un oso me", "me dispara"]:
+		if t.contains(kw):
+			return "help"
+	for kw in ["nos junt", "juntarnos", "juntemonos", "unete", "alianza", "en equipo", "hacer equipo", "ven conmigo", "vamos juntos"]:
+		if t.contains(kw):
+			return "alliance"
+	for kw in ["te mat", "te reviento", "muere", "te quito", "voy a por ti", "te voy a", "te espero", "entrega"]:
+		if t.contains(kw):
+			return "threat"
+	for kw in ["hola", "buenas", "saludos", "que tal", "ey ", "ei ", "oye "]:
+		if t.contains(kw):
+			return "greet"
+	return "talk"
+
+func _chat_sanitize(text: String) -> String:
+	var raw := text.strip_edges()
+	if raw.contains("http") or raw.contains("```"):
+		return ""
+	var out := ""
+	for ln in raw.split("\n"):
+		var l := ln.strip_edges()
+		if l.is_empty():
+			continue
+		l = l.replace("*", "").replace("\"", "").replace("`", "")
+		var colon := l.find(":")
+		if colon > 0 and colon <= 16 and l.substr(0, colon).count(" ") <= 1 and not l.substr(colon).contains("/"):
+			l = l.substr(colon + 1).strip_edges()
+		out = l
+		break
+	if out.length() > 160:
+		out = out.substr(0, 160)
+	if out.begins_with("["):
+		return ""
+	return out.strip_edges()
+
+# Envia el mensaje: queda registrado para el monitor y se entrega — a un bot
+# por el mismo canal interno, a un humano por RPC via relay_actor_chat.
+func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, kind: String) -> void:
+	var clean := _chat_sanitize(text)
+	if clean.is_empty():
+		clean = _chat_fallback_line(b, kind, to_name, "")
+	if clean.is_empty():
+		return
+	var my_id := int(b["bot_id"])
+	var sname := str(b.get("name", "Bot"))
+	if to_name.is_empty():
+		to_name = _actor_display_name(to_id)
+	chat_log.append({
+		"ts": int(Time.get_unix_time_from_system()), "from_id": my_id, "from": sname,
+		"to_id": to_id, "to": to_name, "kind": kind, "text": clean,
+	})
+	while chat_log.size() > BOT_CHAT_LOG_MAX:
+		chat_log.pop_front()
+	var pk := _chat_pair_key(my_id, to_id)
+	_chat_turns[pk] = int(_chat_turns.get(pk, 0)) + 1
+	if bots.has(to_id):
+		on_chat_received(to_id, my_id, sname, clean)
+	else:
+		var net = world.get("net") if world != null else null
+		if net != null and net.has_method("relay_actor_chat"):
+			net.relay_actor_chat(my_id, sname, clean, to_id, to_name)
+
+# Decide canal (Qwen si hay clave+cola libre; si no, plantilla) y aplica los
+# enfriamientos. kind: reply|greet|help|alliance|whisper|taunt.
+func _chat_dispatch(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String = "", intent: String = "") -> void:
+	if to_id <= 0:
+		return
+	var my_id := int(b["bot_id"])
+	var now := Time.get_ticks_msec()
+	# Las respuestas siempre pasan (los turnos ya cortan el ping-pong); los
+	# iniciados respetan el enfriamiento por pareja y por bot.
+	if kind != "reply":
+		if not _chat_pair_ok(my_id, to_id, now) or float(b.get("_chat_cd", 0.0)) > 0.0:
+			return
+		_chat_pair_until[_chat_pair_key(my_id, to_id)] = now + int(BOT_CHAT_PAIR_CD * 1000.0)
+		b["_chat_cd"] = BOT_CHAT_CD
+		if kind == "greet":
+			_chat_greet_until[_chat_pair_key(my_id, to_id)] = now + int(BOT_CHAT_GREET_CD * 1000.0)
+	if _chat_attempt_qwen(b, kind, to_id, to_name, ctx, intent):
+		return # el mensaje sale cuando responde el modelo
+	_bot_chat_send(b, to_id, to_name, _chat_fallback_line(b, kind, to_name, ctx, intent), kind)
+
+# Triggers sociales del chat, evaluados en el paso social (~3.2 s por bot).
+func _bot_chat_tick(b: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	if proxy == null or bool(proxy.get_meta("proxy_dead", false)) or bool(b.get("sleeping", false)):
+		return
+	var now := Time.get_ticks_msec()
+	var my_id := int(b["bot_id"])
+	# 1) Responder al ultimo mensaje recibido
+	var inbox: Dictionary = b.get("_chat_inbox", {})
+	if not inbox.is_empty():
+		b["_chat_inbox"] = {}
+		if now >= int(b.get("_chat_reply_ready", 0)):
+			b["_chat_reply_ready"] = now + int(BOT_CHAT_REPLY_CD * 1000.0)
+			_chat_dispatch(b, "reply", int(inbox.get("from_id", 0)), str(inbox.get("from_name", "?")), str(inbox.get("text", "")), str(inbox.get("intent", "talk")))
+		return
+	if float(b.get("_chat_cd", 0.0)) > 0.0 or not _chat_pending.is_empty():
+		return
+	var pers := _get_bot_personality(b)
+	var hostile := str(b.get("faction", "")) == "hostile"
+	# 2) Pedir ayuda bajo ataque — al aliado mas fiable
+	if (b.get("aggro_target") != null or _sensed_node(b, "_s_foe") != null or _sensed_node(b, "_s_predator") != null) \
+		and now >= int(_chat_help_until.get(my_id, 0)):
+		var ally := _chat_best_ally(b)
+		if not ally.is_empty():
+			_chat_help_until[my_id] = now + int(BOT_CHAT_HELP_CD * 1000.0)
+			_chat_dispatch(b, "help", int(ally["id"]), str(ally["name"]), _chat_threat_name(b))
+			return
+	var amb: Dictionary = b.get("_ambush", {})
+	if hostile and not amb.is_empty():
+		# 3) Susurro a un compinche cercano mientras se prepara el golpe
+		var mate := _chat_nearest_mate(b, 45.0)
+		if not mate.is_empty():
+			_chat_dispatch(b, "whisper", int(mate["id"]), str(mate["name"]), str(amb.get("target_name", "")))
+			return
+		# 4) Provocar a la presa a quemarropa (solo los muy agresivos)
+		var vid := int(amb.get("target_id", 0))
+		var victim := _find_actor_by_peer_id(vid)
+		if victim != null and is_instance_valid(victim) and float(pers.get("aggression", 0.5)) > 0.7 \
+			and proxy.global_position.distance_to(victim.global_position) < 25.0:
+			_chat_dispatch(b, "taunt", vid, str(amb.get("target_name", "?")))
+			return
+	# 5) Proponer alianza al aliado potencial que busca (_meet_id), antes de
+	#    que la confianza cierre el equipo sola
+	var mtid := int(b.get("_meet_id", 0))
+	if mtid > 0 and not hostile and int(b.get("team_leader_id", 0)) == 0 and bots.has(mtid):
+		var rel_m := get_bot_relationship(my_id, "bot_%d" % mtid)
+		var tr := float(rel_m.get("trust", 0.0))
+		if tr > 0.10 and tr < BOT_TEAM_FORM_TRUST + 0.12:
+			_chat_dispatch(b, "alliance", mtid, _actor_display_name(mtid))
+			return
+	# 6) Saludo al encontrarse con alguien a quemarropa (solo sociables no hostiles)
+	if not hostile and float(pers.get("sociability", 0.5)) >= 0.45:
+		var cand := _chat_greet_candidate(b, now)
+		if not cand.is_empty():
+			_chat_dispatch(b, "greet", int(cand["id"]), str(cand["name"]))
+			return
+
+func _chat_best_ally(b: Dictionary) -> Dictionary:
+	var proxy: Node3D = b["proxy"]
+	var my_id := int(b["bot_id"])
+	var my_team := _bot_team_ids(b)
+	var best := {}
+	var best_s := -1.0
+	for oid in bots.keys():
+		if oid == my_id:
+			continue
+		var ob: Dictionary = bots[oid]
+		var op: Node3D = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		var rel := get_bot_relationship(my_id, "bot_%d" % oid)
+		var tr := float(rel.get("trust", 0.0))
+		var in_team: bool = oid in my_team
+		if (not in_team and tr < 0.25) or float(rel.get("hostility", 0.0)) > 0.5:
+			continue
+		var d := proxy.global_position.distance_to(op.global_position)
+		var s := (10.0 if in_team else 0.0) + tr * 3.0 - d * 0.004
+		if s > best_s:
+			best_s = s
+			best = {"id": oid, "name": str(ob.get("name", str(oid)))}
+	var net = world.get("net") if world != null else null
+	if net != null and "players" in net:
+		for pid in net.players.keys():
+			var pdata: Dictionary = net.players[pid]
+			if int(pid) == int(net.get_my_id()) or is_bot_peer_id(int(pid)) or bool(pdata.get("is_ai_bot", false)) or bool(pdata.get("offline", false)):
+				continue
+			var rel := get_bot_relationship(my_id, _actor_persist_key(int(pid)))
+			if float(rel.get("trust", 0.0)) < 0.5 or float(rel.get("hostility", 0.0)) > 0.4:
+				continue
+			var pp := _find_actor_by_peer_id(int(pid))
+			if pp == null:
+				continue
+			var s := float(rel.get("trust", 0.0)) * 3.0 - proxy.global_position.distance_to(pp.global_position) * 0.004
+			if s > best_s:
+				best_s = s
+				best = {"id": int(pid), "name": str(pdata.get("char_name", pdata.get("name", "Jugador")))}
+	return best
+
+func _chat_nearest_mate(b: Dictionary, max_d: float) -> Dictionary:
+	var proxy: Node3D = b["proxy"]
+	var my_id := int(b["bot_id"])
+	var best := {}
+	var best_d := max_d
+	for tid in _bot_team_ids(b):
+		if tid == my_id or not bots.has(tid):
+			continue
+		var op: Node3D = (bots[tid] as Dictionary).get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		var d := proxy.global_position.distance_to(op.global_position)
+		if d < best_d:
+			best_d = d
+			best = {"id": tid, "name": str((bots[tid] as Dictionary).get("name", str(tid)))}
+	return best
+
+func _chat_greet_candidate(b: Dictionary, now: int) -> Dictionary:
+	var proxy: Node3D = b["proxy"]
+	var my_id := int(b["bot_id"])
+	var best := {}
+	var best_d := BOT_CHAT_GREET_RANGE
+	for oid in bots.keys():
+		if oid == my_id:
+			continue
+		var ob: Dictionary = bots[oid]
+		var op: Node3D = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		var rel := get_bot_relationship(my_id, "bot_%d" % oid)
+		if float(rel.get("hostility", 0.0)) > 0.4 or float(rel.get("fear", 0.0)) > 0.55:
+			continue
+		var d := proxy.global_position.distance_to(op.global_position)
+		if d < best_d and now >= int(_chat_greet_until.get(_chat_pair_key(my_id, oid), 0)):
+			best_d = d
+			best = {"id": oid, "name": str(ob.get("name", str(oid)))}
+	var net = world.get("net") if world != null else null
+	if net != null and "players" in net:
+		for pid in net.players.keys():
+			var pdata: Dictionary = net.players[pid]
+			if int(pid) == int(net.get_my_id()) or is_bot_peer_id(int(pid)) or bool(pdata.get("is_ai_bot", false)) or bool(pdata.get("offline", false)):
+				continue
+			var rel := get_bot_relationship(my_id, _actor_persist_key(int(pid)))
+			if float(rel.get("hostility", 0.0)) > 0.4 or float(rel.get("fear", 0.0)) > 0.55:
+				continue
+			var pp := _find_actor_by_peer_id(int(pid))
+			if pp == null or not is_instance_valid(pp):
+				continue
+			var d := proxy.global_position.distance_to(pp.global_position)
+			if d < best_d and now >= int(_chat_greet_until.get(_chat_pair_key(my_id, int(pid)), 0)):
+				best_d = d
+				best = {"id": int(pid), "name": str(pdata.get("char_name", pdata.get("name", "Jugador")))}
+	return best
+
+func _chat_threat_name(b: Dictionary) -> String:
+	var pred := _sensed_node(b, "_s_predator")
+	if pred != null:
+		match str(pred.get("animal_type")):
+			"wolf":
+				return "un lobo"
+			"bear":
+				return "un oso"
+		return "una alimana"
+	var foe: Node3D = _sensed_node(b, "_s_foe")
+	if foe == null:
+		foe = b.get("aggro_target")
+	if foe != null and is_instance_valid(foe):
+		var fid := _peer_id_for_actor(foe)
+		return _actor_display_name(fid) if fid > 0 else "alguien"
+	return "algo"
+
+func _chat_zone_name(pos: Vector3) -> String:
+	match _poi_kind_near(pos):
+		"house":
+			return "el pueblo"
+		"city":
+			return "la ciudad"
+		"military":
+			return "la base militar"
+		"tower":
+			return "la torre"
+	return "el monte"
+
+func _chat_fallback_line(b: Dictionary, kind: String, to_name: String, ctx: String = "", intent: String = "") -> String:
+	var proxy: Node3D = b["proxy"]
+	var nm := to_name if not to_name.is_empty() else "tu"
+	var pers := _get_bot_personality(b)
+	match kind:
+		"greet":
+			if float(pers.get("sociability", 0.5)) > 0.7:
+				return str(["Ey %s, que tal por ahi." % nm, "Buenas %s, me alegro de ver a alguien vivo." % nm][int(b["bot_id"]) % 2])
+			return "Hum. %s." % nm
+		"help":
+			var threat := ctx if not ctx.is_empty() else "algo"
+			return str(["%s encima! %s, ven, estoy en %s!" % [threat, nm, _chat_zone_name(proxy.global_position)],
+				"Ayuda! Me ataca %s, en %s!" % [threat, _chat_zone_name(proxy.global_position)]][int(b["bot_id"]) % 2])
+		"alliance":
+			return str(["%s, nos juntamos? Dos pares de ojos ven mas." % nm,
+				"Equipo, %s? Solo no se llega lejos." % nm][int(b["bot_id"]) % 2])
+		"whisper":
+			return str(["Quieto. Espera a que se acerque.",
+				"No te muevas, casi lo tenemos."][int(b["bot_id"]) % 2])
+		"taunt":
+			return str(["Mala suerte, %s. Entrega lo que llevas." % nm,
+				"Te veo, %s. Esa mochila me viene bien." % nm][int(b["bot_id"]) % 2])
+		"reply":
+			return _chat_fallback_reply(b, intent, nm)
+	return ""
+
+func _chat_fallback_reply(b: Dictionary, intent: String, nm: String) -> String:
+	var hostile := str(b.get("faction", "")) == "hostile"
+	match intent:
+		"help":
+			if hostile:
+				return "Problema tuyo."
+			return "Aguanta, voy para alla."
+		"alliance":
+			return "Prefiero ir solo." if (hostile or float(_get_bot_personality(b).get("distrust", 0.3)) > 0.6) else "Me apunto. Ven a buscarme."
+		"greet":
+			return "Buenas %s." % nm
+		"threat":
+			return "Vale, tranquilo." if float(_get_bot_personality(b).get("bravery", 0.5)) < 0.4 else "No me busques."
+	return "Te leo, %s." % nm
+
+func _chat_ensure_http() -> void:
+	if _chat_http != null and is_instance_valid(_chat_http):
+		return
+	_chat_http = HTTPRequest.new()
+	_chat_http.timeout = 10.0
+	_chat_http.request_completed.connect(_chat_on_response)
+	add_child(_chat_http)
+
+# Redacta el mensaje con Qwen (una peticion en vuelo, comparte la cuota diaria
+# con las decisiones). Devuelve false y el llamador usa la plantilla local.
+func _chat_attempt_qwen(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String, intent: String) -> bool:
+	if not _chat_pending.is_empty() or not _ai_can_query_remote():
+		return false
+	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
+	if key.is_empty() or _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
+		return false
+	_chat_ensure_http()
+	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent}
+	_ai_calls_day += 1
+	_ai_calls_total += 1
+	var payload := {
+		"model": AI_ADVISOR_MODEL,
+		"temperature": 0.85,
+		"max_tokens": 60,
+		"messages": [
+			{"role": "system", "content": BOT_CHAT_SYSTEM_PROMPT},
+			{"role": "user", "content": _chat_build_prompt(b, kind, to_id, to_name, ctx, intent)},
+		],
+	}
+	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
+	if _chat_http.request(AI_ADVISOR_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
+		_chat_pending = {}
+		return false
+	return true
+
+func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String, intent: String) -> String:
+	var proxy: Node3D = b["proxy"]
+	var pers := _get_bot_personality(b)
+	var my_id := int(b["bot_id"])
+	var to_key := ("bot_%d" % to_id) if bots.has(to_id) else _actor_persist_key(to_id)
+	var rel := get_bot_relationship(my_id, to_key)
+	var tr := float(rel.get("trust", 0.0))
+	var ho := float(rel.get("hostility", 0.0))
+	var rel_desc := "un desconocido"
+	if tr > 0.5:
+		rel_desc = "aliado de confianza"
+	elif tr > 0.15:
+		rel_desc = "conocido amistoso"
+	elif ho > 0.5:
+		rel_desc = "tu enemigo"
+	elif ho > 0.2:
+		rel_desc = "alguien que te cae mal"
+	var sit := ""
+	match kind:
+		"greet":
+			sit = "Te cruzas con %s de cerca. Saludale por el chat." % to_name
+		"help":
+			sit = "Te ataca %s y necesitas que %s venga a socorrerte. Escribe el grito de ayuda mencionando que estas en %s." % [ctx, to_name, _chat_zone_name(proxy.global_position)]
+		"alliance":
+			sit = "Te acercas a %s y quieres proponerle hacer equipo para sobrevivir juntos." % to_name
+		"whisper":
+			sit = "Preparas una emboscada contra %s junto a %s. Dale la orden en una frase susurrada." % [ctx, to_name]
+		"taunt":
+			sit = "Estas a punto de atacar a %s para robarle. Escribe una frase intimidante." % to_name
+		"reply":
+			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "threat": "te amenaza"}.get(intent, "te escribe")
+			sit = "%s %s. Su mensaje: \"%s\". Responde segun tu caracter y tu relacion con el." % [to_name, intent_txt, ctx]
+	return "Eres %s, superviviente %s en Last Day. Caracter: valentia %.2f, agresividad %.2f, sociable %.2f, desconfianza %.2f.\nEstado: vida %d, hambre %d, sed %d. Zona: %s. Llevas: %s.\n%s es %s (confianza %.2f, hostilidad %.2f).\n%s" % [
+		str(b.get("name", "Bot")), str(b.get("faction", "friendly")),
+		float(pers.get("bravery", 0.5)), float(pers.get("aggression", 0.5)),
+		float(pers.get("sociability", 0.5)), float(pers.get("distrust", 0.3)),
+		int(float(b.get("health", 100))), int(float(b.get("hunger", 80))), int(float(b.get("thirst", 80))),
+		_chat_zone_name(proxy.global_position), str(b.get("held_item", "las manos")),
+		to_name, rel_desc, tr, ho, sit]
+
+func _chat_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	var req := _chat_pending
+	_chat_pending = {}
+	if req.is_empty():
+		return
+	var bid := int(req.get("bot_id", 0))
+	if not bots.has(bid):
+		return
+	var b: Dictionary = bots[bid]
+	var to_id := int(req.get("to_id", 0))
+	var to_name := str(req.get("to_name", ""))
+	var kind := str(req.get("kind", "talk"))
+	var intent := str(req.get("intent", ""))
+	var text := ""
+	if result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
+		var parsed = JSON.parse_string(body.get_string_from_utf8())
+		if parsed is Dictionary:
+			var usage = parsed.get("usage", {})
+			var tok := int((usage as Dictionary).get("total_tokens", 140)) if usage is Dictionary else 140
+			_ai_tokens_day += maxi(tok, 60)
+			_ai_tokens_total += maxi(tok, 60)
+			var ch = parsed.get("choices", [])
+			if ch is Array and not (ch as Array).is_empty():
+				var msg = (ch[0] as Dictionary).get("message", {})
+				if msg is Dictionary:
+					text = str((msg as Dictionary).get("content", ""))
+	else:
+		_ai_tokens_day += 60
+		_ai_tokens_total += 60
+	text = _chat_sanitize(text)
+	if text.is_empty():
+		text = _chat_fallback_line(b, kind, to_name, "", intent)
+	_bot_chat_send(b, to_id, to_name, text, kind)
 
 func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> String:
 	if not bots.has(bot_id):
@@ -7184,6 +7689,12 @@ func get_full_web_status() -> Dictionary:
 			+ float(st.get("animals_gutted", 0)) * 5.0
 			- float(mem.get("deaths", 0)) * 75.0
 		))
+		# Ultimo mensaje de chat emitido por este bot (para la tarjeta del panel)
+		for m in range(chat_log.size() - 1, -1, -1):
+			var cm: Dictionary = chat_log[m]
+			if int(cm.get("from_id", 0)) == int(bid):
+				snap["chat"] = {"to": str(cm.get("to", "")), "kind": str(cm.get("kind", "")), "text": str(cm.get("text", "")), "ts": int(cm.get("ts", 0))}
+				break
 		snap["alive_seconds"] = int(life_sec)
 		snap["alive_total_seconds"] = int(alive_total)
 		# Media de tiempo de vida: total acumulado entre vidas (muertes + la
@@ -7307,6 +7818,7 @@ func get_full_web_status() -> Dictionary:
 		"players": players_out,
 		"bots": bots_out,
 		"teams": teams_out,
+		"chat_log": chat_log.slice(-BOT_CHAT_LOG_MAX),
 	}
 
 func _ai_save_live_status() -> void:

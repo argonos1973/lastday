@@ -1887,6 +1887,21 @@ func send_chat_message(text: String, target_peer_id: int = 0, group_id: String =
 		return
 	if not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
 		return
+	# Destinatario bot: existe en `players` pero no tiene peer ENet real — el
+	# mensaje lo "oye" la IA a traves de la escena; el humano recibe el eco de
+	# su propio DM para ver la conversacion "Elena" en su panel de chat.
+	if bool(players[target_peer_id].get("is_ai_bot", false)):
+		var bname := str(players[target_peer_id].get("char_name", ""))
+		if bname.is_empty():
+			bname = str(players[target_peer_id].get("name", "Superviviente"))
+		var sc := get_tree().current_scene
+		if sc != null and sc.has_method("_net_bot_hear_chat"):
+			sc._net_bot_hear_chat(sender, sender_name, clean, target_peer_id)
+		if not is_dedicated_server and sender == my_uid:
+			receive_chat_message(sender, sender_name, clean, target_peer_id, bname, "")
+		elif peer != null and sender > 1 and sender != my_uid and players.has(sender) and not players[sender].get("offline", false) and peer_alive(sender):
+			receive_chat_message.rpc_id(sender, sender, sender_name, clean, target_peer_id, bname, "")
+		return
 	var tdata: Dictionary = players[target_peer_id]
 	var target_name := str(tdata.get("char_name", ""))
 	if target_name.is_empty():
@@ -1901,6 +1916,30 @@ func send_chat_message(text: String, target_peer_id: int = 0, group_id: String =
 				receive_chat_message.rpc_id(recipient, sender, sender_name, clean, target_peer_id, target_name, "")
 			if sender == target_peer_id:
 				break
+
+# Relay de chat emitido por un actor no-jugador (bot). El servidor decide a
+# quien entregar: humanos por RPC (ven un DM del bot), bots via la escena
+# (la IA lo "oye" y puede contestar por el mismo camino).
+func relay_actor_chat(sender_id: int, sender_name: String, text: String, target_peer_id: int, target_name: String = "") -> void:
+	var clean := text.strip_edges().replace("\n", " ").replace("\r", " ")
+	if clean.length() > 160:
+		clean = clean.substr(0, 160)
+	if clean.is_empty() or target_peer_id <= 0:
+		return
+	var sc := get_tree().current_scene
+	if players.has(target_peer_id) and bool(players[target_peer_id].get("is_ai_bot", false)):
+		if sc != null and sc.has_method("_net_bot_hear_chat"):
+			sc._net_bot_hear_chat(sender_id, sender_name, clean, target_peer_id)
+		return
+	if not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
+		return
+	if target_name.is_empty():
+		target_name = str(players[target_peer_id].get("char_name", players[target_peer_id].get("name", "Jugador")))
+	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+	if not is_dedicated_server and target_peer_id == my_uid:
+		receive_chat_message(sender_id, sender_name, clean, target_peer_id, target_name, "")
+	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):
+		receive_chat_message.rpc_id(target_peer_id, sender_id, sender_name, clean, target_peer_id, target_name, "")
 
 @rpc("authority", "reliable")
 func receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:

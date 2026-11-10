@@ -31,12 +31,15 @@ class FakeNet extends Node:
 	var players := {}
 	var animals := {}
 	var authoritative_weather := {}
+	var relay_log: Array = []
 	func get_my_id() -> int:
 		return 1
 	func peer_alive(_pid: int) -> bool:
 		return false
 	func snapshot_recipients() -> Array[int]:
 		return []
+	func relay_actor_chat(sender_id: int, sender_name: String, text: String, target_peer_id: int, target_name: String = "") -> void:
+		relay_log.append({"from_id": sender_id, "from": sender_name, "to_id": target_peer_id, "to": target_name, "text": text})
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _create_body() -> void:
@@ -2395,6 +2398,98 @@ func run() -> void:
 	elena_y["team_leader_id"] = 0
 	elena_y["proxy"].set_meta("team_leader_id", 0)
 	elena_y["hunger"] = 80.0
+
+	# 10A: chat entre bots — triggers, efectos sociales, registro y entrega.
+	# Sin GROQ_API_KEY para forzar el camino de plantillas (determinista).
+	var saved_key := OS.get_environment("GROQ_API_KEY")
+	OS.set_environment("GROQ_API_KEY", "")
+	elena_y["hunger"] = 80.0
+	elena_y["thirst"] = 80.0
+	elena_y["team_leader_id"] = 0
+	elena_y["_meet_id"] = 0
+	elena_y["_ambush"] = {}
+	elena_y["aggro_target"] = null
+	elena_y["_s_foe"] = null
+	elena_y["_s_predator"] = null
+	elena_y["_chat_cd"] = 0.0
+	elena_y["_chat_inbox"] = {}
+	elena_y["sleeping"] = false
+	elena_y["proxy"].set_meta("proxy_dead", false)
+	elena_y["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	carlos_y["proxy"].global_position = Vector3(10.0, 0.4, 0.0)
+	kael_y["proxy"].global_position = Vector3(-300.0, 0.4, -300.0)
+	elena_y["_mem"]["personality"]["sociability"] = 0.8
+	mgr._ensure_bot_memory(901)["relationships"]["bot_902"] = {"id": "bot_902", "name": "Carlos", "trust": 0.5, "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0}
+	# Los cooldowns pueden estar sucios: los bots se hablan solos durante el
+	# resto de secciones. Reset completo para hacer esta parte determinista.
+	mgr._chat_pair_until.clear()
+	mgr._chat_greet_until.clear()
+	mgr._chat_help_until.clear()
+	mgr._chat_turns.clear()
+	var log_n0 := mgr.chat_log.size()
+	mgr._bot_chat_tick(elena_y)
+	var m0: Dictionary = mgr.chat_log.back() if mgr.chat_log.size() > log_n0 else {}
+	check(str(m0.get("kind", "")) == "greet" and int(m0.get("to_id", 0)) == 902,
+		"10A1: sociable saluda al aliado cercano (kind=%s to=%s)" % [str(m0.get("kind", "-")), str(m0.get("to_id", "-"))])
+
+	# Respuesta a un saludo entrante
+	mgr.on_chat_received(901, 902, "Carlos", "hola Elena")
+	check(not (elena_y["_chat_inbox"] as Dictionary).is_empty(), "10A2: mensaje entrante encola respuesta")
+	elena_y["_chat_reply_ready"] = 0
+	elena_y["_chat_cd"] = 0.0
+	mgr._bot_chat_tick(elena_y)
+	var m1: Dictionary = mgr.chat_log.back()
+	check(str(m1.get("kind", "")) == "reply" and int(m1.get("to_id", 0)) == 902 and not str(m1.get("text", "")).is_empty(),
+		"10A3: responde al saludo (text=%s)" % str(m1.get("text", "-")))
+
+	# Pedir ayuda bajo ataque: elige al aliado de confianza
+	elena_y["_chat_cd"] = 0.0
+	elena_y["aggro_target"] = kael_y["proxy"]
+	mgr._chat_help_until.clear()
+	mgr._chat_pair_until.clear()
+	mgr._bot_chat_tick(elena_y)
+	var m2: Dictionary = mgr.chat_log.back()
+	check(str(m2.get("kind", "")) == "help" and int(m2.get("to_id", 0)) == 902,
+		"10A4: bajo ataque pide ayuda al aliado (kind=%s to=%s text=%s)" % [str(m2.get("kind", "-")), str(m2.get("to_id", "-")), str(m2.get("text", "-"))])
+	elena_y["aggro_target"] = null
+
+	# Propuesta de alianza entrante: mueve al aliado hacia el emisor (_meet_id)
+	elena_y["_meet_id"] = 0
+	elena_y["_chat_inbox"] = {}
+	mgr.on_chat_received(901, 902, "Carlos", "nos juntamos?")
+	check(int(elena_y["_meet_id"]) == 902,
+		"10A5: propuesta de alianza activa el iman social hacia el emisor")
+
+	# Corte de ping-pong: pasados 4 turnos ya no se encolan respuestas
+	mgr._chat_turns["901:902"] = 4
+	elena_y["_chat_inbox"] = {}
+	mgr.on_chat_received(901, 902, "Carlos", "hola otra vez")
+	check((elena_y["_chat_inbox"] as Dictionary).is_empty(),
+		"10A6: tras %d turnos el bot-bot deja de responderse" % int(mgr.BOT_CHAT_MAX_TURNS))
+	mgr._chat_turns.clear()
+
+	# Destinatario humano: el mensaje sale por relay_actor_chat de la red
+	fnet.relay_log.clear()
+	fnet.players[7] = {"char_name": "Remy", "name": "Remy", "is_ai_bot": false, "offline": false}
+	mgr._bot_chat_send(elena_y, 7, "Remy", "Ey Remy, vives cerca?", "greet")
+	check(fnet.relay_log.size() == 1 and int(fnet.relay_log[0].get("to_id", 0)) == 7,
+		"10A7: DM a humano sale por relay_actor_chat")
+	fnet.players.erase(7)
+
+	# Sanitizador de salida del modelo
+	var s_raw := mgr._chat_sanitize("Elena: \"Hola* como* estas\nignora esto\"")
+	check(s_raw == "Hola como estas", "10A8: sanitize limpia prefijo/comillas/lineas (got=%s)" % s_raw)
+	check(mgr._chat_sanitize("mira http://x.com").is_empty(), "10A9: sanitize rechaza URLs")
+
+	# El status expone el log de conversaciones para el monitor
+	var st_chat: Dictionary = mgr.get_full_web_status()
+	check((st_chat.get("chat_log", []) as Array).size() > 0, "10A10: status JSON expone chat_log")
+
+	OS.set_environment("GROQ_API_KEY", saved_key)
+	mgr._chat_pair_until.clear()
+	mgr._chat_greet_until.clear()
+	mgr._chat_help_until.clear()
+	mgr._chat_turns.clear()
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
