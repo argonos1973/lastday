@@ -3,6 +3,7 @@
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
 c3ac728|Los 3 supervivientes IA (Elena, Carlos y Kael) nacen ahora HOSTILES y te cazan a la vista; solo se vuelven aliados si los convences por chat o voz: súbeles la confianza con saludos, explicaciones y regalos ('te doy pan'), pídele tregua ('alto ahí') para que dejen de dispararte, y cuando confíen lo bastante ('sígueme') se unen a tu equipo — Kael, el del rifle, también se puede convencer; sus respuestas ya se ven en el chat además de habladas, y se quitan por completo la interacción directa [F] y el menú de órdenes [Z]
+e1e2d19|Los bots que descansan de noche (sentados o parapetados) gastan hambre, sed, energía y sueño casi a la mitad, y si se están muriendo de hambre o sed salen a buscar recursos aunque no tengan antorcha — la supervivencia pesa más que la oscuridad
 3c1a2c1|La hora del monitor web ya es la real del servidor (antes salía fija a las 14:00) y de noche los bots solo se mueven a buscar recursos si llevan antorcha — sin luz acampan, duermen o se parapetan donde están
 5fa6c86|El monitor web de bots muestra ahora el nivel de sangre (0-100) de cada bot junto a salud, hambre y sed, con un indicador 🩸 cuando está sangrando
 147df1f|Los bots supervivientes vuelven a aliarse entre sí como antes, incluido Kael: las bandas de bandidos se forman de nuevo por convivencia, alianzas y ayudas por chat según su personalidad; entre bandidos solo hay recelo inicial, la hostilidad alta se reserva para el humano
