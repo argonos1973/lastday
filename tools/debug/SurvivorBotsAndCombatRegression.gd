@@ -89,6 +89,17 @@ class TestWorld extends "res://scripts/Main.gd":
 		if not campfire_positions.has(pos):
 			campfire_positions.append(pos)
 		return true
+	# Replica del camino del servidor dedicado: solo registra la parcela en
+	# _planted_crops, sin crear el nodo visual farm_plot.
+	func _plant_crop(pos: Vector3, crop_state := "planted", growth := 0.0, crop_id := "", watered_until := 0.0, ready_unix := 0.0) -> String:
+		var id := crop_id if not crop_id.is_empty() else "crop_%d" % (int(round(pos.x * 4.0)) * 73856093 ^ int(round(pos.z * 4.0)) * 19349663 ^ int(round(pos.y * 10.0)))
+		for c in _planted_crops:
+			if str(c.get("id", "")) == id:
+				return id
+		_planted_crops.append({"id": id, "pos": pos, "crop_state": crop_state, "growth": growth, "updated_unix": Time.get_unix_time_from_system(), "watered_until": watered_until, "ready_unix": ready_unix})
+		return id
+	func _can_place_ground_vegetation(_pos: Vector3, _river_margin := 0.8, _short_grass := false) -> bool:
+		return true
 
 func _initialize() -> void:
 	call_deferred("run")
@@ -2003,6 +2014,101 @@ func run() -> void:
 		mgr._tick_bot(fresh_b, 0.1)
 	check(bool(fresh_b["proxy"].get_meta("proxy_dead", false)),
 		"SpawnReal 10w12: la inanicion real lo mata igual que a un jugador humano")
+
+	# 10x: huerto — el bot aprende a cultivar como un humano: consigue
+	# semillas cortando arbustos, azada o pala como botin, siembra el bancal
+	# (4 s), espera a que crezca (~7.5 min) y recolecta Verduras.
+	var farm_b: Dictionary = fresh_b
+	farm_b["proxy"].set_meta("proxy_dead", false)
+	farm_b["team_leader_id"] = 0
+	farm_b["hunger"] = 90.0
+	farm_b["thirst"] = 90.0
+	farm_b["health"] = 100.0
+	farm_b["hide_timer"] = 0.0
+	farm_b["sleeping"] = false
+	farm_b["shelter_id"] = "farm_sh"
+	farm_b["shelter_pos"] = Vector3(206.0, 0.4, 200.0)
+	farm_b["proxy"].global_position = Vector3(200.0, 0.4, 200.0)
+	farm_b["pos"] = farm_b["proxy"].global_position
+	farm_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "quantity": 1, "durability": 100.0},
+		{"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 2},
+	])
+	world._planted_crops = []
+	check(not mgr._is_loot_desirable(farm_b, "Azada", "tool_hoe"),
+		"SpawnReal 10x1: ya con azada, otra azada no interesa")
+	farm_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "quantity": 1, "durability": 100.0},
+	])
+	check(mgr._is_loot_desirable(farm_b, "Semillas", "resource"),
+		"SpawnReal 10x2: con herramienta de cultivo las semillas interesan")
+	farm_b["proxy"].set_meta("saved_inventory", [])
+	farm_b["shelter_id"] = ""
+	farm_b["shelter_pos"] = Vector3.INF
+	check(not mgr._is_loot_desirable(farm_b, "Pala", "tool_shovel"),
+		"SpawnReal 10x3: nomada sin semillas ni refugio ignora la pala")
+	farm_b["shelter_id"] = "farm_sh"
+	farm_b["shelter_pos"] = Vector3(206.0, 0.4, 200.0)
+	farm_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 1},
+	])
+	check(mgr._is_loot_desirable(farm_b, "Pala", "tool_shovel"),
+		"SpawnReal 10x4: asentado con semillas quiere la pala para el huerto")
+	farm_b["proxy"].set_meta("saved_inventory", [
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "quantity": 1, "durability": 100.0},
+		{"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 2},
+	])
+
+	# Siembra: va al bancal, cava 4 s con la azada y queda registrado.
+	for i in range(140):
+		mgr._bot_try_farm(farm_b, 0.1)
+		if (world._planted_crops as Array).size() > 0:
+			break
+	check((world._planted_crops as Array).size() == 1,
+		"SpawnReal 10x5: con azada y semillas siembra un bancal (_planted_crops=%d)" % (world._planted_crops as Array).size())
+	var frec: Dictionary = (world._planted_crops as Array)[0] if (world._planted_crops as Array).size() > 0 else {}
+	check(mgr._bot_item_count(farm_b["proxy"], "Semillas") == 1 and (farm_b["_mem"]["farm_plots"] as Array).size() == 1,
+		"SpawnReal 10x6: consume una semilla y recuerda su huerto (plots=%d)" % (farm_b["_mem"]["farm_plots"] as Array).size())
+
+	# Cosecha: el cultivo madura con el tiempo; cuando esta listo lo recolecta.
+	if not frec.is_empty():
+		frec["updated_unix"] = Time.get_unix_time_from_system() - 600.0
+		farm_b["proxy"].global_position = (frec["pos"] as Vector3) + Vector3(0.5, 0, 0.5)
+		farm_b["pos"] = farm_b["proxy"].global_position
+		for i in range(80):
+			mgr._bot_try_farm(farm_b, 0.1)
+			if str(frec.get("crop_state", "")) == "empty":
+				break
+		check(mgr._bot_item_count(farm_b["proxy"], "Verduras") == 3 and str(frec.get("crop_state", "")) == "empty",
+			"SpawnReal 10x7: cultivo maduro -> recolecta 3 Verduras (crop=%s)" % str(frec.get("crop_state", "")))
+
+		# Replanta el bancal vacio con la semilla que le queda.
+		for i in range(140):
+			mgr._bot_try_farm(farm_b, 0.1)
+			if str(frec.get("crop_state", "")) == "planted":
+				break
+		check(str(frec.get("crop_state", "")) == "planted",
+			"SpawnReal 10x8: replanta el bancal vacio con la semilla restante")
+
+		# Riego: con botella llena humedece el bancal y acelera el cultivo.
+		frec["watered_until"] = 0.0
+		farm_b["proxy"].set_meta("saved_inventory", [
+			{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "quantity": 1, "durability": 100.0},
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
+		])
+		farm_b["proxy"].global_position = (frec["pos"] as Vector3) + Vector3(1.0, 0, 1.0)
+		farm_b["pos"] = farm_b["proxy"].global_position
+		for i in range(60):
+			mgr._bot_try_farm(farm_b, 0.1)
+			if float(frec.get("watered_until", 0.0)) > Time.get_unix_time_from_system():
+				break
+		check(float(frec.get("watered_until", 0.0)) > Time.get_unix_time_from_system()
+				and mgr._bot_item_count(farm_b["proxy"], "Botella de plastico") >= 1,
+			"SpawnReal 10x9: riega el cultivo con su botella (queda vacia)")
+	else:
+		check(false, "SpawnReal 10x7: sin bancal no se pudo probar la cosecha")
+	farm_b["shelter_id"] = ""
+	farm_b["shelter_pos"] = Vector3.INF
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()

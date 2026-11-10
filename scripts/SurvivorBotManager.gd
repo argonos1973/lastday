@@ -666,6 +666,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"flee_until": 0.0,
 		"gut_target": null,
 		"gut_t": 0.0,
+		"_farm": {},
 		"strafe_dir": 1.0,
 		"strafe_timer": 0.0,
 		"drink_at": Vector3.INF,
@@ -1212,6 +1213,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# crear una hoguera cuando lleva carne o pescado para asar.
 	if _bot_try_cook_meat(b, delta):
 		b["_act"] = "cook"
+		return
+
+	# 6a-bis) Huerto: cosecha madura que se pudre, limpia bancales, replanta,
+	# riega de paso y siembra bancales nuevos con azada/pala + semillas —
+	# la fuente de comida renovable de un superviviente asentado.
+	if _bot_try_farm(b, delta):
+		b["_act"] = "farm"
 		return
 
 	# 6b) Construir refugio propio si ya reunio los materiales
@@ -3329,6 +3337,10 @@ func _loot_priority(b: Dictionary, nm: String, tp: String) -> float:
 		# Sin arma de verdad, un hacha o lanza es su defensa principal
 		var has_ranged := not _best_weapon_name(b["proxy"]).is_empty()
 		return 3.5 if has_ranged else 6.0
+	if tp in ["tool_hoe", "tool_shovel"]:
+		return 3.6
+	if nm == "Semillas":
+		return 3.8
 	if tp in ["tool_torch", "tool_matches"]:
 		return 4.5
 	if tp == "backpack" or tp == "clothing":
@@ -3370,6 +3382,13 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 		return true
 	if tp in ["weapon", "weapon_rifle", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "ammo", "ammo_arrow", "medical", "tool_matches"]:
 		return true
+	# Azada/Pala: herramienta de huerto — solo si el bot esta asentado (refugio,
+	# semillas o bancales propios); un nomada no carga hierro inutil.
+	if tp in ["tool_hoe", "tool_shovel"]:
+		return _bot_wants_farm_tool(b)
+	# Semillas de arbusto o de cosecha: solo sirven si puede cultivarlas.
+	if nm == "Semillas":
+		return _bot_wants_seeds(b)
 	# Bebida: una sola reserva basta — el rio es la fuente real. Si ya lleva un
 	# recipiente vacio, solo coge una llena si tiene sed; si no, rellena en el rio.
 	if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora"):
@@ -5594,6 +5613,8 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["relationships"] = {}
 	if not mem.has("strategies") or not (mem["strategies"] is Dictionary):
 		mem["strategies"] = {}
+	if not mem.has("farm_plots") or not (mem["farm_plots"] is Array):
+		mem["farm_plots"] = []
 	if not mem.has("pending_goals") or not (mem["pending_goals"] is Array):
 		mem["pending_goals"] = []
 	if not mem.has("sessions"):
@@ -6448,7 +6469,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		var lp = sd.get("last_death_pos")
@@ -6475,7 +6496,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
@@ -7095,6 +7116,291 @@ func _bot_release_gather_claim(b: Dictionary, st: Dictionary) -> void:
 		if "_pickup_claim_until" in world:
 			(world._pickup_claim_until as Dictionary).erase(aid)
 
+# ============================ HUERTO: CULTIVAR VERDURAS ============================
+# Mismo flujo que el jugador humano: semillas de arbustos/cosecha + azada o
+# pala -> preparar bancal (4 s) -> esperar ~7.5 min (la lluvia/riego acelera)
+# -> recolectar Verduras y recuperar semillas. El bancal persiste en memoria
+# entre vidas: tras reaparecer el bot vuelve a su huerto.
+
+func _bot_has_farm_tool(proxy: Node3D) -> bool:
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala"] and float(it.get("durability", 1.0)) > 0.0:
+			return true
+	return false
+
+func _bot_wants_farm_tool(b: Dictionary) -> bool:
+	if _bot_has_farm_tool(b["proxy"]):
+		return false
+	if not (b.get("_mem", {}).get("farm_plots", []) as Array).is_empty():
+		return true
+	if _bot_item_count(b["proxy"], "Semillas") > 0:
+		return true
+	# Asentado con refugio propio: el huerto es su fuente estable de comida.
+	return not str(b.get("shelter_id", "")).is_empty()
+
+func _bot_wants_seeds(b: Dictionary) -> bool:
+	if _bot_item_count(b["proxy"], "Semillas") >= 2:
+		return false
+	if _bot_has_farm_tool(b["proxy"]) or not (b.get("_mem", {}).get("farm_plots", []) as Array).is_empty():
+		return true
+	return not str(b.get("shelter_id", "")).is_empty()
+
+func _bot_farm_plots(b: Dictionary) -> Array:
+	var mem: Dictionary = b.get("_mem", {})
+	if not (mem.get("farm_plots") is Array):
+		mem["farm_plots"] = []
+	return mem["farm_plots"]
+
+# Reproduce el calculo cliente del estado del cultivo (planted->ready->rotten):
+# en el servidor dedicado el registro queda "planted" para siempre y el estado
+# real se deriva del tiempo transcurrido y la humedad acumulada.
+func _crop_effective_state(c: Dictionary) -> Dictionary:
+	var state := str(c.get("crop_state", "planted"))
+	var ready := float(c.get("ready_unix", 0.0))
+	var now := Time.get_unix_time_from_system()
+	if state == "planted":
+		var updated := float(c.get("updated_unix", now))
+		var elapsed := maxf(0.0, now - updated)
+		var moist := clampf(float(c.get("watered_until", 0.0)) - updated, 0.0, elapsed)
+		var growth := float(c.get("growth", 0.0)) + moist * GameConst.CROP_MOIST_GROWTH + (elapsed - moist)
+		if growth >= 450.0:
+			state = "ready"
+			ready = now - maxf(0.0, growth - 450.0)
+	if state == "ready" and ready > 0.0 and now - ready >= GameConst.CROP_ROT_SECONDS:
+		state = "rotten"
+	return {"state": state, "ready_unix": ready}
+
+func _bot_crop_record(crop_id: String) -> Dictionary:
+	if world != null and "_planted_crops" in world:
+		for c in world._planted_crops:
+			if c is Dictionary and str(c.get("id", "")) == crop_id:
+				return c
+	return {}
+
+# La posicion de una parcela guardada en memoria (persiste como [x,y,z] en JSON).
+func _bot_plot_pos(p: Dictionary) -> Vector3:
+	var pv = p.get("pos")
+	if pv is Vector3:
+		return pv
+	if pv is Array and (pv as Array).size() >= 3:
+		return Vector3(float(pv[0]), float(pv[1]), float(pv[2]))
+	return Vector3.INF
+
+func _bot_crop_broadcast(tag: String, pos: Vector3) -> void:
+	if world == null or world.get("net") == null:
+		return
+	var net = world.net
+	if bool(net.get("is_host")) and net.get("peer") != null and net.has_method("world_action_completed"):
+		net.world_action_completed.rpc("", [], tag, pos)
+
+# Sitio del nuevo bancal: cerca del refugio como haria un granjero humano;
+# sin refugio, un claro seco junto a su campamento.
+func _bot_find_farm_spot(b: Dictionary) -> Vector3:
+	var proxy: Node3D = b["proxy"]
+	var origin: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if origin == Vector3.INF:
+		origin = proxy.global_position
+	for off in [Vector3(3.0, 0, 1.5), Vector3(-3.0, 0, 1.5), Vector3(1.5, 0, 3.0), Vector3(0, 0, -3.2), Vector3(-1.5, 0, -3.0), Vector3(3.6, 0, -1.8), Vector3(-3.6, 0, -1.8), Vector3(4.5, 0, 0), Vector3(-4.5, 0, 0), Vector3(0, 0, 4.5)]:
+		var cand: Vector3 = origin + off
+		if world != null and world.has_method("get_river_depth_at") and world.get_river_depth_at(cand) > 0.0:
+			continue
+		if world != null and world.has_method("_can_place_ground_vegetation") and not world._can_place_ground_vegetation(cand, -1.0):
+			continue
+		if not _is_flat_dry_pos(cand, str(b.get("shelter_id", ""))):
+			continue
+		return cand
+	return Vector3.INF
+
+func _bot_consume_one_item(proxy: Node3D, item_name: String) -> bool:
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for i in range(inv.size()):
+		var it = inv[i]
+		if it is Dictionary and str(it.get("name", "")) == item_name and int(it.get("quantity", 1)) > 0:
+			it["quantity"] = int(it.get("quantity", 1)) - 1
+			if int(it.get("quantity", 1)) <= 0:
+				inv.remove_at(i)
+			proxy.set_meta("saved_inventory", inv)
+			return true
+	return false
+
+func _bot_wear_farm_tool(proxy: Node3D) -> void:
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala"]:
+			it["durability"] = float(it.get("durability", 100.0)) - 4.0
+			proxy.set_meta("saved_inventory", proxy.get_meta("saved_inventory", []))
+			return
+
+func _bot_try_farm(b: Dictionary, delta: float) -> bool:
+	if world == null or not ("_planted_crops" in world):
+		return false
+	var proxy: Node3D = b["proxy"]
+	# Escondido de una amenaza o durmiendo no sale al huerto; la cosecha madura
+	# espera a que pase el peligro (los humanos tampoco cultivan bajo fuego).
+	if float(b.get("hide_timer", 0.0)) > 0.0 or bool(b.get("sleeping", false)):
+		return false
+	var mem: Dictionary = b.get("_mem", {})
+	var plots: Array = _bot_farm_plots(b)
+	var now := Time.get_unix_time_from_system()
+	# Registro mundial de la parcela propia (purge ids desaparecidos)
+	for i in range(plots.size() - 1, -1, -1):
+		var pid := str(plots[i].get("id", ""))
+		if _bot_crop_record(pid).is_empty():
+			plots.remove_at(i)
+	var st: Dictionary = b.get("_farm", {})
+	if not st.is_empty():
+		var fpos: Vector3 = st.get("pos", Vector3.INF)
+		if fpos == Vector3.INF:
+			b["_farm"] = {}
+			return false
+		var flat := Vector2(proxy.global_position.x - fpos.x, proxy.global_position.z - fpos.z).length()
+		if flat > 2.0:
+			b["sitting"] = false
+			b["crouching"] = false
+			_move_bot_towards(b, fpos, 4.4 if flat > 10.0 else 3.6, delta, "run" if flat > 10.0 else "walk")
+			return true
+		var phase := str(st.get("phase", ""))
+		st["t"] = float(st.get("t", 0.0)) + delta
+		b["anim"] = "forage"
+		b["crouching"] = true
+		b["sitting"] = false
+		b["held_item"] = str(st.get("tool", ""))
+		proxy.set_meta("saved_held_item", str(st.get("tool", "")))
+		if float(st["t"]) < float(st.get("t_need", 4.0)):
+			return true
+		b["_farm"] = {}
+		match phase:
+			"plant", "replant":
+				var consumed := _bot_consume_one_item(proxy, "Semillas")
+				if not consumed:
+					return true
+				_bot_wear_farm_tool(proxy)
+				if phase == "replant":
+					var rec := _bot_crop_record(str(st.get("crop_id", "")))
+					if rec.is_empty():
+						return true
+					rec["crop_state"] = "planted"
+					rec["growth"] = 0.0
+					rec["updated_unix"] = now
+					rec["watered_until"] = 0.0
+					rec["ready_unix"] = 0.0
+					_bot_crop_broadcast("crop_replanted", fpos)
+				else:
+					var cid: String = world._plant_crop(fpos) if world.has_method("_plant_crop") else ""
+					if not cid.is_empty():
+						plots.append({"id": cid, "pos": [fpos.x, fpos.y, fpos.z]})
+					_bot_crop_broadcast("planted_crop", fpos)
+				mem["farm_plots"] = plots
+				observe_location(int(b["bot_id"]), "farm:%d:%d" % [int(fpos.x), int(fpos.z)], "farm", fpos, "visited")
+				record_bot_event(int(b["bot_id"]), "farm_plant", "self", "farm", fpos, "planta un bancal de semillas")
+				if world.has_method("_save_world_change_silent"):
+					world._save_world_change_silent()
+			"harvest":
+				var rec := _bot_crop_record(str(st.get("crop_id", "")))
+				if not rec.is_empty() and _crop_effective_state(rec)["state"] == "ready":
+					var veg := {"name": "Verduras", "type": "food", "weight": 0.22, "quantity": 3, "use_value": 16.0}
+					var inv: Array = proxy.get_meta("saved_inventory", [])
+					if not _bot_try_add_inventory_item(b, inv, veg):
+						_bot_drop_to_ground(b, veg)
+					if randf() < 0.55:
+						var seed_item := {"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 1, "use_value": 0.0}
+						if not _bot_try_add_inventory_item(b, inv, seed_item):
+							_bot_drop_to_ground(b, seed_item)
+					rec["crop_state"] = "empty"
+					rec["growth"] = 0.0
+					rec["updated_unix"] = now
+					rec["watered_until"] = 0.0
+					rec["ready_unix"] = 0.0
+					_bot_crop_broadcast("crop_harvested", fpos)
+					record_strategy_outcome(int(b["bot_id"]), "farming", true)
+					var fstats: Dictionary = mem.get("stats", {})
+					fstats["harvests"] = int(fstats.get("harvests", 0)) + 1
+					mem["stats"] = fstats
+					if world.has_method("_save_world_change_silent"):
+						world._save_world_change_silent()
+			"clean":
+				var rec := _bot_crop_record(str(st.get("crop_id", "")))
+				if not rec.is_empty():
+					rec["crop_state"] = "empty"
+					rec["growth"] = 0.0
+					rec["updated_unix"] = now
+					rec["watered_until"] = 0.0
+					rec["ready_unix"] = 0.0
+					_bot_crop_broadcast("crop_harvested", fpos)
+					if randf() < 0.3:
+						var seed_item := {"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 1, "use_value": 0.0}
+						var inv: Array = proxy.get_meta("saved_inventory", [])
+						if not _bot_try_add_inventory_item(b, inv, seed_item):
+							_bot_drop_to_ground(b, seed_item)
+					record_strategy_outcome(int(b["bot_id"]), "farming", false, 0.2)
+					if world.has_method("_save_world_change_silent"):
+						world._save_world_change_silent()
+			"water":
+				var rec := _bot_crop_record(str(st.get("crop_id", "")))
+				if not rec.is_empty() and _bot_consume_one_item(proxy, "Botella de agua llena"):
+					_bot_add_inventory_item(proxy.get_meta("saved_inventory", []), {"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0})
+					rec["watered_until"] = now + GameConst.CROP_WATER_SECONDS
+					_bot_crop_broadcast("crop_watered", fpos)
+					if world.has_method("_save_world_change_silent"):
+						world._save_world_change_silent()
+		return true
+	# ---- Decidir la siguiente tarea de huerto ----
+	var has_tool := _bot_has_farm_tool(proxy)
+	var tool_name := ""
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala"] and float(it.get("durability", 1.0)) > 0.0:
+			tool_name = str(it["name"])
+			break
+	var cur := proxy.global_position
+	# 1) Cosechar lo maduro: se pudre en ~10 min y es comida regalada.
+	for p in plots:
+		var rec := _bot_crop_record(str(p.get("id", "")))
+		if rec.is_empty():
+			continue
+		var eff := _crop_effective_state(rec)
+		var pp: Vector3 = rec.get("pos", _bot_plot_pos(p)) if rec.get("pos") is Vector3 else _bot_plot_pos(p)
+		if pp == Vector3.INF:
+			continue
+		if eff["state"] == "ready":
+			b["_farm"] = {"phase": "harvest", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 1.25, "tool": ""}
+			return true
+		if eff["state"] == "rotten":
+			b["_farm"] = {"phase": "clean", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 1.25, "tool": ""}
+			return true
+	# Muerto de hambre/sed: no se pone a sembrar — busca comida ya.
+	var starving := float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, true)
+	if starving:
+		return false
+	# 2) Replantar un bancal vacio propio si lleva semillas y herramienta.
+	if has_tool and _bot_item_count(proxy, "Semillas") >= 1:
+		for p in plots:
+			var rec := _bot_crop_record(str(p.get("id", "")))
+			if not rec.is_empty() and str(rec.get("crop_state", "")) == "empty":
+				var pp: Vector3 = rec.get("pos", _bot_plot_pos(p)) if rec.get("pos") is Vector3 else _bot_plot_pos(p)
+				if pp == Vector3.INF:
+					continue
+				b["_farm"] = {"phase": "replant", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 4.0, "tool": tool_name}
+				return true
+	# 3) Regar lo plantado si pasa cerca con una botella llena.
+	for p in plots:
+		var rec := _bot_crop_record(str(p.get("id", "")))
+		if rec.is_empty() or str(rec.get("crop_state", "")) != "planted":
+			continue
+		if float(rec.get("watered_until", 0.0)) > now:
+			continue
+		var pp: Vector3 = rec.get("pos", _bot_plot_pos(p)) if rec.get("pos") is Vector3 else _bot_plot_pos(p)
+		if pp == Vector3.INF:
+			continue
+		if Vector2(cur.x - pp.x, cur.z - pp.z).length() < 25.0 and _bot_item_count(proxy, "Botella de agua llena") >= 1:
+			b["_farm"] = {"phase": "water", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 2.0, "tool": ""}
+			return true
+	# 4) Sembrar un bancal nuevo: herramienta + semillas + un sitio valido.
+	if has_tool and _bot_item_count(proxy, "Semillas") >= 1 and plots.size() < 3:
+		var spot := _bot_find_farm_spot(b)
+		if spot != Vector3.INF:
+			b["_farm"] = {"phase": "plant", "pos": spot, "t": 0.0, "t_need": 4.0, "tool": tool_name}
+			return true
+	return false
+
 func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var palo_need := 0
@@ -7106,9 +7412,12 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 		var cook_palos := (1 if _bot_item_count(proxy, "Palo afilado") == 0 and not _bot_has_skewered_meat(proxy) else 0) + (2 if str(b["campfire_id"]).is_empty() else 0)
 		palo_need = maxi(palo_need, cook_palos)
 	var tool := _bot_bush_tool(proxy)
+	# Arbustos tambien dan Semillas: quien quiere huerto tala aunque no le
+	# falten palos (2 paquetes de semillas bastan para un bancal).
+	var seeds_need := _bot_wants_seeds(b) and _bot_item_count(proxy, "Semillas") < 2
 	# Escondido o reclutado no sale a talar: las ordenes del lider y la
 	# amenaza van primero. El ruido del corte atrae lobos, como al jugador.
-	var allowed := palo_need > 0 and _bot_item_count(proxy, "Palo") < palo_need \
+	var allowed := ((palo_need > 0 and _bot_item_count(proxy, "Palo") < palo_need) or seeds_need) \
 			and not tool.is_empty() and float(b.get("hide_timer", 0.0)) <= 0.0 \
 			and _sensed_node(b, "_s_leader") == null
 	var st0: Dictionary = b.get("_gather", {})
