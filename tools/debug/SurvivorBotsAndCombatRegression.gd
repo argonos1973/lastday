@@ -2369,6 +2369,33 @@ func run() -> void:
 	mgr._poi_cache_built = false
 	mgr._poi_cache.clear()
 
+	# 10z9: un miembro de equipo muerto de hambre rompe la formacion para
+	# buscar comida — seguir al lider no llena el estomago (Elena murio de
+	# inanicion en la ciudad siguiendo a Carlos en produccion).
+	elena_y["team_leader_id"] = 902
+	elena_y["proxy"].set_meta("team_leader_id", 902)
+	elena_y["proxy"].set_meta("saved_inventory", [])
+	elena_y["hunger"] = 80.0
+	elena_y["thirst"] = 80.0
+	elena_y["sitting"] = false
+	elena_y["sleeping"] = false
+	elena_y["hide_timer"] = 0.0
+	elena_y["_forage"] = {}
+	carlos_y["proxy"].global_position = Vector3(4.0, 0.4, 0.0)
+	elena_y["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	elena_y["sense_t"] = 0.0
+	mgr._tick_bot(elena_y, 0.25)
+	check(str(elena_y["_act"]) == "team",
+		"10z9a: saciada sigue al lider (act=%s)" % str(elena_y["_act"]))
+	elena_y["hunger"] = 20.0
+	elena_y["sense_t"] = 0.0
+	mgr._tick_bot(elena_y, 0.25)
+	check(str(elena_y["_act"]) != "team",
+		"10z9b: hambrienta rompe la formacion (act=%s)" % str(elena_y["_act"]))
+	elena_y["team_leader_id"] = 0
+	elena_y["proxy"].set_meta("team_leader_id", 0)
+	elena_y["hunger"] = 80.0
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

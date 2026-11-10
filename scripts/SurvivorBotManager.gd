@@ -1169,14 +1169,21 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "forage"
 		return
 
+	# Inanicion desesperada (mismo umbral que starving_or_parched, l.1259):
+	# un miembro de equipo muerto de hambre rompe la formacion para buscar
+	# comida — seguir al lider no llena el estomago (_bot_try_forage ya hace
+	# esta excepcion con su propio 'desperate', pero no llega a setas ni
+	# frutales en mitad de la ciudad).
+	var desperate_food: bool = float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, true)
+
 	# 4c) Caza de presas (ciervos/zorros) y aprovechamiento de cadáveres cuando
 	# falta comida o materiales animales (pieles, tendón para cuerda, hueso).
-	if leader == null and _bot_try_hunt_or_scavenge(b, delta):
+	if (leader == null or desperate_food) and _bot_try_hunt_or_scavenge(b, delta):
 		b["_act"] = "hunt"
 		return
 
 	# 5) Si está reclutado en el equipo de un jugador, obedecer órdenes de equipo
-	if leader != null:
+	if leader != null and not desperate_food:
 		b["_act"] = "team"
 		_tick_teammate_behavior(b, leader, delta)
 		return
