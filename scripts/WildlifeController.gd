@@ -47,6 +47,12 @@ var _wolf_eating_timer := 0.0
 var _wolf_eating_target: Node3D = null
 var _prey_flee_timer := 0.0
 var _flee_origin := Vector3.INF
+# Rumbo de huida comprometido: recomputarlo cada frame desde la posicion viva
+# de la amenaza hace que la presa orbite cuando el cazador se mueve o le sigue.
+# Se fija ~0.8 s (o hasta que la amenaza se desplaza mucho) y luego se revisa.
+var _flee_commit_dir := Vector3.ZERO
+var _flee_commit_threat := Vector3.INF
+var _flee_commit_t := 0.0
 # Segundos de huida continua: al agotarse, la presa pierde el sprint y el lobo
 # (más resistente) la alcanza — sin esto, dos velocidades parecidas hacían la
 # persecución eterna.
@@ -1744,6 +1750,38 @@ func _prey_run_anim() -> String:
 		return "gallop" if (_flee_stamina < 6.0 or _prey_flee_timer > 4.5) else "run"
 	return "run"
 
+# Tras una huida no volver caminando hacia el punto de patrulla que tiene la
+# amenaza al lado (bucle huida->regreso->huida = "dar vueltas" ante el mismo
+# jugador quieto): elegir el punto de patrulla mas alejado de la amenaza.
+func _retarget_patrol_away_from(threat_pos: Vector3) -> void:
+	if not threat_pos.is_finite() or patrol_points.size() <= 1:
+		return
+	var best_i := target_index
+	var best_d := -1.0
+	for i in range(patrol_points.size()):
+		var p := Vector3(patrol_points[i])
+		var d := Vector2(p.x - threat_pos.x, p.z - threat_pos.z).length_squared()
+		if d > best_d:
+			best_d = d
+			best_i = i
+	if best_i != target_index:
+		target_index = best_i
+		_current_path.clear()
+		_path_index = 0
+
+func _flee_dir_away(threat_pos: Vector3, delta: float) -> Vector3:
+	var live := global_position - threat_pos
+	live.y = 0.0
+	if live.length() < 0.01:
+		live = Vector3.RIGHT
+	live = live.normalized()
+	_flee_commit_t -= delta
+	if _flee_commit_t <= 0.0 or not _flee_commit_threat.is_finite() or threat_pos.distance_squared_to(_flee_commit_threat) > 100.0:
+		_flee_commit_dir = live
+		_flee_commit_threat = threat_pos
+		_flee_commit_t = 0.8
+	return _flee_commit_dir
+
 func _apply_fox_zigzag(away: Vector3) -> Vector3:
 	if animal_type != "fox":
 		return away
@@ -1772,11 +1810,7 @@ func _prey_ai(delta: float) -> Dictionary:
 		if _prey_flee_timer > 0.0:
 			predator_flee_dist += 7.0
 		if dist_to_predator < predator_flee_dist:
-			var away := global_position - nearest_predator.global_position
-			away.y = 0.0
-			if away.length() < 0.01:
-				away = Vector3.RIGHT
-			away = _apply_fox_zigzag(away)
+			var away := _apply_fox_zigzag(_flee_dir_away(nearest_predator.global_position, delta))
 			if _state != "flee":
 				_state = "flee"
 				_current_path.clear()
@@ -1790,11 +1824,7 @@ func _prey_ai(delta: float) -> Dictionary:
 	# Gunshot or damage panic: flee directly away from the gunshot/threat origin
 	# even when the shooter is far beyond normal proximity detection.
 	if _prey_flee_timer > 0.0 and _flee_origin.is_finite():
-		var away_shot := global_position - _flee_origin
-		away_shot.y = 0.0
-		if away_shot.length() < 0.01:
-			away_shot = Vector3.RIGHT
-		away_shot = _apply_fox_zigzag(away_shot)
+		var away_shot := _apply_fox_zigzag(_flee_dir_away(_flee_origin, delta))
 		_state = "flee"
 		target = _clamp_flee_goal(global_position, away_shot, 38.0)
 		speed = panic_flee_speed
@@ -1810,11 +1840,7 @@ func _prey_ai(delta: float) -> Dictionary:
 		var alert_dist := _effective_prey_alert_range(flee_from)
 		var player_flee_dist := alert_dist + 12.0 if _prey_flee_timer > 0.0 else alert_dist
 		if dist_to_player < player_flee_dist:
-			var away := global_position - flee_from.global_position
-			away.y = 0.0
-			if away.length() < 0.01:
-				away = Vector3.RIGHT
-			away = _apply_fox_zigzag(away)
+			var away := _apply_fox_zigzag(_flee_dir_away(flee_from.global_position, delta))
 			if _state != "flee":
 				_state = "flee"
 				_current_path.clear()
@@ -1854,6 +1880,7 @@ func _prey_ai(delta: float) -> Dictionary:
 			_play_animation_by_name("trot")
 			return {"target": scrap.global_position, "speed": move_speed * 1.65}
 	_state = "patrol"
+	_retarget_patrol_away_from(_flee_origin)
 	_flee_origin = Vector3.INF
 	target = patrol_points[target_index]
 	speed = move_speed * 1.0

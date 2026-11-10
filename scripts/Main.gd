@@ -5265,6 +5265,12 @@ func _build_inventory_sync_extra(actual_held) -> Dictionary:
 		extra["stats_extra"] = stats_extra
 	return extra
 
+# Un puppet sigue marcado como cadaver (is_dead latch en puppet_apply) aunque
+# el actor haya reaparecido en el servidor con el mismo peer_id: en ese caso
+# hay que regenerar el puppet en vez de seguir moviendo el cadaver desnudo.
+func _remote_puppet_needs_respawn(rp: Node3D, anim: String) -> bool:
+	return rp.get("is_dead") == true and not anim.to_lower().contains("dead")
+
 func _update_remote_players() -> void:
 	if net == null:
 		return
@@ -5295,6 +5301,14 @@ func _update_remote_players() -> void:
 			target_pos.y = _get_exact_ground_y(target_pos.x, target_pos.z, target_pos.y + 3.0) - 0.025
 		var target_rot: float = data.get("rot", 0.0)
 		var anim: String = data.get("anim", "idle")
+		if _remote_puppet_needs_respawn(rp, anim):
+			# Respawn bajo el mismo peer_id (bots siempre reusan el id): el
+			# puppet sigue siendo un cadaver desnudo que solo se desliza por
+			# el suelo — regenerarlo para que se vea vivo y vestido.
+			remote_players.erase(pid)
+			rp.queue_free()
+			_spawn_remote_player(pid)
+			continue
 		var clothing: String = data.get("equipped_clothing", "")
 		var clothing_colors: Array = data.get("clothing_colors", [])
 		var held: String = data.get("held_item", "")

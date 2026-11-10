@@ -47,6 +47,9 @@ class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _capture_mouse() -> void:
 		pass
 
+class StubDeadPuppet extends Node3D:
+	var is_dead := false
+
 class TestWorld extends "res://scripts/Main.gd":
 	var water_rect := Rect2(100000.0, 100000.0, 4.0, 4.0) # lejos por defecto
 	var water_depth := 1.0
@@ -2587,6 +2590,56 @@ func run() -> void:
 	mgr._chat_greet_until.clear()
 	mgr._chat_help_until.clear()
 	mgr._chat_turns.clear()
+
+	# --- 10C) Puppet cadaver revive + ciervo rumbo de huida comprometido ---
+	# 10C1: un puppet marcado is_dead que recibe un anim de vida necesita respawn
+	var stub_rp := StubDeadPuppet.new()
+	stub_rp.is_dead = true
+	world.add_child(stub_rp)
+	check(world._remote_puppet_needs_respawn(stub_rp, "walk"),
+		"10C1a: puppet muerto + anim vivo -> regenerar puppet")
+	check(not world._remote_puppet_needs_respawn(stub_rp, "dead"),
+		"10C1b: puppet muerto + anim dead -> sigue siendo cadaver")
+	stub_rp.is_dead = false
+	check(not world._remote_puppet_needs_respawn(stub_rp, "walk"),
+		"10C1c: puppet vivo no se regenera")
+	stub_rp.queue_free()
+
+	# 10C2: el rumbo de huida se compromete ~0.8s (no orbita a una amenaza movil)
+	var d2 := WildlifeControllerScript.new()
+	d2.name = "Wildlife_deer_fleedir"
+	world.add_child(d2)
+	d2.setup("deer", [Vector3(0.0, 0.4, 0.0), Vector3(50.0, 0.4, 0.0)])
+	d2.set_process(false)
+	d2.global_position = Vector3(0.0, 0.4, 0.0)
+	var threat_a := Vector3(10.0, 0.4, 0.0)
+	var dir1 := d2._flee_dir_away(threat_a, 0.016)
+	var threat_b := threat_a + Vector3(3.0, 0.0, 0.0)
+	var dir2 := d2._flee_dir_away(threat_b, 0.016)
+	check(dir1.is_equal_approx(dir2),
+		"10C2a: dentro de la ventana el rumbo no persigue a la amenaza")
+	var threat_c := Vector3(0.0, 0.4, 15.0)
+	var dir3 := d2._flee_dir_away(threat_c, 0.016)
+	check(dir1.dot(dir3) < 0.5 and dir3.dot(Vector3(0.0, 0.0, -1.0)) > 0.9,
+		"10C2b: amenaza desplazada >10m -> nuevo rumbo comprometido")
+	var threat_d := Vector3(0.0, 0.4, -15.0)
+	var dir4 := d2._flee_dir_away(threat_d, 1.0)
+	check(dir4.dot(Vector3(0.0, 0.0, 1.0)) > 0.9,
+		"10C2c: tras expirar la ventana se reevalua el rumbo")
+	d2.queue_free()
+
+	# 10C3: al calmarse patrulla hacia el punto MAS LEJOS de la amenaza (sin yo-yo)
+	var d3 := WildlifeControllerScript.new()
+	d3.name = "Wildlife_deer_yoyo"
+	world.add_child(d3)
+	d3.setup("deer", [Vector3(0.0, 0.4, 0.0), Vector3(80.0, 0.4, 0.0), Vector3(-80.0, 0.4, 0.0)])
+	d3.set_process(false)
+	d3.global_position = Vector3(0.0, 0.4, 0.0)
+	d3.target_index = 0
+	d3._retarget_patrol_away_from(Vector3(5.0, 0.4, 0.0))
+	check(int(d3.target_index) == 2,
+		"10C3: al calmarse elige el punto de patrulla mas lejano de la amenaza")
+	d3.queue_free()
 
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
