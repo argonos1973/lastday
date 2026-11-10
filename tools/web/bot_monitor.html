@@ -362,7 +362,11 @@ function renderHeader(data) {
   document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} fauna · ${srv.players_online || 0} jug.${plNames ? ` (${plNames})` : ""}`;
   document.getElementById("modelBadge").textContent = g.model || "qwen/qwen3.8-27b";
   const dt = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : "--:--:--";
-  document.getElementById("subStatus").textContent = `Autoridad Godot 4 Servidor Dedicado · Último snapshot: ${dt}`;
+  const teams = data.teams || [];
+  const teamTxt = teams.length
+    ? " · " + teams.map(t => `👥 ${t.leader}+${(t.members || []).map(m => m.name).join("+")}`).join(" | ")
+    : "";
+  document.getElementById("subStatus").textContent = `Autoridad Godot 4 Servidor Dedicado · Último snapshot: ${dt}${teamTxt}`;
 }
 
 function renderSummary(data) {
@@ -373,6 +377,7 @@ function renderSummary(data) {
         <th>Bot</th>
         <th>Posición</th>
         <th>Estado / Arma</th>
+        <th>Equipo / Huerto</th>
         <th>Objetivo Actual</th>
         <th>Última Decisión (Qwen / Local)</th>
         <th>Ubicaciones / Muertes</th>
@@ -389,6 +394,18 @@ function renderSummary(data) {
       <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)} · ⭐ ${b.score ?? 0} pts · vivo ${fmtDur(b.alive_seconds)}</span></td>
       <td>(${Math.round(p[0])}, ${Math.round(p[2])})<br/><span style="color:var(--muted)">y=${Number(p[1]||0).toFixed(1)}m</span></td>
       <td>${esc(b.anim || "idle")} <span class="badge info">${esc(b.act || "?")}</span> ${b.crouching ? "· Agachado" : ""} ${b.in_shelter ? "· 🏠 Refugio" : ""}<br/><b>${esc(b.held_item || "Manos")}</b></td>
+      <td>${(() => {
+        const mates = (b.team_mates || []).map(m => m.name || m.id).join(", ");
+        let t = "";
+        if (b.team_role === "leader") t = `<span class="badge ok">👑 líder</span> ${esc(mates)}`;
+        else if (b.team_role === "member") t = `<span class="badge info">miembro</span> con ${esc(mates)}`;
+        else t = `<span style="color:var(--muted)">solo</span>`;
+        const amb = b.ambush || {};
+        if (amb.target) t += `<br/><span style="color:var(--danger)">🗡 acechando a ${esc(amb.target)}${amb.dist >= 0 ? ` (${amb.dist} m)` : ""}</span>`;
+        const farm = b.farm || {};
+        if (farm.plots > 0) t += `<br/><span style="color:var(--accent)">🌱 ${farm.plots} bancal${farm.plots > 1 ? "es" : ""} · ${farm.ready} listo${farm.ready === 1 ? "" : "s"}</span>`;
+        return t;
+      })()}</td>
       <td><b>${esc(b.current_goal || "survival_patrol")}</b></td>
       <td>${d.action ? `${srcBadge} <b>${esc(d.action)}</b> → ${esc(d.target || "-")}<br/><span style="color:var(--muted)">${esc(d.reason || "")}</span>` : `<span class="empty-note">IA táctica local activa</span>`}</td>
       <td>${b.known_locations_count || 0} conocidas<br/><span style="color:var(--muted)">${b.deaths || 0} muertes ${b.last_death_cause ? `(${esc(b.last_death_cause)})` : ""}</span></td>
@@ -532,6 +549,50 @@ function renderMap(data) {
     ctx.font = "bold 11px sans-serif";
     ctx.fillText(`${b.name} (${b.hp}%)`, bx + 9, bz + 4);
   }
+
+  // Enlaces de equipo (linea continua del color del lider) y emboscadas
+  // (rojo discontinuo del acechante hacia la victima).
+  const actorById = {};
+  for (const b2 of (data.bots || [])) actorById[b2.bot_id] = b2;
+  for (const pl2 of (data.players || [])) actorById[pl2.id] = pl2;
+  for (const b of (data.bots || [])) {
+    if (!b.pos || b.pos.length < 3) continue;
+    const [bx, bz] = toScreen(b.pos[0], b.pos[2]);
+    if (b.team_role === "leader") {
+      const lcol = BOT_COLORS[b.bot_id] || "#52d18a";
+      for (const m of (b.team_mates || [])) {
+        const mb = actorById[m.id];
+        if (!mb || !mb.pos || mb.pos.length < 3) continue;
+        const [mx, mz] = toScreen(mb.pos[0], mb.pos[2]);
+        ctx.strokeStyle = lcol;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(bx, bz);
+        ctx.lineTo(mx, mz);
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+      }
+    }
+    const amb = b.ambush || {};
+    if (amb.target_id) {
+      const tv = actorById[amb.target_id];
+      if (tv && tv.pos && tv.pos.length >= 3) {
+        const [ax, az] = toScreen(tv.pos[0], tv.pos[2]);
+        ctx.strokeStyle = "#d94a4a";
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(bx, bz);
+        ctx.lineTo(ax, az);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#d94a4a";
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText("🗡", ax - 4, az - 11);
+      }
+    }
+  }
 }
 
 function renderBots(data) {
@@ -646,6 +707,20 @@ function renderBots(data) {
         <div class="bar-track"><div class="bar-fill" style="width:${b.thirst}%;background:${barColor(b.thirst)}"></div></div>
         <span style="text-align:right">${b.thirst}%</span>
       </div>
+
+      ${(() => {
+        const mates = (b.team_mates || []).map(m => esc(m.name || m.id)).join(", ");
+        const amb = b.ambush || {};
+        const farm = b.farm || {};
+        const hasTeam = b.team_role === "leader" || b.team_role === "member";
+        if (!hasTeam && !amb.target && !(farm.plots > 0)) return "";
+        return `<div class="section-label">Equipo, Emboscada y Huerto</div>
+        <div class="decision-box" style="border-left-color:${col}">
+          ${hasTeam ? `<div class="meta-line">${b.team_role === "leader" ? "👑 <b>Líder</b> de:" : "🤝 <b>Miembro</b>, sigue a:"} ${mates}</div>` : `<div class="meta-line" style="color:var(--muted)">Sin equipo — supervivencia en solitario</div>`}
+          ${amb.target ? `<div class="meta-line" style="color:var(--danger)">🗡 <b>Emboscada en curso:</b> acechando a <b>${esc(amb.target)}</b>${amb.dist >= 0 ? ` a ${amb.dist} m` : ""} (${amb.t || 0}s de acecho)</div>` : ""}
+          ${farm.plots > 0 ? `<div class="meta-line">🌱 <b>Huerto:</b> ${farm.plots} bancal${farm.plots > 1 ? "es" : ""} · ${farm.ready} listo${farm.ready === 1 ? "" : "s"} para cosechar</div>` : ""}
+        </div>`;
+      })()}
 
       <div class="section-label">Objetivo y Última Decisión (Qwen / Cerebro Local)</div>
       <div class="decision-box" style="border-left-color:${col}">

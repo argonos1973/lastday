@@ -2110,6 +2110,147 @@ func run() -> void:
 	farm_b["shelter_id"] = ""
 	farm_b["shelter_pos"] = Vector3.INF
 
+	# 10y: equipos autonomos bot-bot y emboscadas coordinadas — los bots
+	# exploran la colaboracion (confianza mutua -> lider/miembro), se
+	# defienden en equipo y los hostiles acechan presas con recursos.
+	var elena_y: Dictionary = mgr.bots[901]
+	var carlos_y: Dictionary = mgr.bots[902]
+	var kael_y: Dictionary = mgr.bots[903]
+	for bb in [elena_y, carlos_y, kael_y]:
+		bb["team_leader_id"] = 0
+		bb["proxy"].set_meta("team_leader_id", 0)
+		bb["_ambush"] = {}
+		bb["_soc_t"] = 0.0
+		bb["aggro_target"] = null
+		bb["aggro_timer"] = 0.0
+		bb["proxy"].set_meta("proxy_dead", false)
+		# Reingreso completo: si una seccion anterior lo mato, _kill_bot lo
+		# saco del grupo net_player_proxy — el respawn real lo re-anade.
+		if not bb["proxy"].is_in_group("net_player_proxy"):
+			bb["proxy"].add_to_group("net_player_proxy")
+			bb["proxy"].remove_from_group("interactable")
+		bb["health"] = 100.0
+		bb["hunger"] = 80.0
+		bb["thirst"] = 80.0
+		bb["proxy"].set_meta("proxy_health", 100.0)
+	elena_y["proxy"].global_position = Vector3(100.0, 0.4, 100.0)
+	carlos_y["proxy"].global_position = Vector3(104.0, 0.4, 100.0)
+	kael_y["proxy"].global_position = Vector3(-300.0, 0.4, -300.0)
+	# Confianza mutua sembrada (como si hubieran convivido sin agresiones)
+	mgr._ensure_bot_memory(901)["relationships"]["bot_902"] = {"id": "bot_902", "name": "Carlos", "trust": 0.5, "hostility": 0.0, "fear": 0.0, "helped": 4, "attacked": 0}
+	mgr._ensure_bot_memory(902)["relationships"]["bot_901"] = {"id": "bot_901", "name": "Elena", "trust": 0.5, "hostility": 0.0, "fear": 0.0, "helped": 4, "attacked": 0}
+	mgr._bot_social_update(elena_y)
+	mgr._bot_social_update(carlos_y)
+	var lid_e := int(elena_y["team_leader_id"])
+	var lid_c := int(carlos_y["team_leader_id"])
+	check((lid_e == 902) != (lid_c == 901),
+		"10y1: confianza mutua -> exactamente uno sigue al otro (lids %d/%d)" % [lid_e, lid_c])
+	var leader_y: Dictionary = carlos_y if lid_e == 902 else elena_y
+	var member_y: Dictionary = elena_y if lid_e == 902 else carlos_y
+	check(mgr._bot_team_size(int(leader_y["bot_id"])) == 2
+			and mgr._bot_team_role(leader_y) == "leader" and mgr._bot_team_role(member_y) == "member",
+		"10y2: roles lider/miembro y tamano 2")
+	check(mgr._resolve_team_leader(member_y) == leader_y["proxy"],
+		"10y3: el miembro resuelve el proxy de su lider bot")
+
+	# La victima reune a su equipo contra el agresor (lider incluido) — el
+	# agresor debe estar al alcance del contraataque (<60 m del equipo)
+	kael_y["proxy"].global_position = Vector3(112.0, 0.4, 100.0)
+	mgr.rally_bot_team(int(member_y["bot_id"]), kael_y["proxy"])
+	check(leader_y.get("aggro_target") == kael_y["proxy"] and member_y.get("aggro_target") == kael_y["proxy"],
+		"10y4: miembro atacado -> todo el equipo recibe aggro sobre el agresor")
+	leader_y["aggro_target"] = null
+	member_y["aggro_target"] = null
+
+	# Muerte del lider -> el equipo se disuelve
+	leader_y["proxy"].set_meta("proxy_dead", true)
+	member_y["_soc_t"] = 0.0
+	mgr._bot_social_update(member_y)
+	check(int(member_y["team_leader_id"]) == 0,
+		"10y5: lider muerto -> el miembro abandona el equipo")
+	leader_y["proxy"].set_meta("proxy_dead", false)
+	leader_y["team_leader_id"] = 0
+	leader_y["proxy"].set_meta("team_leader_id", 0)
+
+	# Desconfianza -> nadie se alia; y hostil<->amistoso nunca se mezclan
+	mgr._ensure_bot_memory(901)["relationships"]["bot_902"]["trust"] = 0.05
+	mgr._ensure_bot_memory(902)["relationships"]["bot_901"]["trust"] = 0.05
+	elena_y["_soc_t"] = 0.0
+	carlos_y["_soc_t"] = 0.0
+	mgr._bot_social_update(elena_y)
+	mgr._bot_social_update(carlos_y)
+	check(int(elena_y["team_leader_id"]) == 0 and int(carlos_y["team_leader_id"]) == 0,
+		"10y6: con desconfianza mutua no se forma equipo")
+	kael_y["proxy"].global_position = Vector3(106.0, 0.4, 100.0)
+	mgr._ensure_bot_memory(903)["relationships"]["bot_901"] = {"id": "bot_901", "name": "Elena", "trust": 0.9, "hostility": 0.0, "fear": 0.0, "helped": 9, "attacked": 0}
+	mgr._ensure_bot_memory(901)["relationships"]["bot_903"] = {"id": "bot_903", "name": "Kael", "trust": 0.9, "hostility": 0.0, "fear": 0.0, "helped": 9, "attacked": 0}
+	kael_y["_soc_t"] = 0.0
+	elena_y["_soc_t"] = 0.0
+	mgr._bot_social_update(kael_y)
+	mgr._bot_social_update(elena_y)
+	check(int(kael_y["team_leader_id"]) == 0 and int(elena_y["team_leader_id"]) == 0,
+		"10y7: bandido y superviviente nunca forman equipo aunque confien")
+
+	# Emboscada: Kael elige a la presa cargada y sola (Elena con 5 latas)
+	kael_y["_ambush_cd_until"] = 0.0
+	kael_y["proxy"].set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "tool_knife", "weight": 0.2, "quantity": 1},
+	])
+	elena_y["proxy"].set_meta("saved_inventory", [
+		{"name": "Lata de guiso", "type": "food", "weight": 0.4, "quantity": 3, "use_value": 60.0},
+		{"name": "Lata de atun", "type": "food", "weight": 0.4, "quantity": 2, "use_value": 60.0},
+	])
+	carlos_y["proxy"].global_position = Vector3(400.0, 0.4, 400.0)
+	elena_y["proxy"].global_position = Vector3(125.0, 0.4, 100.0)
+	kael_y["proxy"].global_position = Vector3(100.0, 0.4, 100.0)
+	var amb_tgt: Dictionary = mgr._find_ambush_target(kael_y)
+	check(int(amb_tgt.get("target_id", 0)) == 901,
+		"10y8: el hostil elige a la presa cargada y sola (target=%s)" % str(amb_tgt.get("target_id", "nulo")))
+	kael_y["_ambush"] = amb_tgt
+	var sneaked := false
+	for i in range(60):
+		mgr._bot_try_ambush(kael_y, 0.1)
+		if bool(kael_y["crouching"]):
+			sneaked = true
+	check(sneaked, "10y9: acecha agachado hacia la presa")
+	elena_y["proxy"].global_position = Vector3(102.0, 0.4, 100.0)
+	kael_y["proxy"].global_position = Vector3(100.0, 0.4, 100.0)
+	mgr._bot_try_ambush(kael_y, 0.1)
+	check(kael_y.get("aggro_target") == elena_y["proxy"] and (kael_y.get("_ambush", {}) as Dictionary).is_empty(),
+		"10y10: al alcance del golpe -> aggro fijado y emboscada consumida")
+
+	# Desarmado no planea emboscadas; presa escoltada se descarta
+	kael_y["aggro_target"] = null
+	kael_y["aggro_timer"] = 0.0
+	kael_y["_ambush_cd_until"] = 0.0
+	kael_y["proxy"].set_meta("saved_inventory", [])
+	check(mgr._find_ambush_target(kael_y).is_empty(),
+		"10y11: desarmado no planea emboscadas")
+	kael_y["proxy"].set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "tool_knife", "weight": 0.2, "quantity": 1},
+	])
+	carlos_y["proxy"].global_position = Vector3(105.0, 0.4, 100.0)
+	carlos_y["proxy"].set_meta("saved_inventory", [
+		{"name": "Lata de guiso", "type": "food", "weight": 0.4, "quantity": 2, "use_value": 60.0},
+	])
+	kael_y["proxy"].global_position = Vector3(95.0, 0.4, 100.0)
+	var esc_tgt: Dictionary = mgr._find_ambush_target(kael_y)
+	check(esc_tgt.is_empty(),
+		"10y12: presas escoltadas (1v2) se descartan — no hay suicidio")
+
+	# Status JSON: campos de equipo/emboscada/huerto serializables
+	elena_y["proxy"].set_meta("saved_inventory", [])
+	carlos_y["proxy"].set_meta("saved_inventory", [])
+	var st_json: Dictionary = mgr.get_full_web_status()
+	var snap_ok: bool = (st_json.get("bots", []) as Array).size() > 0
+	if snap_ok:
+		var s0: Dictionary = (st_json["bots"] as Array)[0]
+		snap_ok = s0.has("team_role") and s0.has("team_mates") and s0.has("ambush") and s0.has("farm")
+	check(snap_ok and st_json.has("teams"),
+		"10y13: status expone team_role/team_mates/ambush/farm y teams")
+	check(JSON.parse_string(JSON.stringify(st_json)) != null,
+		"10y14: el status completo serializa a JSON")
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

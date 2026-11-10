@@ -921,6 +921,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "dead"
 		b["torch_lit"] = false
 		b["is_aiming"] = false
+		b["_ambush"] = {}
 		b["respawn_timer"] = float(b.get("respawn_timer", 0.0)) + delta
 		if float(b["respawn_timer"]) >= 180.0:
 			_respawn_bot(b)
@@ -941,6 +942,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["eat_cooldown"] = maxf(0.0, float(b["eat_cooldown"]) - delta)
 	b["sick_timer"] = maxf(0.0, float(b.get("sick_timer", 0.0)) - delta)
 	b["cook_cooldown"] = maxf(0.0, float(b["cook_cooldown"]) - delta)
+	b["_soc_t"] = maxf(0.0, float(b.get("_soc_t", 0.0)) - delta)
 	b["aggro_timer"] = maxf(0.0, float(b["aggro_timer"]) - delta)
 	if float(b["aggro_timer"]) <= 0.0:
 		b["aggro_target"] = null
@@ -985,6 +987,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
 		_observe_nearby_world(b)
 		_try_share_allied_knowledge(b)
+		_bot_social_update(b)
 		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
 		if bool(b.get("equip_mission", false)) and (b["_s_loot"] as Dictionary).is_empty():
 			b["equip_mission"] = false
@@ -1032,6 +1035,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["_act"] = "tame"
 			_perform_wolf_taming_step(b, wild_wolf, delta)
 			return
+
+	# 2b) Emboscada: hostiles (solos o en equipo) acechan agachados a una
+	#     victima con recursos y golpean a la vez. Cede ante depredadores.
+	if _bot_try_ambush(b, delta):
+		b["_act"] = "ambush"
+		return
 
 	# 3) Combate contra enemigos humanos / otros bots de facción opuesta
 	var human_foe := _sensed_node(b, "_s_foe")
@@ -3123,6 +3132,305 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 		else:
 			b["anim"] = "idle"
 
+# --- Equipos bot-bot autonomos y emboscadas coordinadas ---------------------
+# Los bots exploran la colaboracion como estrategia: quienes se cruzan y
+# conviven sin agresiones acumulan confianza hasta formar equipo (lider/
+# miembros segun valentia+cooperacion). El equipo se rompe por muerte del
+# lider, traicion o alejamiento. Los hostiles usan el mismo mecanismo para
+# coordinar emboscadas contra bots o humanos que cargan recursos.
+const BOT_TEAM_FORM_TRUST := 0.30
+const BOT_TEAM_BREAK_TRUST := 0.08
+const BOT_TEAM_MAX_SIZE := 3
+const BOT_TEAM_FORM_DIST := 26.0
+const BOT_TEAM_GIVE_UP_DIST := 160.0
+const BOT_AMBUSH_STRIKE_RANGED := 12.5
+const BOT_AMBUSH_STRIKE_MELEE := 6.0
+const BOT_AMBUSH_ABORT_DIST := 90.0
+const BOT_AMBUSH_MAX_SECONDS := 24.0
+
+func _bot_lead_score(b: Dictionary) -> float:
+	var pers: Dictionary = _ensure_bot_memory(int(b["bot_id"])).get("personality", {})
+	return float(pers.get("bravery", 0.5)) + float(pers.get("cooperation", 0.5))
+
+func _bot_team_size(leader_id: int) -> int:
+	var n := 1
+	for bid in bots.keys():
+		if bid != leader_id and int(bots[bid].get("team_leader_id", 0)) == leader_id:
+			n += 1
+	return n
+
+func _bot_team_ids(b: Dictionary) -> Array:
+	var my_id := int(b["bot_id"])
+	var lid := int(b.get("team_leader_id", 0))
+	var leader := lid if lid > 0 else my_id
+	var ids: Array = []
+	if bots.has(leader):
+		ids.append(leader)
+	for bid in bots.keys():
+		if bid != leader and int(bots[bid].get("team_leader_id", 0)) == leader:
+			ids.append(bid)
+	return ids
+
+func _bot_team_role(b: Dictionary) -> String:
+	var lid := int(b.get("team_leader_id", 0))
+	if lid > 0:
+		return "member"
+	for bid in bots.keys():
+		if int(bots[bid].get("team_leader_id", 0)) == int(b["bot_id"]):
+			return "leader"
+	return ""
+
+# Llamado al escaneo de sentidos (~5 Hz); el trabajo real se cadencia a ~4 s
+# para no disparar eventos sociales ni reevaluar alianzas cada decima.
+func _bot_social_update(b: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	if bool(proxy.get_meta("proxy_dead", false)):
+		return
+	b["_soc_t"] = float(b.get("_soc_t", 0.0))
+	if float(b["_soc_t"]) > 0.0:
+		return
+	b["_soc_t"] = 3.2 + fmod(float(b["bot_id"]) * 0.11, 0.9)
+	var my_id := int(b["bot_id"])
+	var my_key := "bot_%d" % my_id
+	var lid := int(b.get("team_leader_id", 0))
+
+	# 1) Mantener o romper el equipo actual (solo si el lider es otro bot;
+	#    los equipos reclutados por un humano se gestionan por ordenes)
+	if lid > 0 and is_bot_peer_id(lid):
+		var lb: Dictionary = bots.get(lid, {})
+		var lp: Node3D = lb.get("proxy")
+		var leader_gone: bool = lb.is_empty() or lp == null or not is_instance_valid(lp) or bool(lp.get_meta("proxy_dead", false))
+		var rel := get_bot_relationship(my_id, "bot_%d" % lid)
+		var too_far := (not leader_gone) and proxy.global_position.distance_to(lp.global_position) > BOT_TEAM_GIVE_UP_DIST
+		if leader_gone or float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST or too_far:
+			record_bot_event(my_id, "team_leave", "bot_%d" % lid, _poi_kind_near(proxy.global_position), proxy.global_position,
+				"lider muerto" if leader_gone else ("desconfianza" if float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST else "se perdio"))
+			b["team_leader_id"] = 0
+			proxy.set_meta("team_leader_id", 0)
+			lid = 0
+		elif randf() < 0.55:
+			# Sobrevivir juntos consolida la confianza (aprendizaje persistente)
+			record_social_event(my_id, "bot_%d" % lid, str(lb.get("name", "")), "ally", 0.03, "equipo")
+
+	# 2) Formar equipo: convivir cerca sin agresiones sube la confianza hasta
+	#    que alguien se ofrece a seguir al bot con mejor perfil de lider
+	if lid <= 0:
+		var my_faction := str(b.get("faction", ""))
+		var my_lead := _bot_lead_score(b)
+		var best_target := 0
+		var best_trust := -1.0
+		for oid in bots.keys():
+			if oid == my_id:
+				continue
+			var ob: Dictionary = bots[oid]
+			if str(ob.get("faction", "")) != my_faction:
+				continue # bandidos y supervivientes no se mezclan
+			var op: Node3D = ob.get("proxy")
+			if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+				continue
+			if proxy.global_position.distance_to(op.global_position) > BOT_TEAM_FORM_DIST:
+				continue
+			var okey := "bot_%d" % oid
+			var rel_out := get_bot_relationship(my_id, okey)
+			var rel_in := get_bot_relationship(oid, my_key)
+			# Los bandidos parten con desconfianza alta entre ellos: su puerta
+			# de convivencia es mas laxa (una banda tarda mas en fraguarse).
+			var host_gate := 0.40 if my_faction == "hostile" else 0.05
+			if float(rel_out.get("hostility", 0.0)) <= host_gate and float(rel_in.get("hostility", 0.0)) <= host_gate:
+				record_social_event(my_id, okey, str(ob.get("name", okey)), "ally", 0.05, "convive")
+				record_social_event(oid, my_key, str(b.get("name", my_key)), "ally", 0.05, "convive")
+				rel_out = get_bot_relationship(my_id, okey)
+				rel_in = get_bot_relationship(oid, my_key)
+			var mutual := minf(float(rel_out.get("trust", 0.0)), float(rel_in.get("trust", 0.0)))
+			if mutual < BOT_TEAM_FORM_TRUST:
+				continue
+			# Si ya milita en un equipo, el candidato es su lider (el equipo crece);
+			# si esta libre, solo me uno si lidera mejor que yo — si no, el se
+			# unira a mi en su propio ciclo (desempate deterministico).
+			var olid := int(ob.get("team_leader_id", 0))
+			var target_id: int = olid if (olid > 0 and is_bot_peer_id(olid)) else oid
+			if olid <= 0 and _bot_lead_score(ob) <= my_lead:
+				continue
+			if _bot_team_size(target_id) >= BOT_TEAM_MAX_SIZE:
+				continue
+			if olid > 0:
+				var lrel := get_bot_relationship(my_id, "bot_%d" % target_id)
+				var lrel_in := get_bot_relationship(target_id, my_key)
+				mutual = minf(float(lrel.get("trust", 0.0)), float(lrel_in.get("trust", 0.0)))
+				if mutual < BOT_TEAM_FORM_TRUST:
+					continue
+			if mutual > best_trust:
+				best_trust = mutual
+				best_target = target_id
+		if best_target > 0:
+			b["team_leader_id"] = best_target
+			proxy.set_meta("team_leader_id", best_target)
+			b["follow_mode"] = "follow"
+			b["sense_t"] = 0.0
+			var tn := str((bots.get(best_target, {}) as Dictionary).get("name", str(best_target)))
+			record_bot_event(my_id, "team_join", "bot_%d" % best_target, _poi_kind_near(proxy.global_position), proxy.global_position, "sigue a " + tn)
+
+	# 3) Coordinacion de emboscada: el lider hostil (o un hostil solo) elige la
+	#    presa; sus miembros reciben el mismo objetivo en su propio ciclo
+	var am: Dictionary = b.get("_ambush", {})
+	var is_hostile: bool = str(b.get("faction", "")) == "hostile"
+	if is_hostile and (lid <= 0 or _bot_team_role(b) == "leader"):
+		# Hostil solo o lider de su equipo: elige la presa el mismo
+		if am.is_empty():
+			var victim := _find_ambush_target(b)
+			if not victim.is_empty():
+				b["_ambush"] = victim
+				record_bot_event(my_id, "ambush_plan", "peer_%d" % int(victim.get("target_id", 0)), _poi_kind_near(proxy.global_position), proxy.global_position, "acecha a " + str(victim.get("target_name", "")))
+	elif is_hostile and lid > 0 and is_bot_peer_id(lid) and bots.has(lid):
+		# Miembro de un lider hostil: copia su presa — el golpe es simultaneo
+		var lamb: Dictionary = bots[lid].get("_ambush", {})
+		if not lamb.is_empty() and int(lamb.get("target_id", 0)) != int(am.get("target_id", -1)):
+			b["_ambush"] = lamb.duplicate()
+
+# Reune a todo el equipo de la victima (lider + miembros) contra el agresor:
+# el equivalente bot de un grito de ayuda. Se llama desde _net_damage_player.
+func rally_bot_team(victim_id: int, attacker: Node3D) -> void:
+	if attacker == null or not is_instance_valid(attacker) or not bots.has(victim_id):
+		return
+	var victim_b: Dictionary = bots[victim_id]
+	var lid := int(victim_b.get("team_leader_id", 0))
+	var leader := lid if lid > 0 else victim_id
+	for bid in bots.keys():
+		var tb: Dictionary = bots[bid]
+		if bid != leader and int(tb.get("team_leader_id", 0)) != leader:
+			continue
+		var tp: Node3D = tb.get("proxy")
+		if tp == null or not is_instance_valid(tp) or bool(tp.get_meta("proxy_dead", false)):
+			continue
+		if tp.global_position.distance_to(attacker.global_position) <= 60.0:
+			tb["aggro_target"] = attacker
+			tb["aggro_timer"] = 25.0
+			tb["sitting"] = false
+			tb["sleeping"] = false
+			tb["sense_t"] = 0.0
+
+func _peer_id_for_actor(node: Node3D) -> int:
+	for bid in bots.keys():
+		if bots[bid].get("proxy") == node:
+			return int(bid)
+	if world != null and "server_proxies" in world:
+		for pid in world.server_proxies.keys():
+			if world.server_proxies[pid] == node:
+				return int(pid)
+	var local_p = world.get("player") if world != null else null
+	if local_p == node:
+		var net = world.get("net")
+		return net.get_my_id() if (net != null and net.has_method("get_my_id")) else 1
+	return 0
+
+func _bot_has_ranged_weapon(proxy: Node3D) -> bool:
+	if _bot_item_count(proxy, "Fusil de asalto") + _bot_item_count(proxy, "Rifle francotirador") > 0:
+		return true
+	return not _bot_best_bow(proxy).is_empty() and _bot_arrow_count(proxy) > 0
+
+# La presa ideal de una emboscada: cerca, cargada de recursos, sola y con pocos
+# aliados — el bandido roba lo que necesita, no mata por matar.
+func _find_ambush_target(b: Dictionary) -> Dictionary:
+	var proxy: Node3D = b["proxy"]
+	var now_s := Time.get_ticks_msec() / 1000.0
+	if now_s < float(b.get("_ambush_cd_until", 0.0)):
+		return {}
+	var weapon := _pick_fight_weapon(b, 10.0)
+	if str(weapon.get("name", "")).is_empty():
+		return {}
+	var my_team := _bot_team_ids(b)
+	var desperate: bool = float(b["hunger"]) < 30.0 or float(b["thirst"]) < 25.0
+	var sight := 52.0
+	var best: Dictionary = {}
+	var best_score := -1.0
+	for p in world.get_tree().get_nodes_in_group("net_player_proxy"):
+		if not (p is Node3D) or p == proxy or not is_instance_valid(p):
+			continue
+		if bool(p.get_meta("proxy_dead", false)) or not bool(p.get_meta("has_real_pos", false)):
+			continue
+		if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
+			continue # no canibalismo entre bandidos
+		var pid := _peer_id_for_actor(p)
+		if pid > 0 and pid in my_team:
+			continue # nunca contra el propio equipo
+		var p3 := p as Node3D
+		var d := proxy.global_position.distance_to(p3.global_position)
+		if d > sight or (d > 12.0 and not _has_clear_shot(proxy.global_position, p3.global_position)):
+			continue
+		# Valor del botin visible: inventario + mochila + arma en mano
+		var inv_n := (p3.get_meta("saved_inventory", []) as Array).size()
+		var loot_val := float(inv_n)
+		if not str(p3.get_meta("saved_backpack", "")).is_empty():
+			loot_val += 5.0
+		if not str(p3.get_meta("saved_held_item", "")).is_empty():
+			loot_val += 1.5
+		var victim_hp := float(p3.get_meta("proxy_health", 100.0))
+		# Escoltas: si la presa tiene compañia cerca y el mio no la supera, pasar
+		var allies := 0
+		for q in world.get_tree().get_nodes_in_group("net_player_proxy"):
+			if q == p3 or not (q is Node3D) or not is_instance_valid(q):
+				continue
+			if bool(q.get_meta("proxy_dead", false)):
+				continue
+			var qid := _peer_id_for_actor(q)
+			if qid > 0 and qid in my_team:
+				continue
+			if p3.global_position.distance_to(q.global_position) <= 20.0:
+				allies += 1
+		if allies >= my_team.size() and not desperate:
+			continue
+		if loot_val < 4.0 and not desperate:
+			continue
+		var score := loot_val + (8.0 if allies == 0 else 0.0) + (4.0 if victim_hp < 60.0 else 0.0) - d * 0.15
+		if score > best_score:
+			best_score = score
+			best = {"target_id": pid, "target_name": _actor_display_name(pid) if pid > 0 else "?", "t": 0.0}
+	return best
+
+# Ejecuta la emboscada cada tick: acecho agachado hasta el borde del asalto y
+# golpe conjunto (el equipo entero recibe aggro sobre la victima a la vez).
+func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
+	var amb: Dictionary = b.get("_ambush", {})
+	if amb.is_empty():
+		return false
+	var proxy: Node3D = b["proxy"]
+	var now_s := Time.get_ticks_msec() / 1000.0
+	var abort := func(cd: float) -> bool:
+		b["_ambush"] = {}
+		b["_ambush_cd_until"] = now_s + cd
+		return false
+	var target := _find_actor_by_peer_id(int(amb.get("target_id", 0)))
+	if target == null or not is_instance_valid(target) or bool(target.get_meta("proxy_dead", false)) or target.get("is_dead") == true:
+		return abort.call(70.0)
+	var d := proxy.global_position.distance_to(target.global_position)
+	if d > BOT_AMBUSH_ABORT_DIST:
+		return abort.call(50.0)
+	if float(b["thirst"]) < 16.0 or float(b["hunger"]) < 10.0 or float(b["health"]) < 30.0:
+		return abort.call(60.0)
+	amb["t"] = float(amb.get("t", 0.0)) + delta
+	b["_ambush"] = amb
+	var strike := BOT_AMBUSH_STRIKE_RANGED if _bot_has_ranged_weapon(proxy) else BOT_AMBUSH_STRIKE_MELEE
+	if d <= strike or (float(amb["t"]) > BOT_AMBUSH_MAX_SECONDS and d <= strike + 8.0):
+		# GOLPE: todo el equipo ataca a la vez
+		b["_ambush"] = {}
+		b["_ambush_cd_until"] = now_s + 75.0
+		b["aggro_target"] = target
+		b["aggro_timer"] = 30.0
+		b["sleeping"] = false
+		b["crouching"] = false
+		b["sense_t"] = 0.0
+		rally_bot_team(int(b["bot_id"]), target)
+		record_bot_event(int(b["bot_id"]), "ambush_strike", "peer_%d" % int(amb.get("target_id", 0)), _poi_kind_near(target.global_position), target.global_position, "asalto a " + str(amb.get("target_name", "")))
+		return true
+	if float(amb["t"]) > BOT_AMBUSH_MAX_SECONDS:
+		return abort.call(45.0)
+	# Acechar agachado: el que va en cuclillas se detecta mucho peor
+	b["sitting"] = false
+	b["sleeping"] = false
+	b["crouching"] = true
+	_move_bot_towards(b, target.global_position, 2.9, delta, "walk")
+	return true
+
 func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> String:
 	if not bots.has(bot_id):
 		return ""
@@ -3661,7 +3969,9 @@ func _find_nearby_raidable_shelter(b: Dictionary, radius: float) -> Dictionary:
 	var proxy: Node3D = b["proxy"]
 	var own_id := str(b.get("shelter_id", ""))
 	var leader_id := int(b.get("team_leader_id", 0))
-	var leader_sh := "player_shelter_%d" % leader_id if leader_id > 0 else ""
+	# El alijo del lider tambien es sagrado — y si el lider es un bot su
+	# refugio usa el prefijo bot_shelter_, no player_shelter_.
+	var leader_sh := ("bot_shelter_%d" if is_bot_peer_id(leader_id) else "player_shelter_%d") % leader_id if leader_id > 0 else ""
 	var best: Dictionary = {}
 	var best_d := radius
 	for sh in world._built_shelters:
@@ -4975,6 +5285,8 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	if b.get("aggro_target") != null or b.get("_s_predator") != null or b.get("_s_foe") != null:
 		return true
+	if not (b.get("_ambush", {}) as Dictionary).is_empty():
+		return true # una emboscada activa lo saca de la cama
 	if float(b.get("hide_timer", 0.0)) > 0.0 or float(b.get("flee_until", 0.0)) > 0.0:
 		return true
 	if float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
@@ -6740,6 +7052,32 @@ func get_full_web_status() -> Dictionary:
 		snap["in_shelter"] = _is_bot_wolf_protected(b) if proxy != null and is_instance_valid(proxy) else false
 		snap["team_leader_id"] = int(b.get("team_leader_id", 0))
 		snap["follow_mode"] = str(b.get("follow_mode", "follow"))
+		# Equipo bot-bot autonomo: rol, compañeros y emboscada en curso para el
+		# panel web (JSON-safe: solo strings, ints y arrays).
+		snap["team_role"] = _bot_team_role(b)
+		var mates: Array = []
+		for tid in _bot_team_ids(b):
+			if tid != int(bid):
+				mates.append({"id": tid, "name": str((bots.get(tid, {}) as Dictionary).get("name", str(tid)))})
+		snap["team_mates"] = mates
+		var amb: Dictionary = b.get("_ambush", {})
+		if not amb.is_empty():
+			var atgt := _find_actor_by_peer_id(int(amb.get("target_id", 0)))
+			snap["ambush"] = {
+				"target": str(amb.get("target_name", "")),
+				"target_id": int(amb.get("target_id", 0)),
+				"dist": int(proxy.global_position.distance_to(atgt.global_position)) if atgt != null and is_instance_valid(atgt) else -1,
+				"t": int(amb.get("t", 0.0)),
+			}
+		else:
+			snap["ambush"] = {}
+		var fplots: Array = _bot_farm_plots(b)
+		var fready := 0
+		for fp in fplots:
+			var rec := _bot_crop_record(str((fp as Dictionary).get("id", "")))
+			if not rec.is_empty() and str(_crop_effective_state(rec).get("state", "")) == "ready":
+				fready += 1
+		snap["farm"] = {"plots": fplots.size(), "ready": fready}
 		snap["camp_spot"] = [snappedf(camp.x, 0.1), snappedf(camp.y, 0.1), snappedf(camp.z, 0.1)] if camp != Vector3.INF else []
 		snap["shelter_pos"] = [snappedf(sh.x, 0.1), snappedf(sh.y, 0.1), snappedf(sh.z, 0.1)] if sh != Vector3.INF else []
 		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
@@ -6844,6 +7182,18 @@ func get_full_web_status() -> Dictionary:
 					"dead": bool((pr2 as Node3D).get_meta("proxy_dead", false)),
 					"offline": false,
 				})
+	# Equipos autonomos bot-bot para el panel: cada lider libre con miembros.
+	var teams_out: Array = []
+	for tid in ids:
+		var tb: Dictionary = bots[tid]
+		if int(tb.get("team_leader_id", 0)) != 0:
+			continue
+		var members: Array = []
+		for oid in bots.keys():
+			if int(bots[oid].get("team_leader_id", 0)) == int(tid):
+				members.append({"id": int(oid), "name": str(bots[oid].get("name", str(oid)))})
+		if not members.is_empty():
+			teams_out.append({"leader_id": int(tid), "leader": str(tb.get("name", str(tid))), "members": members})
 	return {
 		"timestamp": int(Time.get_unix_time_from_system()),
 		"server": {
@@ -6870,6 +7220,7 @@ func get_full_web_status() -> Dictionary:
 		"landmarks": landmarks_out,
 		"players": players_out,
 		"bots": bots_out,
+		"teams": teams_out,
 	}
 
 func _ai_save_live_status() -> void:

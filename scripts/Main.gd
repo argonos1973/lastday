@@ -4584,6 +4584,9 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		survivor_bot_mgr.on_bot_damaged(target_peer_id, amount, sender, weapon)
 		if sender_proxy != null:
 			survivor_bot_mgr.notify_leader_combat(sender, proxy)
+			# Si la victima milita en un equipo de bots, sus compañeros acuden
+			# a defenderla — antes solo se reunia el equipo del agresor.
+			survivor_bot_mgr.rally_bot_team(target_peer_id, sender_proxy)
 		return
 	if survivor_bot_mgr != null:
 		if sender_proxy != null:
