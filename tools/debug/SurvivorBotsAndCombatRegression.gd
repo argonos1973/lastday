@@ -2922,6 +2922,55 @@ func run() -> void:
 		"10F8: con hambre extrema pide comida por el chat (asked=%s pending=%s)" % [asked, str(mgr._chat_pending)])
 	cb["hunger"] = 80.0
 
+	# ==================== 10G: Deduplicacion de ubicaciones conocidas ====================
+	# 10G1: dos POIs del mismo edificio (<4m) son UNA ubicacion
+	var gmem := {"known_locations": {}}
+	mgr._memory[777] = gmem
+	mgr.observe_location(777, "city:-7:3:663", "city", Vector3(-7.0, 3.9, 663.0), "observed", true)
+	mgr.observe_location(777, "city:-8:7:664", "city", Vector3(-7.8, 7.9, 664.0), "observed", true)
+	var gk: Dictionary = gmem["known_locations"]
+	check(gk.size() == 1, "10G1: plantas de un mismo edificio = 1 ubicacion (n=%d)" % gk.size())
+
+	# 10G2: casas distintas (>4m) se conservan
+	mgr.observe_location(777, "house:30:40", "house", Vector3(30.0, 0.4, 40.0))
+	mgr.observe_location(777, "house:44:46", "house", Vector3(44.0, 0.4, 46.0))
+	gk = gmem["known_locations"]
+	check(gk.size() == 3, "10G2: casas separadas no se fusionan (n=%d)" % gk.size())
+
+	# 10G3: ruido de zona (wild/patrol/gunshot) fusiona en radio amplio (18m)
+	mgr.observe_location(777, "wild:100:100", "wild", Vector3(100.0, 0.4, 100.0))
+	mgr.observe_location(777, "wild:105:110", "wild", Vector3(105.0, 0.4, 110.0))
+	var wild_n := 0
+	for k2 in gk.keys():
+		if str(k2).begins_with("wild:"):
+			wild_n += 1
+	check(wild_n == 1, "10G3: eventos 'wild' de la misma zona colapsan (wild=%d total=%d)" % [wild_n, gk.size()])
+
+	# 10G4: la fusion conserva visitas acumuladas en la entrada unica
+	var gentry: Dictionary = gk["city:-7:3:663"]
+	check(int(gentry.get("visits", 0)) == 2,
+		"10G4: la entrada fusionada acumula las visitas (v=%d)" % int(gentry.get("visits", 0)))
+
+	# 10G5: _compact_known_locations limpia memoria vieja de una pasada
+	var dirty := {"known_locations": {
+		"wild:1:1": {"pos": [1.0, 0.0, 1.0], "visits": 2, "risk": 0.3},
+		"wild:2:2": {"pos": [2.0, 0.0, 2.0], "visits": 1, "risk": 0.6},
+		"house:50:50": {"pos": [50.0, 0.0, 50.0], "visits": 1, "risk": 0.0},
+		"house:51:50": {"pos": [51.0, 0.0, 50.0], "visits": 3, "risk": 0.1},
+	}}
+	mgr._compact_known_locations(dirty)
+	var clean_kl: Dictionary = dirty["known_locations"]
+	check(clean_kl.size() == 2, "10G5a: compactacion fusiona duplicados (n=%d de 4)" % clean_kl.size())
+	var max_risk := 0.0
+	var tot_visits := 0
+	for k3 in clean_kl.keys():
+		var e3: Dictionary = clean_kl[k3]
+		max_risk = maxf(max_risk, float(e3.get("risk", 0.0)))
+		tot_visits += int(e3.get("visits", 0))
+	check(is_equal_approx(max_risk, 0.6) and tot_visits == 7,
+		"10G5b: fusion conserva risk max y visitas (risk=%f visits=%d)" % [max_risk, tot_visits])
+	mgr._memory.erase(777)
+
 	print("SurvivorBotsAndCombatRegression: %d failures" % failures)
 	world.queue_free()
 	fnet.queue_free()

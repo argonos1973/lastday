@@ -7193,12 +7193,46 @@ func _observe_nearby_world(b: Dictionary) -> void:
 		if Vector2(pos.x - pp.x, pos.z - pp.z).length() <= AI_OBSERVE_RADIUS:
 			observe_location(bid, _poi_id(p), str(p.get("kind", "wild")), pp, "observed")
 
+# Prefijos de "zona" (no un edificio concreto): se fusionan en un radio amplio.
+# Los canonicos (house/city/military/tower) solo fusionan dentro del mismo
+# edificio: la puerta, la primera planta y el tejado son UN sitio, no tres.
+const LOC_SOFT_PREFIXES := ["wild", "patrol", "gunshot", "danger", "fight", "death", "heard", "zone", "water", "blood"]
+const LOC_MERGE_POI_DIST := 4.0
+const LOC_MERGE_ZONE_DIST := 18.0
+
+func _loc_merge_dist(loc_id: String) -> float:
+	return LOC_MERGE_ZONE_DIST if str(loc_id).get_slice(":", 0) in LOC_SOFT_PREFIXES else LOC_MERGE_POI_DIST
+
+# Devuelve el id de una entrada existente del mismo prefijo a < radio de
+# fusion, o "" si es un lugar genuinamente nuevo.
+func _loc_merge_into(known: Dictionary, loc_id: String, pos: Vector3) -> String:
+	var prefix := loc_id.get_slice(":", 0)
+	var best_d := _loc_merge_dist(loc_id)
+	var best_id := ""
+	for oid in known.keys():
+		var o := str(oid)
+		if o == loc_id or o.get_slice(":", 0) != prefix:
+			continue
+		var op = known[oid].get("pos", null)
+		if not (op is Array) or (op as Array).size() < 3:
+			continue
+		var d := Vector2(pos.x - float(op[0]), pos.z - float(op[2])).length()
+		if d < best_d:
+			best_d = d
+			best_id = o
+	return best_id
+
 func observe_location(bot_id: int, loc_id: String, kind: String, pos: Vector3, source: String = "observed", mark_visit: bool = false) -> void:
 	if loc_id.is_empty():
 		return
 	var mem := _ensure_bot_memory(bot_id)
 	var known: Dictionary = mem["known_locations"]
 	var is_new := not known.has(loc_id)
+	if is_new:
+		var merged := _loc_merge_into(known, loc_id, pos)
+		if not merged.is_empty():
+			loc_id = merged
+			is_new = false
 	var entry: Dictionary = known.get(loc_id, {
 		"id": loc_id,
 		"kind": kind,
@@ -7269,6 +7303,7 @@ func _ai_prune_and_summarize_memories(mem: Dictionary) -> void:
 			summary[k] = int(summary.get(k, 0)) + 1
 	mem["events"] = events
 	mem["events_summary"] = summary
+	_compact_known_locations(mem)
 
 # Comunicación entre bots aliados cercanos (<=14 m): comparten ubicaciones
 # conocidas y avisos de peligro. Un bot hostil o lejano jamás recibe estos datos.
@@ -7305,22 +7340,38 @@ func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 	var kb: Dictionary = mem_b.get("known_locations", {})
 	for loc_id in ka.keys():
 		var entry: Dictionary = ka[loc_id]
+		var merged_id := ""
 		if not kb.has(loc_id):
+			var ep = entry.get("pos", null)
+			if ep is Array and (ep as Array).size() >= 3:
+				merged_id = _loc_merge_into(kb, str(loc_id), Vector3(float(ep[0]), float(ep[1]), float(ep[2])))
+		if merged_id.is_empty() and not kb.has(loc_id):
 			var copy := entry.duplicate(true)
 			copy["source"] = "shared"
 			kb[loc_id] = copy
 			shared_count += 1
 		else:
-			kb[loc_id]["risk"] = maxf(float(kb[loc_id].get("risk", 0.0)), float(entry.get("risk", 0.0)))
+			var tid: String = merged_id if not merged_id.is_empty() else loc_id
+			kb[tid]["risk"] = maxf(float(kb[tid].get("risk", 0.0)), float(entry.get("risk", 0.0)))
+			kb[tid]["visits"] = maxf(float(kb[tid].get("visits", 0)), float(entry.get("visits", 0)))
+			shared_count += 1
 	for loc_id2 in kb.keys():
 		var entry2: Dictionary = kb[loc_id2]
+		var merged2 := ""
 		if not ka.has(loc_id2):
+			var ep2 = entry2.get("pos", null)
+			if ep2 is Array and (ep2 as Array).size() >= 3:
+				merged2 = _loc_merge_into(ka, str(loc_id2), Vector3(float(ep2[0]), float(ep2[1]), float(ep2[2])))
+		if merged2.is_empty() and not ka.has(loc_id2):
 			var copy2 := entry2.duplicate(true)
 			copy2["source"] = "shared"
 			ka[loc_id2] = copy2
 			shared_count += 1
 		else:
-			ka[loc_id2]["risk"] = maxf(float(ka[loc_id2].get("risk", 0.0)), float(entry2.get("risk", 0.0)))
+			var tid2: String = merged2 if not merged2.is_empty() else loc_id2
+			ka[tid2]["risk"] = maxf(float(ka[tid2].get("risk", 0.0)), float(entry2.get("risk", 0.0)))
+			ka[tid2]["visits"] = maxf(float(ka[tid2].get("visits", 0)), float(entry2.get("visits", 0)))
+			shared_count += 1
 	mem_a["known_locations"] = ka
 	mem_b["known_locations"] = kb
 	return shared_count
@@ -7994,6 +8045,7 @@ func _ai_load_memory() -> void:
 		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if sd.has(field):
 				mem[field] = sd[field]
+		_compact_known_locations(mem)
 		var lp = sd.get("last_death_pos")
 		if lp is Array and (lp as Array).size() >= 3:
 			mem["last_death_pos"] = Vector3(float(lp[0]), float(lp[1]), float(lp[2]))
@@ -8004,6 +8056,31 @@ func _ai_load_memory() -> void:
 		if bots.has(bid):
 			bots[bid]["_mem"] = mem
 			bots[bid]["personality"] = mem.get("personality", {})
+
+# Fusiona las ubicaciones duplicadas acumuladas (misma zona/distancia) — la
+# memoria vieja se limpia una vez al cargar y luego observe_location ya no vuelve
+# a crear duplicados cercanos.
+func _compact_known_locations(mem: Dictionary) -> void:
+	var known: Dictionary = mem.get("known_locations", {})
+	if known.size() < 2:
+		return
+	var out := {}
+	for lid in known.keys():
+		var e: Dictionary = known[lid]
+		if not (e is Dictionary):
+			continue
+		var ep = e.get("pos", null)
+		if ep is Array and (ep as Array).size() >= 3:
+			var merged := _loc_merge_into(out, str(lid), Vector3(float(ep[0]), float(ep[1]), float(ep[2])))
+			if not merged.is_empty():
+				var tgt: Dictionary = out[merged]
+				tgt["visits"] = int(tgt.get("visits", 0)) + int(e.get("visits", 0))
+				tgt["risk"] = maxf(float(tgt.get("risk", 0.0)), float(e.get("risk", 0.0)))
+				tgt["loot_score"] = maxf(float(tgt.get("loot_score", 0.0)), float(e.get("loot_score", 0.0)))
+				out[merged] = tgt
+				continue
+		out[str(lid)] = e
+	mem["known_locations"] = out
 
 func _ai_save_memory() -> void:
 	if not _ai_memory_enabled():
