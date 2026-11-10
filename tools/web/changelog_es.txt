@@ -2,6 +2,7 @@
 # Formato: <hash_corto>|<descripción en castellano>
 # update_index.sh usa estas líneas cuando el hash coincide; si un commit no
 # está mapeado, se muestra el subject del commit tal cual.
+c3ac728|Los 3 supervivientes IA (Elena, Carlos y Kael) nacen ahora HOSTILES y te cazan a la vista; solo se vuelven aliados si los convences por chat o voz: súbeles la confianza con saludos, explicaciones y regalos ('te doy pan'), pídele tregua ('alto ahí') para que dejen de dispararte, y cuando confíen lo bastante ('sígueme') se unen a tu equipo — Kael, el del rifle, también se puede convencer; sus respuestas ya se ven en el chat además de habladas, y se quitan por completo la interacción directa [F] y el menú de órdenes [Z]
 ca937fb|Beber del rio, los lagos y la fuente de la plaza con una sola pulsacion de F: el personaje bebe unos 4 tragos y puedes cancelar moviendote; antes habia que mantener F pulsado y el aviso pedia E por error
 5088b08|Barra de progreso general en la pantalla de carga con fases detalladas (terreno, casas, vegetacion, bosque, ciudad, montana, hojarasca, fauna) y generacion del mundo sin bloqueos de pantalla
 ec49680|El bosque se planta unas 5 veces mas rapido: la carga del mundo baja de ~10 minutos a ~2
