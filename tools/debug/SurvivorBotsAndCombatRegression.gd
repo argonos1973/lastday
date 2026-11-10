@@ -827,6 +827,73 @@ func run() -> void:
 	elena["health"] = 100.0
 	elena["_want_cache"] = {}
 
+	# Capacidad de carga = la del jugador humano: base 3 slots/5kg + ropa
+	# puesta (torso 2/2, legs 2/2, chaleco 4/4, extra militar/camo) + mochila.
+	elena["clothing"] = "Camiseta,Pantalones,Zapatillas"
+	elena["backpack"] = ""
+	var cap0 := mgr._bot_carry_capacity(elena)
+	check(int(cap0["slots"]) == 7 and absf(float(cap0["weight"]) - 9.0) < 0.01,
+		"Ropa basica = 7 huecos / 9 kg como el jugador (%s)" % str(cap0))
+	elena["clothing"] = "Chaqueta militar,Pantalones militares,Zapatillas,Chaleco táctico"
+	var cap1 := mgr._bot_carry_capacity(elena)
+	check(int(cap1["slots"]) == 16 and absf(float(cap1["weight"]) - 18.0) < 0.01,
+		"Militar+chaleco = 16 huecos / 18 kg como el jugador (%s)" % str(cap1))
+	elena["backpack"] = "Mochila pequena"
+	var cap2 := mgr._bot_carry_capacity(elena)
+	check(int(cap2["slots"]) == 24 and absf(float(cap2["weight"]) - 28.0) < 0.01,
+		"...y con mochila pequena 24 huecos / 28 kg (%s)" % str(cap2))
+	elena["backpack"] = ""
+	elena["clothing"] = "Camiseta,Pantalones,Zapatillas"
+	# Tope de huecos: con 7 stacks no entra ni un trapo; tope de peso igual.
+	var full7: Array = []
+	for i in range(7):
+		full7.append({"name": "Objeto_%d" % i, "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0})
+	elena_proxy.set_meta("saved_inventory", full7)
+	check(not mgr._bot_would_fit(elena, full7, {"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1}),
+		"7/7 huecos: no cabe ni un trapo (slots)")
+	check(mgr._bot_would_fit(elena, full7, {"name": "Mochila militar", "type": "backpack", "weight": 0.9, "quantity": 1}),
+		"Una mochila siempre cabe (no pesa ni ocupa, como en el jugador)")
+	var inv_w := [{"name": "Piedra", "type": "resource", "weight": 4.5, "quantity": 2, "use_value": 0.0}]
+	check(not mgr._bot_would_fit(elena, inv_w, {"name": "Piedra", "type": "resource", "weight": 0.5, "quantity": 1}),
+		"9.0 kg: ni media piedra mas (peso)")
+	var inv_stk := [{"name": "Piedra", "type": "resource", "weight": 8.5, "quantity": 1, "use_value": 0.0}]
+	check(mgr._bot_would_fit(elena, inv_stk, {"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 1}),
+		"Apilar cabe sin hueco nuevo si no supera el peso")
+	check(not mgr._bot_would_fit(elena, inv_stk, {"name": "Piedra", "type": "resource", "weight": 0.6, "quantity": 1}),
+		"Aun apilando, el peso corta (8.5+0.6>9)")
+	# Y en la recoleccion real el objeto que no cabe se queda en el suelo.
+	elena_proxy.set_meta("saved_inventory", full7.duplicate(true))
+	elena["_s_loot"] = {}
+	world._dropped_items = [
+		{"id": "heavy_rock", "name": "Piedra", "type": "resource", "weight": 0.5, "qty": 1, "use": 0.0, "pos": [elena_proxy.global_position.x, elena_proxy.global_position.y, elena_proxy.global_position.z]},
+	]
+	mgr._collect_loot_entry(elena, world._dropped_items[0])
+	check(world._dropped_items.size() == 1 and (world._dropped_items[0] as Dictionary).get("id") == "heavy_rock",
+		"Mochila llena: el objeto del suelo no se consume")
+	check(mgr._bot_item_count(elena_proxy, "Piedra") == 0,
+		"Mochila llena: nada entro al inventario")
+	# La particion al refugio recorta el keep a la capacidad: con 9 stacks
+	# guardables y solo 7 huecos, los 2 mas prescindibles pasan al alijo.
+	elena["campfire_id"] = ""
+	var over_inv: Array = [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
+		{"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0},
+		{"name": "Cerillas", "type": "tool_matches", "weight": 0.05, "quantity": 1, "use_value": 0.0},
+		{"name": "Boleadoras", "type": "weapon_bola", "weight": 0.5, "quantity": 1, "use_value": 0.0},
+		{"name": "Venda", "type": "medical", "weight": 0.05, "quantity": 2, "use_value": 35.0},
+		{"name": "Carne asada en palo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 28.0},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 6, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.5, "quantity": 4, "use_value": 0.0},
+	]
+	var part_over := mgr._bot_partition_inventory_for_shelter(elena, over_inv)
+	var keep_over: Array = part_over["keep"]
+	check(mgr._bot_inv_stored_count(keep_over) <= 7 and mgr._bot_inv_total_weight(keep_over) <= 9.01,
+		"El keep queda dentro de capacidad (%d stacks / %.1f kg)" % [mgr._bot_inv_stored_count(keep_over), mgr._bot_inv_total_weight(keep_over)])
+	check((part_over["store"] as Array).size() >= 2,
+		"El sobrante va al alijo del refugio (%d items)" % (part_over["store"] as Array).size())
+	elena_proxy.set_meta("saved_inventory", [])
+
 	# --- 22) Asesor estrategico externo (validacion + directivas, sin HTTP) ---
 	var d_hunt := mgr._ai_parse_decision("{\"action\":\"hunt\",\"poi_kind\":\"wild\",\"reason\":\"need meat\"}")
 	check(str(d_hunt.get("mode", "")) == "poi" and (d_hunt.get("only_kinds", []) as Array) == ["wild"],

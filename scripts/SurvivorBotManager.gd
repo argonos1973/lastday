@@ -1813,7 +1813,9 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 			if int(CLOTHING_PRIORITY.get(nm, 0)) > int(CLOTHING_PRIORITY.get(cur, 0)):
 				worn = _swap_worn_slot(worn, slot, nm)
 				if not cur.is_empty():
-					_bot_add_inventory_item(inv, {"name": cur, "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0})
+					var old_piece := {"name": cur, "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0}
+					if not _bot_try_add_inventory_item(b, inv, old_piece):
+						_bot_drop_to_ground(b, old_piece) # no le cabe: la vieja queda tirada
 				it["quantity"] = int(it.get("quantity", 1)) - 1
 				if int(it["quantity"]) <= 0:
 					to_remove.append(it)
@@ -2155,14 +2157,22 @@ func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 			hide_qty = 3
 			part_qty = 2
 	if take_meat:
-		_bot_add_inventory_item(inv, {"name": meat_name, "type": "food", "weight": 0.3, "quantity": meat_qty, "use_value": 15.0})
+		var meat := {"name": meat_name, "type": "food", "weight": 0.3, "quantity": meat_qty, "use_value": 15.0}
+		if not _bot_try_add_inventory_item(b, inv, meat):
+			_bot_drop_to_ground(b, meat) # no le cabe: queda junto a la presa
 	if take_pelts:
-		_bot_add_inventory_item(inv, {"name": hide_name, "type": "resource", "weight": 0.65, "quantity": hide_qty, "use_value": 0.0})
+		var hide := {"name": hide_name, "type": "resource", "weight": 0.65, "quantity": hide_qty, "use_value": 0.0}
+		if not _bot_try_add_inventory_item(b, inv, hide):
+			_bot_drop_to_ground(b, hide)
 	# Hueso y tendón: solo si los necesita ahora para cuerda, refugio, arco o armas de hueso
 	if _bot_item_count(proxy, "Tendón") < 4 and (_bot_wants_craft_input(b, "Tendón") or _bot_wants_craft_input(b, "Cuerda") or (str(b["shelter_id"]).is_empty() and _bot_item_count(proxy, "Cuerda") < 1)):
-		_bot_add_inventory_item(inv, {"name": "Tendón", "type": "resource", "weight": 0.06, "quantity": part_qty, "use_value": 0.0})
+		var tendon := {"name": "Tendón", "type": "resource", "weight": 0.06, "quantity": part_qty, "use_value": 0.0}
+		if not _bot_try_add_inventory_item(b, inv, tendon):
+			_bot_drop_to_ground(b, tendon)
 	if _bot_item_count(proxy, "Hueso") < 4 and _bot_wants_craft_input(b, "Hueso"):
-		_bot_add_inventory_item(inv, {"name": "Hueso", "type": "resource", "weight": 0.18, "quantity": part_qty, "use_value": 0.0})
+		var bone := {"name": "Hueso", "type": "resource", "weight": 0.18, "quantity": part_qty, "use_value": 0.0}
+		if not _bot_try_add_inventory_item(b, inv, bone):
+			_bot_drop_to_ground(b, bone)
 	proxy.set_meta("saved_inventory", inv)
 	animal.set("_gutted", true)
 	var hg_mem: Dictionary = _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
@@ -3127,7 +3137,11 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 		if gname.is_empty():
 			return ""
 		var inv_give: Array = proxy.get_meta("saved_inventory", [])
-		_bot_add_inventory_item(inv_give, {"name": gname, "type": gtype, "quantity": 1, "weight": 0.5, "use_value": 0.0})
+		var gitem := {"name": gname, "type": gtype, "quantity": 1, "weight": 0.5, "use_value": 0.0}
+		if not _bot_try_add_inventory_item(b, inv_give, gitem):
+			# Mochila llena: el objeto no se pierde — cae a los pies del bot
+			_bot_drop_to_ground(b, gitem)
+			return "%s no puede cargar %s — lo deja en el suelo." % [bname, gname]
 		proxy.set_meta("saved_inventory", inv_give)
 		_auto_equip_best_gear(b)
 		var best_w2 := _best_weapon_name(proxy)
@@ -3272,6 +3286,9 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 		var nm := str(entry.get("name", ""))
 		var tp := str(entry.get("type", ""))
 		if not _is_loot_desirable(b, nm, tp):
+			continue
+		# No le cabe en la mochila (slots/peso del modelo humano): ni lo mira
+		if not _bot_would_fit(b, proxy.get_meta("saved_inventory", []), _loot_entry_item_dict(entry)):
 			continue
 		# Orden "equip": solo armas, ropa y mochilas — comida y materiales no
 		if bool(b.get("equip_mission", false)) and not _is_gear_item(nm, tp):
@@ -3513,21 +3530,17 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 		return
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
-	# Mochila llena: solo equipo — evita hinchar el inventario hasta la muerte
-	# (al morir suelta TODO al mundo y el servidor se llenaria de drops).
+	# Capacidad como el jugador humano (slots/peso por ropa y mochila). Si no
+	# le cabe, el objeto se queda en el mundo — ira a descargar a su refugio.
 	var enm := str(entry.get("name", ""))
 	var etp := str(entry.get("type", "resource"))
 	if inv.size() >= 60 and not _is_gear_item(enm, etp):
 		b["_s_loot"] = {}
 		return
-	var item_dict := {
-		"name": str(entry.get("name", "")),
-		"type": str(entry.get("type", "resource")),
-		"weight": float(entry.get("weight", 0.2)),
-		"quantity": int(entry.get("qty", 1)),
-		"use_value": float(entry.get("use", 0.0)),
-	}
-	_bot_add_inventory_item(inv, item_dict)
+	var item_dict := _loot_entry_item_dict(entry)
+	if not _bot_try_add_inventory_item(b, inv, item_dict):
+		b["_s_loot"] = {}
+		return
 	proxy.set_meta("saved_inventory", inv)
 	_ai_note_loot(b, enm, etp)
 	_auto_equip_best_gear(b)
@@ -3680,7 +3693,8 @@ func _bot_raid_shelter(b: Dictionary, sh_entry: Dictionary) -> int:
 		while qty > 0 and _is_loot_desirable(b, nm, tp):
 			var one: Dictionary = (cd as Dictionary).duplicate(true)
 			one["quantity"] = 1
-			_bot_add_inventory_item(inv, one)
+			if not _bot_try_add_inventory_item(b, inv, one):
+				break # mochila llena: el resto se queda en el refugio ajeno
 			proxy.set_meta("saved_inventory", inv)
 			qty -= 1
 			took_from_stack += 1
@@ -3866,6 +3880,17 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 				store.append(it)
 			continue
 		store.append(it)
+	# Si lo que se queda encima supera su capacidad real (slots/peso por ropa
+	# y mochila, igual que el jugador), lo mas prescindible pasa al refugio.
+	var cap := _bot_carry_capacity(b)
+	var guard := 0
+	while guard < 64 and (_bot_inv_stored_count(keep) > int(cap["slots"]) or _bot_inv_total_weight(keep) > float(cap["weight"]) + 0.001):
+		guard += 1
+		var idx := _bot_least_essential_index(b, keep)
+		if idx < 0:
+			break
+		store.append(keep[idx])
+		keep.remove_at(idx)
 	return {"keep": keep, "store": store}
 
 # Retira lo que necesite de su propio refugio y guarda alli todo el loot sobrante.
@@ -3900,7 +3925,8 @@ func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 		if want_withdraw:
 			var one: Dictionary = (cd as Dictionary).duplicate(true)
 			one["quantity"] = 1
-			_bot_add_inventory_item(inv, one)
+			if not _bot_try_add_inventory_item(b, inv, one):
+				continue # no le cabe: se queda guardado en su refugio
 			proxy.set_meta("saved_inventory", inv)
 			var rem := int(cd.get("quantity", 1)) - 1
 			if rem <= 0:
@@ -4596,6 +4622,10 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	b["_mdir"] = sm
 	var on_stair_segment: bool = in_building_3d and absf(next_goal.y - cur.y) > 0.25
 	var eff_speed := minf(speed, 3.2) if on_stair_segment else speed
+	# Sobrepeso: frena igual que al jugador humano (walk * (1 - carry * 0.2))
+	var carry_ratio := _bot_carry_ratio(b)
+	if carry_ratio > 0.0:
+		eff_speed *= 1.0 - carry_ratio * 0.2
 	var spd := move_toward(float(b.get("_speed", 0.0)), eff_speed * (0.45 if depth_cur > 0.12 else 1.0), delta * (11.0 if in_building_3d else 6.5))
 	b["_speed"] = spd
 	var step := minf(spd * delta, d)
@@ -5170,6 +5200,121 @@ func _bot_slot_spare_count(proxy: Node3D, slot: String) -> int:
 				total += int(it.get("quantity", 1))
 	return total
 
+# ============ CAPACIDAD DE CARGA (misma regla que el jugador humano) ============
+# Replica de PlayerController._compute_carry_capacity sobre el estado del bot:
+# base 3 slots / 5 kg + bonus por ropa puesta (torso/legs/chaleco; extra
+# militar/camuflaje en torso y piernas) + mochila equipada (peq 8/10, mil 20/25).
+func _bot_carry_capacity(b: Dictionary) -> Dictionary:
+	var slots := PlayerController.BASE_CARRY_SLOTS
+	var weight := PlayerController.BASE_CARRY_WEIGHT
+	for raw in str(b.get("clothing", "")).split(",", false):
+		var nm := raw.strip_edges()
+		if nm.is_empty() or not PlayerController.CLOTHING_SLOTS.has(nm):
+			continue
+		var is_military := nm.find("militar") >= 0 or nm.find("camuflaje") >= 0
+		match str(PlayerController.CLOTHING_SLOTS[nm]):
+			"torso":
+				slots += PlayerController.TORSO_CARRY_SLOTS + (3 if is_military else 0)
+				weight += PlayerController.TORSO_CARRY_WEIGHT + (3.0 if is_military else 0.0)
+			"legs":
+				slots += PlayerController.LEGS_CARRY_SLOTS + (2 if is_military else 0)
+				weight += PlayerController.LEGS_CARRY_WEIGHT + (2.0 if is_military else 0.0)
+			"chaleco":
+				slots += PlayerController.VEST_CARRY_SLOTS
+				weight += PlayerController.VEST_CARRY_WEIGHT
+	var bp := str(b.get("backpack", ""))
+	if bp == "Mochila militar":
+		slots += PlayerController.MILITARY_BACKPACK_SLOTS
+		weight += PlayerController.MILITARY_BACKPACK_WEIGHT
+	elif not bp.is_empty():
+		slots += PlayerController.SMALL_BACKPACK_SLOTS
+		weight += PlayerController.SMALL_BACKPACK_WEIGHT
+	return {"slots": slots, "weight": weight}
+
+# Peso y huecos del inventario serializado. Como en Inventory.is_equipment_item,
+# las mochilas (equipada o de repuesto) no cuentan ni pesan.
+func _bot_inv_total_weight(inv: Array) -> float:
+	var w := 0.0
+	for it in inv:
+		if it is Dictionary and str(it.get("type", "")) != "backpack":
+			w += float(it.get("weight", 0.2)) * int(it.get("quantity", 1))
+	return w
+
+func _bot_inv_stored_count(inv: Array) -> int:
+	var count := 0
+	for it in inv:
+		if it is Dictionary and str(it.get("type", "")) != "backpack":
+			count += 1
+	return count
+
+# Ratio de carga, como _get_carry_weight_ratio: se usa para frenar el paso.
+func _bot_carry_ratio(b: Dictionary) -> float:
+	var cap := _bot_carry_capacity(b)
+	var mw := float(cap.get("weight", 0.0))
+	if mw <= 0.0:
+		return 0.0
+	return clampf(_bot_inv_total_weight(b["proxy"].get_meta("saved_inventory", [])) / mw, 0.0, 1.0)
+
+# Misma regla que Inventory.add_item: el peso siempre cuenta (salvo mochilas)
+# y un hueco nuevo solo hace falta si no apila sobre un stack existente.
+func _bot_would_fit(b: Dictionary, inv: Array, item_dict: Dictionary) -> bool:
+	var tp := str(item_dict.get("type", "resource"))
+	if tp == "backpack":
+		return true
+	var cap := _bot_carry_capacity(b)
+	if _bot_inv_total_weight(inv) + float(item_dict.get("weight", 0.2)) * int(item_dict.get("quantity", 1)) > float(cap["weight"]) + 0.001:
+		return false
+	var nm := str(item_dict.get("name", ""))
+	if tp in ["food", "resource", "material", "medical", "ammo", "water", "misc"]:
+		for it in inv:
+			if it is Dictionary and str(it.get("name", "")) == nm:
+				return true # apila sobre un stack: no necesita hueco nuevo
+	return _bot_inv_stored_count(inv) < int(cap["slots"])
+
+func _bot_try_add_inventory_item(b: Dictionary, inv: Array, item_dict: Dictionary) -> bool:
+	if not _bot_would_fit(b, inv, item_dict):
+		return false
+	_bot_add_inventory_item(inv, item_dict)
+	return true
+
+func _loot_entry_item_dict(entry: Dictionary) -> Dictionary:
+	return {
+		"name": str(entry.get("name", "")),
+		"type": str(entry.get("type", "resource")),
+		"weight": float(entry.get("weight", 0.2)),
+		"quantity": maxi(1, int(entry.get("quantity", entry.get("qty", 1)))),
+		"use_value": float(entry.get("use_value", entry.get("use", 0.0))),
+	}
+
+# Lo que no le cabe cae al suelo a sus pies, igual que al jugador: queda
+# saqueable por cualquiera como pickup real sincronizado.
+func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary) -> void:
+	if world == null:
+		return
+	var p: Vector3 = (b["proxy"] as Node3D).global_position + Vector3(randf_range(-0.7, 0.7), 0.0, randf_range(-0.7, 0.7))
+	if world.has_method("_spawn_ground_pickup"):
+		world._spawn_ground_pickup(str(item_dict.get("name", "")), str(item_dict.get("type", "resource")), p, float(item_dict.get("weight", 0.2)), int(item_dict.get("quantity", 1)), float(item_dict.get("use_value", 0.0)))
+	elif "_dropped_items" in world:
+		var did := "bot_drop_%d_%d" % [int(b["bot_id"]), int(Time.get_ticks_msec()) % 1000000]
+		world._dropped_items.append({"id": did, "name": str(item_dict.get("name", "")), "type": str(item_dict.get("type", "resource")), "weight": float(item_dict.get("weight", 0.2)), "qty": int(item_dict.get("quantity", 1)), "use": float(item_dict.get("use_value", 0.0)), "pos": [p.x, p.y, p.z], "action_type": "drop"})
+
+# La entrada de "keep" mas prescindible (para recortar lo que se queda encima
+# a la capacidad real): prioridad de loot menor; a empate, la mas pesada.
+func _bot_least_essential_index(b: Dictionary, inv: Array) -> int:
+	var best_i := -1
+	var best_score := INF
+	for i in range(inv.size()):
+		var it = inv[i]
+		if not (it is Dictionary):
+			continue
+		if str(it.get("type", "")) == "backpack":
+			continue
+		var sc := _loot_priority(b, str(it.get("name", "")), str(it.get("type", ""))) - float(it.get("weight", 0.0)) * int(it.get("quantity", 1)) * 0.001
+		if sc < best_score:
+			best_score = sc
+			best_i = i
+	return best_i
+
 func _bot_pelt_count(proxy: Node3D) -> int:
 	var total := 0
 	for it in proxy.get_meta("saved_inventory", []):
@@ -5240,7 +5385,8 @@ func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 		entry["max_durability"] = float(out.get("max_durability", out["durability"]))
 	if not pelt_species.is_empty():
 		entry["pelt_species"] = pelt_species
-	_bot_add_inventory_item(inv, entry)
+	if not _bot_try_add_inventory_item(b, inv, entry):
+		_bot_drop_to_ground(b, entry) # mochila llena: la pieza cae a sus pies
 	proxy.set_meta("saved_inventory", inv)
 	_auto_equip_best_gear(b)
 	_publish_bot_to_net_players(b)
