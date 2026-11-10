@@ -306,6 +306,149 @@ func run() -> void:
 	kael["_act"] = ""
 	kael["anim"] = "idle"
 
+	# --- 3b) Preparacion nocturna: junta material de fuego antes de oscurecer ---
+	# Un superviviente precavido no espera a que anochezca: por la tarde ya
+	# reune palos, piedras y trapos para la fogata o la antorcha.
+	var k_blade := {"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0}
+	kael["hide_timer"] = 0.0
+	kael["sleeping"] = false
+	kael["hunger"] = 85.0
+	kael["thirst"] = 85.0
+	kael["health"] = 100.0
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael["_forage"] = {}
+	kael["_s_leader"] = null
+	kael["_s_foe"] = null
+	kael["_s_predator"] = null
+	kael["_s_prey"] = null
+	kael["_s_loot"] = {}
+	kael["_s_raid_shelter"] = {}
+	kael["ambush"] = {}
+	kael["_want_cache"] = {}
+	kael["campfire_id"] = ""
+	kael["no_fire_spot"] = false
+	kael["torch_lit"] = false
+	kael["equip_mission"] = false
+	world.world_actions_by_id.clear()
+	# Matriz de "noche resuelta": antorcha propia, palo+trapos fabricable al
+	# momento, fogata ya levantada o — solo con refugio — el 2+2 para montarla.
+	kael_proxy.set_meta("saved_inventory", [k_blade])
+	check(not mgr._bot_night_fire_ready(kael, kael_proxy), "Sin antorcha ni fogata ni material: no tiene la noche resuelta")
+	kael_proxy.set_meta("saved_inventory", [k_blade,
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1, "use_value": 0.0}])
+	check(mgr._bot_night_fire_ready(kael, kael_proxy), "Palo+Trapos: puede fabricar la antorcha en cuanto quiera")
+	kael["campfire_id"] = "cf_prep_test"
+	check(mgr._bot_night_fire_ready(kael, kael_proxy), "Fogata ya levantada: tiene la noche resuelta")
+	kael["campfire_id"] = ""
+	# La antorcha puntua >3 todo el dia: abre la puerta a Trapos y ropa cortable
+	var torch_rec := {}
+	for r in CraftingSystem.RECIPES:
+		if str((r.get("output", {}) as Dictionary).get("name", "")) == "Antorcha":
+			torch_rec = r
+	kael["_want_cache"] = {}
+	kael_proxy.set_meta("saved_inventory", [k_blade])
+	dc.time_of_day = 14.0
+	check(mgr._bot_recipe_score(kael, torch_rec) > 3.0,
+		"La antorcha puntua de dia: la fabrica antes de la noche (%.1f)" % mgr._bot_recipe_score(kael, torch_rec))
+	check(mgr._bot_wants_craft_input(kael, "Trapos"), "Sin antorcha quiere Trapos: los recoge para la antorcha")
+	check(mgr._bot_cuts_into_trapos("Chaqueta militar") and not mgr._bot_cuts_into_trapos("Piedra"),
+		"Sabe que ropa se corta a trapos para la antorcha")
+	# Recoleccion dirigida al caer la tarde: piedras sueltas del mundo
+	# (accion stone) se recogen a mano para la fogata — sin filo hace falta.
+	dc.time_of_day = 18.0
+	kael_proxy.global_position = Vector3(40.0, 0.4, 40.0)
+	kael["pos"] = kael_proxy.global_position
+	kael["camp_spot"] = kael_proxy.global_position
+	var prep_stone := WorldActionScript.new()
+	prep_stone.setup("prep_stone", "stone", "Piedras utiles", Vector3(1.0, 0.7, 1.0), Color(0.3, 0.3, 0.26), false, false)
+	world.add_child(prep_stone)
+	prep_stone.global_position = kael_proxy.global_position + Vector3(5.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_stone"] = prep_stone
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Al caer la tarde sin fuego sale a por material")
+	var g_kind := str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
+	check(g_kind == "stone", "Elige el nodo de piedras para la fogata (kind=%s)" % g_kind)
+	kael_proxy.global_position = prep_stone.global_position
+	kael["pos"] = kael_proxy.global_position
+	for i in range(20):
+		if not mgr._bot_try_gather_mats(kael, 0.2):
+			break
+	check(mgr._bot_item_count(kael_proxy, "Piedra") >= 2,
+		"Recoge las piedras del nodo a mano (Piedra=%d)" % mgr._bot_item_count(kael_proxy, "Piedra"))
+	# Troncos aprovechables (accion wood): con filo los lleva para rajar a palos
+	var prep_wood := WorldActionScript.new()
+	prep_wood.setup("prep_wood", "wood", "Troncos aprovechables", Vector3(1.6, 0.7, 1.0), Color(0.25, 0.15, 0.06), false, false)
+	world.add_child(prep_wood)
+	prep_wood.global_position = kael_proxy.global_position + Vector3(5.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_wood"] = prep_wood
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael_proxy.set_meta("saved_inventory", [k_blade])
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Con filo va a por troncos para rajar palos")
+	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
+	check(g_kind == "wood", "Elige el nodo de troncos como fuente de palos (kind=%s)" % g_kind)
+	kael_proxy.global_position = prep_wood.global_position
+	kael["pos"] = kael_proxy.global_position
+	for i in range(20):
+		if not mgr._bot_try_gather_mats(kael, 0.2):
+			break
+	check(mgr._bot_item_count(kael_proxy, "Tronco") >= 1 and mgr._bot_palo_supply(kael_proxy, "Cuchillo") >= 4,
+		"Recoge troncos que cuentan como palos futuros (Tronco=%d supply=%d)" % [mgr._bot_item_count(kael_proxy, "Tronco"), mgr._bot_palo_supply(kael_proxy, "Cuchillo")])
+	# Arbustos a talar: el camino de siempre sigue eligiendose con filo
+	var prep_bush := WorldActionScript.new()
+	prep_bush.setup("prep_bush", "fell_bush", "Arbusto", Vector3(1.2, 1.4, 1.2), Color(0.2, 0.35, 0.12), true, false)
+	world.add_child(prep_bush)
+	prep_bush.global_position = kael_proxy.global_position + Vector3(5.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_bush"] = prep_bush
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael_proxy.set_meta("saved_inventory", [k_blade])
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Con filo y sin palos sale a talar el arbusto")
+	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
+	check(g_kind == "fell_bush", "Sigue eligiendo el arbusto a talar (kind=%s)" % g_kind)
+	# Sin filo no tala nada: un bot sin cuchillo no sale a por palos
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael_proxy.set_meta("saved_inventory", [
+		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 2, "use_value": 0.0}])
+	check(not mgr._bot_try_gather_mats(kael, 0.1), "Sin filo no tala (solo iria a por piedras y ya tiene)")
+	# Botin dirigido de material de fuego: localiza trapos a 40 m al anochecer
+	kael_proxy.set_meta("saved_inventory", [k_blade])
+	var prep_tp: Vector3 = kael_proxy.global_position
+	world._dropped_items.append({"id": "prep_trapos", "name": "Trapos", "type": "resource", "weight": 0.05, "qty": 1, "use": 0.0, "pos": [prep_tp.x + 40.0, prep_tp.y, prep_tp.z]})
+	world._dropped_items.append({"id": "prep_lata", "name": "Lata de judias", "type": "food", "weight": 0.4, "qty": 1, "use": 20.0, "pos": [prep_tp.x + 10.0, prep_tp.y, prep_tp.z]})
+	var prep_hit := mgr._find_fire_prep_loot(kael, 60.0)
+	check(str(prep_hit.get("id", "")) == "prep_trapos",
+		"Al caer la tarde va a por el Trapos lejano e ignora la lata cercana (id=%s)" % str(prep_hit.get("id", "")))
+	world._dropped_items = (world._dropped_items as Array).filter(func(e): return not str(e.get("id", "")).begins_with("prep_"))
+	# Parapeto nocturno con material: sin refugio alcanzable monta la fogata
+	# de emergencia junto a el — el fruto de lo recogido por la tarde.
+	dc.time_of_day = 22.0
+	var k_sh_id_save := str(kael["shelter_id"])
+	var k_sh_pos_save: Vector3 = kael["shelter_pos"]
+	kael["shelter_id"] = ""
+	kael["shelter_pos"] = Vector3.INF
+	kael["campfire_id"] = ""
+	kael["_gather"] = {}
+	kael_proxy.global_position = Vector3(600.0, 0.4, 600.0)
+	kael["pos"] = kael_proxy.global_position
+	(kael["vstats"] as SurvivalStats).sleep = 90.0
+	kael_proxy.set_meta("saved_inventory", [k_blade,
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 5, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 2, "use_value": 0.0}])
+	var fires_pre: int = (world.built_campfires as Array).size()
+	mgr._tick_bot(kael, 0.1)
+	check((world.built_campfires as Array).size() == fires_pre + 1,
+		"Sin refugio alcanzable monta la fogata de emergencia junto a el (act=%s)" % str(kael["_act"]))
+	kael["shelter_id"] = k_sh_id_save
+	kael["shelter_pos"] = k_sh_pos_save
+	kael["sleeping"] = false
+	kael["sitting"] = false
+	kael["_act"] = ""
+	kael["anim"] = "idle"
+	dc.time_of_day = 14.0
+
 	# --- 4) Doma de lobos por parte de un Superviviente IA ---
 	var wild_w := WildlifeControllerScript.new()
 	wild_w.name = "Wildlife_wolf_tame_bot"
@@ -860,8 +1003,17 @@ func run() -> void:
 		{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 1, "use_value": 0.0},
 		{"name": "Arco de madera", "type": "weapon_bow", "weight": 1.0, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0},
 	])
+	# Sin antorcha los trapos ya interesan de dia: son el insumo que le falta
+	# para fabricarse luz antes de la noche. Con antorcha en la mochila vuelve
+	# a no interesarle acumularlos.
+	check(mgr._is_loot_desirable(elena, "Trapos", "resource"),
+		"Sano pero sin antorcha: los trapos del suelo interesan (futura antorcha)")
+	var inv_con_torch: Array = elena_proxy.get_meta("saved_inventory", [])
+	inv_con_torch.append({"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0})
+	elena_proxy.set_meta("saved_inventory", inv_con_torch)
+	elena["_want_cache"] = {}
 	check(not mgr._is_loot_desirable(elena, "Trapos", "resource"),
-		"Sano, con cuerda y arco: los trapos del suelo NO interesan")
+		"Sano, con cuerda, arco y antorcha: los trapos del suelo NO interesan")
 	check(mgr._is_loot_desirable(elena, "Pluma", "resource"),
 		"Con arco y sin flechas: las plumas interesan (para fabricarlas)")
 	check(mgr._is_loot_desirable(elena, "Hueso", "resource"),

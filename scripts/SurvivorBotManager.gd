@@ -1058,6 +1058,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_s_prey"] = _find_huntable_prey(b, 44.0 if hunt_dir else 32.0)
 		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
 		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
+		# Preparacion nocturna: al caer la tarde, quien no tiene el fuego ni la
+		# luz resueltos sale a por lo que le falta (trapos, palos, piedras) mas
+		# alla del radio de saqueo oportunista — antes de que se haga de noche.
+		if (b["_s_loot"] as Dictionary).is_empty() and not bool(b.get("equip_mission", false)) \
+				and _is_pre_night() and not _bot_night_fire_ready(b, proxy):
+			b["_s_loot"] = _find_fire_prep_loot(b, 60.0)
 		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
 		_observe_nearby_world(b)
 		_try_share_allied_knowledge(b)
@@ -1068,6 +1074,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# Luz nocturna con antorcha (se apaga si se está ocultando en su refugio)
 	var is_night := _is_world_night()
+	if not _is_pre_night():
+		b["_prep_logged"] = false
 	_validate_shelter_claim(b)
 	var sh_pos: Vector3 = b["shelter_pos"]
 	var camp_pos: Vector3 = b["camp_spot"]
@@ -1424,6 +1432,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# Dentro del refugio: encender fogata si se apagó, asar carne (solo si tiene Palo afilado / Carne ensartada) y descansar/ocultarse
 		if sh_pos != Vector3.INF:
 			_ensure_bot_campfire_lit(b)
+		# Sin fogata aun y con material a mano: la monta junto a donde acampa —
+		# la lena y las piedras que junto al caer la tarde se vuelven luz y
+		# calor para la noche (quien se esconde no enciende un faro).
+		if str(b["campfire_id"]).is_empty() and float(b["hide_timer"]) <= 0.0 \
+				and (is_night or _is_pre_night() or _bot_is_freezing(b)) \
+				and _bot_item_count(proxy, "Palo") >= 2 and _bot_item_count(proxy, "Piedra") >= 2 \
+				and not _is_near_any_lit_campfire(proxy.global_position, 8.0):
+			_bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9))
 		if float(b["cook_cooldown"]) <= 0.0 and _bot_can_cook_raw_meat(proxy) and (sh_pos != Vector3.INF or _is_near_any_lit_campfire(proxy.global_position, 6.0)):
 			_bot_cook_meat_at_fire(b)
 		# Solo craftea en el refugio si esta sano y no se esta ocultando de una
@@ -1450,6 +1466,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# Quiere acampar pero no hay refugio alcanzable (de noche sin luz, por
 		# ejemplo): se parapeta donde esta — duerme si puede, si no, sentado.
 		b["_act"] = "rest"
+		if str(b["campfire_id"]).is_empty() and float(b["hide_timer"]) <= 0.0 \
+				and (is_night or _is_pre_night() or _bot_is_freezing(b)) \
+				and _bot_item_count(proxy, "Palo") >= 2 and _bot_item_count(proxy, "Piedra") >= 2 \
+				and not _is_near_any_lit_campfire(proxy.global_position, 8.0):
+			_bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9))
 		if not _bot_try_start_sleep(b, is_night):
 			b["sitting"] = true
 			b["crouching"] = str(b["faction"]) == "hostile"
@@ -7179,6 +7200,14 @@ func _is_world_night() -> bool:
 		return tod < 6.2 or tod > 19.3
 	return false
 
+# Las ultimas horas de luz (~16.5-19.3): ventana en la que un superviviente
+# precavido ya junta el fuego y la luz que va a necesitar de noche.
+func _is_pre_night() -> bool:
+	if world != null and world.get("day_cycle") != null:
+		var tod := float(world.day_cycle.get("time_of_day"))
+		return tod >= 16.5 and tod <= 19.3
+	return false
+
 # --- Supervivencia de bot identica a la del jugador humano -----------------
 # Cada bot lleva una instancia real de SurvivalStats (la misma clase que el
 # jugador): hambre, sed, energia, sueño, temperatura corporal, lluvia/nieve,
@@ -7924,7 +7953,12 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	if oname == "Piedra afilada":
 		return 4.3
 	if oname == "Antorcha":
-		return 5.6 if _is_world_night() and not bool(b.get("torch_lit", false)) else 2.2
+		if _bot_item_count(proxy, "Antorcha") > 0:
+			return 2.2
+		# Quiere una antorcha siempre: la fabrica de dia cuando junte palo y
+		# trapos (asi los trapos interesan todo el dia), no cuando ya es de
+		# noche y no ve nada. La urgencia sube al caer la tarde.
+		return 6.4 if _is_world_night() else (5.8 if _is_pre_night() else 4.8)
 	if oname == "Venda":
 		return 5.2 if float(b.get("health", 100.0)) < 80.0 else 1.8
 	if otype == "food":
@@ -10066,17 +10100,32 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 		palo_need = 4
 	elif str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
 		palo_need = 2
+	# La antorcha de la noche tambien pide su palo: uno de repuesto siempre
+	# que no lleve ya una antorcha en la mochila.
+	if _bot_item_count(proxy, "Antorcha") == 0:
+		palo_need = maxi(palo_need, 1)
 	if _bot_has_raw_meat(proxy) or _bot_has_skewered_meat(proxy):
 		var cook_palos := (1 if _bot_item_count(proxy, "Palo afilado") == 0 and not _bot_has_skewered_meat(proxy) else 0) + (2 if str(b["campfire_id"]).is_empty() else 0)
 		palo_need = maxi(palo_need, cook_palos)
+	# Piedras de la fogata: con refugio propio las junta al ir a montarla; sin
+	# el solo le importan al caer la tarde, para la fogata de emergencia.
+	var piedra_need := 0
+	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
+		piedra_need = 2
+	elif _is_pre_night() and not _bot_night_fire_ready(b, proxy):
+		piedra_need = 2
+		palo_need = maxi(palo_need, 2)
 	var tool := _bot_bush_tool(proxy)
 	# Arbustos tambien dan Semillas: quien quiere huerto tala aunque no le
 	# falten palos (2 paquetes de semillas bastan para un bancal).
 	var seeds_need := _bot_wants_seeds(b) and _bot_item_count(proxy, "Semillas") < 2
-	# Escondido o reclutado no sale a talar: las ordenes del lider y la
-	# amenaza van primero. El ruido del corte atrae lobos, como al jugador.
-	var allowed := ((palo_need > 0 and _bot_item_count(proxy, "Palo") < palo_need) or seeds_need) \
-			and not tool.is_empty() and float(b.get("hide_timer", 0.0)) <= 0.0 \
+	var palo_short := _bot_palo_supply(proxy, tool) < palo_need
+	var piedra_short := _bot_item_count(proxy, "Piedra") < piedra_need
+	# Escondido o reclutado no sale a recoger: las ordenes del lider y la
+	# amenaza van primero. Palos y semillas piden filo (arbusto o tronco);
+	# las piedras se recogen a mano.
+	var allowed := (((palo_short or seeds_need) and not tool.is_empty()) or piedra_short) \
+			and float(b.get("hide_timer", 0.0)) <= 0.0 \
 			and _sensed_node(b, "_s_leader") == null
 	var st0: Dictionary = b.get("_gather", {})
 	if not allowed:
@@ -10094,44 +10143,60 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 			var claimer := int((world._pickup_claims as Dictionary).get(aid, int(b["bot_id"])))
 			taken = claimer != int(b["bot_id"])
 		if not (apos is Vector3) or act == null or not is_instance_valid(act) or taken \
-				or (world != null and "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid)):
+				or (world != null and "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid)) \
+				or (str(st.get("kind", "fell_bush")) in ["fell_bush", "wood"] and tool.is_empty()):
 			_bot_release_gather_claim(b, st)
 			b["_gather"] = {}
 			return false
 		var flat := Vector2(proxy.global_position.x - (apos as Vector3).x, proxy.global_position.z - (apos as Vector3).z).length()
+		var cutting := str(st.get("kind", "fell_bush")) == "fell_bush"
 		if flat > 2.2:
 			b["sitting"] = false
 			b["crouching"] = false
-			b["held_item"] = tool
-			proxy.set_meta("saved_held_item", tool)
+			if cutting:
+				b["held_item"] = tool
+				proxy.set_meta("saved_held_item", tool)
 			_move_bot_towards(b, apos, 4.8 if flat > 9.0 else 3.8, delta, "run" if flat > 9.0 else "walk")
 			return true
 		st["t"] = float(st.get("t", 0.0)) + delta
 		b["anim"] = "forage"
 		b["crouching"] = true
 		b["sitting"] = false
-		b["held_item"] = tool
-		proxy.set_meta("saved_held_item", tool)
+		if cutting:
+			b["held_item"] = tool
+			proxy.set_meta("saved_held_item", tool)
 		if float(st["t"]) >= float(st.get("t_need", 5.0)):
 			b["_gather"] = {}
-			_bot_fell_bush_complete(b, st)
+			if cutting:
+				_bot_fell_bush_complete(b, st)
+			else:
+				_bot_node_collect_complete(b, st)
 		return true
 	# Escaneo con cadencia, como el forrajeo
 	b["_gather_scan"] = float(b.get("_gather_scan", 0.0)) - delta
 	if float(b["_gather_scan"]) > 0.0:
 		return false
 	b["_gather_scan"] = 1.4 + fmod(float(int(b["bot_id"])) * 0.29, 0.6)
-	var target := _find_bush_target(b, 80.0)
+	var target := _find_mat_target(b, 80.0, tool, palo_short, piedra_short, seeds_need)
 	if target.is_empty():
 		return false
 	if world != null and "_pickup_claims" in world:
 		(world._pickup_claims as Dictionary)[target["id"]] = int(b["bot_id"])
 		if "_pickup_claim_until" in world:
 			(world._pickup_claim_until as Dictionary)[target["id"]] = Time.get_ticks_msec() + 30000
+	# Aprende la rutina: una salida de material al caer la tarde queda en su
+	# memoria como preparacion para la noche (una sola anotacion por tarde).
+	if _is_pre_night() and not _bot_night_fire_ready(b, proxy) and not bool(b.get("_prep_logged", false)):
+		b["_prep_logged"] = true
+		record_bot_event(int(b["bot_id"]), "night_prep", "self", _poi_kind_near(proxy.global_position), proxy.global_position,
+			"junta fuego/luz: " + str(target.get("kind", "fell_bush")))
 	b["_gather"] = target
 	return _bot_try_gather_mats(b, 0.0)
 
-func _find_bush_target(b: Dictionary, radius: float) -> Dictionary:
+# Nodo de recoleccion mas conveniente segun lo que falta: arbustos a talar
+# (filo, 5 s, 3 palos + semillas), troncos aprovechables (filo para luego
+# rajarlos, 2 Troncos -> 4 palos) o piedras sueltas (a mano, ~3 piedras).
+func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: bool, need_piedra: bool, need_seeds: bool) -> Dictionary:
 	if world == null or not ("world_actions_by_id" in world):
 		return {}
 	var proxy: Node3D = b["proxy"]
@@ -10144,18 +10209,28 @@ func _find_bush_target(b: Dictionary, radius: float) -> Dictionary:
 		var a = world.world_actions_by_id[aid]
 		if a == null or not is_instance_valid(a):
 			continue
-		if str(a.get("action_type")) != "fell_bush" or claims.has(aid) or depleted.has(aid):
+		var atype := str(a.get("action_type"))
+		var serves := false
+		if atype == "fell_bush":
+			serves = not tool.is_empty() and (need_palo or need_seeds)
+		elif atype == "wood":
+			# Troncos solo valen con filo: se rajan a palos con el cuchillo.
+			serves = not tool.is_empty() and need_palo
+		elif atype == "stone":
+			serves = need_piedra
+		if not serves or claims.has(aid) or depleted.has(aid):
 			continue
 		var d := proxy.global_position.distance_to((a as Node3D).global_position)
 		if d > radius:
 			continue
-		# Prefiere arbustos entre el bot y su campamento: el humano tala cerca
+		# Prefiere nodos entre el bot y su campamento: el humano recoge cerca
 		# de donde va a construir, no en la punta opuesta del mapa.
 		var d_camp := (a as Node3D).global_position.distance_to(camp)
 		var score := d + d_camp * 0.5
 		if score < best_score:
 			best_score = score
-			best = {"id": str(aid), "pos": (a as Node3D).global_position, "t": 0.0, "t_need": 5.0}
+			var t_need := 5.0 if atype == "fell_bush" else 1.4
+			best = {"id": str(aid), "pos": (a as Node3D).global_position, "t": 0.0, "t_need": t_need, "kind": atype}
 	return best
 
 func _bot_fell_bush_complete(b: Dictionary, st: Dictionary) -> void:
@@ -10194,3 +10269,111 @@ func _bot_fell_bush_complete(b: Dictionary, st: Dictionary) -> void:
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.world_action_completed.rpc_id(pid, aid, spawns, "", pos)
 	# Los palos caen al suelo: el saqueo normal los recoge en el proximo tick.
+
+# Recogida a mano de nodos "wood"/"stone": igual que el jugador, el material
+# entra directo a la mochila (sin drops), sin filo ni desgaste de herramienta.
+func _bot_node_collect_complete(b: Dictionary, st: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	var aid := str(st.get("id", ""))
+	var pos: Vector3 = st.get("pos", Vector3.INF)
+	_bot_release_gather_claim(b, st)
+	if world == null or aid.is_empty() or pos == Vector3.INF:
+		return
+	var act = world.world_actions_by_id.get(aid) if "world_actions_by_id" in world else null
+	if act == null or not is_instance_valid(act):
+		return
+	if "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid):
+		return
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var got := ""
+	if str(st.get("kind", "")) == "wood":
+		if _bot_try_add_inventory_item(b, inv, {"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0}):
+			got = "Tronco"
+	else:
+		var qty := maxi(1, int(act.get_meta("item_quantity", 3)))
+		if _bot_try_add_inventory_item(b, inv, {"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": qty, "use_value": 0.0}):
+			got = "Piedra"
+	if got.is_empty():
+		# No le cabe: el nodo sigue en pie para cuando vuelva con hueco.
+		return
+	proxy.set_meta("saved_inventory", inv)
+	_ai_note_loot(b, got, "resource")
+	record_strategy_outcome(int(b["bot_id"]), "forage", true, 0.06)
+	if world.has_method("_net_world_action_completed"):
+		world._net_world_action_completed(aid, [], "", pos, 0)
+	var net = world.get("net")
+	if net != null and net.is_host and net.peer != null:
+		for pid in net.players.keys():
+			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
+				net.world_action_completed.rpc_id(pid, aid, [], "", pos)
+
+# ¿Tiene la noche resuelta? Antorcha propia o fabricable al momento (palo +
+# trapos), una fogata ya levantada o — con refugio propio — los 2+2 con los
+# que la monta al volver a casa.
+func _bot_night_fire_ready(b: Dictionary, proxy: Node3D) -> bool:
+	if _bot_item_count(proxy, "Antorcha") > 0:
+		return true
+	if _bot_item_count(proxy, "Palo") >= 1 and _bot_item_count(proxy, "Trapos") >= 1:
+		return true
+	if not str(b.get("campfire_id", "")).is_empty():
+		return true
+	return not str(b.get("shelter_id", "")).is_empty() \
+		and _bot_item_count(proxy, "Palo") >= 2 and _bot_item_count(proxy, "Piedra") >= 2
+
+# Palos de los que dispone en la practica: los que lleva mas los que puede
+# rajar de sus troncos (Tronco + filo -> 2 palos). Sin filo el tronco es lastre.
+func _bot_palo_supply(proxy: Node3D, tool: String = "") -> int:
+	var total := _bot_item_count(proxy, "Palo")
+	var blade := tool if not tool.is_empty() else _bot_bush_tool(proxy)
+	if not blade.is_empty():
+		total += _bot_item_count(proxy, "Tronco") * 2
+	return total
+
+# Busqueda dirigida de material de fuego al anochecer: va solo a por lo que
+# le falta para la antorcha (trapos/ropa cortable, palo) o la fogata
+# (piedras, palos), ignorando el resto del botin.
+func _find_fire_prep_loot(b: Dictionary, radius: float) -> Dictionary:
+	if world == null or not ("_dropped_items" in world):
+		return {}
+	var proxy: Node3D = b["proxy"]
+	var need_palo := _bot_palo_supply(proxy) < 2
+	var need_piedra := _bot_item_count(proxy, "Piedra") < 2
+	var need_trapos := _bot_item_count(proxy, "Trapos") < 1
+	var best := {}
+	var best_d := radius
+	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
+	for entry in world._dropped_items:
+		if not (entry is Dictionary):
+			continue
+		var id := str(entry.get("id", ""))
+		if id.is_empty() or depleted.has(id) or id.begins_with("bot_tame_meat_"):
+			continue
+		if "world_actions_by_id" in world and world.world_actions_by_id.has(id):
+			var wa = world.world_actions_by_id[id]
+			if wa != null and is_instance_valid(wa) and wa.has_meta("dropped_by"):
+				continue
+		var nm := str(entry.get("name", ""))
+		var useful := (need_trapos and (nm == "Trapos" or _bot_cuts_into_trapos(nm))) \
+			or (need_palo and nm in ["Palo", "Tronco"]) \
+			or (need_piedra and nm == "Piedra")
+		if not useful:
+			continue
+		if not _bot_would_fit(b, proxy.get_meta("saved_inventory", []), _loot_entry_item_dict(entry)):
+			continue
+		var pos := _loot_entry_pos(entry)
+		if absf(pos.y - proxy.global_position.y) > 2.4 or _is_goal_blacklisted(b, pos):
+			continue
+		var d := Vector2(pos.x - proxy.global_position.x, pos.z - proxy.global_position.z).length()
+		if d < best_d:
+			best_d = d
+			best = entry
+	return best
+
+# ¿Esta prenda se corta a trapos? Cierto si alguna receta con salida "Trapos"
+# la acepta como insumo (todas llevan ademas filo, que no se consume).
+func _bot_cuts_into_trapos(nm: String) -> bool:
+	for r in CraftingSystem.RECIPES:
+		if str((r.get("output", {}) as Dictionary).get("name", "")) == "Trapos" \
+				and (r.get("inputs", {}) as Dictionary).has(nm):
+			return true
+	return false
