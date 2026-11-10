@@ -32,6 +32,7 @@ class FakeNet extends Node:
 	var animals := {}
 	var authoritative_weather := {}
 	var relay_log: Array = []
+	var voice_relay_log: Array = []
 	func get_my_id() -> int:
 		return 1
 	func peer_alive(_pid: int) -> bool:
@@ -40,6 +41,8 @@ class FakeNet extends Node:
 		return []
 	func relay_actor_chat(sender_id: int, sender_name: String, text: String, target_peer_id: int, target_name: String = "") -> void:
 		relay_log.append({"from_id": sender_id, "from": sender_name, "to_id": target_peer_id, "to": target_name, "text": text})
+	func relay_actor_voice(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_peer_id: int, target_name: String = "") -> void:
+		voice_relay_log.append({"from_id": sender_id, "from": sender_name, "to_id": target_peer_id, "to": target_name, "bytes": pcm_bytes.size()})
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _create_body() -> void:
@@ -2475,12 +2478,16 @@ func run() -> void:
 		"10A6: tras %d turnos el bot-bot deja de responderse" % int(mgr.BOT_CHAT_MAX_TURNS))
 	mgr._chat_turns.clear()
 
-	# Destinatario humano: el mensaje sale por relay_actor_chat de la red
+	# Destinatario humano: el mensaje se encola como respuesta HABLADA (TTS) y NO por chat de texto
 	fnet.relay_log.clear()
+	mgr._tts_jobs.clear()
 	fnet.players[7] = {"char_name": "Remy", "name": "Remy", "is_ai_bot": false, "offline": false}
 	mgr._bot_chat_send(elena_y, 7, "Remy", "Ey Remy, vives cerca?", "greet")
-	check(fnet.relay_log.size() == 1 and int(fnet.relay_log[0].get("to_id", 0)) == 7,
-		"10A7: DM a humano sale por relay_actor_chat")
+	check(fnet.relay_log.is_empty() and mgr._tts_jobs.size() == 1,
+		"10A7: respuesta a humano sale hablada (TTS) y no por relay_actor_chat")
+	for tk0 in mgr._tts_jobs.keys():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(mgr.VOICE_JOBS_DIR) + str(tk0) + ".json")
+	mgr._tts_jobs.clear()
 	fnet.players.erase(7)
 
 	# Sanitizador de salida del modelo
@@ -2506,9 +2513,10 @@ func run() -> void:
 		"10A13: status expone el hilo de chat por bot (%d msgs)" % elena_thread.size())
 
 	# Bucle humano->bot->respuesta: el DM del jugador se encola y el bot
-	# contesta por relay_actor_chat igual que lo veria el cliente.
+	# contesta HABLADO (trabajo TTS) sin enviar chat de texto al HUD.
 	fnet.players[7] = {"char_name": "Remy", "name": "Remy", "is_ai_bot": false, "offline": false}
 	fnet.relay_log.clear()
+	mgr._tts_jobs.clear()
 	elena_y["_chat_inbox"] = {}
 	elena_y["_chat_reply_ready"] = 0
 	elena_y["_chat_cd"] = 0.0
@@ -2517,8 +2525,11 @@ func run() -> void:
 	check(not (elena_y["_chat_inbox"] as Dictionary).is_empty(),
 		"10A14a: DM de humano encola respuesta del bot")
 	mgr._bot_chat_tick(elena_y)
-	check(fnet.relay_log.size() == 1 and int(fnet.relay_log[0].get("to_id", 0)) == 7 and not str(fnet.relay_log[0].get("text", "")).is_empty(),
-		"10A14b: la respuesta del bot llega al humano por relay_actor_chat")
+	check(fnet.relay_log.is_empty() and mgr._tts_jobs.size() == 1,
+		"10A14b: la respuesta del bot al humano se encola como voz TTS (no texto)")
+	for tk1 in mgr._tts_jobs.keys():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(mgr.VOICE_JOBS_DIR) + str(tk1) + ".json")
+	mgr._tts_jobs.clear()
 	fnet.players.erase(7)
 	fnet.relay_log.clear()
 
@@ -3067,6 +3078,42 @@ func run() -> void:
 	check(saw_voice, "10H7a: transcripcion de voz registrada en el hilo")
 	check(int(vb.get("team_leader_id", 0)) == 8,
 		"10H7b: 'sigueme' por voz ejecuta la orden (leader=%d)" % int(vb.get("team_leader_id", 0)))
+
+	# 10H8: preguntar por Elena — responde si esta cerca (<=28 m), ignora si esta lejos
+	var eb901: Dictionary = mgr.bots[901]
+	eb901["proxy"].global_position = h8.global_position + Vector3(5.0, 0.0, 0.0)
+	check(mgr._voice_resolve_named_bot("Hola Elena, donde estas?", 8, 902) == 901,
+		"10H8a: nombrar a Elena a 5 m redirige la voz a Elena (901)")
+	eb901["proxy"].global_position = h8.global_position + Vector3(120.0, 0.0, 0.0)
+	check(mgr._voice_resolve_named_bot("Hola Elena, me oyes?", 8, 902) == 0,
+		"10H8b: nombrar a Elena a 120 m no contesta (fuera de alcance)")
+
+	# 10H9: respuesta hablada TTS — el bot emite paquetes PCM por relay_actor_voice y cero texto
+	for tk2 in mgr._tts_jobs.keys():
+		DirAccess.remove_absolute(jobdir + str(tk2) + ".json")
+	mgr._tts_jobs.clear()
+	mgr._tts_streams.clear()
+	fnet.relay_log.clear()
+	fnet.voice_relay_log.clear()
+	mgr._bot_chat_send(vb, 8, "Profe", "Perfecto, aqui puedo beber. Gracias.", "teach")
+	check(fnet.relay_log.is_empty() and mgr._tts_jobs.size() == 1,
+		"10H9a: _bot_chat_send a humano crea trabajo TTS sin texto en HUD")
+	var tts_base := str(mgr._tts_jobs.keys()[0])
+	var pcm_reply := PackedByteArray()
+	pcm_reply.resize(2400)
+	pcm_reply.fill(140)
+	var pf := FileAccess.open(jobdir + tts_base + ".pcm", FileAccess.WRITE)
+	pf.store_buffer(pcm_reply)
+	pf.close()
+	mgr._tts_poll_jobs()
+	mgr._tts_stream_tick(0.10)
+	var total_voice_b := 0
+	for vr in fnet.voice_relay_log:
+		if int(vr.get("from_id", 0)) == 902 and int(vr.get("to_id", 0)) == 8:
+			total_voice_b += int(vr.get("bytes", 0))
+	check(total_voice_b == 2400 and fnet.relay_log.is_empty(),
+		"10H9b: el audio TTS llega al humano por relay_actor_voice (%d B) y 0 msgs de texto" % total_voice_b)
+
 	world.server_proxies.erase(8)
 	h8.queue_free()
 	vb["team_leader_id"] = 0

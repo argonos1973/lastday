@@ -1214,7 +1214,7 @@ func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: Pa
 		vplayer.name = "VoicePeer_%d" % sender_id
 		var gen := AudioStreamGenerator.new()
 		gen.mix_rate = VOICE_SAMPLE_RATE
-		gen.buffer_length = 0.6
+		gen.buffer_length = 1.5
 		vplayer.stream = gen
 		add_child(vplayer)
 		vplayer.play()

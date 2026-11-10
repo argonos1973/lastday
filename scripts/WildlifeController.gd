@@ -592,7 +592,11 @@ func _process_body(delta: float) -> void:
 		_near_network_observer = false
 		for observer in get_tree().get_nodes_in_group("net_player_proxy"):
 			if observer is Node3D and observer.get_meta("has_real_pos", false) and not observer.get_meta("disconnected", false):
-				if global_position.distance_to(observer.global_position) <= OBSERVER_RANGE:
+				# Los bots IA no tienen camara ni mira telescopica: solo necesitan
+				# fauna a tasa completa en su radio de interaccion (AI_LOD_MID).
+				# Un cliente humano necesita 180 m normales o 620 m si apunta con mira.
+				var obs_range := AI_LOD_MID if bool(observer.get_meta("is_ai_bot", false)) else (OBSERVER_RANGE if bool(observer.get_meta("is_aiming", false)) else 180.0)
+				if global_position.distance_to(observer.global_position) <= obs_range:
 					_near_network_observer = true
 					break
 	# A scoped local observer also needs continuous simulation in single player.

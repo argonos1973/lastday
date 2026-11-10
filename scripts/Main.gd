@@ -1177,13 +1177,15 @@ func _process(delta: float) -> void:
 	_grass_vis_timer += delta
 	if _grass_vis_timer >= 1.0:
 		_grass_vis_timer = 0.0
-		_update_grass_visibility()
+		if net == null or not net.is_dedicated_server:
+			_update_grass_visibility()
 	_tree_check_timer += delta
 	if _tree_check_timer > _tree_check_interval:
 		_tree_check_timer = 0.0
 		_update_tree_interactions()
 		_update_boulder_interactions()
-		_update_forest_visibility()
+		if net == null or not net.is_dedicated_server:
+			_update_forest_visibility()
 		_update_forest_collision()
 	_streaming_update_timer += delta
 	if _streaming_update_timer >= 1.0 and world_streaming_mgr != null:
@@ -17586,9 +17588,21 @@ func _is_in_bot_house_nav(pos: Vector3, blocker: Dictionary) -> bool:
 			return true
 	return false
 
-func _refresh_nav_door_caches() -> void:
-	for blocker in wildlife_blockers:
-		blocker["door_open"] = _check_door_open(blocker.get("door", null), blocker)
+var _last_door_states: Dictionary = {}
+var _last_door_blockers_count := -1
+
+func _refresh_nav_door_caches(force: bool = false) -> void:
+	var changed := force or _last_door_blockers_count != wildlife_blockers.size()
+	_last_door_blockers_count = wildlife_blockers.size()
+	for i in range(wildlife_blockers.size()):
+		var blocker = wildlife_blockers[i]
+		var open_now := _check_door_open(blocker.get("door", null), blocker)
+		blocker["door_open"] = open_now
+		if not _last_door_states.has(i) or bool(_last_door_states[i]) != open_now:
+			_last_door_states[i] = open_now
+			changed = true
+	if not changed:
+		return
 	nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
 	if wolf_nav != null:
 		wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)

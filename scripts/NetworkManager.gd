@@ -1941,6 +1941,21 @@ func relay_actor_chat(sender_id: int, sender_name: String, text: String, target_
 	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):
 		receive_chat_message.rpc_id(target_peer_id, sender_id, sender_name, clean, target_peer_id, target_name, "")
 
+# Relay de voz emitida por un actor no-jugador (bot): entrega chunks PCM u8 a
+# 12 kHz al cliente humano por el mismo canal receive_voice_packet.
+func relay_actor_voice(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_peer_id: int, target_name: String = "") -> void:
+	if pcm_bytes.is_empty() or pcm_bytes.size() > 1200 or target_peer_id <= 0:
+		return
+	if not players.has(target_peer_id) or players[target_peer_id].get("offline", false):
+		return
+	if target_name.is_empty():
+		target_name = str(players[target_peer_id].get("char_name", players[target_peer_id].get("name", "Jugador")))
+	var my_uid := multiplayer.get_unique_id() if multiplayer.has_multiplayer_peer() else 1
+	if not is_dedicated_server and target_peer_id == my_uid:
+		receive_voice_packet(sender_id, sender_name, pcm_bytes, target_peer_id, target_name, "")
+	elif peer != null and target_peer_id > 1 and peer_alive(target_peer_id):
+		receive_voice_packet.rpc_id(target_peer_id, sender_id, sender_name, pcm_bytes, target_peer_id, target_name, "")
+
 @rpc("authority", "reliable")
 func receive_chat_message(sender_id: int, sender_name: String, text: String, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	chat_message_received.emit(sender_id, sender_name, text, target_id, target_name, group_id)

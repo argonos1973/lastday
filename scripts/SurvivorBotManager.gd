@@ -3630,10 +3630,15 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 	if not req.is_empty():
 		_chat_handle_request(tb, sender_id, sender_name, skey, sender_is_bot, str(req["cmd"]), str(req.get("arg", "")))
 		return
-	# Encolar respuesta (la ultima gana); los turnos cortan el ping-pong
+	# Encolar respuesta (la ultima gana); los turnos cortan el ping-pong.
+	# Si el emisor es humano, responder en el siguiente tick sin esperar el
+	# ciclo social de ~3.5 s ni descartar por enfriamiento entre bots.
 	var pk := _chat_pair_key(target_id, sender_id)
 	if not sender_is_bot or int(_chat_turns.get(pk, 0)) < BOT_CHAT_MAX_TURNS:
 		tb["_chat_inbox"] = {"from_id": sender_id, "from_name": sender_name, "text": clean, "intent": intent}
+		if not sender_is_bot:
+			tb["_chat_reply_ready"] = 0
+			tb["_soc_t"] = 0.0
 
 func _chat_touch_rel(bot_id: int, skey: String, sname: String) -> Dictionary:
 	var mem := _ensure_bot_memory(bot_id)
@@ -4213,42 +4218,93 @@ func _known_water_pos(b: Dictionary) -> Vector3:
 			best = p
 	return best
 
-# ==================== VOZ HUMANO -> BOT (STT local) ====================
-# El jugador abre el DM de voz hacia el bot (como con otro jugador): el PCM
-# 8-bit u8 12 kHz se acumula, un silencio de 1.4 s cierra la frase, se escribe
-# un WAV en user://voice_jobs/ y el demonio faster-whisper del host escribe
-# <base>.txt. Solo se oye a quemarropa (BOT_VOICE_RANGE) — la voz es fisica.
+# ==================== VOZ HUMANO <-> BOT (STT + TTS local/Groq) ====================
+# El jugador habla con [V]: el PCM 8-bit u8 12 kHz se acumula, un silencio
+# corto (0.85 s) cierra la frase, se escribe un WAV en user://voice_jobs/ y el
+# demonio transcribe a <base>.txt. Solo se oye a quemarropa (BOT_VOICE_RANGE);
+# si el bot seleccionado esta lejos pero otro bot esta cerca, escucha el
+# cercano, y si la frase nombra a un bot ("Elena", "Carlos", "Kael"), contesta
+# ese bot siempre que este al alcance de la voz.
+# La respuesta del bot al humano sale HABLADA (no por chat de texto): se
+# encola <base>.json, el demonio sintetiza <base>.pcm con la voz del personaje
+# y el servidor emite paquetes de 600 muestras por relay_actor_voice.
 
 const BOT_VOICE_RANGE := 28.0
-const BOT_VOICE_GAP_MSEC := 1400
+const BOT_VOICE_GAP_MSEC := 850
 const BOT_VOICE_MAX_BYTES := 240000 # ~20 s a 12 kHz u8
 const VOICE_JOBS_DIR := "user://voice_jobs/"
+const TTS_PACKET_SAMPLES := 600
+const TTS_STREAM_RATE := 12400.0 # ligeramente >12 kHz para mantener buffer sin underrun
 
-var _voice_bufs: Dictionary = {}      # "sid_bid" -> {pcm, last, sid, bid, sname}
-var _voice_jobs: Dictionary = {}      # basename -> {bot_id, sender_id, sender_name, born}
+var _voice_bufs: Dictionary = {}       # "sid_bid" -> {pcm, last, sid, bid, sname}
+var _voice_jobs: Dictionary = {}       # basename -> {bot_id, sender_id, sender_name, born}
 var _voice_far_notice: Dictionary = {} # sid -> msec
+var _tts_jobs: Dictionary = {}         # basename -> {bot_id, bot_name, to_id, to_name, text, born}
+var _tts_streams: Array = []           # [{bot_id, bot_name, to_id, to_name, pcm, offset, budget}]
+var _tts_seq: int = 0
+
+func _nearest_hearing_bot_id(from_pos: Vector3, preferred_id: int = 0) -> int:
+	if preferred_id > 0 and bots.has(preferred_id):
+		var pb: Dictionary = bots[preferred_id]
+		var pp: Node3D = pb.get("proxy")
+		if pp != null and is_instance_valid(pp) and not bool(pp.get_meta("proxy_dead", false)):
+			if pp.global_position.distance_to(from_pos) <= BOT_VOICE_RANGE:
+				return preferred_id
+	var best_id := 0
+	var best_d := BOT_VOICE_RANGE
+	for bid in bots.keys():
+		var b: Dictionary = bots[bid]
+		var pr: Node3D = b.get("proxy")
+		if pr == null or not is_instance_valid(pr) or bool(pr.get_meta("proxy_dead", false)):
+			continue
+		var d := pr.global_position.distance_to(from_pos)
+		if d <= best_d:
+			best_d = d
+			best_id = int(bid)
+	return best_id
+
+# Si la frase nombra explicitamente a un bot ("elena", "carlos", "kael"),
+# enruta a ese bot SOLO si esta dentro de BOT_VOICE_RANGE; si esta lejos no
+# puede oirlo y nadie mas responde en su nombre.
+func _voice_resolve_named_bot(text: String, sender_id: int, default_bot_id: int) -> int:
+	var snode := _find_actor_by_peer_id(sender_id)
+	var spos := Vector3.INF
+	if snode != null and is_instance_valid(snode):
+		spos = snode.global_position
+	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace(",", " ").replace(".", " ").replace("?", " ").replace("¿", " ").replace("!", " ").replace("¡", " ") + " "
+	var named_id := 0
+	for bid in bots.keys():
+		var bname := str((bots[bid] as Dictionary).get("name", "")).to_lower()
+		if not bname.is_empty() and t.contains(" " + bname + " "):
+			named_id = int(bid)
+			break
+	if named_id > 0:
+		if spos == Vector3.INF:
+			return named_id
+		var nb: Dictionary = bots.get(named_id, {})
+		var np: Node3D = nb.get("proxy")
+		if np != null and is_instance_valid(np) and not bool(np.get_meta("proxy_dead", false)) and np.global_position.distance_to(spos) <= BOT_VOICE_RANGE:
+			return named_id
+		return 0 # preguntaron por un bot que no esta cerca -> no oye
+	if spos != Vector3.INF:
+		return _nearest_hearing_bot_id(spos, default_bot_id)
+	return default_bot_id if bots.has(default_bot_id) else 0
 
 func on_voice_received(target_id: int, sender_id: int, sender_name: String, pcm: PackedByteArray) -> void:
-	if not bots.has(target_id) or pcm.is_empty():
-		return
-	var tb: Dictionary = bots[target_id]
-	var proxy: Node3D = tb.get("proxy")
-	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
+	if pcm.is_empty():
 		return
 	var snode := _find_actor_by_peer_id(sender_id)
 	if snode == null or not is_instance_valid(snode):
 		return
-	if proxy.global_position.distance_to(snode.global_position) > BOT_VOICE_RANGE:
+	var listener_id := _nearest_hearing_bot_id(snode.global_position, target_id)
+	if listener_id <= 0:
 		var nowm0 := Time.get_ticks_msec()
 		var last_notice := int(_voice_far_notice.get(sender_id, -1))
 		if last_notice < 0 or nowm0 - last_notice > 10000:
 			_voice_far_notice[sender_id] = nowm0
-			var net0 = world.get("net") if world != null else null
-			if net0 != null and net0.has_method("relay_actor_chat"):
-				net0.relay_actor_chat(target_id, str(tb.get("name", "?")), "(esta demasiado lejos — no te oye)", sender_id, sender_name)
 		return
-	var key := "%d_%d" % [sender_id, target_id]
-	var entry: Dictionary = _voice_bufs.get(key, {"pcm": PackedByteArray(), "last": 0, "sid": sender_id, "bid": target_id, "sname": sender_name})
+	var key := "%d_%d" % [sender_id, listener_id]
+	var entry: Dictionary = _voice_bufs.get(key, {"pcm": PackedByteArray(), "last": 0, "sid": sender_id, "bid": listener_id, "sname": sender_name})
 	var buf: PackedByteArray = entry["pcm"]
 	buf.append_array(pcm)
 	if buf.size() > BOT_VOICE_MAX_BYTES:
@@ -4257,8 +4313,9 @@ func on_voice_received(target_id: int, sender_id: int, sender_name: String, pcm:
 	entry["last"] = Time.get_ticks_msec()
 	_voice_bufs[key] = entry
 
-# En tick(): cierra frases por silencio y recoge transcripciones del demonio.
-func _voice_tick(_delta: float) -> void:
+# En tick(): cierra frases por silencio, recoge transcripciones STT y emite el
+# audio TTS sintetizado de las respuestas de los bots.
+func _voice_tick(delta: float) -> void:
 	var nowm := Time.get_ticks_msec()
 	for k in _voice_bufs.keys():
 		var e: Dictionary = _voice_bufs[k]
@@ -4267,6 +4324,10 @@ func _voice_tick(_delta: float) -> void:
 			_voice_enqueue_job(e)
 	if not _voice_jobs.is_empty():
 		_voice_poll_jobs()
+	if not _tts_jobs.is_empty():
+		_tts_poll_jobs()
+	if not _tts_streams.is_empty():
+		_tts_stream_tick(delta)
 
 func _voice_enqueue_job(e: Dictionary) -> void:
 	var pcm: PackedByteArray = e["pcm"]
@@ -4302,14 +4363,101 @@ func _voice_poll_jobs() -> void:
 		DirAccess.remove_absolute(wav_path)
 		if text.is_empty():
 			continue
-		var bid := int(job["bot_id"])
 		var sid := int(job["sender_id"])
 		var sname := str(job.get("sender_name", "?"))
+		var bid := _voice_resolve_named_bot(text, sid, int(job["bot_id"]))
+		if bid <= 0 or not bots.has(bid):
+			continue
 		chat_log.append({"ts": int(Time.get_unix_time_from_system()), "from_id": sid, "from": sname,
 			"to_id": bid, "to": _actor_display_name(bid), "kind": "voice", "text": text})
 		while chat_log.size() > BOT_CHAT_LOG_MAX:
 			chat_log.pop_front()
 		on_chat_received(bid, sid, sname, text)
+
+func _tts_enqueue_job(bot_id: int, bot_name: String, to_id: int, to_name: String, text: String) -> void:
+	if text.is_empty() or to_id <= 0:
+		return
+	_tts_seq += 1
+	var base := "tts_%d_%d_%d_%d" % [bot_id, to_id, Time.get_ticks_msec() % 10000000, _tts_seq]
+	var dir := ProjectSettings.globalize_path(VOICE_JOBS_DIR)
+	DirAccess.make_dir_recursive_absolute(dir)
+	var jpath: String = dir + base + ".json"
+	var f := FileAccess.open(jpath, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify({
+		"bot_id": bot_id,
+		"bot_name": bot_name,
+		"to_id": to_id,
+		"to_name": to_name,
+		"text": text,
+	}))
+	f.close()
+	_tts_jobs[base] = {
+		"bot_id": bot_id,
+		"bot_name": bot_name,
+		"to_id": to_id,
+		"to_name": to_name,
+		"text": text,
+		"born": Time.get_ticks_msec(),
+	}
+
+func _tts_poll_jobs() -> void:
+	var dir := ProjectSettings.globalize_path(VOICE_JOBS_DIR)
+	var nowm := Time.get_ticks_msec()
+	for base in _tts_jobs.keys():
+		var job: Dictionary = _tts_jobs[base]
+		var pcm_path: String = dir + str(base) + ".pcm"
+		var json_path: String = dir + str(base) + ".json"
+		var pcm := PackedByteArray()
+		var done := FileAccess.file_exists(pcm_path)
+		if done:
+			pcm = FileAccess.get_file_as_bytes(pcm_path)
+		elif nowm - int(job.get("born", 0)) > 8000:
+			done = true
+		if not done:
+			continue
+		_tts_jobs.erase(base)
+		DirAccess.remove_absolute(pcm_path)
+		DirAccess.remove_absolute(json_path)
+		if pcm.is_empty():
+			continue
+		var bid := int(job["bot_id"])
+		# Si ese mismo bot seguia hablando a ese jugador, sustituir por la nueva frase
+		for i in range(_tts_streams.size() - 1, -1, -1):
+			var s0: Dictionary = _tts_streams[i]
+			if int(s0.get("bot_id", 0)) == bid and int(s0.get("to_id", 0)) == int(job["to_id"]):
+				_tts_streams.remove_at(i)
+		_tts_streams.append({
+			"bot_id": bid,
+			"bot_name": str(job.get("bot_name", "Bot")),
+			"to_id": int(job["to_id"]),
+			"to_name": str(job.get("to_name", "")),
+			"pcm": pcm,
+			"offset": 0,
+			"budget": float(TTS_PACKET_SAMPLES * 3), # prebuffer inicial de 150 ms
+		})
+
+func _tts_stream_tick(delta: float) -> void:
+	var net = world.get("net") if world != null else null
+	for i in range(_tts_streams.size() - 1, -1, -1):
+		var st: Dictionary = _tts_streams[i]
+		var pcm: PackedByteArray = st["pcm"]
+		var off := int(st.get("offset", 0))
+		var budget := float(st.get("budget", 0.0)) + maxf(delta, 0.016) * TTS_STREAM_RATE
+		while budget >= float(TTS_PACKET_SAMPLES) and off < pcm.size():
+			var end_idx := mini(off + TTS_PACKET_SAMPLES, pcm.size())
+			var chunk := pcm.slice(off, end_idx)
+			off = end_idx
+			budget -= float(TTS_PACKET_SAMPLES)
+			if net != null and net.has_method("relay_actor_voice"):
+				net.relay_actor_voice(int(st["bot_id"]), str(st["bot_name"]), chunk, int(st["to_id"]), str(st.get("to_name", "")))
+		if off >= pcm.size():
+			_tts_streams.remove_at(i)
+		else:
+			st["offset"] = off
+			st["budget"] = budget
+			_tts_streams[i] = st
 
 # WAV/RIFF PCM unsigned-8 mono — lo justo para que faster-whisper lo lea.
 func _voice_write_wav(path: String, pcm_u8: PackedByteArray, rate: int = 12000) -> bool:
@@ -4355,7 +4503,8 @@ func _chat_sanitize(text: String) -> String:
 	return out.strip_edges()
 
 # Envia el mensaje: queda registrado para el monitor y se entrega — a un bot
-# por el mismo canal interno, a un humano por RPC via relay_actor_chat.
+# por el mismo canal interno, a un humano HABLADO por voz sintetizada (TTS ->
+# relay_actor_voice), nunca por texto en el panel del jugador.
 func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, kind: String) -> void:
 	var clean := _chat_sanitize(text)
 	if clean.is_empty():
@@ -4378,9 +4527,7 @@ func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, ki
 	if bots.has(to_id):
 		on_chat_received(to_id, my_id, sname, clean)
 	else:
-		var net = world.get("net") if world != null else null
-		if net != null and net.has_method("relay_actor_chat"):
-			net.relay_actor_chat(my_id, sname, clean, to_id, to_name)
+		_tts_enqueue_job(my_id, sname, to_id, to_name, clean)
 
 # Decide canal (Qwen si hay clave+cola libre; si no, plantilla) y aplica los
 # enfriamientos. kind: reply|greet|help|alliance|whisper|taunt.
@@ -4412,10 +4559,12 @@ func _bot_chat_tick(b: Dictionary) -> void:
 	# 1) Responder al ultimo mensaje recibido
 	var inbox: Dictionary = b.get("_chat_inbox", {})
 	if not inbox.is_empty():
-		b["_chat_inbox"] = {}
-		if now >= int(b.get("_chat_reply_ready", 0)):
-			b["_chat_reply_ready"] = now + int(BOT_CHAT_REPLY_CD * 1000.0)
-			_chat_dispatch(b, "reply", int(inbox.get("from_id", 0)), str(inbox.get("from_name", "?")), str(inbox.get("text", "")), str(inbox.get("intent", "talk")))
+		var from_id_in := int(inbox.get("from_id", 0))
+		var from_human := not bots.has(from_id_in)
+		if from_human or now >= int(b.get("_chat_reply_ready", 0)):
+			b["_chat_inbox"] = {}
+			b["_chat_reply_ready"] = now + int((1.5 if from_human else BOT_CHAT_REPLY_CD) * 1000.0)
+			_chat_dispatch(b, "reply", from_id_in, str(inbox.get("from_name", "?")), str(inbox.get("text", "")), str(inbox.get("intent", "talk")))
 		return
 	if float(b.get("_chat_cd", 0.0)) > 0.0 or not _chat_pending.is_empty():
 		return
@@ -4714,10 +4863,11 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 		"request":
 			sit = "Te falta %s de verdad y le pides ayuda a %s. Escribele la peticion, breve y natural." % [ctx, to_name]
 		"reply":
-			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "threat": "te amenaza"}.get(intent, "te escribe")
-			sit = "%s %s. Su mensaje: \"%s\". Responde segun tu caracter y tu relacion con el." % [to_name, intent_txt, ctx]
-	return "Eres %s, superviviente %s en Last Day. Caracter: valentia %.2f, agresividad %.2f, sociable %.2f, desconfianza %.2f.\nEstado: vida %d, hambre %d, sed %d. Zona: %s. Llevas: %s.\n%s es %s (confianza %.2f, hostilidad %.2f).\n%s" % [
-		str(b.get("name", "Bot")), str(b.get("faction", "friendly")),
+			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "threat": "te amenaza"}.get(intent, "te habla")
+			sit = "%s %s. Dice: \"%s\". Responde hablando en voz alta, breve (1 frase), segun tu caracter y tu relacion con el." % [to_name, intent_txt, ctx]
+	var faction_desc := "bandido hostil y peligroso" if str(b.get("faction", "friendly")) == "hostile" else "superviviente pacifico, cooperativo y amable (nunca amenaces ni busques pelea salvo que te ataquen; si algo no se entiende, pregunta con naturalidad)"
+	return "Eres %s, %s en Last Day. Caracter: valentia %.2f, agresividad %.2f, sociable %.2f, desconfianza %.2f.\nEstado: vida %d, hambre %d, sed %d. Zona: %s. Llevas: %s.\n%s es %s (confianza %.2f, hostilidad %.2f).\n%s" % [
+		str(b.get("name", "Bot")), faction_desc,
 		float(pers.get("bravery", 0.5)), float(pers.get("aggression", 0.5)),
 		float(pers.get("sociability", 0.5)), float(pers.get("distrust", 0.3)),
 		int(float(b.get("health", 100))), int(float(b.get("hunger", 80))), int(float(b.get("thirst", 80))),
