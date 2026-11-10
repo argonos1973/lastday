@@ -233,6 +233,11 @@
   }
   table.mini-table th { color: var(--muted); font-weight: 600; }
   .empty-note { color: var(--muted); font-style: italic; font-size: 11px; }
+  details[data-chat] summary { cursor: pointer; list-style: none; user-select: none; }
+  details[data-chat] summary::-webkit-details-marker { display: none; }
+  details[data-chat] summary::before { content: "▸ "; color: var(--muted); }
+  details[data-chat][open] > summary::before { content: "▾ "; }
+  details.chat-det summary.section-label { margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -298,10 +303,10 @@
   </div>
 </div>
 
-<div class="card" id="chatCard" style="display:none">
-  <div class="card-title"><span>💬 Conversaciones (chat del juego)</span><span id="chatCount" class="badge info"></span></div>
+<details class="card" id="chatCard" data-chat style="display:none">
+  <summary class="card-title"><span>💬 Conversaciones (chat del juego)</span><span id="chatCount" class="badge info"></span></summary>
   <div id="chatLogWrap"></div>
-</div>
+</details>
 
 <div class="bots-grid" id="botsContainer"></div>
 
@@ -340,6 +345,17 @@ function fmtDur(sec) {
   if (h > 0) return `${h} h ${m} m`;
   if (m > 0) return `${m} m ${s} s`;
   return `${s} s`;
+}
+
+const openChats = new Set(JSON.parse(localStorage.getItem("chatOpen") || '["chatCard"]'));
+document.addEventListener("toggle", e => {
+  if (e.target.matches && e.target.matches("details[data-chat]")) {
+    e.target.open ? openChats.add(e.target.id) : openChats.delete(e.target.id);
+    localStorage.setItem("chatOpen", JSON.stringify([...openChats]));
+  }
+}, true);
+function restoreChatOpen() {
+  for (const d of document.querySelectorAll("details[data-chat]")) d.open = openChats.has(d.id);
 }
 
 function timeAgo(ts) {
@@ -825,8 +841,10 @@ function renderBots(data) {
       <div class="section-label">Recuerdos Recientes</div>
       ${memHtml}
 
-      <div class="section-label">💬 Chats de ${esc(b.name)} (${bchat.length})</div>
-      ${bchatHtml}
+      <details class="chat-det" data-chat id="chats_${b.bot_id}">
+        <summary class="section-label">💬 Chats de ${esc(b.name)} (${bchat.length})</summary>
+        ${bchatHtml}
+      </details>
 
       <div class="section-label">Ropa Equipada e Inventario (${inv.length})</div>
       <div style="color:var(--muted);font-size:11px;margin-bottom:5px;">Ropa: ${esc(b.clothing || "Ninguna")}</div>
@@ -850,6 +868,7 @@ async function pollStatus() {
     renderMap(data);
     renderChat(data);
     renderBots(data);
+    restoreChatOpen();
   } catch (err) {
     document.getElementById("subStatus").textContent = "Esperando generación del primer snapshot en el servidor (" + err.message + ")...";
   }

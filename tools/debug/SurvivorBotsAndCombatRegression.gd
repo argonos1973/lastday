@@ -2498,6 +2498,23 @@ func run() -> void:
 	check(not elena_thread.is_empty() and elena_thread.all(func(m): return int(m.get("from_id", 0)) == 901 or int(m.get("to_id", 0)) == 901),
 		"10A13: status expone el hilo de chat por bot (%d msgs)" % elena_thread.size())
 
+	# Bucle humano->bot->respuesta: el DM del jugador se encola y el bot
+	# contesta por relay_actor_chat igual que lo veria el cliente.
+	fnet.players[7] = {"char_name": "Remy", "name": "Remy", "is_ai_bot": false, "offline": false}
+	fnet.relay_log.clear()
+	elena_y["_chat_inbox"] = {}
+	elena_y["_chat_reply_ready"] = 0
+	elena_y["_chat_cd"] = 0.0
+	mgr._chat_turns.clear()
+	mgr.on_chat_received(901, 7, "Remy", "hola elena, todo bien?")
+	check(not (elena_y["_chat_inbox"] as Dictionary).is_empty(),
+		"10A14a: DM de humano encola respuesta del bot")
+	mgr._bot_chat_tick(elena_y)
+	check(fnet.relay_log.size() == 1 and int(fnet.relay_log[0].get("to_id", 0)) == 7 and not str(fnet.relay_log[0].get("text", "")).is_empty(),
+		"10A14b: la respuesta del bot llega al humano por relay_actor_chat")
+	fnet.players.erase(7)
+	fnet.relay_log.clear()
+
 	# 10B: refugios — vinculo persistente, saqueo del alijo y desmontaje por palos
 	var sb: Dictionary = mgr.bots[902]
 	sb["proxy"].set_meta("proxy_dead", false)
