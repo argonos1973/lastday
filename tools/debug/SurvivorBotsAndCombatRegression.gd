@@ -2005,6 +2005,10 @@ func run() -> void:
 	mgr.force_memory_io = true
 	mgr.record_social_event(901, "client_sami_77", "Sami", "help", 0.65, "shared_water_and_bandage")
 	mgr.observe_location(901, "house:120:140", "house", Vector3(120.0, 0.0, 140.0), "observed", true)
+	# El reset de marcador (score_reset_v) es una migracion de una sola vez:
+	# con la bandera ya puesta, las ubicaciones conocidas vuelven a persistir
+	# entre reinicios como siempre.
+	mgr._ensure_bot_memory(901, mgr.bots[901]["cfg"])["score_reset_v"] = 1
 	mgr._ai_save_memory()
 	mgr._ai_flush_writes()
 	# Simular reinicio del servidor con un nuevo SurvivorBotManager que carga desde disco
@@ -4607,6 +4611,28 @@ func run() -> void:
 	b_nt["thirst"] = 80.0
 	b_nt["sitting"] = false
 	b_nt["_act"] = ""
+
+	# 10J5o: Reset de marcador — una sola vez por bot: stats, deaths y
+	# known_locations vuelven a cero; el resto de la memoria se conserva.
+	var mem_rst: Dictionary = mgr._ensure_bot_memory(902, {})
+	mem_rst["stats"] = {"alive_total_sec": 9999.0, "kills_prey": 7, "kills_predator": 3, "animals_gutted": 11}
+	mem_rst["deaths"] = 12
+	mem_rst["known_locations"] = {"house:1:2": {"pos": [1.0, 0.0, 2.0]}}
+	mem_rst["death_lessons"] = {"cold": 2.0}
+	mem_rst.erase("score_reset_v")
+	mgr._bot_apply_score_reset(mem_rst)
+	check(int((mem_rst.get("stats", {}) as Dictionary).get("kills_prey", -1)) == 0
+		and int(mem_rst.get("deaths", -1)) == 0
+		and (mem_rst.get("known_locations", {}) as Dictionary).is_empty()
+		and int(mem_rst.get("score_reset_v", 0)) == 1,
+		"10J5o1: El reset de marcador pone a 0 stats/deaths/known_locations una sola vez")
+	mem_rst["stats"]["kills_prey"] = 5
+	mem_rst["deaths"] = 2
+	mgr._bot_apply_score_reset(mem_rst)
+	check(int((mem_rst.get("stats", {}) as Dictionary).get("kills_prey", -1)) == 5
+		and int(mem_rst.get("deaths", -1)) == 2
+		and float((mem_rst.get("death_lessons", {}) as Dictionary).get("cold", 0.0)) == 2.0,
+		"10J5o2: No se repite: las estadisticas nuevas y las lecciones de muerte se conservan")
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")

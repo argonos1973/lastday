@@ -820,6 +820,11 @@ function renderBots(data) {
         ).join("") + `</div>`
       : `<div class="empty-note">Explorando entorno inicial</div>`;
 
+    const bt = Number(b.body_temperature ?? 36.6);
+    const tempW = Math.max(0, Math.min(100, (bt - 33.0) / 7.0 * 100));
+    const tempC = bt < 35.4 ? "#4aa3df" : (bt > 38.2 ? "#e25555" : "#52d18a");
+    const tempTxt = bt.toFixed(1) + "°C";
+
     html += `<div class="card">
       <div class="bot-header">
         <div>
@@ -870,6 +875,11 @@ function renderBots(data) {
         <span>Sed</span>
         <div class="bar-track"><div class="bar-fill" style="width:${b.thirst}%;background:${barColor(b.thirst)}"></div></div>
         <span style="text-align:right">${b.thirst}%</span>
+      </div>
+      <div class="bar-row">
+        <span>Temperatura${Number(b.wetness || 0) > 0.05 ? " 🌧" : ""}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${tempW}%;background:${tempC}"></div></div>
+        <span style="text-align:right">${tempTxt}</span>
       </div>
 
       ${(() => {

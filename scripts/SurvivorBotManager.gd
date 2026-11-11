@@ -10288,7 +10288,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		# Migracion: las relaciones bot<->bot creadas sin agresion arrastran la
@@ -10305,6 +10305,7 @@ func _ai_load_memory() -> void:
 					# permite que el enfriamiento temporal las erosione en minutos.
 					rel2["attacked"] = 6
 		_compact_known_locations(mem)
+		_bot_apply_score_reset(mem)
 		var lp = sd.get("last_death_pos")
 		if lp is Array and (lp as Array).size() >= 3:
 			mem["last_death_pos"] = Vector3(float(lp[0]), float(lp[1]), float(lp[2]))
@@ -10315,6 +10316,18 @@ func _ai_load_memory() -> void:
 		if bots.has(bid):
 			bots[bid]["_mem"] = mem
 			bots[bid]["personality"] = mem.get("personality", {})
+
+# Reset de marcador una sola vez por bot: las estadisticas que alimentan la
+# puntuacion del monitor (vidas acumuladas, bajas, lugares conocidos) vuelven
+# a cero. Se conserva el resto de la memoria: personalidad, relaciones,
+# lecciones de muerte, nemesis e historial de caidas.
+func _bot_apply_score_reset(mem: Dictionary) -> void:
+	if int(mem.get("score_reset_v", 0)) >= 1:
+		return
+	mem["score_reset_v"] = 1
+	mem["stats"] = {"alive_total_sec": 0.0, "kills_prey": 0, "kills_predator": 0, "animals_gutted": 0}
+	mem["deaths"] = 0
+	mem["known_locations"] = {}
 
 # Fusiona las ubicaciones duplicadas acumuladas (misma zona/distancia) — la
 # memoria vieja se limpia una vez al cargar y luego observe_location ya no vuelve
@@ -10354,7 +10367,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
