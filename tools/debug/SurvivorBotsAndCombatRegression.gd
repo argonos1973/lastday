@@ -1623,6 +1623,32 @@ func run() -> void:
 	check(int(mgr._ai_backoff_until_msec) == 0,
 		"RateLimit: con margen de tokens no se activa ningun backoff")
 
+	# Aceptación 2d: canales IA independientes (las cuotas Groq son por modelo):
+	# el backoff del chat no toca al de decisiones y viceversa, cada uno con su
+	# propio umbral de tokens (chat ~300/llamada -> headroom 900).
+	mgr._ai_backoff_until_msec = 0
+	mgr._chat_backoff_until_msec = 0
+	mgr._ai_note_rate_headers(PackedStringArray(["x-ratelimit-remaining-tokens: 100", "x-ratelimit-reset-tokens: 42s"]), true)
+	check(int(mgr._chat_backoff_until_msec) > 0 and int(mgr._ai_backoff_until_msec) == 0,
+		"RateLimit: el 429/pacing del chat solo congela el canal de chat")
+	mgr._chat_backoff_until_msec = 0
+	mgr._ai_note_rate_headers(PackedStringArray(["x-ratelimit-remaining-tokens: 1500", "x-ratelimit-reset-tokens: 42s"]))
+	check(int(mgr._ai_backoff_until_msec) > 0 and int(mgr._chat_backoff_until_msec) == 0,
+		"RateLimit: el pacing de decisiones solo congela el canal de decisiones")
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_note_rate_headers(PackedStringArray(["x-ratelimit-remaining-tokens: 1500", "x-ratelimit-reset-tokens: 42s"]), true)
+	check(int(mgr._chat_backoff_until_msec) == 0,
+		"RateLimit: con 1500 tokens el chat (headroom 900) sigue pudiendo hablar")
+	mgr._chat_backoff_until_msec = 0
+	check(mgr._ai_chat_model() == SurvivorBotManagerScript.AI_CHAT_MODEL
+		and mgr._ai_decision_model() == SurvivorBotManagerScript.AI_ADVISOR_MODEL
+		and mgr._ai_chat_model() != mgr._ai_decision_model(),
+		"RateLimit: chat y decisiones usan modelos distintos (%s / %s)" % [mgr._ai_chat_model(), mgr._ai_decision_model()])
+	OS.set_environment("GROQ_CHAT_MODEL", "test/model-xyz")
+	check(mgr._ai_chat_model() == "test/model-xyz",
+		"RateLimit: GROQ_CHAT_MODEL sobreescribe el modelo de chat")
+	OS.set_environment("GROQ_CHAT_MODEL", "")
+
 	# Aceptación 3: Un bot modifica su comportamiento tras experiencias repetidas
 	# 3a) Riesgo repetido en una ubicación reduce su preferencia de exploración y evoluciona personalidad
 	var p_surv_before := float(mgr._get_bot_personality(elena).get("survival_instinct", 0.0))

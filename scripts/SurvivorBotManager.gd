@@ -162,7 +162,11 @@ var _poi_cache_built := false
 # (OS.get_environment("GROQ_API_KEY")), la API falla o la respuesta no valida,
 # los bots se comportan exactamente igual que sin asesor.
 const AI_ADVISOR_URL := "https://api.groq.com/openai/v1/chat/completions"
+# Dos modelos distintos: las cuotas de Groq son POR MODELO, asi que el chat no
+# compite con las decisiones tactica por la misma ventana de tokens. Override
+# por env: GROQ_DECISION_MODEL / GROQ_CHAT_MODEL.
 const AI_ADVISOR_MODEL := "qwen/qwen3.8-27b"
+const AI_CHAT_MODEL := "openai/gpt-oss-20b"
 const AI_DECISION_MIN_SEC := 900.0
 const AI_DECISION_SPREAD_SEC := 600.0
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000
@@ -201,6 +205,19 @@ var _ai_last_call_msec: Dictionary = {} # bot_id -> msec ultima llamada remota
 var _ai_backoff_until_msec := 0
 var _ai_backoff_sec := 60.0
 var _ai_conn_status := "idle"
+# Backoff/estado del canal de chat: va aparte porque el limite de tokens es por
+# modelo — un 429 de qwen no debe silenciar el chat (otro modelo, otra cuota).
+var _chat_backoff_until_msec := 0
+var _chat_backoff_sec := 30.0
+var _chat_conn_status := "idle"
+
+func _ai_decision_model() -> String:
+	var m := OS.get_environment("GROQ_DECISION_MODEL").strip_edges()
+	return m if not m.is_empty() else AI_ADVISOR_MODEL
+
+func _ai_chat_model() -> String:
+	var m := OS.get_environment("GROQ_CHAT_MODEL").strip_edges()
+	return m if not m.is_empty() else AI_CHAT_MODEL
 var ai_max_calls_per_day := AI_MAX_CALLS_PER_DAY
 var ai_max_tokens_per_day := AI_MAX_TOKENS_PER_DAY
 var memory_path: String = AI_MEMORY_PATH
@@ -5349,7 +5366,7 @@ func _chat_ensure_http() -> void:
 func _chat_attempt_qwen(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String, intent: String) -> bool:
 	if not _chat_pending.is_empty() or not _ai_can_query_remote():
 		return false
-	if Time.get_ticks_msec() < _ai_backoff_until_msec:
+	if Time.get_ticks_msec() < _chat_backoff_until_msec:
 		return false
 	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
 	if key.is_empty() or _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
@@ -5358,15 +5375,20 @@ func _chat_attempt_qwen(b: Dictionary, kind: String, to_id: int, to_name: String
 	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent}
 	_ai_calls_day += 1
 	_ai_calls_total += 1
+	var chat_model := _ai_chat_model()
 	var payload := {
-		"model": AI_ADVISOR_MODEL,
+		"model": chat_model,
 		"temperature": 0.85,
-		"max_tokens": 60,
+		"max_tokens": 120,
 		"messages": [
 			{"role": "system", "content": BOT_CHAT_SYSTEM_PROMPT},
 			{"role": "user", "content": _chat_build_prompt(b, kind, to_id, to_name, ctx, intent)},
 		],
 	}
+	# gpt-oss quema tokens razonando: a low para que el presupuesto de
+	# completado llegue a la frase y no a la cadena de pensamiento.
+	if "gpt-oss" in chat_model:
+		payload["reasoning_effort"] = "low"
 	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
 	if _chat_http.request(AI_ADVISOR_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
 		_chat_pending = {}
@@ -5431,9 +5453,11 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 	var intent := str(req.get("intent", ""))
 	var text := ""
 	if response_code == 429:
-		_ai_register_429(_headers)
+		_ai_register_429(_headers, true)
 	elif result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
-		_ai_note_rate_headers(_headers)
+		_chat_backoff_sec = 30.0
+		_chat_conn_status = "online (200)"
+		_ai_note_rate_headers(_headers, true)
 		var parsed = JSON.parse_string(body.get_string_from_utf8())
 		if parsed is Dictionary:
 			var usage = parsed.get("usage", {})
@@ -5446,6 +5470,7 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 				if msg is Dictionary:
 					text = str((msg as Dictionary).get("content", ""))
 	else:
+		_chat_conn_status = "offline_fallback (%d)" % response_code
 		_ai_tokens_day += 60
 		_ai_tokens_total += 60
 	text = _chat_sanitize(text)
@@ -8755,7 +8780,7 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	_ai_conn_status = "requesting"
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_DECISION_MIN_SEC * 1000.0) + randi() % int(AI_DECISION_SPREAD_SEC * 1000.0)
 	var payload := {
-		"model": AI_ADVISOR_MODEL,
+		"model": _ai_decision_model(),
 		"temperature": 0.4,
 		"max_tokens": 160,
 		"response_format": {"type": "json_object"},
@@ -8825,7 +8850,7 @@ func _ai_build_prompt(b: Dictionary) -> String:
 # Groq devuelve "retry-after" (segundos) en los 429: si llega lo respetamos tal
 # cual en vez de duplicar a ciegas — el tier gratis castiga rachas cortas y la
 # espera real suele ser mucho menor que el backoff exponencial de 60..600 s.
-func _ai_register_429(headers: PackedStringArray) -> void:
+func _ai_register_429(headers: PackedStringArray, for_chat := false) -> void:
 	_ai_429_count += 1
 	var wait := -1.0
 	for h in headers:
@@ -8833,18 +8858,26 @@ func _ai_register_429(headers: PackedStringArray) -> void:
 		if hl.begins_with("retry-after:"):
 			wait = float(hl.get_slice(":", 1).strip_edges())
 			break
-	if wait < 0.0:
-		wait = _ai_backoff_sec
-		_ai_backoff_sec = minf(_ai_backoff_sec * 2.0, 600.0)
-	_ai_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
-	_ai_conn_status = "rate_limited (429, retry_in=%ds)" % int(maxf(wait, 2.0))
+	if for_chat:
+		if wait < 0.0:
+			wait = _chat_backoff_sec
+			_chat_backoff_sec = minf(_chat_backoff_sec * 2.0, 600.0)
+		_chat_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
+		_chat_conn_status = "rate_limited (429, retry_in=%ds)" % int(maxf(wait, 2.0))
+	else:
+		if wait < 0.0:
+			wait = _ai_backoff_sec
+			_ai_backoff_sec = minf(_ai_backoff_sec * 2.0, 600.0)
+		_ai_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
+		_ai_conn_status = "rate_limited (429, retry_in=%ds)" % int(maxf(wait, 2.0))
 
 # Groq publica la cuota en cada respuesta 200: x-ratelimit-remaining-tokens +
 # x-ratelimit-reset-tokens (formato Go "4m19.2s", "172ms", "1h30m"). El tier
-# gratis limita a ~8000 tokens/minuto y cada decision consume ~2-3k, asi que
-# cuando queda poco margen paramos proactivamente hasta el reset en vez de
-# comernos el 429. threshold ~una llamada completa de asesor+chat.
+# gratis limita a ~8000 tokens/minuto POR MODELO y cada decision consume ~2-3k
+# (el chat ~300), asi que cuando queda poco margen paramos proactivamente
+# hasta el reset en vez de comernos el 429 — cada canal con su propio umbral.
 const AI_RATELIMIT_HEADROOM_TOKENS := 3200
+const AI_CHAT_RATELIMIT_HEADROOM_TOKENS := 900
 
 func _ai_parse_groq_reset_seconds(raw: String) -> float:
 	var s := raw.strip_edges()
@@ -8872,7 +8905,7 @@ func _ai_parse_groq_reset_seconds(raw: String) -> float:
 		pos = end
 	return total if total > 0.0 else -1.0
 
-func _ai_note_rate_headers(headers: PackedStringArray) -> void:
+func _ai_note_rate_headers(headers: PackedStringArray, for_chat := false) -> void:
 	var remaining := -1
 	var reset_sec := -1.0
 	for h in headers:
@@ -8881,11 +8914,17 @@ func _ai_note_rate_headers(headers: PackedStringArray) -> void:
 			remaining = int(hl.get_slice(":", 1).strip_edges())
 		elif hl.begins_with("x-ratelimit-reset-tokens:"):
 			reset_sec = _ai_parse_groq_reset_seconds(hl.get_slice(":", 1).strip_edges())
-	if remaining >= 0 and remaining < AI_RATELIMIT_HEADROOM_TOKENS and reset_sec > 0.0:
+	var headroom := AI_CHAT_RATELIMIT_HEADROOM_TOKENS if for_chat else AI_RATELIMIT_HEADROOM_TOKENS
+	if remaining >= 0 and remaining < headroom and reset_sec > 0.0:
 		var until := Time.get_ticks_msec() + int((reset_sec + 0.5) * 1000.0)
-		if until > _ai_backoff_until_msec:
+		var status := "pacing (tokens<=%d, reset=%ds)" % [remaining, int(reset_sec)]
+		if for_chat:
+			if until > _chat_backoff_until_msec:
+				_chat_backoff_until_msec = until
+				_chat_conn_status = status
+		elif until > _ai_backoff_until_msec:
 			_ai_backoff_until_msec = until
-			_ai_conn_status = "pacing (tokens<=%d, reset=%ds)" % [remaining, int(reset_sec)]
+			_ai_conn_status = status
 
 func _ai_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var bot_id := _ai_pending_bot
@@ -9644,8 +9683,10 @@ func get_full_web_status() -> Dictionary:
 			"players_online": online_p,
 		},
 		"groq": {
-			"model": AI_ADVISOR_MODEL,
+			"model": _ai_decision_model(),
+			"chat_model": _ai_chat_model(),
 			"status": _ai_conn_status,
+			"chat_status": _chat_conn_status,
 			"calls_day": _ai_calls_day,
 			"max_calls_day": ai_max_calls_per_day,
 			"calls_total": _ai_calls_total,

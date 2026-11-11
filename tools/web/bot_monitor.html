@@ -381,12 +381,13 @@ function renderHeader(data) {
   document.getElementById("mGroqStatus").innerHTML = `<span class="badge ${cls}">${esc(st)}</span>`;
   document.getElementById("mGroqCalls").textContent = `${g.calls_day || 0} / ${g.max_calls_day || 380} (tot ${g.calls_total || 0})`;
   document.getElementById("mGroqTokens").textContent = `${g.tokens_day || 0} / ${Math.round((g.max_tokens_day || 120000)/1000)}k (tot ${g.tokens_total || 0})`;
-  document.getElementById("mGroqCache").textContent = `${g.cache_hits || 0} caché · ${g.http_429_count || 0} 429s · ${g.queue_size || 0} cola`;
+  document.getElementById("mGroqCache").textContent = `${g.cache_hits || 0} caché · ${g.http_429_count || 0} 429s · ${g.queue_size || 0} cola · chat ${g.chat_status || "idle"}`;
   document.getElementById("mServerPerf").textContent = `${srv.fps || 0} fps · ${fmtHour(srv.time_of_day)} ${srv.is_night ? "🌙" : "☀️"}`;
   const pls = (data.players || []).filter(p => !p.offline);
   const plNames = pls.map(p => p.name).join(", ");
   document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} fauna · ${srv.players_online || 0} jug.${plNames ? ` (${plNames})` : ""}`;
-  document.getElementById("modelBadge").textContent = g.model || "qwen/qwen3.8-27b";
+  const chatM = g.chat_model && g.chat_model !== g.model ? ` · chat ${g.chat_model}` : "";
+  document.getElementById("modelBadge").textContent = (g.model || "qwen/qwen3.8-27b") + chatM;
   const dt = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : "--:--:--";
   const teams = data.teams || [];
   const teamTxt = teams.length
