@@ -1576,18 +1576,42 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["_act"] = "craft"
 			return
 
+	# Antes de emprender una caminata larga al solar con los 11 palos a cuestas:
+	# si va a oscurecer/es de noche sin antorcha (y lleva palo sobrante + trapos
+	# o ropa cortable) o tiene hambre con latas cerradas, terminar ese crafteo
+	# vital primero (la antorcha encendida ademas ahuyenta a los lobos en ruta).
+	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
+		var want_pre_build_craft := ((is_night or _is_pre_night()) and _bot_item_count(proxy, "Antorcha") == 0 and _bot_palo_supply(proxy) >= 12 and (_bot_item_count(proxy, "Trapos") > 0 or _bot_spare_clothing_count(proxy) > 0)) \
+			or (float(b["hunger"]) < 58.0 and not _bot_has_edible_food(proxy, false))
+		if want_pre_build_craft:
+			b["_craft_check"] = 0.0
+			if _bot_try_craft(b, delta):
+				b["_act"] = "craft"
+				return
+
 	# 6b) Construir refugio propio si ya reunio los materiales: en su solar
 	# reclamado si lo tiene, junto a la base de su lider de equipo si milita
 	# (bases compartidas de varios refugios) o en su campamento remoto.
 	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
-		b["_act"] = "build"
 		var build_pos := _bot_build_camp_pos(b)
 		var d_camp := Vector2(proxy.global_position.x - build_pos.x, proxy.global_position.z - build_pos.z).length()
-		if d_camp > 2.4:
-			_move_bot_towards(b, build_pos, 5.5 if d_camp > 30.0 else 3.8, delta, "run" if d_camp > 30.0 else "walk")
+		if d_camp > 170.0 and b.get("shelter_pos", Vector3.INF) == Vector3.INF and int(b.get("team_leader_id", 0)) == 0:
+			var mem_re := _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
+			var nearer := _find_valid_camp_spot(_pick_remote_base_spot(int(b["bot_id"]), proxy.global_position, mem_re), proxy.global_position, 0, mem_re.get("bad_camp_spots", []))
+			var d_nearer := Vector2(proxy.global_position.x - nearer.x, proxy.global_position.z - nearer.z).length() if nearer != Vector3.INF else INF
+			if d_nearer < d_camp - 30.0:
+				b["camp_spot"] = nearer
+				build_pos = nearer
+				d_camp = d_nearer
+		# Si el solar queda lejos (>24 m) y el bot esta agotado o helandose,
+		# primero descansa/entra en calor en wants_camp antes de cruzar el monte.
+		if d_camp <= 24.0 or (not _bot_is_exhausted(b) and not _bot_is_freezing(b)):
+			b["_act"] = "build"
+			if d_camp > 2.4:
+				_move_bot_towards(b, build_pos, 5.5 if d_camp > 30.0 else 3.8, delta, "run" if d_camp > 30.0 else "walk")
+				return
+			_bot_build_shelter(b, build_pos)
 			return
-		_bot_build_shelter(b, build_pos)
-		return
 
 	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)) and _can_bot_build_campfire(proxy):
 		b["_act"] = "campfire"
@@ -11230,6 +11254,8 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 	var palo_need := 0
 	if str(b["shelter_id"]).is_empty():
 		palo_need = 11 # refugio: mismo coste que el del jugador
+		if _bot_item_count(proxy, "Antorcha") == 0 and (_bot_item_count(proxy, "Trapos") > 0 or _bot_spare_clothing_count(proxy) > 0):
+			palo_need = 12 # 11 para el refugio + 1 para su antorcha
 	elif str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
 		palo_need = 2
 	# La antorcha de la noche tambien pide su palo: uno de repuesto siempre
