@@ -2925,7 +2925,9 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			if to_foe.length_squared() > 0.001:
 				b["rot"] = atan2(-to_foe.x, -to_foe.z)
 				proxy.rotation.y = float(b["rot"])
-			b["shoot_cooldown"] = 1.15 if weapon == "Fusil de asalto" else 1.85
+			# Cadencia humana, no metronomo: +-0.45 s entre rafagas rompe el
+			# ritmo perfecto que volvia los intercambios tan opresivos.
+			b["shoot_cooldown"] = (1.15 if weapon == "Fusil de asalto" else 1.85) + randf_range(0.0, 0.45)
 			var dmg := 26.0 if weapon == "Fusil de asalto" else 48.0
 			_bot_fire_rifle_at(b, foe, dmg)
 		return
@@ -3005,21 +3007,61 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			proxy.rotation.y = float(b["rot"])
 		b["anim"] = "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
 		if float(b["attack_cooldown"]) <= 0.0:
-			b["attack_cooldown"] = 0.68
+			b["attack_cooldown"] = 0.68 + randf_range(0.0, 0.35)
 			# A quemarropa usa su mejor arma cuerpo a cuerpo (o los punos)
 			var melee_w := _best_melee_weapon(proxy)
 			var melee_dmg := _weapon_melee_damage(melee_w) if _bot_item_count(proxy, melee_w) > 0 else 25.0
-			_apply_bot_damage_to_target(b, foe, melee_dmg * 0.45, "melee")
-			_reduce_bot_item_durability(proxy, melee_w, 1.5)
+			# Un objetivo que se mueve rapido esquiva parte de los tajos: el golpe
+			# no es automatico aunque este dentro del alcance.
+			var mspd := _bot_target_speed(b, foe)
+			if randf() >= _bot_melee_dodge_chance(mspd):
+				_apply_bot_damage_to_target(b, foe, melee_dmg * 0.45, "melee")
+				_reduce_bot_item_durability(proxy, melee_w, 1.5)
 	else:
 		_move_bot_towards(b, fpos, 6.5, delta, "run")
+
+# Velocidad reciente del objetivo medida entre disparos del bot: un blanco que
+# corre/esprinta es mucho mas dificil de conectar — nada de aimbot que nunca
+# falla. Al cambiar de objetivo la primera estimacion sale disparada (salto de
+# posicion), lo cual da el efecto deseado: apuntar a alguien nuevo es peor.
+func _bot_target_speed(b: Dictionary, target: Node3D) -> float:
+	var key := int(target.get_instance_id())
+	var prev: Dictionary = b.get("_foe_track", {})
+	var now := Time.get_ticks_msec()
+	var speed := 0.0
+	var pt = prev.get("tpos", null)
+	if pt is Vector3 and int(prev.get("id", 0)) == key:
+		var dt := maxf(0.2, float(now - int(prev.get("msec", 0))) / 1000.0)
+		speed = (target.global_position - pt).length() / dt
+	b["_foe_track"] = {"id": key, "tpos": target.global_position, "msec": now}
+	return speed
+
+# Probabilidad de fallo del bot con fusil: ~12% a quemarropa quieto, ~25% a
+# 30 m quieto, ~45% a 30 m si el blanco corre (6 m/s), tope 62%.
+func _bot_rifle_miss_chance(dist: float, target_speed: float, aggression: float) -> float:
+	return clampf(0.10 + dist * 0.005 + minf(target_speed, 8.0) * 0.04 - aggression * 0.05, 0.07, 0.62)
+
+# Lo mismo para el tajo cuerpo a cuerpo: ~10% quieto, ~50% si viene esprintando.
+func _bot_melee_dodge_chance(target_speed: float) -> float:
+	return clampf(0.10 + minf(target_speed, 8.0) * 0.05, 0.10, 0.5)
 
 func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	var bot_id := int(b["bot_id"])
 	var origin := proxy.global_position + Vector3(0.0, 1.4, 0.0)
 	var aim_pos := target.global_position + Vector3(0.0, 1.0, 0.0)
+	var dist := origin.distance_to(aim_pos)
 	var dir := (aim_pos - origin).normalized()
+	# Punteria humana, no laser: el fallo crece con la distancia y con la
+	# velocidad del blanco; los agresivos mantienen algo mas la calma.
+	var spd := _bot_target_speed(b, target)
+	var aggr := float(_get_bot_personality(b).get("aggression", 0.5))
+	var hits := randf() >= _bot_rifle_miss_chance(dist, spd, aggr)
+	if not hits:
+		# El fogonazo sale igual pero desviado ~1 paso del blanco: el jugador
+		# ve el tracero pasar de largo en vez de un daño automatico.
+		var off := Vector3(randf_range(-1.0, 1.0), randf_range(-0.35, 0.85), randf_range(-1.0, 1.0)).normalized() * randf_range(0.7, 1.7)
+		dir = (aim_pos + off - origin).normalized()
 	if world.has_method("_net_player_shot_rifle"):
 		world._net_player_shot_rifle(bot_id, origin, dir, Vector3.ZERO)
 	var net = world.get("net")
@@ -3027,6 +3069,8 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.player_shot_rifle.rpc_id(pid, bot_id, origin, dir, Vector3.ZERO)
+	if not hits:
+		return
 	if target is WildlifeController or target.is_in_group("wildlife"):
 		if target.has_method("take_damage"):
 			target.take_damage(dmg, false, proxy)

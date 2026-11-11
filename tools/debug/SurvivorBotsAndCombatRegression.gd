@@ -1438,6 +1438,28 @@ func run() -> void:
 	check(elena_proxy.global_position.distance_to(bear.global_position) > d_pred,
 		"Sin fusil el bot huye del oso igual que del lobo (d %.1f->%.1f)" % [d_pred, elena_proxy.global_position.distance_to(bear.global_position)])
 
+	# Punteria del bot: no es un aimbot — la probabilidad de fallo crece con la
+	# distancia y con la velocidad del blanco, y el melee se puede esquivar.
+	var m_close := mgr._bot_rifle_miss_chance(8.0, 0.0, 0.5)
+	var m_far := mgr._bot_rifle_miss_chance(40.0, 0.0, 0.5)
+	var m_far_run := mgr._bot_rifle_miss_chance(40.0, 7.0, 0.5)
+	check(m_close > 0.0 and m_close < m_far and m_far < m_far_run and m_far_run <= 0.62,
+		"Punteria bot: el fallo crece con distancia y carrera (%.2f < %.2f < %.2f)" % [m_close, m_far, m_far_run])
+	var d_still := mgr._bot_melee_dodge_chance(0.0)
+	var d_sprint := mgr._bot_melee_dodge_chance(7.0)
+	check(d_still < d_sprint and d_still >= 0.10,
+		"Melee bot: el tajo se puede esquivar mas al correr (%.2f < %.2f)" % [d_still, d_sprint])
+	var track_b: Dictionary = mgr.bots[901]
+	track_b["_foe_track"] = {}
+	var foe_ref: Node3D = elena_proxy
+	var spd0 := mgr._bot_target_speed(track_b, foe_ref)
+	check(spd0 == 0.0, "Velocidad de objetivo: primer contacto da 0 m/s")
+	var tid := int(foe_ref.get_instance_id())
+	track_b["_foe_track"] = {"id": tid, "tpos": foe_ref.global_position - Vector3(24.0, 0.0, 0.0), "msec": Time.get_ticks_msec() - 4000}
+	var spd_run := mgr._bot_target_speed(track_b, foe_ref)
+	check(spd_run > 4.0,
+		"Velocidad de objetivo: 24 m en 4 s detecta un blanco en carrera (%.1f m/s)" % spd_run)
+
 	# Acorralado (lobo encima): defensa a vida o muerte en melee
 	wolf3.global_position = elena_proxy.global_position + Vector3(3.0, 0.0, 0.0)
 	elena["attack_cooldown"] = 0.0

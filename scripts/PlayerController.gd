@@ -14454,9 +14454,15 @@ static var _blood_mist_scale: CurveTexture = null
 static var _blood_drops_mat: ParticleProcessMaterial = null
 static var _blood_mist_mat: ParticleProcessMaterial = null
 
+# Cada impacto instancia 2 GPUParticles3D; bajo fuego sostenido (rafagas de
+# bots) la creacion masiva de sistemas de particulas por segundo pegaba
+# tirones. Se limita el numero de salpicaduras vivas a la vez.
+const MAX_LIVE_BLOOD_SYSTEMS := 8
+var _live_blood_systems := 0
+
 func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
 	var scene := get_tree().current_scene
-	if scene == null:
+	if scene == null or _live_blood_systems >= MAX_LIVE_BLOOD_SYSTEMS:
 		return
 	if _blood_drops_ramp == null:
 		_blood_drops_ramp = _make_fade_ramp(0.03, 0.75)
@@ -14520,6 +14526,9 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 	scene.add_child(mist)
 	mist.global_position = pos
 	mist.emitting = true
+	_live_blood_systems += 2
+	drops.tree_exited.connect(func(): _live_blood_systems -= 1)
+	mist.tree_exited.connect(func(): _live_blood_systems -= 1)
 	get_tree().create_timer(2.0).timeout.connect(func():
 		if is_instance_valid(drops):
 			drops.queue_free()
