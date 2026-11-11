@@ -376,10 +376,57 @@ func _pick_remote_base_spot(bot_id: int, spawn_pos: Vector3, mem: Dictionary) ->
 		if near_bad:
 			continue
 		var score := d_center * 0.5 + clampf(hot_d, 0.0, 120.0) * 0.8 - cp.distance_to(anchor) * 0.6
+		score += _base_spot_safety(mem, cp)
 		if score > best_score:
 			best_score = score
 			best = cp
 	return best
+
+# Seguridad aprendida del emplazamiento de base: lo que el bot ya sabe del
+# mundo pesa en la eleccion del solar — muertes propias cerca, zonas marcadas
+# como peligrosas, acceso a agua a tiro util (ni pegada ni a dias de camino)
+# y arboles que oculten el refugio. Con supervivencia alta el miedo pesa mas.
+func _base_spot_safety(mem: Dictionary, cp: Vector3) -> float:
+	var surv := float((mem.get("personality", {}) as Dictionary).get("survival_instinct", 0.7))
+	var fear_w := 0.7 + surv * 0.6
+	var score := 0.0
+	for s in mem.get("death_spots", []):
+		if not (s is Dictionary):
+			continue
+		var dx := cp.x - float(s.get("x", 0.0))
+		var dz := cp.z - float(s.get("z", 0.0))
+		var d2 := dx * dx + dz * dz
+		if d2 < 22500.0: # 150 m
+			var dcnt := clampi(int(s.get("count", 1)), 1, 4)
+			score -= (1.0 - sqrt(d2) / 150.0) * 90.0 * dcnt * fear_w
+	for loc in (mem.get("known_locations", {}) as Dictionary).values():
+		if not (loc is Dictionary):
+			continue
+		var risk := float((loc as Dictionary).get("risk", 0.0))
+		if risk <= 0.0:
+			continue
+		var lp = (loc as Dictionary).get("pos", null)
+		if lp is Array and lp.size() >= 3:
+			var ldx := cp.x - float(lp[0])
+			var ldz := cp.z - float(lp[2])
+			var ld2 := ldx * ldx + ldz * ldz
+			if ld2 < 10000.0: # 100 m
+				score -= risk * (1.0 - sqrt(ld2) / 100.0) * 35.0 * fear_w
+	# Agua a tiro util para las salidas de aprovisionamiento (20-90 m suma,
+	# pegada a la orilla resta un poco por fauna, >150 m no puntua).
+	var wp := _nearest_water_pos(cp, {})
+	if wp != Vector3.INF:
+		var wd := Vector2(cp.x - wp.x, cp.z - wp.z).length()
+		if wd < 15.0:
+			score -= 12.0
+		elif wd <= 90.0:
+			score += 18.0 * (1.0 - absf(wd - 45.0) / 45.0)
+		elif wd > 150.0:
+			score -= 8.0
+	# Arboles cercanos: camuflaje natural para el refugio.
+	var tree_d := _nearest_tree_dist(cp, 30.0)
+	score += (1.0 - clampf(tree_d / 30.0, 0.0, 1.0)) * 22.0
+	return score
 
 # Busca en espiral alrededor del punto preferido un sitio valido de campamento,
 # preferiblemente junto a arboles (oculto) en vez de en mitad del campo.
@@ -1572,6 +1619,33 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# (herramientas, armas, flechas, cuerda, ropa de piel, antorcha, comida...)
 	if _bot_try_craft(b, delta):
 		b["_act"] = "craft"
+		return
+
+	# 6c) Vida sedentaria: con su refugio ya levantado en la base y sin
+	# necesidades ni encargos pendientes, el superviviente se refugia en casa
+	# y descansa — no vaga todo el dia arriba y abajo. Sale solo cuando
+	# necesita provisiones/loot o la IA tactica le marca un destino.
+	if not starving_or_parched and _bot_has_own_base(b) and not _bot_needs_outing(b):
+		var d_home := Vector2(proxy.global_position.x - sh_pos.x, proxy.global_position.z - sh_pos.z).length()
+		if d_home > 3.2:
+			b["_act"] = "return_home"
+			b["sitting"] = false
+			b["crouching"] = false
+			_move_bot_towards(b, sh_pos, 5.5 if d_home > 30.0 else 3.6, delta, "run" if d_home > 30.0 else "walk")
+			return
+		# En casa: sentado junto a su refugio, recuperando algo de vida como
+		# en el descanso de wants_camp. El lobo domestico recibe 'stay' por
+		# _sync_bot_wolf_orders (resting_home detecta sitting).
+		b["_act"] = "rest_home"
+		b["sitting"] = true
+		b["crouching"] = false
+		proxy.set_meta("crouching", false)
+		b["anim"] = "sit"
+		if float(b["health"]) < 100.0 and float(b.get("sick_timer", 0.0)) <= 0.0:
+			var healed_home := minf(100.0, float(b["health"]) + delta * 1.2)
+			b["health"] = healed_home
+			proxy.set_meta("proxy_health", healed_home)
+			proxy.set_meta("saved_health", healed_home)
 		return
 
 	# 7) Exploracion como un jugador real: viaja por puntos de interes (casas,
@@ -2779,6 +2853,30 @@ func _note_bot_wolf_life(b: Dictionary, has_wolf: bool) -> void:
 	elif not bool(b.get("dead", false)):
 		record_bot_event(int(b["bot_id"]), "wolf_lost", "lobo", _poi_kind_near(proxy.global_position), proxy.global_position, "perdio a su lobo")
 		b["_wolf_last_order"] = ""
+
+# Vida sedentaria: la base propia cuenta cuando el refugio esta levantado
+# (shelter_id + posicion valida). Con solo el solar reclamado aun hay que
+# salir a por materiales — eso lo cubren los pasos de mats/build anteriores.
+func _bot_has_own_base(b: Dictionary) -> bool:
+	return b.get("shelter_pos", Vector3.INF) != Vector3.INF and not str(b.get("shelter_id", "")).is_empty()
+
+# Motivos legitimos para salir de la base: provisiones bajas, encargos de
+# equipo, directivas tacticas de la IA, reencuentro social pendiente o la
+# necesidad de equipo basico (sin arma ni filo encima ni en el alijo).
+func _bot_needs_outing(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if float(b["hunger"]) < 55.0 or float(b["thirst"]) < 55.0:
+		return true
+	if not _bot_has_edible_food(proxy, false) and not _bot_has_drink(proxy):
+		return true
+	if _best_weapon_name(proxy).is_empty() and not _own_shelter_has_needed_item(b):
+		return true
+	if bool(b.get("equip_mission", false)) or int(b.get("_meet_id", 0)) > 0:
+		return true
+	var dir := _ai_active_directive(b)
+	if str(dir.get("action", "")) in ["explore", "scavenge", "hunt", "forage", "seek_ally", "avoid_zone"]:
+		return true
+	return false
 
 func _perform_wolf_taming_step(b: Dictionary, wolf: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]

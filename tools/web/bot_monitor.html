@@ -238,6 +238,13 @@
   details[data-chat] summary::before { content: "▸ "; color: var(--muted); }
   details[data-chat][open] > summary::before { content: "▾ "; }
   details.chat-det summary.section-label { margin-top: 2px; }
+  details[data-sec] summary { cursor: pointer; list-style: none; user-select: none; }
+  details[data-sec] summary::-webkit-details-marker { display: none; }
+  details[data-sec] summary::before { content: "▸ "; color: var(--muted); }
+  details[data-sec][open] > summary::before { content: "▾ "; }
+  details.sec { margin-top: 6px; }
+  details.sec > summary.section-label { margin-top: 0; opacity: 0.92; }
+  details.sec[open] > summary.section-label { opacity: 1; }
 </style>
 </head>
 <body>
@@ -276,11 +283,11 @@
 </header>
 
 <div class="top-grid">
-  <div class="card">
-    <div class="card-title">
+  <details class="card" data-sec id="mapCard" open>
+    <summary class="card-title">
       <span id="mapTitle">Mapa Táctico en Tiempo Real</span>
       <span id="mapClock" style="color:var(--muted);font-size:12px;">En vivo (2s)</span>
-    </div>
+    </summary>
     <canvas id="mapCanvas" width="400" height="360"></canvas>
     <div class="legend">
       <span><i class="dot" style="background:var(--elena)"></i> Elena (901)</span>
@@ -292,15 +299,15 @@
       <span><i class="dot" style="background:#f2f5f3"></i> ◆ Jugador</span>
       <span><i class="dot" style="background:#52d18a"></i> Refugio Bot</span>
     </div>
-  </div>
+  </details>
 
-  <div class="card">
-    <div class="card-title">
+  <details class="card" data-sec id="summaryCard" open>
+    <summary class="card-title">
       <span>Resumen Estratégico y Flujo de Decisiones Qwen</span>
       <span id="modelBadge" class="badge info">qwen/qwen3.8-27b</span>
-    </div>
+    </summary>
     <div id="summaryTableWrap"></div>
-  </div>
+  </details>
 </div>
 
 <details class="card" id="chatCard" data-chat style="display:none">
@@ -347,15 +354,15 @@ function fmtDur(sec) {
   return `${s} s`;
 }
 
-const openChats = new Set(JSON.parse(localStorage.getItem("chatOpen") || '["chatCard"]'));
+const openChats = new Set(JSON.parse(localStorage.getItem("chatOpen") || '["chatCard","mapCard","summaryCard"]'));
 document.addEventListener("toggle", e => {
-  if (e.target.matches && e.target.matches("details[data-chat]")) {
+  if (e.target.matches && e.target.matches("details[data-chat], details[data-sec]")) {
     e.target.open ? openChats.add(e.target.id) : openChats.delete(e.target.id);
     localStorage.setItem("chatOpen", JSON.stringify([...openChats]));
   }
 }, true);
 function restoreChatOpen() {
-  for (const d of document.querySelectorAll("details[data-chat]")) d.open = openChats.has(d.id);
+  for (const d of document.querySelectorAll("details[data-chat], details[data-sec]")) d.open = openChats.has(d.id);
 }
 
 function timeAgo(ts) {
@@ -891,14 +898,14 @@ function renderBots(data) {
         }
       </div>
 
-      <div class="section-label">Personalidad Evolutiva (7 Rasgos)</div>
-      ${traitsHtml}
+      <details class="sec" data-sec id="sec_${b.bot_id}_pers"><summary class="section-label">Personalidad Evolutiva (7 Rasgos)</summary>
+      ${traitsHtml}</details>
 
-      <div class="section-label">Relaciones Sociales (Confianza / Hostilidad / Miedo)</div>
-      ${relHtml}
+      <details class="sec" data-sec id="sec_${b.bot_id}_rel"><summary class="section-label">Relaciones Sociales (Confianza / Hostilidad / Miedo)</summary>
+      ${relHtml}</details>
 
-      <div class="section-label">Evolución de Conducta (Hitos)</div>
-      ${mstHtml}
+      <details class="sec" data-sec id="sec_${b.bot_id}_mst"><summary class="section-label">Evolución de Conducta (Hitos)</summary>
+      ${mstHtml}</details>
 
       ${(() => {
         const dlog = b.death_log || [];
@@ -908,32 +915,32 @@ function renderBots(data) {
         if (!dlog.length && !lastBy && !nem.name) return "";
         const KIND_ES = {wolf_bite:"mordedura de lobo",bear_bite:"mordedura de oso",melee:"cuerpo a cuerpo",rifle:"disparo de rifle",bola:"boleadoras",arco:"flecha",arco_madera:"flecha",arrow:"flecha",lanza:"lanza",starved:"inanición",dehydrated:"deshidratación",hypothermia:"hipotermia",exhausted:"agotamiento",heatstroke:"golpe de calor",combat:"combate",succumbed:"sucumbió"};
         const kindEs = k => KIND_ES[k] || k;
-        return `<div class="section-label">☠ Muertes (${b.deaths || 0})${nem.name ? ` · Némesis: ${esc(nem.name)} ×${nem.count}` : ""}</div>
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_death"><summary class="section-label">☠ Muertes (${b.deaths || 0})${nem.name ? ` · Némesis: ${esc(nem.name)} ×${nem.count}` : ""}</summary>
         <div class="decision-box" style="border-left-color:var(--danger)">
           ${lastBy || lastWp ? `<div class="meta-line">Última: ${lastBy ? `<b>${esc(lastBy)}</b> con ` : ""}<b>${esc(kindEs(lastWp))}</b>${b.last_death_unix ? ` · hace ${esc(timeAgo(Number(b.last_death_unix)))}` : ""}</div>` : ""}
           ${dlog.slice().reverse().map(d2 => `<div class="meta-line" style="color:var(--muted)">— ${d2.by ? `Matado por <b>${esc(d2.by)}</b> · ` : ""}${esc(kindEs(d2.weapon || d2.kind || ""))}${d2.t ? ` · ${new Date(Number(d2.t) * 1000).toLocaleString()}` : ""}</div>`).join("")}
-        </div>`;
+        </div></details>`;
       })()}
 
-      <div class="section-label">Estrategias Aprendidas (recientes primero)</div>
-      ${stratHtml}
+      <details class="sec" data-sec id="sec_${b.bot_id}_strat"><summary class="section-label">Estrategias Aprendidas (recientes primero)</summary>
+      ${stratHtml}</details>
 
-      <div class="section-label">Ubicaciones Conocidas (${b.known_locations_count || 0} — Sin Omnisciencia)</div>
-      ${locHtml}
+      <details class="sec" data-sec id="sec_${b.bot_id}_loc"><summary class="section-label">Ubicaciones Conocidas (${b.known_locations_count || 0} — Sin Omnisciencia)</summary>
+      ${locHtml}</details>
 
-      <div class="section-label">Recuerdos Recientes</div>
-      ${memHtml}
+      <details class="sec" data-sec id="sec_${b.bot_id}_mem"><summary class="section-label">Recuerdos Recientes</summary>
+      ${memHtml}</details>
 
       <details class="chat-det" data-chat id="chats_${b.bot_id}">
         <summary class="section-label">💬 Chats de ${esc(b.name)} (${bchat.length})</summary>
         ${bchatHtml}
       </details>
 
-      <div class="section-label">Ropa Equipada e Inventario (${inv.length})</div>
+      <details class="sec" data-sec id="sec_${b.bot_id}_inv"><summary class="section-label">Ropa Equipada e Inventario (${inv.length})</summary>
       <div style="color:var(--muted);font-size:11px;margin-bottom:5px;">Ropa: ${esc(b.clothing || "Ninguna")}</div>
-      <div class="pill-list">${invHtml}</div>
+      <div class="pill-list">${invHtml}</div></details>
 
-      <div class="section-label">Base Propia y Alijo en Refugio (${stash.length}/18)</div>
+      <details class="sec" data-sec id="sec_${b.bot_id}_base"><summary class="section-label">Base Propia y Alijo en Refugio (${stash.length}/18)</summary>
       ${(() => {
         const sp = b.shelter_pos || [];
         const cs = b.camp_spot || [];
@@ -944,22 +951,22 @@ function renderBots(data) {
           ${b.shelter_pelts ? `<span class="item-tag">🪶 Forrado con pieles</span>` : ""}
         </div>`;
       })()}
-      <div class="pill-list">${stashHtml}</div>
+      <div class="pill-list">${stashHtml}</div></details>
 
       ${(() => {
         const wl = b.wolf || {};
         if (!wl.tamed && !wl.taming) return "";
         const MODE_ES = {follow:"le sigue", stay:"guarda la zona", patrol:"patrulla", guard:"guarda"};
-        if (wl.taming) return `<div class="section-label">🐺 Domando lobo</div>
-          <div class="meta-line">${esc(wl.name || "lobo")} — confianza ${wl.progress || 0}/${wl.need || 3} comidas</div>`;
-        return `<div class="section-label">🐺 Lobo domesticado</div>
+        if (wl.taming) return `<details class="sec" data-sec id="sec_${b.bot_id}_wolf"><summary class="section-label">🐺 Domando lobo</summary>
+          <div class="meta-line">${esc(wl.name || "lobo")} — confianza ${wl.progress || 0}/${wl.need || 3} comidas</div></details>`;
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_wolf"><summary class="section-label">🐺 Lobo domesticado</summary>
           <div class="kv-grid">
             <div class="kv-item"><b>Nombre</b>${esc(wl.name || "—")}</div>
             <div class="kv-item"><b>Modo</b>${esc(MODE_ES[wl.mode] || wl.mode || "—")}</div>
             <div class="kv-item"><b>Última orden</b>${esc(wl.order === "stay" ? "quieto (guarda el campamento)" : "sígueme")}</div>
             <div class="kv-item"><b>Vida</b>${wl.hp != null ? wl.hp + "%" : "—"}</div>
             <div class="kv-item"><b>Hambre</b>${wl.hunger != null ? wl.hunger + "%" : "—"}</div>
-          </div>`;
+          </div></details>`;
       })()}
     </div>`;
   }

@@ -789,6 +789,76 @@ func run() -> void:
 	twolf._is_dead = true
 	twolf.queue_free()
 
+	# --- 10h) Vida sedentaria + la IA elige el solar mas seguro ---
+	# Con su refugio levantado, provisiones encima y sin amenazas, Carlos se
+	# refugia en casa en vez de vagar explorando todo el dia.
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0},
+		{"name": "Lata de fabada abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Cantimplora", "type": "water", "weight": 0.6, "quantity": 1, "use_value": 40.0},
+	])
+	carlos_proxy.global_position = carlos["shelter_pos"] + Vector3(1.0, 0.0, 0.0)
+	carlos["pos"] = carlos_proxy.global_position
+	carlos["hunger"] = 90.0
+	carlos["thirst"] = 90.0
+	carlos["health"] = 100.0
+	carlos["hide_timer"] = 0.0
+	carlos["sleeping"] = false
+	carlos["sitting"] = false
+	carlos["equip_mission"] = false
+	carlos["_meet_id"] = 0
+	carlos["ai_directive"] = {}
+	carlos["_s_foe"] = null
+	carlos["_s_predator"] = null
+	carlos["_s_leader"] = null
+	carlos["_s_loot"] = {}
+	carlos["_s_prey"] = null
+	carlos["_s_corpse"] = null
+	carlos["_s_raid_shelter"] = {}
+	carlos["tame_cooldown"] = 0.0
+	carlos["aggro_target"] = null
+	carlos["aggro_timer"] = 0.0
+	check(not mgr._bot_needs_outing(carlos), "Provisionado y sano no necesita salir de su base")
+	mgr._tick_bot(carlos, 0.2)
+	check(str(carlos["_act"]) != "explore", "Con base propia y provisiones se refugia, no explora (act=%s)" % str(carlos["_act"]))
+	mgr._tick_bot(carlos, 0.2)
+	check(str(carlos["_act"]) == "rest_home" and bool(carlos["sitting"]),
+		"Ya en casa descansa sentado junto a su refugio (act=%s)" % str(carlos["_act"]))
+	# Hambre critica -> sale a buscar provisiones
+	carlos["hunger"] = 20.0
+	carlos["sitting"] = false
+	check(mgr._bot_needs_outing(carlos), "Hambre baja fuerza una salida de aprovisionamiento")
+	carlos["hunger"] = 90.0
+	# Sin comida/bebida ni arma encima -> tambien sale
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 3, "use_value": 0.0},
+	])
+	check(mgr._bot_needs_outing(carlos), "Sin comida/bebida ni arma sale a por equipo")
+	# Directiva tactica de la IA -> sale a cumplirla
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0},
+		{"name": "Lata de fabada abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Cantimplora", "type": "water", "weight": 0.6, "quantity": 1, "use_value": 40.0},
+	])
+	carlos["ai_directive"] = {"action": "scavenge", "pos": [10.0, 0.0, 10.0], "until": Time.get_ticks_msec() + 120000}
+	check(mgr._bot_needs_outing(carlos), "Directiva tactica 'scavenge' fuerza salida de la base")
+	carlos["ai_directive"] = {}
+	# Solar seguro: la memoria castiga muertes y zonas de riesgo cercanas
+	var mem_clean := {"personality": {"survival_instinct": 0.7}, "death_spots": [], "known_locations": {}, "zone_yield": {}}
+	var mem_hazard := mem_clean.duplicate(true)
+	var spot_a := Vector3(320.0, 0.0, -180.0)
+	(mem_hazard["death_spots"] as Array).append({"x": spot_a.x + 8.0, "y": 0.0, "z": spot_a.z, "cause": "rifle", "count": 2})
+	(mem_hazard["known_locations"] as Dictionary)["loc_hot"] = {"pos": [spot_a.x - 12.0, 0.0, spot_a.z], "risk": 5.0}
+	var clean_score: float = mgr._base_spot_safety(mem_clean, spot_a)
+	var hazard_score: float = mgr._base_spot_safety(mem_hazard, spot_a)
+	check(hazard_score < clean_score - 40.0,
+		"El solar junto a muertes y zonas de riesgo puntua mucho peor (%.0f < %.0f)" % [hazard_score, clean_score])
+	# Mas instinto de supervivencia = mas miedo a repetir el sitio
+	var mem_brave := mem_hazard.duplicate(true)
+	(mem_brave["personality"] as Dictionary)["survival_instinct"] = 0.1
+	check(mgr._base_spot_safety(mem_brave, spot_a) > hazard_score,
+		"Un superviviente con poco instinto teme menos los solares peligrosos")
+
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()
 	mgr.on_bot_damaged(901, 8.0, 1, "rifle")
