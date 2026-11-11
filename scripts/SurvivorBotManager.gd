@@ -1198,6 +1198,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["attack_cooldown"] = maxf(0.0, float(b["attack_cooldown"]) - delta)
 	b["shoot_cooldown"] = maxf(0.0, float(b["shoot_cooldown"]) - delta)
 	b["tame_cooldown"] = maxf(0.0, float(b["tame_cooldown"]) - delta)
+	b["_tame_wait_t"] = maxf(0.0, float(b.get("_tame_wait_t", 0.0)) - delta)
 	b["eat_cooldown"] = maxf(0.0, float(b["eat_cooldown"]) - delta)
 	b["sick_timer"] = maxf(0.0, float(b.get("sick_timer", 0.0)) - delta)
 	b["cook_cooldown"] = maxf(0.0, float(b["cook_cooldown"]) - delta)
@@ -1315,20 +1316,23 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["anim"] = "idle"
 		return
 
-	# 1) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
+	# 1) Doma de lobos: va ANTES que predator para que _s_predator (radio 22..34 m)
+	# no secuestre al lobo salvaje que el bot pretende domesticar (radio 20 m)
+	# ni haga que el bot le dispare o huya mientras el lobo se come el cebo.
+	if not bool(b.get("_s_has_wolf", false)) and float(b.get("health", 100.0)) >= 55.0:
+		var wild_wolf := _sensed_node(b, "_s_tame_wolf")
+		if wild_wolf != null and proxy.global_position.distance_to(wild_wolf.global_position) >= 4.2:
+			if (float(b["tame_cooldown"]) <= 0.0 and _bot_has_raw_meat(proxy)) or float(b.get("_tame_wait_t", 0.0)) > 0.0:
+				b["_act"] = "tame"
+				_perform_wolf_taming_step(b, wild_wolf, delta)
+				return
+
+	# 2) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
 	var predator := _sensed_node(b, "_s_predator")
 	if predator != null:
 		b["_act"] = "predator"
 		_handle_predator_encounter(b, predator, delta)
 		return
-
-	# 2) Doma de lobos: si hay un lobo salvaje cerca (10..22 m), tenemos carne cruda y aún no tenemos lobo domado
-	if float(b["tame_cooldown"]) <= 0.0 and not bool(b.get("_s_has_wolf", false)):
-		var wild_wolf := _sensed_node(b, "_s_tame_wolf")
-		if wild_wolf != null and _bot_has_raw_meat(proxy):
-			b["_act"] = "tame"
-			_perform_wolf_taming_step(b, wild_wolf, delta)
-			return
 
 	# 2b) Emboscada: hostiles (solos o en equipo) acechan agachados a una
 	#     victima con recursos y golpean a la vez. Cede ante depredadores.
@@ -2063,6 +2067,11 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 		b["_gather"] = {}
 	if not (b.get("_forage", {}) as Dictionary).is_empty():
 		b["_forage"] = {}
+	var cur_aggro: Node3D = b.get("aggro_target")
+	if cur_aggro != null and is_instance_valid(cur_aggro) and Vector2(goal.x - cur_aggro.global_position.x, goal.z - cur_aggro.global_position.z).length() < 6.0:
+		b["aggro_target"] = null
+		b["aggro_timer"] = 0.0
+		b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 6.0)
 	var pat: Array = b.get("patrol", [])
 	if not pat.is_empty():
 		b["patrol_idx"] = (int(b["patrol_idx"]) + 1) % pat.size()
@@ -2197,13 +2206,17 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	# Vendarse si tiene poca salud o sangrado (si aprendio de muertes en combate, se venda antes)
 	var d_lessons: Dictionary = b.get("_mem", {}).get("death_lessons", {})
 	var bandage_line := 72.0 + minf(12.0, float(int(d_lessons.get("combat", 0))) * 4.0)
-	if float(b["health"]) < bandage_line and float(b["eat_cooldown"]) <= 0.0:
+	var vst_b: SurvivalStats = b.get("vstats")
+	var is_bleeding: bool = vst_b != null and vst_b.bleeding > 0.0
+	if (float(b["health"]) < bandage_line or is_bleeding) and float(b["eat_cooldown"]) <= 0.0:
 		for i in range(inv.size()):
 			var it = inv[i]
-			if it is Dictionary and str(it.get("name", "")) == "Venda" and int(it.get("quantity", 1)) > 0:
+			if it is Dictionary and str(it.get("name", "")) in ["Venda", "Vendaje"] and int(it.get("quantity", 1)) > 0:
 				it["quantity"] = int(it.get("quantity", 1)) - 1
 				if int(it["quantity"]) <= 0:
 					inv.remove_at(i)
+				if vst_b != null:
+					vst_b.stop_bleeding()
 				var new_hp := minf(100.0, float(b["health"]) + 32.0)
 				b["health"] = new_hp
 				proxy.set_meta("proxy_health", new_hp)
@@ -2653,7 +2666,7 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 	for cand in candidates:
 		var cpos: Vector3 = cand
 		var d := Vector2(cur.x - cpos.x, cur.z - cpos.z).length()
-		if d > best_d:
+		if d > best_d or _is_goal_blacklisted(b, cpos):
 			continue
 		if has_threat and d > 2.5 and to_threat.length_squared() > 0.01:
 			var to_c := cpos - cur
@@ -2683,6 +2696,8 @@ func _bot_wants_pelts(b: Dictionary, proxy: Node3D) -> bool:
 func _bot_wants_animal_loot(b: Dictionary, proxy: Node3D) -> bool:
 	if not _bot_has_can_opener(proxy):
 		return false
+	if not bool(b.get("_s_has_wolf", false)) and _bot_raw_meat_count(proxy) < 3:
+		return true
 	if float(b["hunger"]) < 62.0 or not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0):
 		return true
 	return _bot_wants_pelts(b, proxy)
@@ -2706,7 +2721,7 @@ func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 	var proxy: Node3D = b["proxy"]
 	if not _bot_has_can_opener(proxy):
 		return
-	var take_meat := float(b["hunger"]) < 62.0 or not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0)
+	var take_meat := float(b["hunger"]) < 62.0 or not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0) or (not bool(b.get("_s_has_wolf", false)) and _bot_raw_meat_count(proxy) < 3)
 	var take_pelts := _bot_wants_pelts(b, proxy)
 	if not take_meat and not take_pelts:
 		return
@@ -3133,16 +3148,28 @@ func _bot_avoid_nemesis(b: Dictionary, foe: Node3D, nem_name: String, delta: flo
 
 func _perform_wolf_taming_step(b: Dictionary, wolf: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
-	# Sostener carne en la mano pacifica al lobo salvaje (_player_holds_meat)
-	var meat_name := _first_raw_meat_name(proxy)
-	if meat_name.is_empty():
-		return
-	b["held_item"] = meat_name
-	b["has_rifle"] = false
-	proxy.set_meta("saved_held_item", meat_name)
-
 	var wpos := wolf.global_position
 	var d := proxy.global_position.distance_to(wpos)
+	var to_wolf := wpos - proxy.global_position
+	to_wolf.y = 0.0
+	var meat_name := _first_raw_meat_name(proxy)
+	if not meat_name.is_empty():
+		b["held_item"] = meat_name
+		b["has_rifle"] = false
+		proxy.set_meta("saved_held_item", meat_name)
+	# Mientras espera a que el lobo se coma el cebo soltado, mantenerse a 7..12 m
+	# (WildlifeController exige <15 m al alimentador para acreditar la toma).
+	if float(b.get("tame_cooldown", 0.0)) > 0.0 or meat_name.is_empty():
+		if d < 6.0 and to_wolf.length_squared() > 0.01:
+			_move_bot_towards(b, proxy.global_position - to_wolf.normalized() * 3.0, 3.2, delta, "walk")
+		elif d > 12.5:
+			_move_bot_towards(b, wpos, 3.2, delta, "walk")
+		else:
+			if to_wolf.length_squared() > 0.001:
+				b["rot"] = atan2(-to_wolf.x, -to_wolf.z)
+				proxy.rotation.y = float(b["rot"])
+			b["anim"] = "idle"
+		return
 	if d > 11.5:
 		_move_bot_towards(b, wpos, 3.2, delta, "walk")
 		return
@@ -3166,6 +3193,7 @@ func _perform_wolf_taming_step(b: Dictionary, wolf: Node3D, delta: float) -> voi
 		if "_wolf_hunger" in wolf and float(wolf._wolf_hunger) >= float(wolf._wolf_hunger_threshold):
 			wolf._wolf_hunger = float(wolf._wolf_hunger_threshold) - 15.0
 		b["tame_cooldown"] = 11.0
+		b["_tame_wait_t"] = 11.0
 		b["anim"] = "idle"
 
 # Alcance visual humano realista: de noche se ve menos (salvo que el objetivo
@@ -3372,27 +3400,34 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	var pick := _pick_fight_weapon(b, dist)
 	var weapon := str(pick.get("name", "Cuchillo"))
 	var wkind := str(pick.get("kind", "melee"))
+	# Táctica con boleadoras: si lleva boleadoras y el rival no está trabado,
+	# bolearlo primero a media distancia (5..22 m) para frenarlo 6 s.
+	if wkind != "rifle" and _bot_item_count(proxy, "Boleadoras") > 0 and dist > 5.0 and dist <= 22.0:
+		if float(foe.get_meta("bola_slow_until", 0.0)) < Time.get_unix_time_from_system():
+			wkind = "bola"
+			weapon = "Boleadoras"
 	b["held_item"] = weapon
 	b["has_rifle"] = wkind == "rifle"
 	proxy.set_meta("saved_held_item", weapon)
+	var clear_los := _has_clear_shot(proxy.global_position, fpos) and absf(fpos.y - proxy.global_position.y) < 3.2
 
 	if wkind == "rifle" and dist > 3.5 and dist <= 48.0:
-		b["is_aiming"] = true
-		# Combate como un jugador: si el enemigo esta demasiado lejos avanza;
-		# si esta en rango de tiro, no se queda quieto — zigzaguea lateralmente
-		# entre disparos para no ser un blanco facil.
-		if dist > 26.0:
+		b["is_aiming"] = clear_los
+		# Si el objetivo está lejos o tras un muro/puerta/planta sin línea de
+		# tiro limpia, avanzar hacia él (abriendo puertas/subiendo escaleras) en
+		# lugar de quedarse strafeando enganchado contra la pared exterior.
+		if dist > 26.0 or not clear_los:
 			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
-			if float(b["strafe_timer"]) > 1.4:
+			var side := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
+			if float(b["strafe_timer"]) > 1.4 or _is_step_blocked(proxy.global_position, proxy.global_position + side * float(b["strafe_dir"]) * 1.4):
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
-			var side := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
 			_move_bot_towards(b, proxy.global_position + side * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
-		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los:
 			if to_foe.length_squared() > 0.001:
 				b["rot"] = atan2(-to_foe.x, -to_foe.z)
 				proxy.rotation.y = float(b["rot"])
@@ -3417,22 +3452,25 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	# se mueve en zigzag; si el rival se cierra (< 9.5 m) retrocede corriendo;
 	# de muy cerca cambia a melee porque el arco no sirve.
 	if wkind == "bow" and dist > 4.5 and dist <= 46.0:
-		b["is_aiming"] = true
-		if dist > 30.0:
+		b["is_aiming"] = clear_los
+		var sideb := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
+		if dist > 30.0 or not clear_los:
 			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		elif dist < 9.5 and to_foe.length_squared() > 0.01 and float(b["shoot_cooldown"]) > 0.15:
 			b["is_aiming"] = false
-			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 5.0, 6.2, delta, "run")
+			var back_dir := -to_foe.normalized()
+			if _is_step_blocked(proxy.global_position, proxy.global_position + back_dir * 1.6):
+				back_dir = (back_dir + sideb * float(b["strafe_dir"]) * 1.2).normalized()
+			_move_bot_towards(b, proxy.global_position + back_dir * 5.0, 6.2, delta, "run")
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
-			if float(b["strafe_timer"]) > 1.5:
+			if float(b["strafe_timer"]) > 1.5 or _is_step_blocked(proxy.global_position, proxy.global_position + sideb * float(b["strafe_dir"]) * 1.4):
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
-			var sideb := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
 			_move_bot_towards(b, proxy.global_position + sideb * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
-		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los:
 			if to_foe.length_squared() > 0.001:
 				b["rot"] = atan2(-to_foe.x, -to_foe.z)
 				proxy.rotation.y = float(b["rot"])
@@ -3446,20 +3484,23 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	# Arrojadizas (lanzas, palo afilado, boleadoras): un lanzamiento cada pocos
 	# segundos; el proyectil vuela de verdad en el servidor y se ve en clientes.
 	if wkind in ["thrown", "bola"] and dist > 4.5 and dist <= 38.0:
-		b["is_aiming"] = true
-		if dist > 26.0:
+		b["is_aiming"] = clear_los
+		var sidet := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
+		if dist > 26.0 or not clear_los:
 			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		elif dist < 8.5 and to_foe.length_squared() > 0.01 and float(b["shoot_cooldown"]) > 0.15:
 			b["is_aiming"] = false
-			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 4.5, 6.2, delta, "run")
+			var back_t := -to_foe.normalized()
+			if _is_step_blocked(proxy.global_position, proxy.global_position + back_t * 1.6):
+				back_t = (back_t + sidet * float(b["strafe_dir"]) * 1.2).normalized()
+			_move_bot_towards(b, proxy.global_position + back_t * 4.5, 6.2, delta, "run")
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
-			if float(b["strafe_timer"]) > 1.6:
+			if float(b["strafe_timer"]) > 1.6 or _is_step_blocked(proxy.global_position, proxy.global_position + sidet * float(b["strafe_dir"]) * 1.4):
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
-			var sidet := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
 			_move_bot_towards(b, proxy.global_position + sidet * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
-		if float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, fpos):
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los:
 			if to_foe.length_squared() > 0.001:
 				b["rot"] = atan2(-to_foe.x, -to_foe.z)
 				proxy.rotation.y = float(b["rot"])
@@ -3472,7 +3513,13 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 
 	b["is_aiming"] = false
 	var reach := 3.6
-	if dist <= reach:
+	var can_melee_hit: bool = dist <= reach and absf(fpos.y - proxy.global_position.y) <= 1.8 and _has_clear_shot(proxy.global_position, fpos)
+	if can_melee_hit:
+		var side_m := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
+		# No pegarse a 0 m dentro de la capsula del jugador (enganche): mantener
+		# paso lateral/distancia de golpe (1.3..2.4 m) mientras ataca.
+		if dist < 1.25 and to_foe.length_squared() > 0.01:
+			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 1.5 + side_m * float(b["strafe_dir"]) * 1.2, 3.4, delta, "walk")
 		if to_foe.length_squared() > 0.001:
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
@@ -4790,7 +4837,7 @@ func _chat_parse_order(text: String) -> Dictionary:
 			return {"cmd": "follow"}
 	# Tregua/parley: pacificar a un hostil antes de pedirle nada. Va antes que
 	# el resto de ordenes porque "alto/basta/hablemos" no es una orden de equipo.
-	for kw in [" alto ahi", " basta ", " tregua ", "deja de disparar", "dejen de disparar", "para de disparar", "no disparen", "no disparar", "guarda el arma", "guarden el arma", "guarda las armas", "baja el arma", "bajad el arma", "deja el arma", "dejen las armas", "no hace falta disparar", "no quiero pelea", "no vengo a pegar", "no vengo a disparar", "no soy tu enemigo", "no te hare dano", "no vengo a hacerte dano", "vengo en paz", "vengo en son de paz", "solo quiero hablar", "podemos hablar", "quiero hablar", "hablemos", "podemos negociar", "negociemos", "hablar contigo", "hablame", "habla conmigo", "confia en mi", "date cuenta", "soy de los tuyos", "no soy enemigo"]:
+	for kw in [" alto ahi", " alto el fuego", " basta ", " tregua ", " calma ", " tranquilo ", " tranquila ", "deja de disparar", "dejen de disparar", "para de disparar", "no disparen", "no dispares", "no me dispares", "no me mates", "no disparar", "guarda el arma", "guarden el arma", "guarda las armas", "baja el arma", "bajad el arma", "deja el arma", "dejen las armas", "no hace falta disparar", "no quiero pelea", "no vengo a pegar", "no vengo a disparar", "no soy tu enemigo", "no te hare dano", "no vengo a hacerte dano", "vengo en paz", "vengo en son de paz", "en son de paz", "solo quiero hablar", "podemos hablar", "quiero hablar", "hablemos", "podemos negociar", "negociemos", "hablar contigo", "hablame", "habla conmigo", "confia en mi", "date cuenta", "soy de los tuyos", "no soy enemigo"]:
 		if t.contains(kw):
 			return {"cmd": "truce"}
 	for kw in [" ataca ", "matalo", "matela", "matadle", "encargate", "dispara a", "a por el", "a por ella", "defiendeme", "protegeme"]:
@@ -5561,7 +5608,7 @@ func _known_water_pos(b: Dictionary) -> Vector3:
 # encola <base>.json, el demonio sintetiza <base>.pcm con la voz del personaje
 # y el servidor emite paquetes de 600 muestras por relay_actor_voice.
 
-const BOT_VOICE_RANGE := 28.0
+const BOT_VOICE_RANGE := 55.0
 const BOT_VOICE_GAP_MSEC := 850
 const BOT_VOICE_MAX_BYTES := 240000 # ~20 s a 12 kHz u8
 const VOICE_JOBS_DIR := "user://voice_jobs/"
@@ -5580,17 +5627,19 @@ func _nearest_hearing_bot_id(from_pos: Vector3, preferred_id: int = 0) -> int:
 		var pb: Dictionary = bots[preferred_id]
 		var pp: Node3D = pb.get("proxy")
 		if pp != null and is_instance_valid(pp) and not bool(pp.get_meta("proxy_dead", false)):
-			if pp.global_position.distance_to(from_pos) <= BOT_VOICE_RANGE:
+			var max_pref := 90.0 if pb.get("aggro_target") != null else BOT_VOICE_RANGE
+			if pp.global_position.distance_to(from_pos) <= max_pref:
 				return preferred_id
 	var best_id := 0
-	var best_d := BOT_VOICE_RANGE
+	var best_d := 90.0
 	for bid in bots.keys():
 		var b: Dictionary = bots[bid]
 		var pr: Node3D = b.get("proxy")
 		if pr == null or not is_instance_valid(pr) or bool(pr.get_meta("proxy_dead", false)):
 			continue
+		var max_r := 90.0 if b.get("aggro_target") != null else BOT_VOICE_RANGE
 		var d := pr.global_position.distance_to(from_pos)
-		if d <= best_d:
+		if d <= max_r and d <= best_d:
 			best_d = d
 			best_id = int(bid)
 	return best_id
@@ -7182,7 +7231,7 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 				store.append(it)
 			continue
 		if tp == "food":
-			if nm == "Carne ensartada" or nm == "Pez ensartado" or (nm.begins_with("Carne cruda") and _bot_item_count(proxy, "Palo afilado") > 0):
+			if nm == "Carne ensartada" or nm == "Pez ensartado" or (nm.begins_with("Carne cruda") and (_bot_item_count(proxy, "Palo afilado") > 0 or not bool(b.get("_s_has_wolf", false)))):
 				keep.append(it)
 				continue
 			if food_kept < food_cap:
@@ -7404,6 +7453,10 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 		return false
 	var proxy: Node3D = b["proxy"]
 	if not _bot_can_cook_raw_meat(proxy):
+		return false
+	# Si aun no tiene lobo domesticado y no pasa hambre, reserva hasta 3 piezas
+	# de carne cruda como cebo para cuando se cruce con un lobo salvaje.
+	if not bool(b.get("_s_has_wolf", false)) and float(b.get("hunger", 100.0)) >= 52.0 and not _bot_has_skewered_meat(proxy) and _bot_raw_meat_count(proxy) <= 3:
 		return false
 	var cur := proxy.global_position
 	var fire_pos := _nearest_lit_campfire_pos(cur, 85.0)
@@ -8029,6 +8082,18 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		sm = (sm + (dir - sm) * minf(1.0, delta * turn_rate)).normalized()
 	b["_mdir"] = sm
 	var on_stair_segment: bool = in_building_3d and absf(next_goal.y - cur.y) > 0.25
+	# Gestion de estamina como en PlayerController: fuera de combate/huida,
+	# cuando la energia cae a <=12 pasa a caminar hasta recuperar >=45, evitando
+	# que corran con energia 0 (lo que multiplicaba x1.875 el desgaste de sueno).
+	var in_urgent_chase: bool = b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null or float(b.get("flee_until", 0.0)) > 0.0
+	var cur_energy := float(b.get("energy", 100.0))
+	if cur_energy <= 12.0 and not in_urgent_chase:
+		b["_stamina_recover"] = true
+	elif cur_energy >= 45.0 or in_urgent_chase:
+		b["_stamina_recover"] = false
+	if anim_name == "run" and bool(b.get("_stamina_recover", false)):
+		anim_name = "walk"
+		speed = minf(speed, 3.8)
 	var base_spd := maxf(speed, 6.2) if (anim_name == "run" and not on_stair_segment) else speed
 	var eff_speed := minf(base_spd, 3.2) if on_stair_segment else base_spd
 	# Sobrepeso: frena igual que al jugador humano (walk * (1 - carry * 0.2))
@@ -8177,15 +8242,20 @@ func _bot_weather_observation() -> Dictionary:
 			"cloud_cover": 0.88, "wind_speed": 0.0, "wind_direction": 0.0}
 	return {}
 
-# Bajo techo: refugio propio/ajeno construido, o casa con la puerta cerrada.
+# Bajo techo: refugio propio/ajeno construido, o casa/edificio (si descansa o
+# duerme dentro, el techo le resguarda del frio nocturno y la lluvia aunque la
+# puerta hubiera quedado abierta al entrar).
 func _bot_is_sheltered(b: Dictionary, pos: Vector3) -> bool:
 	if _bot_at_own_built_shelter(b, pos):
 		return true
 	if world.has_method("_is_near_built_shelter") and world._is_near_built_shelter(pos):
 		return true
+	var resting_inside: bool = bool(b.get("sleeping", false)) or bool(b.get("sitting", false)) or str(b.get("_act", "")) in ["rest", "rest_home"]
 	if world.has_method("_is_player_in_house") and world._is_player_in_house(pos):
-		if world.has_method("_is_in_open_house") and world._is_in_open_house(pos):
+		if not resting_inside and world.has_method("_is_in_open_house") and world._is_in_open_house(pos):
 			return false
+		return true
+	if resting_inside and (_find_city_building_for_pos(pos) >= 0 or _is_in_clock_tower(pos)):
 		return true
 	return false
 
@@ -8317,6 +8387,12 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var wind := float(obs.get("wind_speed", 0.0))
 	var resting := bool(b.get("sitting", false)) or str(b.get("_act", "")) == "rest"
 	st.tick(delta, sprinting, ambient_temp, sheltered, shelter_warmth, is_night, moving, sleeping, carry_ratio, false, false, sun, wind, resting)
+	# Recuperacion de energia al caminar o descansar despierto (misma curva que
+	# PlayerController._physics_process: sin esto st.energy caia a 0 para siempre
+	# y multiplicaba x1.5 el desgaste de sueno hasta matar al bot de agotamiento).
+	if not sprinting and not sleeping and not st.dead:
+		var eff_max_en := st.max_stat * (1.0 - carry_ratio * 0.5)
+		st.energy = minf(eff_max_en, st.energy + maxf(2.5, 8.0 - carry_ratio * 5.0) * st.get_thermal_recovery_multiplier() * delta)
 	if sleeping:
 		st.do_sleep(delta, false)
 	if st.dead:
@@ -8343,7 +8419,7 @@ func _on_bot_stats_died(b: Dictionary) -> void:
 	var st: SurvivalStats = b.get("vstats")
 	var kind := "succumbed"
 	if st != null:
-		if st.body_temperature < 34.5:
+		if st.body_temperature < 35.4:
 			kind = "hypothermia"
 		elif st.body_temperature > 39.0:
 			kind = "heatstroke"
@@ -8380,10 +8456,10 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	if not collapse:
 		if float(b["hunger"]) < 20.0 or float(b["thirst"]) < 16.0:
 			return false
-		if st.body_temperature < 34.9 or st.body_temperature > 38.4:
+		if st.body_temperature < 35.4 or st.body_temperature > 38.4:
 			return false
-	if st.sleep >= 99.0 and st.energy >= 98.0 and float(b["health"]) >= 99.0:
-		return false # nada que recuperar: queda sentado de vigilancia
+	if st.sleep >= 99.0 and st.energy >= 98.0:
+		return false # sueño y energia al tope: queda sentado (donde recupera vida)
 	b["sleeping"] = true
 	b["sitting"] = false
 	b["crouching"] = false
@@ -8527,6 +8603,13 @@ func _bot_item_count(proxy: Node3D, item_name: String) -> int:
 
 func _bot_has_raw_meat(proxy: Node3D) -> bool:
 	return not _first_raw_meat_name(proxy).is_empty()
+
+func _bot_raw_meat_count(proxy: Node3D) -> int:
+	var total := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("name", "")).begins_with("Carne cruda"):
+			total += int(it.get("quantity", 1))
+	return total
 
 func _bot_has_skewered_meat(proxy: Node3D) -> bool:
 	return _bot_item_count(proxy, "Carne ensartada") > 0 or _bot_item_count(proxy, "Pez ensartado") > 0

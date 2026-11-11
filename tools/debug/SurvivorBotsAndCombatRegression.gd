@@ -4452,6 +4452,70 @@ func run() -> void:
 	check(not str(b_log.get("shelter_id", "")).is_empty() and mgr._bot_item_count(p_log, "Tronco") == 0,
 		"10J5i: Con 6 Troncos + Cuchillo raja los 12 palos y construye su refugio (sh=%s)" % str(b_log.get("shelter_id", "")))
 
+	# 10J5j: Recuperacion de energia al caminar/descansar y freno de sprint con
+	# energia <=12 (evita quedar a energy=0 perpetuo y morir de agotamiento).
+	var vs_en: SurvivalStats = b_log["vstats"]
+	vs_en.energy = 8.0
+	b_log["energy"] = 8.0
+	b_log["aggro_target"] = null
+	b_log["_s_predator"] = null
+	b_log["_s_foe"] = null
+	b_log["flee_until"] = 0.0
+	mgr._move_bot_towards(b_log, p_log.global_position + Vector3(20.0, 0.0, 0.0), 6.2, 0.2, "run")
+	mgr._bot_survival_tick(b_log, 2.0)
+	check(str(b_log["anim"]) == "walk" and vs_en.energy > 12.0,
+		"10J5j: Con energia baja el bot deja de esprintar, pasa a walk y recupera energia (anim=%s en=%.1f)" % [str(b_log["anim"]), vs_en.energy])
+
+	# 10J5k: Doma de lobos real en _tick_bot (no secuestrada por predator) y
+	# reserva de 3 carnes crudas sin cocinar mientras no tenga lobo domado.
+	var w_tame2 := WildlifeControllerScript.new()
+	w_tame2.name = "Wildlife_wolf_tame_tick"
+	world.add_child(w_tame2)
+	w_tame2.setup("wolf", [Vector3(120.0, 0.4, 120.0)])
+	w_tame2.set_process(false)
+	w_tame2.global_position = p_log.global_position + Vector3(10.0, 0.0, 0.0)
+	b_log["tame_cooldown"] = 0.0
+	b_log["_tame_wait_t"] = 0.0
+	b_log["hunger"] = 85.0
+	b_log["health"] = 100.0
+	b_log["sense_t"] = 0.0
+	p_log.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 15.0},
+		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 2},
+		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 2},
+	])
+	check(not mgr._bot_try_cook_meat(b_log, 0.1),
+		"10J5k1: Sin lobo domesticado y sin hambre reserva sus 3 carnes crudas para domar en vez de asarlas")
+	mgr._tick_bot(b_log, 0.1)
+	check(str(b_log.get("_act", "")) == "tame" and float(b_log.get("_tame_wait_t", 0.0)) > 0.0,
+		"10J5k2: Con lobo salvaje a 10 m y carne cruda _tick_bot entra en 'tame' antes que 'predator' (act=%s)" % str(b_log.get("_act", "")))
+	w_tame2.queue_free()
+
+	# 10J5l: Tactica de boleadoras en combate humano y anti-enganche en melee (<1.25 m)
+	var foe_t := Node3D.new()
+	world.add_child(foe_t)
+	foe_t.global_position = p_log.global_position + Vector3(12.0, 0.0, 0.0)
+	p_log.set_meta("saved_inventory", [
+		{"name": "Arco reforzado", "type": "weapon_bow", "weight": 1.1, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+		{"name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.08, "quantity": 5},
+		{"name": "Boleadoras", "type": "weapon_bola", "weight": 0.65, "quantity": 1},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+	])
+	b_log["shoot_cooldown"] = 0.0
+	mgr._engage_foe(b_log, foe_t, 0.1)
+	check(str(b_log.get("held_item", "")) == "Boleadoras",
+		"10J5l1: En combate a 12 m prioriza lanzar Boleadoras si el enemigo aun no esta trabado (held=%s)" % str(b_log.get("held_item", "")))
+	foe_t.global_position = p_log.global_position + Vector3(0.5, 0.0, 0.0)
+	mgr._engage_foe(b_log, foe_t, 0.2)
+	check(p_log.global_position.distance_to(foe_t.global_position) > 0.55,
+		"10J5l2: En cuerpo a cuerpo a <1.25 m se separa para no engancharse dentro del jugador (d=%.2f)" % p_log.global_position.distance_to(foe_t.global_position))
+	foe_t.queue_free()
+
+	# 10J5m: Alcance de voz ampliado (55 m normal, 90 m en combate) y nuevas frases de tregua
+	check(str(mgr._chat_parse_order("¡no me dispares, alto el fuego!").get("cmd", "")) == "truce",
+		"10J5m: El parser de voz/chat reconoce 'no me dispares / alto el fuego' como tregua")
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
