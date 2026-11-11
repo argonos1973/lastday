@@ -859,6 +859,64 @@ func run() -> void:
 	check(mgr._base_spot_safety(mem_brave, spot_a) > hazard_score,
 		"Un superviviente con poco instinto teme menos los solares peligrosos")
 
+	# --- 10i) Aprende de SUS muertes: nemesis y cautela anti-tirador ---
+	# Nemesis registrada en memoria -> al detectarla sin ventaja se retira a
+	# su refugio en vez de repetir la pelea que le mato.
+	var mem_c: Dictionary = carlos["_mem"]
+	var killers_bak: Dictionary = (mem_c.get("killers", {}) as Dictionary).duplicate(true)
+	var dl_bak: Dictionary = (mem_c.get("death_lessons", {}) as Dictionary).duplicate(true)
+	var nem_proxy := Node3D.new()
+	world.add_child(nem_proxy)
+	nem_proxy.global_position = carlos_proxy.global_position + Vector3(20.0, 0.0, 0.0)
+	nem_proxy.set_meta("client_id", "sami_nem")
+	nem_proxy.set_meta("saved_held_item", "Fusil de asalto")
+	world.server_proxies[77] = nem_proxy
+	(mem_c["killers"] as Dictionary)["sami_nem"] = {"name": "Sami", "count": 2}
+	var nem := mgr._foe_nemesis(carlos, nem_proxy)
+	check(not nem.is_empty() and int(nem.get("count", 0)) == 2 and str(nem.get("name", "")) == "Sami",
+		"Reconoce a su nemesis consultando la memoria de verdugos")
+	carlos["aggro_target"] = nem_proxy
+	carlos["aggro_timer"] = 10.0
+	carlos["health"] = 100.0
+	carlos["hide_timer"] = 0.0
+	carlos["flee_until"] = 0.0
+	carlos["sitting"] = false
+	carlos["sense_t"] = 0.0
+	var d0_nem := carlos_proxy.global_position.distance_to(nem_proxy.global_position)
+	mgr._tick_bot(carlos, 0.2)
+	check(float(carlos["hide_timer"]) > 0.0 or carlos_proxy.global_position.distance_to(nem_proxy.global_position) > d0_nem,
+		"Sin ventaja evita pelear con su nemesis: se repliega a su refugio")
+	check((mem_c.get("events", []) as Array).size() > 0 and str(((mem_c.get("events", []) as Array).back() as Dictionary).get("type", "")) == "evade_nemesis",
+		"La retirada ante la nemesis queda registrada en su memoria")
+	# Leccion 'ranged': rival con fusil + bot solo con melee -> acercamiento
+	# en zigzag, no en linea recta (aprendio a no repetir la muerte a tiros).
+	mem_c["killers"] = {}
+	(mem_c["death_lessons"] as Dictionary)["ranged"] = 1
+	carlos["hide_timer"] = 0.0
+	carlos["flee_until"] = 0.0
+	carlos["crouching"] = false
+	carlos["sitting"] = false
+	carlos["sense_t"] = 0.0
+	var before_z := carlos_proxy.global_position
+	mgr._tick_bot(carlos, 0.2)
+	var mv := carlos_proxy.global_position - before_z
+	mv.y = 0.0
+	var to_foe_t := nem_proxy.global_position - before_z
+	to_foe_t.y = 0.0
+	var fwd := to_foe_t.normalized()
+	var lateral := mv - fwd * mv.dot(fwd)
+	check(mv.length() > 0.4 and lateral.length() > mv.length() * 0.3,
+		"Con leccion 'ranged' se acerca en zigzag al tirador (lat=%.2f de %.2f m)" % [lateral.length(), mv.length()])
+	# Limpieza
+	carlos["aggro_target"] = null
+	carlos["aggro_timer"] = 0.0
+	carlos["hide_timer"] = 0.0
+	carlos["flee_until"] = 0.0
+	mem_c["killers"] = killers_bak
+	mem_c["death_lessons"] = dl_bak
+	world.server_proxies.erase(77)
+	nem_proxy.queue_free()
+
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()
 	mgr.on_bot_damaged(901, 8.0, 1, "rifle")

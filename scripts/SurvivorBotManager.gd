@@ -1287,6 +1287,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var combat_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("combat", 0))
 		var ranged_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("ranged", 0))
 		var retreat_hp := 30.0 + minf(15.0, float(combat_lessons) * 5.0) + minf(10.0, float(ranged_lessons) * 4.0)
+		# Nemesis: quien ya le mato suma miedo persistente. Si no tiene ventaja
+		# clara, aprende a no repetir la muerte y se retira en vez de pelear.
+		b["_nemesis_ev_t"] = maxf(0.0, float(b.get("_nemesis_ev_t", 0.0)) - delta)
+		var nem := _foe_nemesis(b, human_foe)
+		if not nem.is_empty() and not _has_combat_edge(b, human_foe):
+			var fear_n := float(get_bot_relationship(int(b["bot_id"]), str(nem.get("key", ""))).get("fear", 0.0))
+			var pers_n := _get_bot_personality(b)
+			if int(nem.get("count", 1)) >= 2 or fear_n > 0.6 or unarmed_vs_armed or float(pers_n.get("bravery", 0.5)) < 0.42:
+				_bot_avoid_nemesis(b, human_foe, str(nem.get("name", "")), delta)
+				return
 		if (float(b["health"]) < retreat_hp or fleeing or unarmed_vs_armed) and not _has_combat_edge(b, human_foe):
 			if sh_pos != Vector3.INF:
 				b["hide_timer"] = 20.0
@@ -1307,6 +1317,23 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["strafe_timer"] = 0.0
 			var side := Vector3(-away_dir.z, 0.0, away_dir.x)
 			_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.5).normalized() * 8.0, 6.0, delta, "run")
+			return
+		# Leccion anti-tirador: si ya murio a tiros y el rival lleva un arma a
+		# distancia, no carga en linea recta — se acerca en zigzag hasta el
+		# cuerpo a cuerpo. Los bots con arma a distancia ya zigzaguean en
+		# _engage_foe; esto cubre a los que solo llevan melee.
+		var dist_foe := proxy.global_position.distance_to(human_foe.global_position)
+		if ranged_lessons > 0 and _actor_holds_ranged(human_foe) and str(_pick_fight_weapon(b, dist_foe).get("kind", "")) == "melee" and dist_foe > 14.0:
+			b["strafe_timer"] = float(b["strafe_timer"]) + delta
+			if float(b["strafe_timer"]) > 0.9:
+				b["strafe_dir"] = -float(b["strafe_dir"])
+				b["strafe_timer"] = 0.0
+			var to_fz := human_foe.global_position - proxy.global_position
+			to_fz.y = 0.0
+			var sidez := Vector3(-to_fz.z, 0.0, to_fz.x).normalized() if to_fz.length_squared() > 0.01 else Vector3.RIGHT
+			_move_bot_towards(b, proxy.global_position + (to_fz.normalized() + sidez * float(b["strafe_dir"]) * 0.9).normalized() * 7.0, 6.2, delta, "run")
+			b["rot"] = atan2(-to_fz.x, -to_fz.z)
+			proxy.rotation.y = float(b["rot"])
 			return
 		_engage_foe(b, human_foe, delta)
 		return
@@ -2878,6 +2905,58 @@ func _bot_needs_outing(b: Dictionary) -> bool:
 		return true
 	return false
 
+# Nemesis: devuelve la ficha del verdugo si el enemigo sensado ya le mato
+# antes (memoria persistente 'killers'). Aprender de las muertes es, ante
+# todo, reconocer a quien te las causa.
+func _foe_nemesis(b: Dictionary, foe: Node3D) -> Dictionary:
+	var killers: Dictionary = b.get("_mem", {}).get("killers", {})
+	if killers.is_empty() or foe == null:
+		return {}
+	var pid := _peer_id_for_actor(foe)
+	if pid <= 0:
+		return {}
+	var kkey := _actor_persist_key(pid)
+	if not (killers.get(kkey) is Dictionary):
+		return {}
+	var kr: Dictionary = (killers[kkey] as Dictionary).duplicate()
+	kr["key"] = kkey
+	return kr
+
+# El rival lleva en mano un arma de fuego/arco — contra eso cargar en
+# linea recta es repetir la muerte anterior.
+func _actor_holds_ranged(node: Node3D) -> bool:
+	var held := str(node.get_meta("saved_held_item", "")) if node != null else ""
+	return held.begins_with("Fusil") or held.begins_with("Rifle") or held.begins_with("Pistola") or held.begins_with("Arco") or held.begins_with("Ballesta") or held == "Boleadoras"
+
+# Retirada ante la nemesis: aprendio a no repetir el enfrentamiento. Se
+# parapeta en su refugio si existe; si no, huye en zigzag lejos del verdugo.
+func _bot_avoid_nemesis(b: Dictionary, foe: Node3D, nem_name: String, delta: float) -> void:
+	var proxy: Node3D = b["proxy"]
+	b["is_aiming"] = false
+	var sh: Vector3 = b["shelter_pos"]
+	if sh != Vector3.INF:
+		b["hide_timer"] = 24.0
+		_move_bot_towards(b, sh, 6.0, delta, "run")
+		if proxy.global_position.distance_to(sh) < 1.8:
+			b["crouching"] = true
+			b["sitting"] = true
+			b["anim"] = "sit"
+	else:
+		b["flee_until"] = 14.0
+		var away := proxy.global_position - foe.global_position
+		away.y = 0.0
+		var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
+		b["strafe_timer"] = float(b["strafe_timer"]) + delta
+		if float(b["strafe_timer"]) > 1.2:
+			b["strafe_dir"] = -float(b["strafe_dir"])
+			b["strafe_timer"] = 0.0
+		var side := Vector3(-away_dir.z, 0.0, away_dir.x)
+		_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.6).normalized() * 8.0, 6.0, delta, "run")
+	if float(b.get("_nemesis_ev_t", 0.0)) <= 0.0:
+		b["_nemesis_ev_t"] = 60.0
+		record_bot_event(int(b["bot_id"]), "evade_nemesis", nem_name, _poi_kind_near(proxy.global_position), proxy.global_position,
+			"evita a %s, que ya le mato" % nem_name)
+
 func _perform_wolf_taming_step(b: Dictionary, wolf: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	# Sostener carne en la mano pacifica al lobo salvaje (_player_holds_meat)
@@ -3684,7 +3763,14 @@ func _bot_death_adaptations(mem: Dictionary) -> Array:
 		out.append("🛡 Táctica de combate (repliegue a <%d HP)" % (30 + mini(15, cmb * 5)))
 	var rng := int(lessons.get("ranged", 0))
 	if rng > 0:
-		out.append("🎯 Precaución anti-tirador (evita campo abierto, desconfía ×%d)" % mini(3, rng + 1))
+		out.append("🎯 Precaución anti-tirador (zigzag al cargar, repliegue antes, desconfía ×%d)" % mini(3, rng + 1))
+	var killers_m: Dictionary = mem.get("killers", {})
+	var nem_c := 0
+	for k2 in killers_m.values():
+		if k2 is Dictionary and int((k2 as Dictionary).get("count", 0)) > 0:
+			nem_c += 1
+	if nem_c > 0:
+		out.append("⚠ Reconoce a sus verdugos (%d) y evita pelear sin ventaja" % nem_c)
 	var cld := int(lessons.get("cold", 0))
 	if cld > 0:
 		out.append("🔥 Prioridad térmica (abrigo y fogata temprana)")
