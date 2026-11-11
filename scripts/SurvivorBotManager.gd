@@ -8003,12 +8003,15 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		var path: Array = b["path"]
 		var prev_pgoal: Vector3 = b.get("_path_goal", Vector3.INF) if b.get("_path_goal") is Vector3 else Vector3.INF
 		var goal_shifted: bool = prev_pgoal == Vector3.INF or Vector2(goal.x - prev_pgoal.x, goal.z - prev_pgoal.z).length() > 2.5
-		if path.is_empty() or float(b["path_timer"]) <= 0.0 or goal_shifted:
+		if float(b["path_timer"]) <= 0.0 or (goal_shifted and float(b["path_timer"]) <= 1.2):
 			b["path"] = bot_nav_ref.find_path(cur, goal)
 			b["_path_goal"] = goal
 			b["path_idx"] = 0
 			b["path_timer"] = 1.8
 			path = b["path"]
+			if path.is_empty() and flat_dist > 8.0:
+				_abandon_unreachable_goal(b, raw_goal)
+				return
 		var pidx := int(b["path_idx"])
 		# Si find_path devuelve un unico punto (_nearest_free_cell) que queda
 		# MAS LEJOS del objetivo que la posicion actual, el nav esta intentando
@@ -8130,10 +8133,10 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 				steered = true
 				break
 		if not steered:
-			# Bloqueado en todas direcciones: invertir sentido de rodeo y recalcular ruta
+			# Bloqueado en todas direcciones: invertir sentido de rodeo y recalcular ruta tras enfriamiento
 			b["avoid_sign"] = -sign_pref
 			b["path"] = []
-			b["path_timer"] = 0.0
+			b["path_timer"] = maxf(float(b["path_timer"]), 0.8)
 	var gy := _ground_y(new_pos.x, new_pos.z, cur.y)
 	if on_stair_segment or (in_building_3d and absf(next_goal.y - cur.y) > 0.01):
 		var t_ramp := clampf(step / maxf(d, 0.01), 0.0, 1.0)
