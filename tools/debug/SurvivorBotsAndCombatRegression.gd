@@ -4606,6 +4606,68 @@ func run() -> void:
 			break
 	check(mgr._bot_item_count(p_nt, "Antorcha") >= 1 and mgr._bot_item_count(p_nt, "Camiseta") == 0,
 		"10J5n7: La cadena camiseta->trapos->antorcha se completa de noche (antorchas=%d camiseta=%d)" % [mgr._bot_item_count(p_nt, "Antorcha"), mgr._bot_item_count(p_nt, "Camiseta")])
+	# El cuchillo no es prenda cortable: las herramientas figuran en TODAS las
+	# recetas de trapos pero no se cortan (un bot llego a cargar 3 cuchillos).
+	check(not mgr._bot_cuts_into_trapos("Cuchillo") and mgr._bot_cuts_into_trapos("Camiseta"),
+		"10J5n8: El cuchillo no es prenda cortable; la camiseta si")
+	# Con 9 palos + trapos la antorcha ya no espera al doceavo palo: solo los
+	# 11 EXACTOS del refugio a punto de pagarse quedan protegidos.
+	p_nt.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 9},
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1},
+	])
+	b_nt["_craft_state"] = {}
+	b_nt["_act"] = ""
+	mgr._tick_bot(b_nt, 0.1)
+	check(str(b_nt.get("_act", "")) == "torch",
+		"10J5n9: Con 9 palos+trapos la antorcha no espera al 12 del refugio (act=%s)" % str(b_nt.get("_act", "")))
+	for i in range(25):
+		mgr._tick_bot(b_nt, 0.2)
+		if mgr._bot_item_count(p_nt, "Antorcha") >= 1:
+			break
+	check(mgr._bot_item_count(p_nt, "Antorcha") >= 1 and mgr._bot_item_count(p_nt, "Palo") == 8,
+		"10J5n9b: Con 9 palos fabrica la antorcha y le quedan 8 (palo=%d)" % mgr._bot_item_count(p_nt, "Palo"))
+	# El seguidor sin luz sale a por el palo de su antorcha pese al lider: la
+	# salida de material de fuego es la unica excepcion a no separarse.
+	var n_bush := WorldActionScript.new()
+	n_bush.setup("night_torch_bush", "fell_bush", "Arbusto", Vector3(1.2, 1.4, 1.2), Color(0.2, 0.35, 0.12), true, false)
+	world.add_child(n_bush)
+	n_bush.global_position = p_nt.global_position + Vector3(5.0, 0.0, 0.0)
+	world.world_actions_by_id["night_torch_bush"] = n_bush
+	var lead_nt := Node3D.new()
+	world.add_child(lead_nt)
+	lead_nt.global_position = p_nt.global_position + Vector3(3.0, 0.0, 0.0)
+	p_nt.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1},
+	])
+	b_nt["team_leader_id"] = 901
+	b_nt["_s_leader"] = {"id": 901, "proxy": lead_nt, "pos": lead_nt.global_position, "dist": 3.0}
+	b_nt["_gather"] = {}
+	b_nt["_gather_scan"] = 0.0
+	check(mgr._bot_try_gather_mats(b_nt, 0.1),
+		"10J5n10: El seguidor sin luz sale a por el palo de su antorcha pese al lider")
+	b_nt["team_leader_id"] = 0
+	b_nt["_s_leader"] = null
+	b_nt["_gather"] = {}
+	world.world_actions_by_id.erase("night_torch_bush")
+	n_bush.queue_free()
+	lead_nt.queue_free()
+	# Mochila llena de noche: por material de fuego puede soltar lo menos
+	# esencial; de dia nunca.
+	var cap_nt: Dictionary = mgr._bot_carry_capacity(b_nt)
+	var inv_lleno: Array = []
+	for i in range(int(cap_nt.get("slots", 3))):
+		inv_lleno.append({"name": "Piel de lobo", "type": "resource", "weight": 0.35, "quantity": 1})
+	p_nt.set_meta("saved_inventory", inv_lleno)
+	var palo_d := {"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0}
+	check(not mgr._bot_would_fit(b_nt, inv_lleno, palo_d),
+		"10J5n11a: Mochila llena: el palo no cabe tal cual")
+	check(mgr._bot_can_drop_for_fire(b_nt, inv_lleno, palo_d),
+		"10J5n11b: De noche por material de fuego suelta lo menos esencial")
+	dc.time_of_day = 14.0
+	check(not mgr._bot_can_drop_for_fire(b_nt, inv_lleno, palo_d),
+		"10J5n11c: De dia no suelta nada por material de fuego")
 	dc.time_of_day = 14.0
 	b_nt["hunger"] = 80.0
 	b_nt["thirst"] = 80.0
