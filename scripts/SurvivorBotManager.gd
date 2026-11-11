@@ -1492,8 +1492,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "hunt"
 		return
 
-	# 5) Si está reclutado en el equipo de un jugador, obedecer órdenes de equipo
-	if leader != null and not desperate_food:
+	# 5) Si está reclutado en un equipo, seguir al líder — salvo emergencia
+	# vital (hambre, agotamiento o frío en equipos bot-bot, o cuando ya tiene
+	# los 11 palos para levantar su refugio junto al campamento del líder).
+	var bot_team_member := is_bot_peer_id(int(b.get("team_leader_id", 0)))
+	var desperate_team_break: bool = desperate_food or (bot_team_member and (_bot_is_exhausted(b) or _bot_is_freezing(b) or (str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy))))
+	if leader != null and not desperate_team_break:
 		b["_act"] = "team"
 		_tick_teammate_behavior(b, leader, delta)
 		return
@@ -3938,8 +3942,20 @@ func _respawn_bot(b: Dictionary) -> void:
 
 func _resolve_team_leader(b: Dictionary) -> Node3D:
 	var lid := int(b.get("team_leader_id", 0))
-	if lid <= 0:
+	if lid <= 0 or lid == int(b.get("bot_id", 0)):
 		return null
+	# Si el supuesto lider bot sigue a su vez a este mismo bot (ciclo A<->B),
+	# el de mayor liderazgo actua como raiz libre en el acto sin esperar al
+	# ciclo social de 3.5 s, evitando que ambos se queden mirandose quietos.
+	if bots.has(lid):
+		var lb: Dictionary = bots[lid]
+		var llid := int(lb.get("team_leader_id", 0))
+		if llid == int(b.get("bot_id", 0)) and _bot_lead_score(b) >= _bot_lead_score(lb):
+			b["team_leader_id"] = 0
+			var prx: Node3D = b.get("proxy")
+			if prx != null and is_instance_valid(prx):
+				prx.set_meta("team_leader_id", 0)
+			return null
 	var node := _find_actor_by_peer_id(lid)
 	if node == null or not is_instance_valid(node) or bool(node.get_meta("proxy_dead", false)) or bool(node.get_meta("disconnected", false)) or node.get("is_dead") == true:
 		return null
@@ -3989,14 +4005,18 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 		var clip := "run" if should_run else "walk"
 		_move_bot_towards(b, lpos, spd, delta, clip)
 	else:
-		# Cerca del líder en la misma planta: si hay un botín útil muy a mano (< 8 m), recogerlo
-		var nearby_loot := _find_nearby_valuable_loot(b, 7.5)
+		# Cerca del líder en la misma planta: usa el botín cacheado a 5 Hz
+		# (_s_loot) en vez de escanear todos los drops del mundo a 60 Hz.
+		var nearby_loot: Dictionary = b.get("_s_loot", {})
 		if not nearby_loot.is_empty():
 			var lp := _loot_entry_pos(nearby_loot)
-			if Vector2(cur.x - lp.x, cur.z - lp.z).length() <= 2.1 and absf(cur.y - lp.y) <= 1.8:
+			var d_nl := Vector2(cur.x - lp.x, cur.z - lp.z).length()
+			if d_nl <= 2.1 and absf(cur.y - lp.y) <= 1.8:
 				_collect_loot_entry(b, nearby_loot)
-			else:
+			elif d_nl <= 8.5 and absf(cur.y - lp.y) <= 1.8:
 				_move_bot_towards(b, lp, 3.6, delta, "walk")
+			else:
+				b["anim"] = "idle"
 		else:
 			b["anim"] = "idle"
 
@@ -4021,7 +4041,7 @@ const BOT_AMBUSH_MAX_SECONDS := 24.0
 
 func _bot_lead_score(b: Dictionary) -> float:
 	var pers: Dictionary = _ensure_bot_memory(int(b["bot_id"])).get("personality", {})
-	return float(pers.get("bravery", 0.5)) + float(pers.get("cooperation", 0.5))
+	return float(pers.get("bravery", 0.5)) + float(pers.get("cooperation", 0.5)) - float(int(b.get("bot_id", 0))) * 0.0001
 
 func _bot_team_size(leader_id: int) -> int:
 	var n := 1
@@ -4232,21 +4252,47 @@ func _bot_social_update(b: Dictionary) -> void:
 		var lb: Dictionary = bots.get(lid, {})
 		var lp: Node3D = lb.get("proxy")
 		var leader_gone: bool = lb.is_empty() or lp == null or not is_instance_valid(lp) or bool(lp.get_meta("proxy_dead", false))
-		var rel := get_bot_relationship(my_id, "bot_%d" % lid)
-		var too_far := (not leader_gone) and proxy.global_position.distance_to(lp.global_position) > BOT_TEAM_GIVE_UP_DIST
-		if leader_gone or float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST or too_far:
-			record_bot_event(my_id, "team_leave", "bot_%d" % lid, _poi_kind_near(proxy.global_position), proxy.global_position,
-				"lider muerto" if leader_gone else ("desconfianza" if float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST else "se perdio"))
-			b["team_leader_id"] = 0
-			proxy.set_meta("team_leader_id", 0)
-			lid = 0
-		elif randf() < 0.55:
-			# Sobrevivir juntos consolida la confianza (aprendizaje persistente)
-			record_social_event(my_id, "bot_%d" % lid, str(lb.get("name", "")), "ally", 0.03, "equipo")
+		var llid := int(lb.get("team_leader_id", 0)) if not lb.is_empty() else 0
+		# Anti-ciclo: si el supuesto lider sigue a su vez a otro bot (p.ej.
+		# 901<->902 mirandose en bucle sin que ninguno lidere), romper el ciclo
+		# dejando como unico lider raiz al de mayor _bot_lead_score.
+		if not leader_gone and llid > 0:
+			if llid == my_id:
+				if _bot_lead_score(b) >= _bot_lead_score(lb):
+					b["team_leader_id"] = 0
+					proxy.set_meta("team_leader_id", 0)
+					lid = 0
+				else:
+					lb["team_leader_id"] = 0
+					if lp != null and is_instance_valid(lp):
+						lp.set_meta("team_leader_id", 0)
+			elif bots.has(llid) and int(bots[llid].get("team_leader_id", 0)) == 0:
+				b["team_leader_id"] = llid
+				proxy.set_meta("team_leader_id", llid)
+				lid = llid
+				lb = bots[lid]
+				lp = lb.get("proxy")
+			else:
+				b["team_leader_id"] = 0
+				proxy.set_meta("team_leader_id", 0)
+				lid = 0
+		if lid > 0:
+			var rel := get_bot_relationship(my_id, "bot_%d" % lid)
+			var too_far := (not leader_gone) and proxy.global_position.distance_to(lp.global_position) > BOT_TEAM_GIVE_UP_DIST
+			if leader_gone or float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST or too_far:
+				record_bot_event(my_id, "team_leave", "bot_%d" % lid, _poi_kind_near(proxy.global_position), proxy.global_position,
+					"lider muerto" if leader_gone else ("desconfianza" if float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST else "se perdio"))
+				b["team_leader_id"] = 0
+				proxy.set_meta("team_leader_id", 0)
+				lid = 0
+			elif randf() < 0.55:
+				# Sobrevivir juntos consolida la confianza (aprendizaje persistente)
+				record_social_event(my_id, "bot_%d" % lid, str(lb.get("name", "")), "ally", 0.03, "equipo")
 
 	# 2) Formar equipo: convivir cerca sin agresiones sube la confianza hasta
 	#    que alguien se ofrece a seguir al bot con mejor perfil de lider
 	if lid <= 0:
+		var already_leading := _bot_team_role(b) == "leader"
 		var my_faction := str(b.get("faction", ""))
 		var my_lead := _bot_lead_score(b)
 		var best_target := 0
@@ -4282,7 +4328,7 @@ func _bot_social_update(b: Dictionary) -> void:
 			if odist > BOT_TEAM_FORM_DIST:
 				# Iman social: lejos para convivir pero al alcance — un bot que
 				# quiere compañia viaja a reunirse con su aliado potencial.
-				if civil and _bot_wants_company(b, rel_out) and odist < meet_dist:
+				if not already_leading and civil and _bot_wants_company(b, rel_out) and odist < meet_dist:
 					meet_dist = odist
 					meet_id = oid
 				continue
@@ -4291,6 +4337,8 @@ func _bot_social_update(b: Dictionary) -> void:
 				record_social_event(oid, my_key, str(b.get("name", my_key)), "ally", 0.05, "convive")
 				rel_out = get_bot_relationship(my_id, okey)
 				rel_in = get_bot_relationship(oid, my_key)
+			if already_leading:
+				continue # quien ya lidera un equipo no se subordina a otro (evita ciclos)
 			var mutual := minf(float(rel_out.get("trust", 0.0)), float(rel_in.get("trust", 0.0)))
 			if mutual < form_trust:
 				continue
@@ -4299,7 +4347,10 @@ func _bot_social_update(b: Dictionary) -> void:
 			# unira a mi en su propio ciclo (desempate deterministico).
 			var olid := int(ob.get("team_leader_id", 0))
 			var target_id: int = olid if (olid > 0 and is_bot_peer_id(olid)) else oid
-			if olid <= 0 and _bot_lead_score(ob) <= my_lead:
+			if target_id == my_id or not bots.has(target_id):
+				continue
+			var tb_lead: Dictionary = bots[target_id]
+			if int(tb_lead.get("team_leader_id", 0)) != 0 or _bot_lead_score(tb_lead) <= my_lead:
 				continue
 			if _bot_team_size(target_id) >= BOT_TEAM_MAX_SIZE:
 				continue

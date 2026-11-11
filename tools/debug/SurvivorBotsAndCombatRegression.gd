@@ -4393,6 +4393,41 @@ func run() -> void:
 		"10J5g: Morir por agotamiento/sed no registra como asesino ni nemesis a un atacante previo")
 	mgr._respawn_bot(b_ai)
 
+	# Anti-ciclo de equipo: si dos bots quedan apuntandose como lider el uno
+	# al otro (901<->902, que dejaba a los 3 parados en act=team/idle), el de
+	# mejor liderazgo rompe el ciclo al instante y queda un unico lider raiz.
+	var b901_c: Dictionary = mgr.bots[901]
+	var b902_c: Dictionary = mgr.bots[902]
+	var b903_c: Dictionary = mgr.bots[903]
+	mgr._set_bot_faction(b901_c, "hostile")
+	mgr._set_bot_faction(b902_c, "hostile")
+	mgr._set_bot_faction(b903_c, "hostile")
+	for id_a in [901, 902, 903]:
+		for id_b in [901, 902, 903]:
+			if id_a != id_b:
+				mgr._ensure_bot_memory(id_a)["relationships"]["bot_%d" % id_b] = {"id": "bot_%d" % id_b, "name": "Bot", "trust": 0.8, "hostility": 0.1, "fear": 0.0, "helped": 5, "attacked": 0}
+	b901_c["proxy"].global_position = Vector3(50.0, 0.4, 50.0)
+	b902_c["proxy"].global_position = Vector3(52.0, 0.4, 50.0)
+	b903_c["proxy"].global_position = Vector3(54.0, 0.4, 50.0)
+	b901_c["team_leader_id"] = 902
+	b902_c["team_leader_id"] = 901
+	b903_c["team_leader_id"] = 901
+	b901_c["_soc_t"] = 0.0
+	b902_c["_soc_t"] = 0.0
+	b903_c["_soc_t"] = 0.0
+	mgr._bot_social_update(b901_c)
+	mgr._bot_social_update(b902_c)
+	mgr._bot_social_update(b903_c)
+	var roots := 0
+	for b_chk in [b901_c, b902_c, b903_c]:
+		if int(b_chk.get("team_leader_id", 0)) == 0:
+			roots += 1
+	check(roots == 1 and not (int(b901_c.get("team_leader_id", 0)) == 902 and int(b902_c.get("team_leader_id", 0)) == 901),
+		"10J5h: El ciclo de liderazgo 901<->902 se rompe dejando exactamente 1 lider raiz con su equipo en marcha (roots=%d)" % roots)
+	for b_clr in [b901_c, b902_c, b903_c]:
+		b_clr["team_leader_id"] = 0
+		(b_clr["proxy"] as Node3D).set_meta("team_leader_id", 0)
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
