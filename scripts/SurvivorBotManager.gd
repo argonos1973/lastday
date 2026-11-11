@@ -1705,12 +1705,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		return
 
 	# 6d) Asentarse: con el campamento elegido pero el refugio aun sin
-	# levantar, el superviviente tira hacia su solar. El viaje es productivo:
-	# por el camino la cadena de arriba sigue cazando, destripando (tendon),
-	# recogiendo materiales y fabricando cuerda/palos — al llegar monta la
-	# base. Las urgencias (amenazas, sed, hambre, equipo) van antes.
+	# levantar, el superviviente tira hacia su solar ENTRE VIAJES. Cede a un
+	# explore_target en curso (salida a lootear, ruido o encuentro lejano):
+	# si el viaje a casa se impone por encima de cualquier objetivo lejano,
+	# el bot queda orbitando el solar sin poder salir nunca a buscar.
+	# Las urgencias (amenazas, sed, hambre, equipo) van antes.
 	if str(b["shelter_id"]).is_empty() and not starving_or_parched \
-			and float(b.get("hide_timer", 0.0)) <= 0.0 and not bool(b.get("sleeping", false)):
+			and float(b.get("hide_timer", 0.0)) <= 0.0 and not bool(b.get("sleeping", false)) \
+			and b.get("explore_target", Vector3.INF) == Vector3.INF:
 		var settle_pos := _bot_build_camp_pos(b)
 		if settle_pos != Vector3.INF:
 			var d_settle := Vector2(proxy.global_position.x - settle_pos.x, proxy.global_position.z - settle_pos.z).length()

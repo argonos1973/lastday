@@ -1000,6 +1000,7 @@ func run() -> void:
 	carlos["sitting"] = false
 	carlos["aggro_target"] = null
 	carlos["sense_t"] = 0.0
+	carlos["explore_target"] = Vector3.INF # sin viaje en curso: le toca asentarse
 	carlos_proxy.set_meta("saved_inventory", [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0},
 		{"name": "Cantimplora", "type": "water", "weight": 0.6, "quantity": 1, "use_value": 40.0},
@@ -1010,6 +1011,15 @@ func run() -> void:
 	var d_settle1: float = Vector2(carlos_proxy.global_position.x - carlos["camp_spot"].x, carlos_proxy.global_position.z - carlos["camp_spot"].z).length()
 	check(str(carlos["_act"]) == "settle" and d_settle1 < d_settle0,
 		"Sin refugio y sin urgencias viaja a su campamento (act=%s, %.0f->%.0f m)" % [str(carlos["_act"]), d_settle0, d_settle1])
+	# Pero un viaje en curso (explore_target: salida a loot, ruido lejano)
+	# no se cancela por el asentamiento — sin esta cesion el bot quedaba
+	# orbitando el solar, empujado de vuelta cada vez que salia a por loot.
+	carlos["explore_target"] = carlos["camp_spot"] + Vector3(400.0, 0.0, 0.0)
+	var pos_pre_explore: Vector3 = carlos_proxy.global_position
+	mgr._tick_bot(carlos, 0.2)
+	check(str(carlos["_act"]) != "settle",
+		"Un viaje a por loot en curso no lo anula el asentamiento (act=%s)" % str(carlos["_act"]))
+	carlos["explore_target"] = Vector3.INF
 	carlos["shelter_id"] = sid_bak
 	carlos["shelter_pos"] = spos_bak
 
