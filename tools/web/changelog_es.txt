@@ -161,3 +161,4 @@ f454180|Eliminado el personaje generico "Superviviente": siempre se usa el perso
 51e0662|Los jugadores remotos y bots con rifle ya no aparecen desarmados: el modelo del arma obedece al estado armado aunque el objeto en mano no llegue sincronizado
 6eea8d1|La tecla F ya no interactua con los bots supervivientes: sin prompt ni ordenes directas; solo chat, voz u ordenes [Z]
 7850ab9|La IA usa dos modelos de Groq a la vez: qwen3.8-27b para las decisiones tacticas de los bots y gpt-oss-20b (mas rapido) para sus frases de chat — al ser cuotas separadas por modelo, el chat deja de competir con las decisiones por el limite de tokens
+7223eb9|El chat de voz de los bots pasa a un modelo mas capaz (gpt-oss-120b): frases mas naturales y variadas, sin repeticiones ni mensajes que llegan a destiempo cuando la escena ya cambio
