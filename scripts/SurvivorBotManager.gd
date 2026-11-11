@@ -166,7 +166,7 @@ const AI_ADVISOR_URL := "https://api.groq.com/openai/v1/chat/completions"
 # compite con las decisiones tactica por la misma ventana de tokens. Override
 # por env: GROQ_DECISION_MODEL / GROQ_CHAT_MODEL.
 const AI_ADVISOR_MODEL := "qwen/qwen3.8-27b"
-const AI_CHAT_MODEL := "openai/gpt-oss-20b"
+const AI_CHAT_MODEL := "openai/gpt-oss-120b"
 const AI_DECISION_MIN_SEC := 900.0
 const AI_DECISION_SPREAD_SEC := 600.0
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000
@@ -3860,16 +3860,21 @@ const BOT_CHAT_HELP_CD := 120.0
 const BOT_CHAT_REQ_CD := 90.0
 const BOT_CHAT_LOG_MAX := 24
 const BOT_CHAT_MAX_TURNS := 4
+# Una frase generada por el modelo que llega con mas de 9 s de retraso ya no
+# encaja en la escena (el saludo aterriza en mitad de un tiroteo): se descarta.
+const BOT_CHAT_STALE_MSEC := 9000
+const BOT_CHAT_RECENT_MAX := 4
 const BOT_CHAT_SYSTEM_PROMPT := "Eres un superviviente real en un mundo postapocaliptico (Last Day) y hablas EN VOZ ALTA. Habla como una persona espanola real en mitad del campo: natural, coloquial, con pausas breves (comas, puntos suspensivos), muletillas humanas ocasionales (oye, mira, vale, bueno, escucha) y SIEMPRE con ortografia y tildes espanolas correctas (qué, dónde, cómo, está, aquí, ahí, allá, más, tú, mí, sí) para que tu voz suene 100% humana al pronunciarse. Prohibido: sonar robotico o formal, emojis, comillas, roleplay con asteriscos, abreviaturas de chat (q, tb, pq), mencionar que eres IA. Responde SOLO con lo que dices en voz alta, 1 o 2 frases cortas, maximo 130 caracteres."
 
 var _chat_http: HTTPRequest = null
-var _chat_pending: Dictionary = {}          # peticion Qwen en vuelo {bot_id,to_id,to_name,kind,intent}
+var _chat_pending: Dictionary = {}          # peticion LLM en vuelo {bot_id,to_id,to_name,kind,intent,t}
 var chat_log: Array = []                    # [{ts,from_id,from,to_id,to,kind,text}] para el monitor
 var _chat_pair_until: Dictionary = {}       # "a:b" -> msec (enfriamiento de iniciados)
 var _chat_greet_until: Dictionary = {}      # "a:b" -> msec (saludos, ventana larga)
 var _chat_turns: Dictionary = {}            # "a:b" -> int (corta el ping-pong bot-bot)
 var _chat_help_until: Dictionary = {}       # bot_id -> msec
 var _chat_req_until: Dictionary = {}        # bot_id -> msec (peticiones de recursos)
+var _chat_recent: Dictionary = {}           # bot_id -> Array[String] ultimas frases enviadas (anti-repeticion)
 
 func _chat_pair_key(a: int, b2: int) -> String:
 	return "%d:%d" % [mini(a, b2), maxi(a, b2)]
@@ -5065,6 +5070,11 @@ func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, ki
 	if clean.is_empty():
 		return
 	var my_id := int(b["bot_id"])
+	# Anti-repeticion: el mismo bot no encadena dos veces la misma frase. Las
+	# respuestas salen igual (el jugador espera contestacion); el resto se cae.
+	var recent: Array = _chat_recent.get(my_id, [])
+	if kind != "reply" and not recent.is_empty() and String(recent.back()) == clean:
+		return
 	var sname := str(b.get("name", "Bot"))
 	if to_name.is_empty():
 		to_name = _actor_display_name(to_id)
@@ -5076,6 +5086,11 @@ func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, ki
 		chat_log.pop_front()
 	var pk := _chat_pair_key(my_id, to_id)
 	_chat_turns[pk] = int(_chat_turns.get(pk, 0)) + 1
+	recent = _chat_recent.get(my_id, [])
+	recent.append(clean)
+	while recent.size() > BOT_CHAT_RECENT_MAX:
+		recent.pop_front()
+	_chat_recent[my_id] = recent
 	_record_milestone(my_id, "first_chat")
 	if bots.has(to_id):
 		on_chat_received(to_id, my_id, sname, clean)
@@ -5102,7 +5117,7 @@ func _chat_dispatch(b: Dictionary, kind: String, to_id: int, to_name: String, ct
 		b["_chat_cd"] = BOT_CHAT_CD
 		if kind == "greet":
 			_chat_greet_until[_chat_pair_key(my_id, to_id)] = now + int(BOT_CHAT_GREET_CD * 1000.0)
-	if _chat_attempt_qwen(b, kind, to_id, to_name, ctx, intent):
+	if _chat_attempt_llm(b, kind, to_id, to_name, ctx, intent):
 		return # el mensaje sale cuando responde el modelo
 	_bot_chat_send(b, to_id, to_name, _chat_fallback_line(b, kind, to_name, ctx, intent), kind)
 
@@ -5306,29 +5321,29 @@ func _chat_fallback_line(b: Dictionary, kind: String, to_name: String, ctx: Stri
 	match kind:
 		"greet":
 			if float(pers.get("sociability", 0.5)) > 0.7:
-				return str(["Oye %s, ¿qué tal todo por ahí?" % nm, "Buenas %s, me alegro de ver a alguien con vida." % nm][int(b["bot_id"]) % 2])
+				return str(["Oye %s, ¿qué tal todo por ahí?" % nm, "Buenas %s, me alegro de ver a alguien con vida." % nm][randi() % 2])
 			return "Ey, %s." % nm
 		"help":
 			var threat := ctx if not ctx.is_empty() else "algo"
 			return str(["¡Tengo %s encima! ¡%s, ven rápido, estoy en %s!" % [threat, nm, _chat_zone_name(proxy.global_position)],
-				"¡Ayuda! ¡Me ataca %s aquí en %s!" % [threat, _chat_zone_name(proxy.global_position)]][int(b["bot_id"]) % 2])
+				"¡Ayuda! ¡Me ataca %s aquí en %s!" % [threat, _chat_zone_name(proxy.global_position)]][randi() % 2])
 		"alliance":
 			return str(["Oye %s, ¿vamos juntos? Dos pares de ojos ven más que uno." % nm,
-				"¿Hacemos equipo, %s? Solo no se llega muy lejos por aquí." % nm][int(b["bot_id"]) % 2])
+				"¿Hacemos equipo, %s? Solo no se llega muy lejos por aquí." % nm][randi() % 2])
 		"whisper":
 			return str(["Quieto... espera a que se acerque un poco más.",
-				"No hagas ruido, ya casi lo tenemos."][int(b["bot_id"]) % 2])
+				"No hagas ruido, ya casi lo tenemos."][randi() % 2])
 		"taunt":
 			return str(["Mala suerte, %s... suelta todo lo que llevas." % nm,
-				"Te he visto, %s. Esa mochila me viene de perlas." % nm][int(b["bot_id"]) % 2])
+				"Te he visto, %s. Esa mochila me viene de perlas." % nm][randi() % 2])
 		"request":
 			match ctx:
 				"comida":
 					return str(["Oye %s, ¿tienes algo de comida? Me estoy muriendo de hambre." % nm,
-						"Pásame algo de comer, %s, por favor." % nm][int(b["bot_id"]) % 2])
+						"Pásame algo de comer, %s, por favor." % nm][randi() % 2])
 				"agua":
 					return str(["%s, necesito agua... me muero de sed." % nm,
-						"¿Tienes algo de beber, %s? Estoy seco." % nm][int(b["bot_id"]) % 2])
+						"¿Tienes algo de beber, %s? Estoy seco." % nm][randi() % 2])
 				"vendas":
 					return "Estoy herido, %s... ¿llevas vendas o un botiquín encima?" % nm
 				"arma":
@@ -5361,9 +5376,10 @@ func _chat_ensure_http() -> void:
 	_chat_http.request_completed.connect(_chat_on_response)
 	add_child(_chat_http)
 
-# Redacta el mensaje con Qwen (una peticion en vuelo, comparte la cuota diaria
-# con las decisiones). Devuelve false y el llamador usa la plantilla local.
-func _chat_attempt_qwen(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String, intent: String) -> bool:
+# Redacta el mensaje con el modelo de chat (una peticion en vuelo, su propia
+# cuota de tokens por ser otro modelo). Devuelve false y el llamador usa la
+# plantilla local.
+func _chat_attempt_llm(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String, intent: String) -> bool:
 	if not _chat_pending.is_empty() or not _ai_can_query_remote():
 		return false
 	if Time.get_ticks_msec() < _chat_backoff_until_msec:
@@ -5372,7 +5388,7 @@ func _chat_attempt_qwen(b: Dictionary, kind: String, to_id: int, to_name: String
 	if key.is_empty() or _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
 		return false
 	_chat_ensure_http()
-	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent}
+	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent, "t": Time.get_ticks_msec()}
 	_ai_calls_day += 1
 	_ai_calls_total += 1
 	var chat_model := _ai_chat_model()
@@ -5430,13 +5446,17 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "threat": "te amenaza"}.get(intent, "te habla")
 			sit = "%s %s. Dice: \"%s\". Responde hablando en voz alta, breve (1 frase), segun tu caracter y tu relacion con el." % [to_name, intent_txt, ctx]
 	var faction_desc := "bandido hostil y peligroso" if str(b.get("faction", "friendly")) == "hostile" else "superviviente pacifico, cooperativo y amable (nunca amenaces ni busques pelea salvo que te ataquen; si algo no se entiende, pregunta con naturalidad)"
-	return "Eres %s, %s en Last Day. Caracter: valentia %.2f, agresividad %.2f, sociable %.2f, desconfianza %.2f.\nEstado: vida %d, hambre %d, sed %d. Zona: %s. Llevas: %s.\n%s es %s (confianza %.2f, hostilidad %.2f).\n%s" % [
+	var anti_repeat := ""
+	var past: Array = _chat_recent.get(int(b["bot_id"]), [])
+	if not past.is_empty():
+		anti_repeat = "\nYa dijiste recientemente (no lo repitas ni uses las mismas palabras): " + " | ".join(past.slice(-2))
+	return "Eres %s, %s en Last Day. Caracter: valentia %.2f, agresividad %.2f, sociable %.2f, desconfianza %.2f.\nEstado: vida %d, hambre %d, sed %d. Zona: %s. Llevas: %s.\n%s es %s (confianza %.2f, hostilidad %.2f).\n%s%s" % [
 		str(b.get("name", "Bot")), faction_desc,
 		float(pers.get("bravery", 0.5)), float(pers.get("aggression", 0.5)),
 		float(pers.get("sociability", 0.5)), float(pers.get("distrust", 0.3)),
 		int(float(b.get("health", 100))), int(float(b.get("hunger", 80))), int(float(b.get("thirst", 80))),
 		_chat_zone_name(proxy.global_position), str(b.get("held_item", "las manos")),
-		to_name, rel_desc, tr, ho, sit]
+		to_name, rel_desc, tr, ho, sit, anti_repeat]
 
 func _chat_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var req := _chat_pending
@@ -5476,6 +5496,16 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 	text = _chat_sanitize(text)
 	if text.is_empty():
 		text = _chat_fallback_line(b, kind, to_name, "", intent)
+	# Frescura: la respuesta llego tan tarde que la escena ya es otra — fuera.
+	if Time.get_ticks_msec() - int(req.get("t", 0)) > BOT_CHAT_STALE_MSEC:
+		return
+	var cproxy: Node3D = b.get("proxy")
+	if cproxy == null or not is_instance_valid(cproxy) or bool(cproxy.get_meta("proxy_dead", false)):
+		return
+	# Mensajes iniciados (saludo, bravuconada, alianza) suenan a destiempo si el
+	# bot entro en pelea/huida/escondite/sueno mientras el modelo pensaba.
+	if kind != "reply" and (bool(b.get("sleeping", false)) or float(b.get("flee_until", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0):
+		return
 	_bot_chat_send(b, to_id, to_name, text, kind)
 
 func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> String:

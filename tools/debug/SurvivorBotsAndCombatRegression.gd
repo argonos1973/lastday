@@ -1649,6 +1649,39 @@ func run() -> void:
 		"RateLimit: GROQ_CHAT_MODEL sobreescribe el modelo de chat")
 	OS.set_environment("GROQ_CHAT_MODEL", "")
 
+	# Aceptación 2e: chat anti-repeticion y frescura — el mismo bot no emite dos
+	# veces la misma frase (salvo respuestas) y las respuestas tardias se caen.
+	var chat_b: Dictionary = mgr.bots[901]
+	var log_before := mgr.chat_log.size()
+	mgr._bot_chat_send(chat_b, 777, "Sami", "Ey, Sami, prueba de eco.", "greet")
+	var log_after1 := mgr.chat_log.size()
+	check(log_after1 == log_before + 1, "Chat: la frase nueva se registra en el log")
+	mgr._bot_chat_send(chat_b, 777, "Sami", "Ey, Sami, prueba de eco.", "greet")
+	check(mgr.chat_log.size() == log_after1,
+		"Chat: una frase identica repetida por el mismo bot se descarta")
+	mgr._bot_chat_send(chat_b, 777, "Sami", "Ey, Sami, prueba de eco.", "reply")
+	check(mgr.chat_log.size() == log_after1 + 1,
+		"Chat: la respuesta directa al jugador sale aunque repita (contesta siempre)")
+	check((mgr._chat_recent.get(901, []) as Array).has("Ey, Sami, prueba de eco."),
+		"Chat: las frases enviadas quedan en la lista anti-repeticion del bot")
+	var prompt_rep := mgr._chat_build_prompt(chat_b, "greet", 777, "Sami", "", "")
+	check(prompt_rep.contains("no lo repitas"),
+		"Chat: el prompt avisa al modelo de sus frases recientes")
+	# Frescura: una respuesta que llega con mas de BOT_CHAT_STALE_MSEC se cae.
+	mgr._chat_pending = {"bot_id": 901, "to_id": 777, "to_name": "Sami", "kind": "greet", "intent": "", "t": Time.get_ticks_msec() - SurvivorBotManagerScript.BOT_CHAT_STALE_MSEC - 1000}
+	var log_stale := mgr.chat_log.size()
+	mgr._chat_on_response(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), "{\"choices\":[{\"message\":{\"content\":\"hola muy tarde\"}}]}".to_utf8_buffer())
+	check(mgr.chat_log.size() == log_stale,
+		"Chat: una respuesta del modelo que llega a destiempo se descarta")
+	# Contexto: un mensaje iniciado no sale si el bot entro en combate mientras.
+	chat_b["flee_until"] = 8.0
+	mgr._chat_pending = {"bot_id": 901, "to_id": 777, "to_name": "Sami", "kind": "greet", "intent": "", "t": Time.get_ticks_msec()}
+	var log_ctx := mgr.chat_log.size()
+	mgr._chat_on_response(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), "{\"choices\":[{\"message\":{\"content\":\"hola en plena huida\"}}]}".to_utf8_buffer())
+	check(mgr.chat_log.size() == log_ctx,
+		"Chat: un saludo generado durante una huida no llega a emitirse")
+	chat_b["flee_until"] = 0.0
+
 	# Aceptación 3: Un bot modifica su comportamiento tras experiencias repetidas
 	# 3a) Riesgo repetido en una ubicación reduce su preferencia de exploración y evoluciona personalidad
 	var p_surv_before := float(mgr._get_bot_personality(elena).get("survival_instinct", 0.0))
