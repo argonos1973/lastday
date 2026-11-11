@@ -4327,11 +4327,15 @@ func run() -> void:
 	vs_ai.body_temperature = 36.6
 	p_ai.global_position = Vector3(100.0, 0.4, -140.0)
 	b_ai["pos"] = p_ai.global_position
-	p_ai.set_meta("saved_inventory", [])
+	# Con antorcha propia si puede moverse de noche: la luz es el minimo para
+	# salir a explorar (sin ella se parapeta, ver 10J5n).
+	p_ai.set_meta("saved_inventory", [
+		{"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0},
+	])
 	dc.time_of_day = 20.5
 	mgr._tick_bot(b_ai, 0.1)
 	check(str(b_ai.get("_act", "")) != "rest" and not bool(b_ai.get("sitting", false)),
-		"10J5a: De noche sin refugio y descansado (sleep=95) el bot NO se queda clavado en rest (act=%s)" % str(b_ai.get("_act", "")))
+		"10J5a: De noche con antorcha y descansado (sleep=95) el bot NO se queda clavado en rest (act=%s)" % str(b_ai.get("_act", "")))
 	dc.time_of_day = 14.0
 
 	# Apilado de flechas y tope de crafteo mientras faltan los 11 palos del refugio
@@ -4515,6 +4519,94 @@ func run() -> void:
 	# 10J5m: Alcance de voz ampliado (55 m normal, 90 m en combate) y nuevas frases de tregua
 	check(str(mgr._chat_parse_order("¡no me dispares, alto el fuego!").get("cmd", "")) == "truce",
 		"10J5m: El parser de voz/chat reconoce 'no me dispares / alto el fuego' como tregua")
+
+	# 10J5n: De noche la antorcha es el minimo para salir a explorar: sin ella
+	# ni material para hacerla el bot se parapeta; con palo+trapos la fabrica
+	# en el acto; con ropa+filo primero la corta a trapos; y con los 11 palos
+	# justos del refugio no gasta el palo que le falta para la obra.
+	var b_nt: Dictionary = mgr.bots[902]
+	var p_nt: Node3D = b_nt["proxy"]
+	var vs_nt: SurvivalStats = b_nt["vstats"]
+	b_nt["shelter_id"] = ""
+	b_nt["shelter_pos"] = Vector3.INF
+	b_nt["campfire_id"] = ""
+	b_nt["camp_spot"] = Vector3(500.0, 0.4, 500.0) # lejos: sin viaje que lo salve
+	b_nt["explore_target"] = Vector3.INF
+	b_nt["hide_timer"] = 0.0
+	b_nt["flee_until"] = 0.0
+	b_nt["sleeping"] = false
+	b_nt["sitting"] = false
+	b_nt["health"] = 100.0
+	b_nt["hunger"] = 85.0
+	b_nt["thirst"] = 85.0
+	b_nt["aggro_target"] = null
+	vs_nt.sleep = 100.0
+	vs_nt.energy = 100.0
+	vs_nt.body_temperature = 36.6
+	dc.ambient_temp = 20.0
+	p_nt.global_position = Vector3(200.0, 0.4, 200.0)
+	b_nt["pos"] = p_nt.global_position
+	for k2 in ["_s_predator", "_s_foe", "_s_leader", "_s_tame_wolf", "_s_prey", "_s_corpse"]:
+		b_nt[k2] = null
+	b_nt["_s_loot"] = {}
+	b_nt["_s_raid_shelter"] = {}
+	b_nt["_craft_state"] = {}
+	b_nt["_gather"] = {}
+	dc.time_of_day = 22.0
+	# Sin antorcha ni material para hacerla: no sale a explorar — se parapeta.
+	p_nt.set_meta("saved_inventory", [])
+	mgr._tick_bot(b_nt, 0.1)
+	check(str(b_nt.get("_act", "")) == "rest",
+		"10J5n1: De noche sin antorcha ni material no deambula a oscuras: se parapeta (act=%s)" % str(b_nt.get("_act", "")))
+	# Con palo+trapos de sobra para el refugio la fabrica en el acto.
+	p_nt.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 13},
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1},
+	])
+	mgr._tick_bot(b_nt, 0.1)
+	check(str(b_nt.get("_act", "")) == "torch",
+		"10J5n2: De noche con palo+trapos fabrica la antorcha antes que nada (act=%s)" % str(b_nt.get("_act", "")))
+	for i in range(25):
+		mgr._tick_bot(b_nt, 0.2)
+		if mgr._bot_item_count(p_nt, "Antorcha") >= 1:
+			break
+	check(mgr._bot_item_count(p_nt, "Antorcha") >= 1,
+		"10J5n3: La antorcha queda fabricada en la mochila (n=%d)" % mgr._bot_item_count(p_nt, "Antorcha"))
+	# Con antorcha ya puede salir a explorar de noche.
+	b_nt["explore_target"] = Vector3.INF
+	mgr._tick_bot(b_nt, 0.1)
+	check(str(b_nt.get("_act", "")) != "rest" and bool(b_nt.get("torch_lit", false)),
+		"10J5n4: Con antorcha de noche vuelve a poder salir (act=%s torch=%s)" % [str(b_nt.get("_act", "")), str(b_nt.get("torch_lit", false))])
+	# Sin refugio y con justo los 11 palos no gasta el del refugio en la antorcha.
+	p_nt.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11},
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1},
+	])
+	b_nt["_craft_state"] = {}
+	mgr._tick_bot(b_nt, 0.1)
+	check(str(b_nt.get("_act", "")) == "build" and mgr._bot_item_count(p_nt, "Antorcha") == 0,
+		"10J5n5: Con los 11 palos justos del refugio no gasta uno en la antorcha: va a construir (act=%s)" % str(b_nt.get("_act", "")))
+	# Pero con ropa+filo sin trapos primero la corta a trapos y luego fabrica.
+	p_nt.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 13},
+		{"name": "Camiseta", "type": "clothing", "weight": 0.2, "quantity": 1},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+	])
+	b_nt["_craft_state"] = {}
+	mgr._tick_bot(b_nt, 0.1)
+	check(str(b_nt.get("_act", "")) == "torch",
+		"10J5n6: Sin trapos pero con camiseta+filo empieza por cortarla a trapos (act=%s)" % str(b_nt.get("_act", "")))
+	for i in range(40):
+		mgr._tick_bot(b_nt, 0.2)
+		if mgr._bot_item_count(p_nt, "Antorcha") >= 1 and mgr._bot_item_count(p_nt, "Camiseta") == 0:
+			break
+	check(mgr._bot_item_count(p_nt, "Antorcha") >= 1 and mgr._bot_item_count(p_nt, "Camiseta") == 0,
+		"10J5n7: La cadena camiseta->trapos->antorcha se completa de noche (antorchas=%d camiseta=%d)" % [mgr._bot_item_count(p_nt, "Antorcha"), mgr._bot_item_count(p_nt, "Camiseta")])
+	dc.time_of_day = 14.0
+	b_nt["hunger"] = 80.0
+	b_nt["thirst"] = 80.0
+	b_nt["sitting"] = false
+	b_nt["_act"] = ""
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")

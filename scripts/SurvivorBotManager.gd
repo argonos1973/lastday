@@ -1259,7 +1259,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# luz resueltos sale a por lo que le falta (trapos, palos, piedras) mas
 		# alla del radio de saqueo oportunista — antes de que se haga de noche.
 		if (b["_s_loot"] as Dictionary).is_empty() and not bool(b.get("equip_mission", false)) \
-				and _is_pre_night() and not _bot_night_fire_ready(b, proxy):
+				and (_is_pre_night() or _is_world_night()) and not _bot_night_fire_ready(b, proxy):
 			b["_s_loot"] = _find_fire_prep_loot(b, 60.0)
 		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
 		_observe_nearby_world(b)
@@ -1611,6 +1611,20 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "farm"
 		return
 
+	# La antorcha es el minimo para salir a explorar de noche: se fabrica en
+	# el acto si lleva palo+trapos (y antes los trapos si solo le falta eso),
+	# tambien de tarde para llegar a la noche con luz — antes de emprender la
+	# caminata al solar. Sin materiales para hacerla se resguarda en
+	# wants_camp mas abajo: nadie deambula a oscuras sin luz propia.
+	# Oculto, dormido, agotado o helandose: primero eso.
+	if (is_night or _is_pre_night()) and not _bot_has_item(proxy, "Antorcha") \
+			and float(b.get("hide_timer", 0.0)) <= 0.0 and not bool(b.get("sleeping", false)) \
+			and not _bot_is_exhausted(b) and not _bot_is_freezing(b):
+		if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
+				or (_bot_item_count(proxy, "Trapos") == 0 and _bot_try_craft_named(b, delta, ["Trapos"], false)):
+			b["_act"] = "torch"
+			return
+
 	# Si ya reune los 11 palos contando sus Troncos (Tronco+filo -> 2 Palos),
 	# rajar los troncos a palos de inmediato para desbloquear la obra del refugio.
 	if str(b["shelter_id"]).is_empty() and not _can_bot_build_shelter(proxy) and _bot_palo_supply(proxy) >= 11 and _bot_item_count(proxy, "Tronco") > 0:
@@ -1700,13 +1714,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# antorcha para salir o sufra hambre/sed desesperada. Quien AUN NO tiene
 	# refugio y esta descansado (sleep>=65), sano y sin frio sigue moviendose
 	# para saquear, juntar los 11 palos y levantar su base en vez de quedarse
-	# clavado sentado en mitad del campo toda la noche.
+	# clavado sentado en mitad del campo toda la noche — pero solo mientras
+	# pueda trabajar la luz: sin antorcha ni fogata propia no sale a explorar.
 	var has_night_light := bool(b["torch_lit"]) or _bot_has_item(proxy, "Antorcha")
 	var desperate_needs := (float(b["hunger"]) < 14.0 and not _bot_has_edible_food(proxy, true)) or (float(b["thirst"]) < 10.0 and not _bot_has_drink(proxy))
 	var has_built_sh := not str(b["shelter_id"]).is_empty()
 	var vst: SurvivalStats = b.get("vstats")
 	var night_needs_sleep: bool = is_night and ((vst != null and vst.sleep < 65.0) or (has_built_sh and (not has_night_light or not _bot_needs_outing(b))))
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and has_built_sh and not has_night_light and not desperate_needs) or (not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light and not desperate_needs) or (not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -9072,6 +9087,49 @@ func _bot_try_craft(b: Dictionary, delta: float) -> bool:
 	b["crouching"] = true
 	return true
 
+# Fabrica YA una receta concreta por nombre de salida, saltandose la cola por
+# puntos de _bot_try_craft: la antorcha nocturna es supervivencia, no un capricho
+# que deba ganar el sorteo. Comparte _craft_state con el crafteo normal.
+func _bot_try_craft_named(b: Dictionary, delta: float, wanted: Array, protect_sticks: bool) -> bool:
+	var st: Dictionary = b.get("_craft_state", {})
+	if not st.is_empty():
+		var cur := str(((st.get("recipe", {}) as Dictionary).get("output", {}) as Dictionary).get("name", ""))
+		if not wanted.has(cur):
+			return false
+		st["t"] = float(st.get("t", 0.0)) - delta
+		b["anim"] = "idle"
+		b["crouching"] = true
+		b["sitting"] = false
+		if float(st["t"]) <= 0.0:
+			b["_craft_state"] = {}
+			b["_craft_check"] = 0.4
+			_bot_apply_craft(b, st.get("recipe", {}))
+		return true
+	var proxy: Node3D = b["proxy"]
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for recipe in CraftingSystem.RECIPES:
+		var out := recipe.get("output", {}) as Dictionary
+		var oname := str(out.get("name", ""))
+		if not wanted.has(oname) or not _bot_can_craft(recipe, inv):
+			continue
+		if protect_sticks and oname == "Antorcha" and not _bot_can_spare_torch_stick(b, proxy):
+			continue
+		b["_craft_state"] = {"recipe": recipe, "t": 2.4}
+		b["anim"] = "idle"
+		b["crouching"] = true
+		b["sitting"] = false
+		return true
+	return false
+
+# El palo de la antorcha no puede salir de la reserva del refugio (11) ni de
+# la fogata (2): solo se gasta cuando sobra de verdad para ambas cosas.
+func _bot_can_spare_torch_stick(b: Dictionary, proxy: Node3D) -> bool:
+	if not str(b.get("campfire_id", "")).is_empty() or _is_near_any_lit_campfire(proxy.global_position, 10.0):
+		return true
+	if str(b.get("shelter_id", "")).is_empty():
+		return _bot_palo_supply(proxy) >= 12
+	return _bot_item_count(proxy, "Palo") >= 3
+
 # ==================== SISTEMA COGNITIVO, PERSONALIDAD Y ASESOR QWEN/GROQ ====================
 # Cada bot dispone de:
 # - Personalidad independiente (7 rasgos en [0.05..0.98]) que evoluciona por experiencias reales.
@@ -11397,9 +11455,13 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 	elif str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
 		palo_need = 2
 	# La antorcha de la noche tambien pide su palo: uno de repuesto siempre
-	# que no lleve ya una antorcha en la mochila.
+	# que no lleve ya una antorcha, mas los 2 de la fogata si esta aun sin
+	# fuego propio ni litio al alcance — no quedarse sin palo para ninguna.
 	if _bot_item_count(proxy, "Antorcha") == 0:
-		palo_need = maxi(palo_need, 1)
+		var torch_palos := 1
+		if str(b["campfire_id"]).is_empty() and not _is_near_any_lit_campfire(proxy.global_position, 8.0):
+			torch_palos += 2
+		palo_need = maxi(palo_need, torch_palos)
 	if _bot_has_raw_meat(proxy) or _bot_has_skewered_meat(proxy):
 		var cook_palos := (1 if _bot_item_count(proxy, "Palo afilado") == 0 and not _bot_has_skewered_meat(proxy) else 0) + (2 if str(b["campfire_id"]).is_empty() else 0)
 		palo_need = maxi(palo_need, cook_palos)
@@ -11644,6 +11706,7 @@ func _find_fire_prep_loot(b: Dictionary, radius: float) -> Dictionary:
 	var need_palo := _bot_palo_supply(proxy) < 2
 	var need_piedra := _bot_item_count(proxy, "Piedra") < 2
 	var need_trapos := _bot_item_count(proxy, "Trapos") < 1
+	var need_torch := _bot_item_count(proxy, "Antorcha") < 1
 	var best := {}
 	var best_d := radius
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
@@ -11658,9 +11721,10 @@ func _find_fire_prep_loot(b: Dictionary, radius: float) -> Dictionary:
 			if wa != null and is_instance_valid(wa) and wa.has_meta("dropped_by"):
 				continue
 		var nm := str(entry.get("name", ""))
-		var useful := (need_trapos and (nm == "Trapos" or _bot_cuts_into_trapos(nm))) \
+		var useful := (need_torch and nm == "Antorcha") \
 			or (need_palo and nm in ["Palo", "Tronco"]) \
-			or (need_piedra and nm == "Piedra")
+			or (need_piedra and nm == "Piedra") \
+			or (need_trapos and (nm == "Trapos" or _bot_cuts_into_trapos(nm)))
 		if not useful:
 			continue
 		if not _bot_would_fit(b, proxy.get_meta("saved_inventory", []), _loot_entry_item_dict(entry)):
