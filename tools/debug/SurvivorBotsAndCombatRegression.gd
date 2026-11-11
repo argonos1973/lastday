@@ -720,6 +720,75 @@ func run() -> void:
 	check(bool(csh.get("camo_covered", false)), "Con tela encima camufla su refugio al pasar por casa")
 	check(mgr._bot_item_count(carlos_proxy, "Tela de camuflaje") == 0, "La tela se consume al camuflar el refugio")
 
+	# --- 10g) Doma de lobos por bots: mismo mecanismo que el jugador ---
+	# (carne en mano, cebo con dropped_by, 3 comidas -> tamed_to, ordenes)
+	# Carlos aun no tiene lobo (Elena domo el suyo en la seccion 4).
+	carlos["tame_cooldown"] = 0.0
+	carlos["sleeping"] = false
+	carlos["hide_timer"] = 0.0
+	carlos["sitting"] = false
+	carlos["_act"] = "explore"
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Carne cruda", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 15.0},
+	])
+	carlos_proxy.global_position = Vector3(-80.0, 0.375, -80.0)
+	carlos["pos"] = carlos_proxy.global_position
+	var twolf := WildlifeControllerScript.new()
+	twolf.name = "Wildlife_wolf_bot_tame"
+	world.add_child(twolf)
+	twolf.setup("wolf", [Vector3.ZERO])
+	twolf.set_process(false)
+	twolf.global_position = carlos_proxy.global_position + Vector3(8.0, 0.0, 0.0)
+	check(mgr._bot_has_raw_meat(carlos_proxy), "El bot lleva carne cruda para el cebo")
+	mgr._perform_wolf_taming_step(carlos, twolf, 0.2)
+	var bait_id := ""
+	for wa_id in world.world_actions_by_id.keys():
+		var wa = world.world_actions_by_id[wa_id]
+		if wa != null and is_instance_valid(wa) and str(wa_id).begins_with("bot_tame_meat_902"):
+			bait_id = str(wa_id)
+			break
+	check(not bait_id.is_empty(), "El bot suelta un cebo bot_tame_meat_* en el suelo")
+	if not bait_id.is_empty():
+		var bait = world.world_actions_by_id[bait_id]
+		check(str(bait.get_meta("dropped_by", "")) == "902" and bait.is_in_group("wolf_meat_pickups"),
+			"El cebo queda marcado con dropped_by=<bot_id> en el grupo wolf_meat_pickups")
+	check(mgr._bot_item_count(carlos_proxy, "Carne cruda") == 2, "El cebo consume 1 carne del inventario (quedan 2)")
+	# Las 3 comidas que el lobo daria de verdad al comer el cebo
+	for i2 in range(3):
+		twolf._register_feeding("902", twolf.global_position)
+	check(str(twolf.tamed_to) == "902", "Tras 3 comidas el lobo queda domesticado por el bot (tamed_to=902)")
+	check(mgr._bot_has_tamed_wolf(carlos) and mgr._bot_tamed_wolf(carlos) == twolf, "_bot_has_tamed_wolf/_bot_tamed_wolf reconocen al lobo del bot")
+	mgr._note_bot_wolf_life(carlos, true)
+	check(bool(carlos.get("_mem", {}).get("milestones", {}).get("wolf_tamed", false)),
+		"Domesticar el lobo deja milestone 'wolf_tamed' en la memoria")
+	# Ordenes como el humano: descansando -> stay (guarda), activo -> follow
+	carlos["sleeping"] = true
+	mgr._sync_bot_wolf_orders(carlos)
+	check(str(twolf._follow_mode) == "stay", "Con el bot durmiendo, el lobo recibe orden 'stay' (guarda la zona)")
+	carlos["sleeping"] = false
+	carlos["_act"] = "explore"
+	carlos_proxy.global_position += Vector3(60.0, 0.0, 0.0)
+	mgr._sync_bot_wolf_orders(carlos)
+	check(str(twolf._follow_mode) == "follow", "De viaje, el lobo recibe orden 'follow' (le sigue)")
+	check(str(carlos.get("_wolf_last_order", "")) == "follow", "La ultima orden registrada es 'follow'")
+	# Defensa: atacar al bot -> notify_threat sobre su lobo
+	carlos["aggro_target"] = player
+	mgr._command_bot_wolf_against(carlos, player)
+	check(twolf._threat_player == player, "Su lobo es notificado del agresor del bot (defensa)")
+	carlos["aggro_target"] = null
+	# Snapshot del monitor lleva el bloque wolf
+	var snap_w: Dictionary = {}
+	for bs2 in mgr.get_full_web_status().get("bots", []):
+		if int(bs2.get("bot_id", 0)) == 902:
+			snap_w = bs2
+			break
+	var wblk: Dictionary = snap_w.get("wolf", {})
+	check(bool(wblk.get("tamed", false)) and str(wblk.get("mode", "")) == "follow" and (wblk.get("pos", []) as Array).size() == 3,
+		"El monitor expone el lobo del bot: nombre, modo, posicion y vitales")
+	twolf.tamed_to = ""
+	twolf._is_dead = true
+	twolf.queue_free()
+
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()
 	mgr.on_bot_damaged(901, 8.0, 1, "rifle")

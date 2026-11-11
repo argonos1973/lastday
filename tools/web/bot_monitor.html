@@ -433,6 +433,9 @@ function renderSummary(data) {
         if (amb.target) t += `<br/><span style="color:var(--danger)">🗡 acechando a ${esc(amb.target)}${amb.dist >= 0 ? ` (${amb.dist} m)` : ""}</span>`;
         const farm = b.farm || {};
         if (farm.plots > 0) t += `<br/><span style="color:var(--accent)">🌱 ${farm.plots} bancal${farm.plots > 1 ? "es" : ""} · ${farm.ready} listo${farm.ready === 1 ? "" : "s"}</span>`;
+        const wl = b.wolf || {};
+        if (wl.tamed) t += `<br/><span style="color:var(--accent)">🐺 ${esc(wl.name || "lobo")} (${esc(wl.mode || "follow")})</span>`;
+        else if (wl.taming) t += `<br/><span style="color:var(--muted)">🐺 domando ${wl.progress || 0}/${wl.need || 3}</span>`;
         return t;
       })()}</td>
       <td><b>${esc(b.current_goal || "survival_patrol")}</b></td>
@@ -470,6 +473,8 @@ function renderMap(data) {
     if (b.shelter_pos && b.shelter_pos.length >= 3) ext = Math.max(ext, Math.abs(b.shelter_pos[0]), Math.abs(b.shelter_pos[2]));
     if (b.camp_spot && b.camp_spot.length >= 3) ext = Math.max(ext, Math.abs(b.camp_spot[0]), Math.abs(b.camp_spot[2]));
     if (b.last_death_pos && b.last_death_pos.length >= 3) ext = Math.max(ext, Math.abs(b.last_death_pos[0]), Math.abs(b.last_death_pos[2]));
+    const wlp = (b.wolf || {}).pos || [];
+    if (wlp.length >= 3) ext = Math.max(ext, Math.abs(wlp[0]), Math.abs(wlp[2]));
   }
   ext = Math.ceil((ext + 40) / 100) * 100; // margen + redondeo a 100 m
   document.getElementById("mapTitle").textContent = `Mapa Táctico en Tiempo Real (±${ext} m)`;
@@ -578,6 +583,28 @@ function renderMap(data) {
       const [dx2, dz2] = toScreen(b.last_death_pos[0], b.last_death_pos[2]);
       ctx.font = "11px sans-serif";
       ctx.fillText("💀", dx2 - 6, dz2 + 4);
+    }
+
+    // Lobo domesticado o en doma: posicion, linea al dueño y 🐺
+    const wl = b.wolf || {};
+    if ((wl.tamed || wl.taming) && wl.pos && wl.pos.length >= 3) {
+      const [wx, wz] = toScreen(wl.pos[0], wl.pos[2]);
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.55;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(bx, bz);
+      ctx.lineTo(wx, wz);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1.0;
+      ctx.font = "12px sans-serif";
+      ctx.fillText(wl.taming ? "🐺⁉" : "🐺", wx - 7, wz + 4);
+      if (wl.taming && wl.progress) {
+        ctx.font = "9px sans-serif";
+        ctx.fillStyle = col;
+        ctx.fillText(`${wl.progress}/${wl.need || 3}`, wx + 6, wz - 5);
+      }
     }
 
     if (b.explore_target && b.explore_target.length >= 3) {
@@ -918,6 +945,22 @@ function renderBots(data) {
         </div>`;
       })()}
       <div class="pill-list">${stashHtml}</div>
+
+      ${(() => {
+        const wl = b.wolf || {};
+        if (!wl.tamed && !wl.taming) return "";
+        const MODE_ES = {follow:"le sigue", stay:"guarda la zona", patrol:"patrulla", guard:"guarda"};
+        if (wl.taming) return `<div class="section-label">🐺 Domando lobo</div>
+          <div class="meta-line">${esc(wl.name || "lobo")} — confianza ${wl.progress || 0}/${wl.need || 3} comidas</div>`;
+        return `<div class="section-label">🐺 Lobo domesticado</div>
+          <div class="kv-grid">
+            <div class="kv-item"><b>Nombre</b>${esc(wl.name || "—")}</div>
+            <div class="kv-item"><b>Modo</b>${esc(MODE_ES[wl.mode] || wl.mode || "—")}</div>
+            <div class="kv-item"><b>Última orden</b>${esc(wl.order === "stay" ? "quieto (guarda el campamento)" : "sígueme")}</div>
+            <div class="kv-item"><b>Vida</b>${wl.hp != null ? wl.hp + "%" : "—"}</div>
+            <div class="kv-item"><b>Hambre</b>${wl.hunger != null ? wl.hunger + "%" : "—"}</div>
+          </div>`;
+      })()}
     </div>`;
   }
 

@@ -1137,6 +1137,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var has_wolf := _bot_has_tamed_wolf(b)
 		b["_s_has_wolf"] = has_wolf
 		b["_s_tame_wolf"] = null if has_wolf else _find_tameable_wolf(b, 20.0)
+		_note_bot_wolf_life(b, has_wolf)
+		if has_wolf:
+			_sync_bot_wolf_orders(b)
 		var hunt_dir := str(_ai_active_directive(b).get("action", "")) == "hunt"
 		b["_s_prey"] = _find_huntable_prey(b, 44.0 if hunt_dir else 32.0)
 		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
@@ -2722,14 +2725,60 @@ func _find_tameable_wolf(b: Dictionary, max_dist: float) -> Node3D:
 			return w as Node3D
 	return null
 
-func _bot_has_tamed_wolf(b: Dictionary) -> bool:
+func _bot_tamed_wolf(b: Dictionary) -> Node3D:
 	if world == null or world.get_tree() == null:
-		return false
+		return null
 	var key := str(b["bot_id"])
 	for w in world.get_tree().get_nodes_in_group("wildlife"):
 		if is_instance_valid(w) and not bool(w.get("_is_dead")) and str(w.get("animal_type")) == "wolf" and str(w.get("tamed_to")) == key:
-			return true
-	return false
+			return w as Node3D
+	return null
+
+func _bot_has_tamed_wolf(b: Dictionary) -> bool:
+	return _bot_tamed_wolf(b) != null
+
+# Ordenes al lobo domesticado con el mismo mecanismo que usa el jugador en su
+# menu [F]: apply_command("follow"/"stay") — viaja pegado al bot mientras
+# trabaja fuera, y guarda el campamento mientras el bot descansa o duerme en
+# su base. El ataque/defensa ya lo cubre _command_bot_wolf_against
+# (notify_threat) al entrar en combate.
+func _sync_bot_wolf_orders(b: Dictionary) -> void:
+	var wolf := _bot_tamed_wolf(b)
+	if wolf == null or not wolf.has_method("apply_command"):
+		return
+	var proxy: Node3D = b["proxy"]
+	var resting_home := bool(b.get("sleeping", false)) or float(b.get("hide_timer", 0.0)) > 0.0
+	if not resting_home:
+		var camp: Vector3 = b.get("camp_spot", Vector3.INF)
+		var sh: Vector3 = b.get("shelter_pos", Vector3.INF)
+		var home: Vector3 = sh if sh != Vector3.INF else camp
+		if home != Vector3.INF and proxy.global_position.distance_to(home) <= 14.0:
+			var act := str(b.get("_act", ""))
+			resting_home = act in ["rest", "shelter", "stash", "camo", "build", "sleep", "idle"] or bool(b.get("sitting", false))
+	var want := "stay" if resting_home else "follow"
+	if str(b.get("_wolf_last_order", "")) == want:
+		return
+	b["_wolf_last_order"] = want
+	wolf.apply_command(want)
+	var mem: Dictionary = b.get("_mem", {})
+	record_bot_event(int(b["bot_id"]), "wolf_order", str(wolf.name), _poi_kind_near(proxy.global_position), proxy.global_position,
+		"orden: %s" % ("guardar el campamento" if want == "stay" else "seguirme"))
+	if mem is Dictionary and not bool(mem.get("milestones", {}).get("wolf_ordered", false)):
+		_record_milestone(int(b["bot_id"]), "wolf_ordered")
+
+func _note_bot_wolf_life(b: Dictionary, has_wolf: bool) -> void:
+	var had := bool(b.get("_had_wolf", false))
+	if has_wolf == had:
+		return
+	b["_had_wolf"] = has_wolf
+	var proxy: Node3D = b["proxy"]
+	if has_wolf:
+		var wolf := _bot_tamed_wolf(b)
+		_record_milestone(int(b["bot_id"]), "wolf_tamed")
+		record_bot_event(int(b["bot_id"]), "tame", str(wolf.name) if wolf != null else "lobo", _poi_kind_near(proxy.global_position), proxy.global_position, "domestico un lobo fiel")
+	elif not bool(b.get("dead", false)):
+		record_bot_event(int(b["bot_id"]), "wolf_lost", "lobo", _poi_kind_near(proxy.global_position), proxy.global_position, "perdio a su lobo")
+		b["_wolf_last_order"] = ""
 
 func _perform_wolf_taming_step(b: Dictionary, wolf: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
@@ -9802,6 +9851,38 @@ func get_full_web_status() -> Dictionary:
 		var own_sh_d := _find_shelter_dict(str(b.get("shelter_id", "")))
 		snap["shelter_camo"] = bool(own_sh_d.get("camo_covered", false)) if not own_sh_d.is_empty() else false
 		snap["shelter_pelts"] = bool(own_sh_d.get("pelt_lined", false)) if not own_sh_d.is_empty() else false
+		# Lobo domesticado: nombre, orden vigente, modo y vitales; o progreso de
+		# doma si esta ganando la confianza de un lobo salvaje con cebo.
+		var wolf_node := _bot_tamed_wolf(b)
+		if wolf_node != null:
+			var wpos := (wolf_node as Node3D).global_position
+			snap["wolf"] = {
+				"name": str(wolf_node.name),
+				"mode": str(wolf_node.get("_follow_mode")),
+				"order": str(b.get("_wolf_last_order", "follow")),
+				"hp": int(wolf_node.get("health")),
+				"hunger": int(wolf_node.get("_wolf_hunger")),
+				"pos": [snappedf(wpos.x, 0.1), snappedf(wpos.y, 0.1), snappedf(wpos.z, 0.1)],
+				"tamed": true,
+			}
+		else:
+			var tame_key := str(bid)
+			var tame_wolf: Node3D = null
+			var tame_n := 0
+			if world != null and world.get_tree() != null:
+				for tw in world.get_tree().get_nodes_in_group("wildlife"):
+					if not is_instance_valid(tw) or bool(tw.get("_is_dead")) or str(tw.get("animal_type")) != "wolf":
+						continue
+					var tp: Dictionary = tw.get("_tame_progress") if tw.get("_tame_progress") is Dictionary else {}
+					var n := int(tp.get(tame_key, 0))
+					if n > tame_n:
+						tame_n = n
+						tame_wolf = tw as Node3D
+			if tame_wolf != null:
+				var tp2 := tame_wolf.global_position
+				snap["wolf"] = {"name": str(tame_wolf.name), "progress": tame_n, "need": 3, "pos": [snappedf(tp2.x, 0.1), snappedf(tp2.y, 0.1), snappedf(tp2.z, 0.1)], "taming": true}
+			else:
+				snap["wolf"] = {}
 		snap["known_locations"] = (mem.get("known_locations", {}) as Dictionary).values()
 		snap["deaths"] = int(mem.get("deaths", 0))
 		snap["last_death_cause"] = str(mem.get("last_death_cause", ""))
