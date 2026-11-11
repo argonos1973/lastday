@@ -4428,6 +4428,30 @@ func run() -> void:
 		b_clr["team_leader_id"] = 0
 		(b_clr["proxy"] as Node3D).set_meta("team_leader_id", 0)
 
+	# 10J5i: Con 6 Troncos + Cuchillo (suministro >= 11 palos), el bot raja los
+	# troncos a 12 palos de inmediato y levanta su refugio.
+	var b_log: Dictionary = mgr.bots[902]
+	var p_log: Node3D = b_log["proxy"]
+	b_log["shelter_id"] = ""
+	b_log["shelter_pos"] = Vector3.INF
+	b_log["camp_spot"] = Vector3(120.0, 0.4, 120.0)
+	p_log.global_position = Vector3(120.0, 0.4, 120.0)
+	b_log["pos"] = p_log.global_position
+	b_log["hunger"] = 90.0
+	b_log["thirst"] = 90.0
+	b_log["health"] = 100.0
+	b_log["_craft_state"] = {}
+	p_log.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 6},
+	])
+	for i in range(90):
+		mgr._tick_bot(b_log, 0.25)
+		if not str(b_log.get("shelter_id", "")).is_empty():
+			break
+	check(not str(b_log.get("shelter_id", "")).is_empty() and mgr._bot_item_count(p_log, "Tronco") == 0,
+		"10J5i: Con 6 Troncos + Cuchillo raja los 12 palos y construye su refugio (sh=%s)" % str(b_log.get("shelter_id", "")))
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()

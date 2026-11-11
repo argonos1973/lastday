@@ -1165,6 +1165,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["_soc_t"] = maxf(0.0, float(b.get("_soc_t", 0.0)) - delta)
 	b["_meet_ev_t"] = maxf(0.0, float(b.get("_meet_ev_t", 0.0)) - delta)
 	b["_chat_cd"] = maxf(0.0, float(b.get("_chat_cd", 0.0)) - delta)
+	b["_craft_check"] = maxf(0.0, float(b.get("_craft_check", 0.0)) - delta)
 	b["aggro_timer"] = maxf(0.0, float(b["aggro_timer"]) - delta)
 	if float(b["aggro_timer"]) <= 0.0:
 		b["aggro_target"] = null
@@ -1566,6 +1567,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if _bot_try_farm(b, delta):
 		b["_act"] = "farm"
 		return
+
+	# Si ya reune los 11 palos contando sus Troncos (Tronco+filo -> 2 Palos),
+	# rajar los troncos a palos de inmediato para desbloquear la obra del refugio.
+	if str(b["shelter_id"]).is_empty() and not _can_bot_build_shelter(proxy) and _bot_palo_supply(proxy) >= 11 and _bot_item_count(proxy, "Tronco") > 0:
+		b["_craft_check"] = 0.0
+		if _bot_try_craft(b, delta):
+			b["_act"] = "craft"
+			return
 
 	# 6b) Construir refugio propio si ya reunio los materiales: en su solar
 	# reclamado si lo tiene, junto a la base de su lider de equipo si milita
@@ -8287,7 +8296,7 @@ func _on_bot_stats_died(b: Dictionary) -> void:
 # bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
 func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# Un bot reclutado en tu equipo no se duerme: te sigue dia y noche.
-	if bool(b.get("sleeping", false)) or int(b.get("team_leader_id", 0)) > 0 or float(b.get("hide_timer", 0.0)) > 0.0 or b.get("aggro_target") != null:
+	if bool(b.get("sleeping", false)) or (int(b.get("team_leader_id", 0)) > 0 and not is_bot_peer_id(int(b.get("team_leader_id", 0)))) or float(b.get("hide_timer", 0.0)) > 0.0 or b.get("aggro_target") != null:
 		return false
 	var st: SurvivalStats = b.get("vstats")
 	if st == null or st.dead:
@@ -8843,10 +8852,12 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 		# boleadoras o ropa de piel — nunca por acumular
 		return 5.5 if _bot_wants_craft_input(b, "Trapos") else 1.5
 	if oname == "Palo":
-		# Tronco -> 2 palos: habilitador cuando escasean las ramas; el
-		# refugio pide 11 — sin el, cada palo cuenta.
-		return 4.0 if _bot_item_count(proxy, "Palo") < 11 else 1.5
+		# Tronco -> 2 palos: prioridad maxima mientras le falten los 11 palos
+		# del refugio para no quedarse con troncos sin rajar en la mochila.
+		return 6.9 if _bot_item_count(proxy, "Palo") < 11 else 1.5
 	if oname == "Piedra afilada":
+		if _bot_item_count(proxy, "Piedra afilada") > 0 or _bot_has_can_opener(proxy):
+			return -1.0
 		return 4.3
 	if oname == "Antorcha":
 		if _bot_item_count(proxy, "Antorcha") > 0:
@@ -8874,12 +8885,13 @@ func _bot_try_craft(b: Dictionary, delta: float) -> bool:
 		b["sitting"] = false
 		if float(st["t"]) <= 0.0:
 			b["_craft_state"] = {}
+			b["_craft_check"] = 0.4
 			_bot_apply_craft(b, st.get("recipe", {}))
 		return true
 	b["_craft_check"] = float(b.get("_craft_check", 0.0)) - delta
 	if float(b["_craft_check"]) > 0.0:
 		return false
-	b["_craft_check"] = 7.0 + fmod(float(int(b["bot_id"])) * 1.7, 4.0)
+	b["_craft_check"] = 3.5 + fmod(float(int(b["bot_id"])) * 1.1, 2.0)
 	var inv: Array = b["proxy"].get_meta("saved_inventory", [])
 	var best: Dictionary = {}
 	var best_score := 3.0
