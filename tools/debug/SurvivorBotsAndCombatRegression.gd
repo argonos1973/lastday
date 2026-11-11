@@ -629,6 +629,97 @@ func run() -> void:
 	var tgt: Vector3 = mgr._choose_explore_target(elena)
 	check(tgt != Vector3.INF, "Elige un destino de exploracion real (%.0f,%.0f)" % [tgt.x, tgt.z])
 
+	# --- 10e) Base remota, asesino+arma en la muerte, nemesis y base quemada ---
+	# La base propia se elige en zona alejada: >=140 m del centro, anclada a
+	# POIs "wild" y lejos de solares donde ya le quemaron la base.
+	var remote_pick: Vector3 = mgr._pick_remote_base_spot(901, Vector3(22.0, 0.0, 12.0), {})
+	check(Vector2(remote_pick.x, remote_pick.z).length() >= 140.0,
+		"Base propia: emplazamiento remoto >=140 m del centro (%.0f m)" % Vector2(remote_pick.x, remote_pick.z).length())
+	var mem_bad: Dictionary = {"bad_camp_spots": [{"x": remote_pick.x, "y": remote_pick.y, "z": remote_pick.z}]}
+	var second_pick: Vector3 = mgr._pick_remote_base_spot(901, Vector3(22.0, 0.0, 12.0), mem_bad)
+	check(second_pick.distance_to(remote_pick) >= 55.0,
+		"Solar quemado: bad_camp_spots mueve la base a otra zona (d=%.0f m)" % second_pick.distance_to(remote_pick))
+
+	# Muerte con asesino: un jugador la mata a tiros junto a su campamento ->
+	# se graban asesino, arma, log de muertes, nemesis y el solar queda quemado.
+	var ed: Dictionary = mgr.bots[901]
+	var old_camp_e: Vector3 = ed["camp_spot"]
+	ed["proxy"].global_position = old_camp_e + Vector3(2.0, 0.0, 0.0)
+	var dlog_n := (ed.get("_mem", {}).get("death_log", []) as Array).size()
+	mgr.on_bot_damaged(901, 500.0, 1, "rifle")
+	var mem901: Dictionary = mgr._memory.get(901, {})
+	check(bool(ed["proxy"].get_meta("proxy_dead", false)), "Disparo letal de jugador mata al bot")
+	check(str(mem901.get("last_death_killer", "")) != "" and str(mem901.get("last_death_weapon", "")) == "rifle",
+		"Muerte graba asesino (%s) y arma (%s)" % [str(mem901.get("last_death_killer")), str(mem901.get("last_death_weapon"))])
+	check((mem901.get("death_log", []) as Array).size() == dlog_n + 1 and int(mem901.get("last_death_unix", 0)) > 0,
+		"death_log anota la muerte con timestamp")
+	check(int((mem901.get("death_lessons", {}) as Dictionary).get("ranged", 0)) >= 1,
+		"Muerte a distancia deja leccion 'ranged'")
+	check((mem901.get("bad_camp_spots", []) as Array).size() >= 1 and int(mem901.get("base_raided", 0)) >= 1,
+		"Morir junto a su campamento quema el solar -> se mudara de zona")
+	# Segunda muerte a manos del mismo verdugo -> nemesis (count 2)
+	mgr._respawn_bot(ed)
+	ed = mgr.bots[901]
+	mgr.on_bot_damaged(901, 500.0, 1, "melee")
+	var mem901b: Dictionary = mgr._memory.get(901, {})
+	var nem_count := 0
+	for kvv in (mem901b.get("killers", {}) as Dictionary).values():
+		nem_count = maxi(nem_count, int((kvv as Dictionary).get("count", 0)))
+	check(nem_count == 2, "El mismo verdugo repitiendo se convierte en nemesis (count=%d)" % nem_count)
+	check(int((mem901b.get("death_lessons", {}) as Dictionary).get("combat", 0)) >= 1,
+		"Muerte a melee deja leccion 'combat'")
+	var new_camp_e: Vector3 = (mgr.bots[901] as Dictionary).get("camp_spot", Vector3.INF)
+	check(new_camp_e.distance_to(old_camp_e) > 45.0,
+		"Tras quemarle la base, el nuevo campamento se muda de zona (d=%.0f m)" % new_camp_e.distance_to(old_camp_e))
+	# Reaparecida: la segunda muerte la dejo cadaver otra vez — respawn final y
+	# reasignar las referencias locales para las secciones que siguen.
+	mgr._respawn_bot(mgr.bots[901])
+	elena = mgr.bots[901]
+	elena_proxy = elena["proxy"]
+
+	# --- 10f) Camuflaje posterior (retrofit) sobre refugio ya construido ---
+	carlos = mgr.bots[902]
+	carlos_proxy = carlos["proxy"]
+	carlos["aggro_target"] = null
+	carlos["aggro_timer"] = 0.0
+	carlos["hunger"] = 90.0
+	carlos["thirst"] = 90.0
+	carlos["hide_timer"] = 0.0
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 4, "use_value": 0.0},
+		{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 1, "use_value": 0.0},
+	])
+	carlos_proxy.global_position = carlos["camp_spot"]
+	carlos["pos"] = carlos_proxy.global_position
+	for i2 in range(8):
+		mgr._tick_bot(carlos, 0.2)
+		if not str(carlos["shelter_id"]).is_empty():
+			break
+	check(not str(carlos["shelter_id"]).is_empty(), "Carlos levanta su refugio en su base")
+	var csh := mgr._find_shelter_dict(str(carlos["shelter_id"]))
+	check(not csh.is_empty() and not bool(csh.get("camo_covered", false)), "Sin tela el refugio queda sin camuflar")
+	# La particion mantiene la tela encima mientras el refugio no este camuflado
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Tela de camuflaje", "type": "material", "weight": 0.8, "quantity": 1, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 3, "use_value": 0.0},
+	])
+	var plan_c: Dictionary = mgr._bot_partition_inventory_for_shelter(carlos, carlos_proxy.get_meta("saved_inventory", []))
+	var camo_in_keep := false
+	for it2 in (plan_c.get("keep", []) as Array):
+		if str(it2.get("name", "")) == "Tela de camuflaje":
+			camo_in_keep = true
+	check(camo_in_keep, "La particion retiene la tela encima mientras el refugio no este camuflado")
+	# Pasando por su refugio con la tela -> la aplica (retrofit igual que el jugador)
+	carlos_proxy.global_position = carlos["shelter_pos"]
+	carlos["pos"] = carlos_proxy.global_position
+	for i2 in range(8):
+		mgr._tick_bot(carlos, 0.2)
+		csh = mgr._find_shelter_dict(str(carlos["shelter_id"]))
+		if bool(csh.get("camo_covered", false)):
+			break
+	check(bool(csh.get("camo_covered", false)), "Con tela encima camufla su refugio al pasar por casa")
+	check(mgr._bot_item_count(carlos_proxy, "Tela de camuflaje") == 0, "La tela se consume al camuflar el refugio")
+
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()
 	mgr.on_bot_damaged(901, 8.0, 1, "rifle")
@@ -3660,15 +3751,20 @@ func run() -> void:
 	var b_evo: Dictionary = mgr.bots[902]
 	var mem_evo: Dictionary = mgr._ensure_bot_memory(902, b_evo.get("cfg", {}))
 	mem_evo["death_lessons"] = {}
+	mem_evo["base_raided"] = 0
 	mgr._record_death_lesson(b_evo, mem_evo, "dehydrated")
 	mgr._record_death_lesson(b_evo, mem_evo, "starved")
 	mgr._record_death_lesson(b_evo, mem_evo, "wolf_bite")
 	mgr._record_death_lesson(b_evo, mem_evo, "hypothermia")
-	mgr._record_death_lesson(b_evo, mem_evo, "rifle")
+	mgr._record_death_lesson(b_evo, mem_evo, "melee")
 	var dl_map: Dictionary = mem_evo.get("death_lessons", {})
 	var adapts_evo: Array = mgr._bot_death_adaptations(mem_evo)
 	check(int(dl_map.get("dehydrated", 0)) == 1 and int(dl_map.get("starved", 0)) == 1 and int(dl_map.get("predator", 0)) == 1 and int(dl_map.get("cold", 0)) == 1 and int(dl_map.get("combat", 0)) == 1 and adapts_evo.size() == 5,
 		"10J4a: El bot aprende lecciones especificas de cada causa de muerte y genera las 5 adaptaciones evolutivas (n=%d)" % adapts_evo.size())
+	# Muerte a distancia (rifle): categoria propia 'ranged' con su adaptacion
+	mgr._record_death_lesson(b_evo, mem_evo, "rifle")
+	check(int(dl_map.get("ranged", 0)) == 1 and mgr._bot_death_adaptations(mem_evo).size() == 6,
+		"10J4a2: La muerte a tiros deja leccion 'ranged' y su adaptacion anti-tirador")
 	var tmp_mem_path := "user://test_bot_death_lessons_mem.json"
 	mgr.memory_path = tmp_mem_path
 	mgr.force_memory_io = true

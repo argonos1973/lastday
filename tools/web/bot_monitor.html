@@ -437,7 +437,7 @@ function renderSummary(data) {
       })()}</td>
       <td><b>${esc(b.current_goal || "survival_patrol")}</b></td>
       <td>${d.action ? `${srcBadge} <b>${esc(d.action)}</b> → ${esc(d.target || "-")}<br/><span style="color:var(--muted)">${esc(d.reason || "")}</span>` : `<span class="empty-note">IA táctica local activa</span>`}</td>
-      <td>${b.known_locations_count || 0} conocidas<br/><span style="color:var(--muted)">${b.deaths || 0} muertes ${b.last_death_cause ? `(${esc(b.last_death_cause)})` : ""}</span></td>
+      <td>${b.known_locations_count || 0} conocidas<br/><span style="color:var(--muted)">${b.deaths || 0} muertes${b.last_death_killer ? ` — últ: ${esc(b.last_death_killer)} (${esc(b.last_death_weapon || b.last_death_cause)})` : (b.last_death_cause ? ` (${esc(b.last_death_cause)})` : "")}</span></td>
     </tr>`;
   }
   html += `</tbody></table>`;
@@ -468,6 +468,8 @@ function renderMap(data) {
     if (b.pos) ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2]));
     if (b.explore_target && b.explore_target.length >= 3) ext = Math.max(ext, Math.abs(b.explore_target[0]), Math.abs(b.explore_target[2]));
     if (b.shelter_pos && b.shelter_pos.length >= 3) ext = Math.max(ext, Math.abs(b.shelter_pos[0]), Math.abs(b.shelter_pos[2]));
+    if (b.camp_spot && b.camp_spot.length >= 3) ext = Math.max(ext, Math.abs(b.camp_spot[0]), Math.abs(b.camp_spot[2]));
+    if (b.last_death_pos && b.last_death_pos.length >= 3) ext = Math.max(ext, Math.abs(b.last_death_pos[0]), Math.abs(b.last_death_pos[2]));
   }
   ext = Math.ceil((ext + 40) / 100) * 100; // margen + redondeo a 100 m
   document.getElementById("mapTitle").textContent = `Mapa Táctico en Tiempo Real (±${ext} m)`;
@@ -556,6 +558,26 @@ function renderMap(data) {
       ctx.fillStyle = "rgba(82, 209, 138, 0.25)";
       ctx.strokeRect(sx - 5, sz - 5, 10, 10);
       ctx.fillRect(sx - 5, sz - 5, 10, 10);
+      if (b.shelter_camo) {
+        ctx.font = "10px sans-serif";
+        ctx.fillText("🌿", sx + 6, sz - 6);
+      }
+    } else if (b.camp_spot && b.camp_spot.length >= 3) {
+      // Campamento elegido (base remota pendiente de construir)
+      const [cx, cz] = toScreen(b.camp_spot[0], b.camp_spot[2]);
+      ctx.strokeStyle = col;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(cx - 4, cz - 4, 8, 8);
+      ctx.setLineDash([]);
+      ctx.font = "9px sans-serif";
+      ctx.fillText("🏕", cx + 5, cz - 5);
+    }
+
+    // Punto de la ultima muerte (quien lo mato aparece en su ficha)
+    if (b.last_death_pos && b.last_death_pos.length >= 3 && b.last_death_unix) {
+      const [dx2, dz2] = toScreen(b.last_death_pos[0], b.last_death_pos[2]);
+      ctx.font = "11px sans-serif";
+      ctx.fillText("💀", dx2 - 6, dz2 + 4);
     }
 
     if (b.explore_target && b.explore_target.length >= 3) {
@@ -791,7 +813,7 @@ function renderBots(data) {
           <div class="kv-item"><b>Caza — presas</b>${st.kills_prey || 0}</div>
           <div class="kv-item"><b>Caza — depredadores</b>${st.kills_predator || 0}</div>
           <div class="kv-item"><b>Animales destripados</b>${st.animals_gutted || 0}</div>
-          <div class="kv-item"><b>Muertes</b>${b.deaths || 0}${b.last_death_cause ? ` (${esc(b.last_death_cause)})` : ""}</div>
+          <div class="kv-item"><b>Muertes</b>${b.deaths || 0}${b.last_death_killer ? ` — ${esc(b.last_death_killer)}` : ""}${b.last_death_cause ? ` (${esc(b.last_death_cause)})` : ""}</div>
         </div>`;
       })()}
 
@@ -851,6 +873,21 @@ function renderBots(data) {
       <div class="section-label">Evolución de Conducta (Hitos)</div>
       ${mstHtml}
 
+      ${(() => {
+        const dlog = b.death_log || [];
+        const nem = b.nemesis || {};
+        const lastBy = b.last_death_killer || "";
+        const lastWp = b.last_death_weapon || b.last_death_cause || "";
+        if (!dlog.length && !lastBy && !nem.name) return "";
+        const KIND_ES = {wolf_bite:"mordedura de lobo",bear_bite:"mordedura de oso",melee:"cuerpo a cuerpo",rifle:"disparo de rifle",bola:"boleadoras",arco:"flecha",arco_madera:"flecha",arrow:"flecha",lanza:"lanza",starved:"inanición",dehydrated:"deshidratación",hypothermia:"hipotermia",exhausted:"agotamiento",heatstroke:"golpe de calor",combat:"combate",succumbed:"sucumbió"};
+        const kindEs = k => KIND_ES[k] || k;
+        return `<div class="section-label">☠ Muertes (${b.deaths || 0})${nem.name ? ` · Némesis: ${esc(nem.name)} ×${nem.count}` : ""}</div>
+        <div class="decision-box" style="border-left-color:var(--danger)">
+          ${lastBy || lastWp ? `<div class="meta-line">Última: ${lastBy ? `<b>${esc(lastBy)}</b> con ` : ""}<b>${esc(kindEs(lastWp))}</b>${b.last_death_unix ? ` · hace ${esc(timeAgo(Number(b.last_death_unix)))}` : ""}</div>` : ""}
+          ${dlog.slice().reverse().map(d2 => `<div class="meta-line" style="color:var(--muted)">— ${d2.by ? `Matado por <b>${esc(d2.by)}</b> · ` : ""}${esc(kindEs(d2.weapon || d2.kind || ""))}${d2.t ? ` · ${new Date(Number(d2.t) * 1000).toLocaleString()}` : ""}</div>`).join("")}
+        </div>`;
+      })()}
+
       <div class="section-label">Estrategias Aprendidas (recientes primero)</div>
       ${stratHtml}
 
@@ -869,7 +906,17 @@ function renderBots(data) {
       <div style="color:var(--muted);font-size:11px;margin-bottom:5px;">Ropa: ${esc(b.clothing || "Ninguna")}</div>
       <div class="pill-list">${invHtml}</div>
 
-      <div class="section-label">Alijo en Refugio Propio (${stash.length}/18)</div>
+      <div class="section-label">Base Propia y Alijo en Refugio (${stash.length}/18)</div>
+      ${(() => {
+        const sp = b.shelter_pos || [];
+        const cs = b.camp_spot || [];
+        if (!sp.length && !cs.length) return `<div class="empty-note">Sin base aún — reunirá materiales y acampará en zona alejada</div>`;
+        return `<div style="color:var(--muted);font-size:11px;margin-bottom:5px">
+          ${sp.length ? `⛺ Refugio en (${Math.round(sp[0])}, ${Math.round(sp[2])})` : `🏕 Campamento elegido en (${Math.round(cs[0])}, ${Math.round(cs[2])}) — refugio pendiente`}
+          ${b.shelter_camo ? `<span class="item-tag" style="border-color:rgba(82,209,138,.5);color:#b9f5d0">🌿 Camuflado</span>` : ""}
+          ${b.shelter_pelts ? `<span class="item-tag">🪶 Forrado con pieles</span>` : ""}
+        </div>`;
+      })()}
       <div class="pill-list">${stashHtml}</div>
     </div>`;
   }

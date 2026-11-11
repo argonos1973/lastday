@@ -310,21 +310,80 @@ func _is_settled_area(pos: Vector3, ignore_shelter_id: String = "") -> bool:
 				return true
 	return false
 
-# Un campamento ademas necesita estar a >=35 m de cualquier otro campamento IA.
-func _is_valid_camp_pos(pos: Vector3) -> bool:
+# Un campamento ademas necesita estar a >=35 m de cualquier otro campamento IA
+# (salvo que el otro bot sea su lider de equipo: las bases compartidas juntan
+# refugios a ~14 m). avoid_spots marca solares quemados que nunca se repiten.
+func _is_valid_camp_pos(pos: Vector3, ally_id: int = 0, avoid_spots: Array = []) -> bool:
 	if not _is_flat_dry_pos(pos):
 		return false
 	for other_id in bots.keys():
 		var ob: Dictionary = bots[other_id]
-		if ob.get("shelter_pos", Vector3.INF) != Vector3.INF and pos.distance_to(ob["shelter_pos"]) < 35.0:
+		var min_d := 14.0 if int(other_id) == ally_id else 35.0
+		if ob.get("shelter_pos", Vector3.INF) != Vector3.INF and pos.distance_to(ob["shelter_pos"]) < min_d:
 			return false
-		if ob.get("camp_spot", Vector3.INF) != Vector3.INF and pos.distance_to(ob["camp_spot"]) < 35.0:
+		if ob.get("camp_spot", Vector3.INF) != Vector3.INF and pos.distance_to(ob["camp_spot"]) < min_d:
 			return false
+	for s in avoid_spots:
+		if s is Dictionary:
+			var dx := pos.x - float(s.get("x", 0.0))
+			var dz := pos.z - float(s.get("z", 0.0))
+			if dx * dx + dz * dz < 2025.0: # 45 m alrededor del solar quemado
+				return false
 	return true
+
+# Distancia al POI "caliente" (ciudad/base militar) mas cercano: las bases de
+# bots se levantan lejos del saqueo humano habitual.
+func _nearest_poi_dist(pos: Vector3, kinds: Array) -> float:
+	var best := 10000.0
+	for p in _explore_pois():
+		if str(p.get("kind", "")) in kinds:
+			var pp: Vector3 = p["pos"]
+			best = minf(best, Vector2(pos.x - pp.x, pos.z - pp.z).length())
+	return best
+
+# Emplazamiento de la base propia en zona alejada: anclada a los POIs "wild"
+# del mapa, >=140 m del centro de spawn, lejos de POIs calientes y de los
+# puntos donde el bot ya murio o le quemaron la base. Cada bot tira hacia su
+# propio sector para que las bases queden repartidas por el mapa.
+func _pick_remote_base_spot(bot_id: int, spawn_pos: Vector3, mem: Dictionary) -> Vector3:
+	var bad: Array = []
+	bad.append_array(mem.get("bad_camp_spots", []))
+	bad.append_array(mem.get("death_spots", []))
+	var sector := TAU * float(bot_id % 97) / 7.0
+	var anchor := spawn_pos + Vector3(cos(sector), 0.0, sin(sector)) * 230.0
+	var best := anchor
+	var best_score := -1.0
+	var cands: Array = [anchor]
+	for p in _explore_pois():
+		if str(p.get("kind", "")) == "wild":
+			cands.append(p["pos"])
+	for c in cands:
+		var cp: Vector3 = _sanitize_ground_point(c)
+		var d_center := Vector2(cp.x, cp.z).length()
+		if d_center < 140.0:
+			continue
+		var hot_d := _nearest_poi_dist(cp, ["military", "city", "tower"])
+		if hot_d < 45.0:
+			continue
+		var near_bad := false
+		for s in bad:
+			if s is Dictionary:
+				var dx := cp.x - float(s.get("x", 0.0))
+				var dz := cp.z - float(s.get("z", 0.0))
+				if dx * dx + dz * dz < 3600.0: # 60 m
+					near_bad = true
+					break
+		if near_bad:
+			continue
+		var score := d_center * 0.5 + clampf(hot_d, 0.0, 120.0) * 0.8 - cp.distance_to(anchor) * 0.6
+		if score > best_score:
+			best_score = score
+			best = cp
+	return best
 
 # Busca en espiral alrededor del punto preferido un sitio valido de campamento,
 # preferiblemente junto a arboles (oculto) en vez de en mitad del campo.
-func _find_valid_camp_spot(preferred: Vector3, _near: Vector3) -> Vector3:
+func _find_valid_camp_spot(preferred: Vector3, _near: Vector3, ally_id: int = 0, avoid_spots: Array = []) -> Vector3:
 	var best := preferred
 	var best_score := -1.0
 	var found := false
@@ -334,7 +393,7 @@ func _find_valid_camp_spot(preferred: Vector3, _near: Vector3) -> Vector3:
 			var ang := TAU * float(i) / float(steps)
 			var cand := preferred + Vector3(cos(ang) * radius, 0.0, sin(ang) * radius)
 			cand.y = _ground_y(cand.x, cand.z)
-			if not _is_valid_camp_pos(cand):
+			if not _is_valid_camp_pos(cand, ally_id, avoid_spots):
 				continue
 			var tree_dist := _nearest_tree_dist(cand, 25.0)
 			var score := 1.0 - clampf(tree_dist / 25.0, 0.0, 1.0)
@@ -585,9 +644,14 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		var mt: Vector3 = world._military_tent_pos
 		patrol.append(_sanitize_ground_point(mt))
 	# El campamento debe estar en un sitio valido: tierra firme, fuera de
-	# carreteras/casas, terreno llano y lejos de otros campamentos.
-	var preferred_camp: Vector3 = cfg.get("camp_spot", spawn_pos + Vector3(6.0, 0.0, 6.0))
-	var camp_spot: Vector3 = _find_valid_camp_spot(preferred_camp, spawn_pos)
+	# carreteras/casas, terreno llano y lejos de otros campamentos. Ademas el
+	# bot elige una base propia en zona alejada del centro — salvo que su
+	# memoria ya tenga un refugio reclamado, en cuyo caso vuelve a su solar.
+	var preferred_camp: Vector3 = _pick_remote_base_spot(bot_id, spawn_pos, mem0)
+	var mem_sh0: Dictionary = mem0.get("shelter", {}) if mem0.get("shelter") is Dictionary else {}
+	if mem_sh0.get("pos") is Array and (mem_sh0["pos"] as Array).size() >= 3:
+		preferred_camp = Vector3(float(mem_sh0["pos"][0]), float(mem_sh0["pos"][1]), float(mem_sh0["pos"][2]))
+	var camp_spot: Vector3 = _find_valid_camp_spot(preferred_camp, spawn_pos, 0, mem0.get("bad_camp_spots", []))
 
 	var proxy := Node3D.new()
 	proxy.name = "ServerProxy_%d" % bot_id
@@ -1097,7 +1161,6 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_prep_logged"] = false
 	_validate_shelter_claim(b)
 	var sh_pos: Vector3 = b["shelter_pos"]
-	var camp_pos: Vector3 = b["camp_spot"]
 	var hiding_in_shelter: bool = float(b["hide_timer"]) > 0.0 and sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 2.6
 	b["torch_lit"] = is_night and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
@@ -1172,7 +1235,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["flee_until"] = maxf(0.0, float(b["flee_until"]) - delta)
 		var unarmed_vs_armed: bool = _best_weapon_name(proxy).is_empty() and not str(human_foe.get_meta("saved_held_item", "")).is_empty()
 		var combat_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("combat", 0))
-		var retreat_hp := 30.0 + minf(15.0, float(combat_lessons) * 5.0)
+		var ranged_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("ranged", 0))
+		var retreat_hp := 30.0 + minf(15.0, float(combat_lessons) * 5.0) + minf(10.0, float(ranged_lessons) * 4.0)
 		if (float(b["health"]) < retreat_hp or fleeing or unarmed_vs_armed) and not _has_combat_edge(b, human_foe):
 			if sh_pos != Vector3.INF:
 				b["hide_timer"] = 20.0
@@ -1381,14 +1445,17 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "farm"
 		return
 
-	# 6b) Construir refugio propio si ya reunio los materiales
+	# 6b) Construir refugio propio si ya reunio los materiales: en su solar
+	# reclamado si lo tiene, junto a la base de su lider de equipo si milita
+	# (bases compartidas de varios refugios) o en su campamento remoto.
 	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
 		b["_act"] = "build"
-		var d_camp := Vector2(proxy.global_position.x - camp_pos.x, proxy.global_position.z - camp_pos.z).length()
+		var build_pos := _bot_build_camp_pos(b)
+		var d_camp := Vector2(proxy.global_position.x - build_pos.x, proxy.global_position.z - build_pos.z).length()
 		if d_camp > 2.4:
-			_move_bot_towards(b, camp_pos, 3.8, delta, "walk")
+			_move_bot_towards(b, build_pos, 5.5 if d_camp > 30.0 else 3.8, delta, "run" if d_camp > 30.0 else "walk")
 			return
-		_bot_build_shelter(b, camp_pos)
+		_bot_build_shelter(b, build_pos)
 		return
 
 	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)) and _can_bot_build_campfire(proxy):
@@ -1414,6 +1481,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var d_own_sh := Vector2(proxy.global_position.x - sh_pos.x, proxy.global_position.z - sh_pos.z).length()
 		if d_own_sh <= 2.6:
 			_bot_sync_own_shelter_stash(b)
+			_bot_try_camo_shelter(b)
 		var needs_from_stash := _own_shelter_has_needed_item(b) and d_own_sh < 110.0
 		var storable_n := _bot_count_storable_items(b)
 		var wants_stash_run := needs_from_stash or (not starving_or_parched and (storable_n >= 3 or (storable_n >= 1 and d_own_sh < 24.0)))
@@ -3323,14 +3391,51 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	mem["death_spots"] = spots
 	record_zone_hazard(bot_id, dp, _poi_kind_near(dp), 0.75)
 	var killer_id := int(b.get("_last_attacker_id", 0))
+	var killer_name := ""
 	if killer_id > 0:
 		var kkey := _actor_persist_key(killer_id)
 		var kname := _actor_display_name(killer_id)
+		killer_name = kname
 		record_social_event(bot_id, kkey, kname, "attack", 0.75, "killed_by_" + death_kind)
+		# Nemesis: cada muerte a manos del mismo actor suma mas miedo que la
+		# anterior — el bot aprende quien es su verdugo habitual.
+		var killers: Dictionary = mem.get("killers", {})
+		var kr: Dictionary = killers.get(kkey, {"name": kname, "count": 0})
+		kr["count"] = int(kr.get("count", 0)) + 1
+		kr["name"] = kname
+		killers[kkey] = kr
+		mem["killers"] = killers
 		var krel := get_bot_relationship(bot_id, kkey)
-		krel["fear"] = snappedf(clampf(float(krel.get("fear", 0.0)) + 0.30, 0.0, 1.0), 0.001)
+		var fear_add := 0.30 * minf(2.0, 1.0 + float(int(kr.get("count", 1)) - 1) * 0.5)
+		krel["fear"] = snappedf(clampf(float(krel.get("fear", 0.0)) + fear_add, 0.0, 1.0), 0.001)
 		record_strategy_outcome(bot_id, "scavenge", false, 0.16)
 	b["_last_attacker_id"] = 0
+	# Quien y como: la ficha de la muerte queda en memoria persistente para el
+	# monitor y para que el asesor IA razone sobre su verdugo. El arma solo es
+	# fiable si hubo atacante (de lo contrario seria la del combate anterior).
+	var death_weapon := str(b.get("_last_hit_weapon", "")) if killer_id > 0 else ""
+	b["_last_hit_weapon"] = ""
+	mem["last_death_killer"] = killer_name
+	mem["last_death_weapon"] = death_weapon if not death_weapon.is_empty() else death_kind
+	mem["last_death_unix"] = int(Time.get_unix_time_from_system())
+	var dlog: Array = mem.get("death_log", [])
+	dlog.append({"by": killer_name, "kind": death_kind, "weapon": mem["last_death_weapon"], "t": int(Time.get_unix_time_from_system())})
+	while dlog.size() > 8:
+		dlog.pop_front()
+	mem["death_log"] = dlog
+	# Base comprometida: morir en/junto a su propio campamento quema el solar —
+	# la proxima vida monta la base en otro sitio (aprende que lo encontraron).
+	var own_camp: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if own_camp == Vector3.INF:
+		own_camp = b.get("camp_spot", Vector3.INF)
+	if own_camp != Vector3.INF and dp.distance_to(own_camp) < 30.0:
+		var bad: Array = mem.get("bad_camp_spots", [])
+		bad.append({"x": own_camp.x, "y": own_camp.y, "z": own_camp.z})
+		while bad.size() > 6:
+			bad.pop_front()
+		mem["bad_camp_spots"] = bad
+		mem["base_raided"] = int(mem.get("base_raided", 0)) + 1
+		record_strategy_outcome(bot_id, "fortify_camp", false, 0.10)
 	_record_death_lesson(b, mem, death_kind)
 	record_bot_event(bot_id, "death", death_kind, _poi_kind_near(dp), dp, "died:" + death_kind)
 	_evolve_personality(b, "death", 0.6)
@@ -3395,6 +3500,16 @@ func _record_death_lesson(b: Dictionary, mem: Dictionary, death_kind: String) ->
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
 			record_strategy_outcome(bid, "fortify_camp", true, 0.15)
 			_record_milestone(bid, "learned_shelter_warmth")
+		"rifle", "bola", "arco", "arco_madera", "arrow", "lanza":
+			# Muerte a distancia: aprende a desconfiar, a no cruzar campo
+			# abierto de dia y a cubrir/camuflar su campamento.
+			cat = "ranged"
+			_adjust_trait(p, "distrust", 0.06, float(base_p["distrust"]))
+			_adjust_trait(p, "bravery", -0.03, float(base_p["bravery"]))
+			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
+			record_strategy_outcome(bid, "avoid_zone", true, 0.12)
+			record_strategy_outcome(bid, "fortify_camp", true, 0.10)
+			_record_milestone(bid, "learned_ranged_threat")
 		_:
 			cat = "combat"
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
@@ -3420,9 +3535,15 @@ func _bot_death_adaptations(mem: Dictionary) -> Array:
 	var cmb := int(lessons.get("combat", 0))
 	if cmb > 0:
 		out.append("🛡 Táctica de combate (repliegue a <%d HP)" % (30 + mini(15, cmb * 5)))
+	var rng := int(lessons.get("ranged", 0))
+	if rng > 0:
+		out.append("🎯 Precaución anti-tirador (evita campo abierto, desconfía ×%d)" % mini(3, rng + 1))
 	var cld := int(lessons.get("cold", 0))
 	if cld > 0:
 		out.append("🔥 Prioridad térmica (abrigo y fogata temprana)")
+	var raided := int(mem.get("base_raided", 0))
+	if raided > 0:
+		out.append("🏚 Base quemada ×%d (se mudó a zona alejada)" % raided)
 	return out
 
 func _bot_has_drink(proxy: Node3D) -> bool:
@@ -6019,6 +6140,25 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 func _can_bot_build_shelter(proxy: Node3D) -> bool:
 	return _bot_item_count(proxy, "Palo") >= 4 and _bot_item_count(proxy, "Cuerda") >= 1
 
+# Donde levantar el refugio: el solar propio reclamado si ya lo tiene (reobrar
+# sobre su base), junto al refugio del lider de equipo si milita en uno (base
+# compartida a ~15-30 m) o su campamento remoto. El sitio de equipo se cachea
+# para no recalcularlo cada tick.
+func _bot_build_camp_pos(b: Dictionary) -> Vector3:
+	var shp: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if shp != Vector3.INF:
+		return shp
+	var lid := int(b.get("team_leader_id", 0))
+	if lid > 0 and bots.has(lid):
+		if not (b.get("_team_camp") is Vector3):
+			var lb: Dictionary = bots[lid]
+			var lsp: Vector3 = lb.get("shelter_pos", lb.get("camp_spot", Vector3.INF))
+			if lsp != Vector3.INF:
+				b["_team_camp"] = _find_valid_camp_spot(lsp, (b["proxy"] as Node3D).global_position, lid)
+		if b.get("_team_camp") is Vector3:
+			return b["_team_camp"]
+	return b.get("camp_spot", Vector3.INF)
+
 func _can_bot_build_campfire(proxy: Node3D) -> bool:
 	return _bot_item_count(proxy, "Palo") >= 2 and _bot_item_count(proxy, "Piedra") >= 2
 
@@ -6308,6 +6448,11 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 	var stone_cap := 1 if has_cf else 2
 	var stick_kept := 0
 	var stone_kept := 0
+	# La tela no se almacena mientras su refugio siga sin camuflar: la necesita
+	# encima para cubrirlo la proxima vez que pase por casa.
+	var own_sh := _find_shelter_dict(str(b.get("shelter_id", "")))
+	var needs_camo_net := not own_sh.is_empty() and not bool(own_sh.get("camo_covered", false))
+	var kept_camo := false
 	var keep: Array = []
 	var store: Array = []
 	for raw_it in inv:
@@ -6346,6 +6491,10 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			continue
 		if nm == "Cerillas" and not kept_matches:
 			kept_matches = true
+			keep.append(it)
+			continue
+		if nm == "Tela de camuflaje" and needs_camo_net and not kept_camo:
+			kept_camo = true
 			keep.append(it)
 			continue
 		if tp in ["ammo", "ammo_arrow"]:
@@ -6430,6 +6579,32 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 	return {"keep": keep, "store": store}
 
 # Retira lo que necesite de su propio refugio y guarda alli todo el loot sobrante.
+# Camufla el refugio propio con una Tela de camuflaje si aun no la lleva —
+# igual que el jugador humano sobre su refugio (meta + visual via RPC).
+func _bot_try_camo_shelter(b: Dictionary) -> void:
+	var sid := str(b.get("shelter_id", ""))
+	if sid.is_empty() or world == null:
+		return
+	var sh := _find_shelter_dict(sid)
+	if sh.is_empty() or bool(sh.get("camo_covered", false)):
+		return
+	var proxy: Node3D = b["proxy"]
+	if not _consume_bot_item(proxy, "Tela de camuflaje", 1):
+		return
+	if not (world.has_method("_apply_shelter_camo_state") and world._apply_shelter_camo_state(sid, true)):
+		return
+	var net = world.get("net")
+	if net != null and net.is_host and net.peer != null:
+		for pid in net.players.keys():
+			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
+				net.shelter_camo_changed.rpc_id(pid, sid, true)
+	var mm = b.get("_mem", {})
+	if mm is Dictionary:
+		var sm: Dictionary = (mm as Dictionary).get("shelter", {}) if (mm as Dictionary).get("shelter") is Dictionary else {}
+		sm["camo"] = true
+		(mm as Dictionary)["shelter"] = sm
+	_record_milestone(int(b["bot_id"]), "camouflaged_shelter")
+
 func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 	var sid := str(b.get("shelter_id", ""))
 	if sid.is_empty():
@@ -8172,6 +8347,20 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["last_death_pos"] = Vector3.INF
 	if not mem.has("last_death_cause"):
 		mem["last_death_cause"] = ""
+	if not mem.has("last_death_killer"):
+		mem["last_death_killer"] = ""
+	if not mem.has("last_death_weapon"):
+		mem["last_death_weapon"] = ""
+	if not mem.has("last_death_unix"):
+		mem["last_death_unix"] = 0
+	if not mem.has("death_log") or not (mem["death_log"] is Array):
+		mem["death_log"] = []
+	if not mem.has("killers") or not (mem["killers"] is Dictionary):
+		mem["killers"] = {}
+	if not mem.has("bad_camp_spots") or not (mem["bad_camp_spots"] is Array):
+		mem["bad_camp_spots"] = []
+	if not mem.has("base_raided"):
+		mem["base_raided"] = 0
 	if not mem.has("visited") or not (mem["visited"] is Array):
 		mem["visited"] = []
 	if not mem.has("gear_learned"):
@@ -9229,7 +9418,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		# Migracion: las relaciones bot<->bot creadas sin agresion arrastran la
@@ -9290,7 +9479,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
@@ -9610,9 +9799,29 @@ func get_full_web_status() -> Dictionary:
 		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
 		snap["inventory"] = (proxy.get_meta("saved_inventory", []) as Array) if proxy != null and is_instance_valid(proxy) else []
 		snap["shelter_stash"] = _get_shelter_contents(str(b.get("shelter_id", "")))
+		var own_sh_d := _find_shelter_dict(str(b.get("shelter_id", "")))
+		snap["shelter_camo"] = bool(own_sh_d.get("camo_covered", false)) if not own_sh_d.is_empty() else false
+		snap["shelter_pelts"] = bool(own_sh_d.get("pelt_lined", false)) if not own_sh_d.is_empty() else false
 		snap["known_locations"] = (mem.get("known_locations", {}) as Dictionary).values()
 		snap["deaths"] = int(mem.get("deaths", 0))
 		snap["last_death_cause"] = str(mem.get("last_death_cause", ""))
+		# Quien lo mato y como: asesino (jugador/bot) + arma/causa + hace cuanto.
+		var killer_nm := str(mem.get("last_death_killer", ""))
+		snap["last_death_killer"] = killer_nm
+		snap["last_death_weapon"] = str(mem.get("last_death_weapon", mem.get("last_death_cause", "")))
+		snap["last_death_unix"] = int(mem.get("last_death_unix", 0))
+		var ldp = mem.get("last_death_pos", Vector3.INF)
+		snap["last_death_pos"] = [snappedf((ldp as Vector3).x, 0.1), snappedf((ldp as Vector3).y, 0.1), snappedf((ldp as Vector3).z, 0.1)] if ldp is Vector3 and ldp != Vector3.INF else []
+		var dlog: Array = mem.get("death_log", [])
+		snap["death_log"] = (dlog.duplicate(true) if dlog is Array else [])
+		# Nemesis: verdugo que ya lo mato >=2 veces.
+		var nem := {}
+		var nem_n := 0
+		for kk in (mem.get("killers", {}) as Dictionary).values():
+			if kk is Dictionary and int(kk.get("count", 0)) > nem_n:
+				nem_n = int(kk.get("count", 0))
+				nem = kk
+		snap["nemesis"] = {"name": str(nem.get("name", "")), "count": nem_n} if nem_n >= 2 else {}
 		# Puntuacion y tiempo de vida: mem.stats acumula vidas anteriores y el
 		# tramo no volcado de la vida actual se calcula desde alive_flush_msec.
 		var now_ms := Time.get_ticks_msec()
