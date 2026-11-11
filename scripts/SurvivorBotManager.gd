@@ -5433,6 +5433,7 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 	if response_code == 429:
 		_ai_register_429(_headers)
 	elif result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
+		_ai_note_rate_headers(_headers)
 		var parsed = JSON.parse_string(body.get_string_from_utf8())
 		if parsed is Dictionary:
 			var usage = parsed.get("usage", {})
@@ -8838,6 +8839,54 @@ func _ai_register_429(headers: PackedStringArray) -> void:
 	_ai_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
 	_ai_conn_status = "rate_limited (429, retry_in=%ds)" % int(maxf(wait, 2.0))
 
+# Groq publica la cuota en cada respuesta 200: x-ratelimit-remaining-tokens +
+# x-ratelimit-reset-tokens (formato Go "4m19.2s", "172ms", "1h30m"). El tier
+# gratis limita a ~8000 tokens/minuto y cada decision consume ~2-3k, asi que
+# cuando queda poco margen paramos proactivamente hasta el reset en vez de
+# comernos el 429. threshold ~una llamada completa de asesor+chat.
+const AI_RATELIMIT_HEADROOM_TOKENS := 3200
+
+func _ai_parse_groq_reset_seconds(raw: String) -> float:
+	var s := raw.strip_edges()
+	var total := 0.0
+	var pos := 0
+	while pos < s.length():
+		var end := pos
+		while end < s.length() and (s[end].is_valid_int() or s[end] == "."):
+			end += 1
+		if end == pos:
+			return -1.0
+		var num := float(s.substr(pos, end - pos))
+		var unit := ""
+		while end < s.length() and not s[end].is_valid_int():
+			unit += s[end]
+			end += 1
+		match unit:
+			"h": total += num * 3600.0
+			"m": total += num * 60.0
+			"ms": total += num / 1000.0
+			"s": total += num
+			"us": total += num / 1000000.0
+			"ns": total += num / 1000000000.0
+			_: return -1.0
+		pos = end
+	return total if total > 0.0 else -1.0
+
+func _ai_note_rate_headers(headers: PackedStringArray) -> void:
+	var remaining := -1
+	var reset_sec := -1.0
+	for h in headers:
+		var hl := str(h).to_lower()
+		if hl.begins_with("x-ratelimit-remaining-tokens:"):
+			remaining = int(hl.get_slice(":", 1).strip_edges())
+		elif hl.begins_with("x-ratelimit-reset-tokens:"):
+			reset_sec = _ai_parse_groq_reset_seconds(hl.get_slice(":", 1).strip_edges())
+	if remaining >= 0 and remaining < AI_RATELIMIT_HEADROOM_TOKENS and reset_sec > 0.0:
+		var until := Time.get_ticks_msec() + int((reset_sec + 0.5) * 1000.0)
+		if until > _ai_backoff_until_msec:
+			_ai_backoff_until_msec = until
+			_ai_conn_status = "pacing (tokens<=%d, reset=%ds)" % [remaining, int(reset_sec)]
+
 func _ai_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var bot_id := _ai_pending_bot
 	_ai_pending_bot = 0
@@ -8856,6 +8905,7 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		return
 	_ai_backoff_sec = 60.0
 	_ai_conn_status = "online (200)"
+	_ai_note_rate_headers(_headers)
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not (parsed is Dictionary):
 		_ai_apply_local_fallback_decision(bot_id, "invalid_json")

@@ -1607,6 +1607,22 @@ func run() -> void:
 	mgr.force_memory_io = false
 	mgr.memory_path = SurvivorBotManagerScript.AI_MEMORY_PATH
 
+	# Aceptación 2c: pacing de rate-limit Groq — parser de duraciones Go +
+	# _ai_note_rate_headers activa el backoff cuando quedan pocos tokens
+	check(absf(mgr._ai_parse_groq_reset_seconds("172ms") - 0.172) < 0.001,
+		"RateLimit: parse '172ms' -> 0.172 s")
+	check(absf(mgr._ai_parse_groq_reset_seconds("4m19.2s") - 259.2) < 0.01,
+		"RateLimit: parse '4m19.2s' -> 259.2 s")
+	check(absf(mgr._ai_parse_groq_reset_seconds("1h30m") - 5400.0) < 0.5,
+		"RateLimit: parse '1h30m' -> 5400 s")
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_note_rate_headers(PackedStringArray(["x-ratelimit-remaining-tokens: 100", "x-ratelimit-reset-tokens: 42s"]))
+	check(int(mgr._ai_backoff_until_msec) > 0, "RateLimit: tokens agotados activan el backoff hasta el reset")
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_note_rate_headers(PackedStringArray(["x-ratelimit-remaining-tokens: 7500", "x-ratelimit-reset-tokens: 200ms"]))
+	check(int(mgr._ai_backoff_until_msec) == 0,
+		"RateLimit: con margen de tokens no se activa ningun backoff")
+
 	# Aceptación 3: Un bot modifica su comportamiento tras experiencias repetidas
 	# 3a) Riesgo repetido en una ubicación reduce su preferencia de exploración y evoluciona personalidad
 	var p_surv_before := float(mgr._get_bot_personality(elena).get("survival_instinct", 0.0))
