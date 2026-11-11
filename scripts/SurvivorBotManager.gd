@@ -469,20 +469,58 @@ func _find_valid_camp_spot(preferred: Vector3, _near: Vector3, ally_id: int = 0,
 			break
 	return best
 
+var _cached_wa_size := -1
+var _cached_wa_last := ""
+var _cached_tree_positions: Array = []
+var _cached_drink_ids: Array = []
+var _cached_eat_ids: Array = []
+var _cached_fruit_ids: Array = []
+var _cached_mat_ids: Array = []
+
+func _ensure_world_action_caches() -> void:
+	if world == null or not ("world_actions_by_id" in world):
+		return
+	var wa_dict: Dictionary = world.world_actions_by_id
+	var sz := wa_dict.size()
+	var lk := str(wa_dict.keys().back()) if sz > 0 else ""
+	if sz == _cached_wa_size and lk == _cached_wa_last:
+		return
+	_cached_wa_size = sz
+	_cached_wa_last = lk
+	_cached_tree_positions.clear()
+	_cached_drink_ids.clear()
+	_cached_eat_ids.clear()
+	_cached_fruit_ids.clear()
+	_cached_mat_ids.clear()
+	for aid in wa_dict.keys():
+		var a = wa_dict[aid]
+		if a == null or not is_instance_valid(a) or not (a is Node3D):
+			continue
+		var at := str(a.get("action_type"))
+		if at == "fell_tree":
+			_cached_tree_positions.append((a as Node3D).global_position)
+		elif at == "fell_bush":
+			_cached_tree_positions.append((a as Node3D).global_position)
+			_cached_mat_ids.append(aid)
+		elif at == "wood" or at == "stone":
+			_cached_mat_ids.append(aid)
+		elif at == "drink_water":
+			_cached_drink_ids.append(aid)
+		elif at == "eat_food":
+			_cached_eat_ids.append(aid)
+		elif at == "pick_fruit":
+			_cached_fruit_ids.append(aid)
+
 func _nearest_tree_dist(pos: Vector3, max_dist: float) -> float:
 	if world == null or not ("world_actions_by_id" in world):
 		return max_dist
-	var best := max_dist
-	for aid in world.world_actions_by_id.keys():
-		var a = world.world_actions_by_id[aid]
-		if a == null or not is_instance_valid(a):
-			continue
-		if str(a.get("action_type")) != "fell_tree" and str(a.get("action_type")) != "fell_bush":
-			continue
-		var d := pos.distance_to((a as Node3D).global_position)
-		if d < best:
-			best = d
-	return best
+	_ensure_world_action_caches()
+	var best_sq := max_dist * max_dist
+	for tp in _cached_tree_positions:
+		var d_sq := pos.distance_squared_to(tp as Vector3)
+		if d_sq < best_sq:
+			best_sq = d_sq
+	return sqrt(best_sq)
 
 # Punto de agua alcanzable mas cercano (segmentos del rio/lago) para que el
 # superviviente vaya a beber cuando se quede sin botellas.
@@ -530,8 +568,9 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 	# igual que un jugador con E mantenida. Las acciones drink_N del rio/lago
 	# caen dentro del agua y ya las cubren los segmentos de arriba.
 	if "world_actions_by_id" in world:
-		for aid in world.world_actions_by_id.keys():
-			var a = world.world_actions_by_id[aid]
+		_ensure_world_action_caches()
+		for aid in _cached_drink_ids:
+			var a = world.world_actions_by_id.get(aid)
 			if a == null or not is_instance_valid(a) or not (a is Node3D):
 				continue
 			if str(a.get("action_type")) != "drink_water":
@@ -1577,11 +1616,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			return
 
 	# Antes de emprender una caminata larga al solar con los 11 palos a cuestas:
-	# si va a oscurecer/es de noche sin antorcha (y lleva palo sobrante + trapos
-	# o ropa cortable) o tiene hambre con latas cerradas, terminar ese crafteo
-	# vital primero (la antorcha encendida ademas ahuyenta a los lobos en ruta).
+	# si va a oscurecer/es de noche sin antorcha (y lleva palo sobrante + trapos)
+	# o tiene hambre con latas cerradas, terminar ese crafteo vital primero.
 	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
-		var want_pre_build_craft := ((is_night or _is_pre_night()) and _bot_item_count(proxy, "Antorcha") == 0 and _bot_palo_supply(proxy) >= 12 and (_bot_item_count(proxy, "Trapos") > 0 or _bot_spare_clothing_count(proxy) > 0)) \
+		var want_pre_build_craft := ((is_night or _is_pre_night()) and _bot_item_count(proxy, "Antorcha") == 0 and _bot_palo_supply(proxy) >= 12 and _bot_item_count(proxy, "Trapos") > 0) \
 			or (float(b["hunger"]) < 58.0 and not _bot_has_edible_food(proxy, false))
 		if want_pre_build_craft:
 			b["_craft_check"] = 0.0
@@ -1595,7 +1633,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
 		var build_pos := _bot_build_camp_pos(b)
 		var d_camp := Vector2(proxy.global_position.x - build_pos.x, proxy.global_position.z - build_pos.z).length()
-		if d_camp > 170.0 and b.get("shelter_pos", Vector3.INF) == Vector3.INF and int(b.get("team_leader_id", 0)) == 0:
+		if d_camp > 170.0 and not bool(b.get("_camp_reanchored", false)) and b.get("shelter_pos", Vector3.INF) == Vector3.INF and int(b.get("team_leader_id", 0)) == 0:
+			b["_camp_reanchored"] = true
 			var mem_re := _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
 			var nearer := _find_valid_camp_spot(_pick_remote_base_spot(int(b["bot_id"]), proxy.global_position, mem_re), proxy.global_position, 0, mem_re.get("bad_camp_spots", []))
 			var d_nearer := Vector2(proxy.global_position.x - nearer.x, proxy.global_position.z - nearer.z).length() if nearer != Vector3.INF else INF
@@ -8853,6 +8892,15 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 		return 5.6 if oname == "Arco reforzado" else 5.0
 	if oname == "Boleadoras":
 		return 3.0 if has_rifle or not _bot_best_bow(proxy).is_empty() else 5.0
+	# Mientras junta los 11 palos del refugio (ya lleva >=6 en camino y aun no
+	# sobran >=13), blindar los palos contra recetas secundarias (azada, lanza,
+	# palo afilado sin carne) para que no le roben los 11 del refugio.
+	var r_inputs: Dictionary = recipe.get("inputs", {})
+	if str(b.get("shelter_id", "")).is_empty() and (r_inputs.has("Palo") or r_inputs.has("Palo afilado")):
+		var essential_stick := oname in ["Antorcha", "Carne ensartada", "Pez ensartado"] or (oname == "Palo afilado" and _bot_has_raw_meat(proxy) and _bot_item_count(proxy, "Palo afilado") == 0)
+		var supply_now := _bot_palo_supply(proxy)
+		if not essential_stick and supply_now >= 6 and supply_now < 13:
+			return -1.0
 	# Armas y herramienta: solo si mejoran lo que ya tiene en la mano
 	if otype in ["weapon", "tool_axe", "tool_spear"]:
 		if oname == "Palo afilado":
@@ -8870,10 +8918,16 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	if oname == "Azada de piedra":
 		return 6.1 if _bot_wants_farm_tool(b) else -1.0
 	if oname == "Cuerda":
+		# Si aun no tiene antorcha, no gastar los primeros Trapos en cuerda
+		# (la cuerda de Tendon sigue puntuando 6.8).
+		if r_inputs.has("Trapos") and _bot_item_count(proxy, "Antorcha") == 0 and _bot_item_count(proxy, "Trapos") <= 2:
+			return 3.2
 		return 6.8 if _bot_item_count(proxy, "Cuerda") < 1 else 2.0
 	if oname == "Trapos":
 		# Cortar ropa a tiras solo cuando hacen falta: venda, cuerda,
-		# boleadoras o ropa de piel — nunca por acumular
+		# boleadoras, antorcha o ropa de piel — nunca por acumular
+		if _bot_item_count(proxy, "Antorcha") == 0 and _bot_item_count(proxy, "Trapos") == 0:
+			return 6.85
 		return 5.5 if _bot_wants_craft_input(b, "Trapos") else 1.5
 	if oname == "Palo":
 		# Tronco -> 2 palos: prioridad maxima mientras le falten los 11 palos
@@ -8886,10 +8940,9 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	if oname == "Antorcha":
 		if _bot_item_count(proxy, "Antorcha") > 0:
 			return 2.2
-		# Quiere una antorcha siempre: la fabrica de dia cuando junte palo y
-		# trapos (asi los trapos interesan todo el dia), no cuando ya es de
-		# noche y no ve nada. La urgencia sube al caer la tarde.
-		return 6.4 if _is_world_night() else (5.8 if _is_pre_night() else 4.8)
+		# Quiere una antorcha siempre: por encima de Cuerda (6.8) de tarde/noche
+		# para que los primeros Trapos + Palo den luz y ahuyenten lobos.
+		return 6.95 if (_is_world_night() or _is_pre_night()) else 5.8
 	if oname == "Venda":
 		return 5.2 if float(b.get("health", 100.0)) < 80.0 else 1.8
 	if otype == "food":
@@ -10822,8 +10875,9 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
 	# Setas primero: se comen al momento, sin objetos al suelo ni esperas largas
-	for aid in world.world_actions_by_id.keys():
-		var a = world.world_actions_by_id[aid]
+	_ensure_world_action_caches()
+	for aid in _cached_eat_ids:
+		var a = world.world_actions_by_id.get(aid)
 		if a == null or not is_instance_valid(a):
 			continue
 		if str(a.get("action_type")) != "eat_food" or claims.has(aid) or depleted.has(aid):
@@ -10835,8 +10889,8 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 				"use": float(a.get_meta("item_use_value", 12.0)), "name": str(a.get_meta("item_name", "comida"))}
 	# Frutales: solo si no hay setas al alcance (la fruta cae al suelo y hay que recogerla)
 	if best.is_empty():
-		for aid in world.world_actions_by_id.keys():
-			var a = world.world_actions_by_id[aid]
+		for aid in _cached_fruit_ids:
+			var a = world.world_actions_by_id.get(aid)
 			if a == null or not is_instance_valid(a):
 				continue
 			if str(a.get("action_type")) != "pick_fruit" or claims.has(aid) or depleted.has(aid):
@@ -11253,9 +11307,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var palo_need := 0
 	if str(b["shelter_id"]).is_empty():
-		palo_need = 11 # refugio: mismo coste que el del jugador
-		if _bot_item_count(proxy, "Antorcha") == 0 and (_bot_item_count(proxy, "Trapos") > 0 or _bot_spare_clothing_count(proxy) > 0):
-			palo_need = 12 # 11 para el refugio + 1 para su antorcha
+		palo_need = 11 # refugio: mismo coste exacto que el del jugador (11 palos)
 	elif str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
 		palo_need = 2
 	# La antorcha de la noche tambien pide su palo: uno de repuesto siempre
@@ -11368,8 +11420,9 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
 	var best := {}
 	var best_score := INF
-	for aid in world.world_actions_by_id.keys():
-		var a = world.world_actions_by_id[aid]
+	_ensure_world_action_caches()
+	for aid in _cached_mat_ids:
+		var a = world.world_actions_by_id.get(aid)
 		if a == null or not is_instance_valid(a):
 			continue
 		var atype := str(a.get("action_type"))
