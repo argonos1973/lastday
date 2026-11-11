@@ -712,8 +712,14 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	# bot elige una base propia en zona alejada del centro — salvo que su
 	# memoria ya tenga un refugio reclamado, en cuyo caso vuelve a su solar.
 	var preferred_camp: Vector3 = _pick_remote_base_spot(bot_id, spawn_pos, mem0)
+	# El solar solo se hereda si el refugio sigue EN PIE en este mundo: un
+	# mem.shelter cuyo edificio ya no existe (destruido o mundo nuevo) no
+	# puede anclar el campamento — mas abajo (restauracion) se olvida, y
+	# sembrarla aqui mandaba al bot en romeria a un solar vacio.
 	var mem_sh0: Dictionary = mem0.get("shelter", {}) if mem0.get("shelter") is Dictionary else {}
-	if mem_sh0.get("pos") is Array and (mem_sh0["pos"] as Array).size() >= 3:
+	var sh_id0 := str(mem_sh0.get("id", ""))
+	if not sh_id0.is_empty() and mem_sh0.get("pos") is Array and (mem_sh0["pos"] as Array).size() >= 3 \
+			and not _find_shelter_dict(sh_id0).is_empty():
 		preferred_camp = Vector3(float(mem_sh0["pos"][0]), float(mem_sh0["pos"][1]), float(mem_sh0["pos"][2]))
 	var camp_spot: Vector3 = _find_valid_camp_spot(preferred_camp, spawn_pos, 0, mem0.get("bad_camp_spots", []))
 
@@ -4014,6 +4020,152 @@ func _bot_wants_company(b: Dictionary, rel: Dictionary) -> bool:
 		return float(pers.get("aggression", 0.5)) + float(pers.get("sociability", 0.5)) >= 0.7
 	return float(pers.get("sociability", 0.5)) + float(pers.get("cooperation", 0.5)) >= 1.0
 
+# El tiempo enfria las heridas: sin agresiones recientes (harm_t lo sella
+# cada golpe), hostilidad y miedo decaen, el rencor sube hasta un fondo y
+# cada tramo de paz borra una cicatriz de "me ataco" — nunca por debajo de
+# 2, el recuerdo del peligro no se borra del todo. Las agresiones recientes
+# pausan el olvido: mientras se sigan haciendo dano no enfria.
+const REL_PEACE_MS := 45000          # sin dano en ~45 s reales: empieza a enfriar
+const REL_DECAY_HOSTILITY := 0.0045  # ~-0.07/min al ciclo social de ~3.7 s
+const REL_DECAY_FEAR := 0.0028       # el miedo enfria mas lento que el odio
+const REL_DECAY_RENCOR := 0.0022     # trust<0 sube hasta REL_TRUST_FLOOR
+const REL_TRUST_FLOOR := -0.25
+const REL_SCAR_MS := 75000           # cada 75 s de paz borra una cicatriz
+
+func _rel_time_decay(b: Dictionary) -> void:
+	var mem := _ensure_bot_memory(int(b["bot_id"]))
+	var rels: Dictionary = mem.get("relationships", {})
+	if rels.is_empty():
+		return
+	var now_ms := Time.get_ticks_msec()
+	for skey in rels.keys():
+		var rel = rels[skey]
+		if not (rel is Dictionary):
+			continue
+		var harm := int(rel.get("harm_t", 0))
+		if harm > 0 and now_ms - harm < REL_PEACE_MS:
+			continue # se hicieron dano hace nada: la herida esta fresca
+		var host := float(rel.get("hostility", 0.0))
+		if host > 0.0:
+			rel["hostility"] = snappedf(maxf(0.0, host - REL_DECAY_HOSTILITY), 0.001)
+		var fear := float(rel.get("fear", 0.0))
+		if fear > 0.0:
+			rel["fear"] = snappedf(maxf(0.0, fear - REL_DECAY_FEAR), 0.001)
+		var tr := float(rel.get("trust", 0.0))
+		if tr < REL_TRUST_FLOOR:
+			rel["trust"] = snappedf(minf(REL_TRUST_FLOOR, tr + REL_DECAY_RENCOR), 0.001)
+		var scar := int(rel.get("scar_t", harm))
+		if int(rel.get("attacked", 0)) > 2 and now_ms - scar >= REL_SCAR_MS:
+			rel["attacked"] = int(rel.get("attacked", 0)) - 1
+			rel["scar_t"] = now_ms
+
+# Gesto de paz autonomo: con un rival de su faccion cerca, herida abierta
+# (miedo/odio/rencor) pero sangre no fresca, el bot puede dejarle comida o
+# una venda a sus pies — el equivalente bot de "toma, paz". Rompe el
+# circulo vicioso del miedo: quien teme evita el contacto y sin contacto
+# nunca llegan los eventos positivos que bajarian el miedo.
+const PEACE_GESTURE_DIST := 40.0
+const PEACE_GESTURE_CD_MS := 150000
+
+func _bot_try_peace_gesture(b: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	if bool(proxy.get_meta("proxy_dead", false)):
+		return
+	# Solo en calma: ni peleando, ni escondido, ni durmiendo, ni huyendo
+	if b.get("aggro_target") != null or float(b.get("hide_timer", 0.0)) > 0.0 \
+			or bool(b.get("sleeping", false)) or float(b.get("flee_until", 0.0)) > 0.0:
+		return
+	# Un regalo no se hace con la tripa vacia ni sediento
+	if float(b.get("hunger", 100.0)) < 40.0 or float(b.get("thirst", 100.0)) < 35.0:
+		return
+	var my_id := int(b["bot_id"])
+	var my_key := "bot_%d" % my_id
+	var mem := _ensure_bot_memory(my_id)
+	var rels: Dictionary = mem.get("relationships", {})
+	var now_ms := Time.get_ticks_msec()
+	var cds: Dictionary = b.get("_peace_cd", {})
+	for k in cds.keys():
+		if int(cds[k]) <= now_ms:
+			cds.erase(k)
+	var best_id := 0
+	var best_key := ""
+	var best_score := 0.0
+	for oid in bots.keys():
+		if oid == my_id:
+			continue
+		var ob: Dictionary = bots[oid]
+		if str(ob.get("faction", "")) != str(b.get("faction", "")):
+			continue
+		var op: Node3D = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		var okey := "bot_%d" % oid
+		if int(cds.get(okey, 0)) > now_ms:
+			continue
+		var rel = rels.get(okey, {})
+		if not (rel is Dictionary) or (rel as Dictionary).is_empty():
+			continue
+		var wounded := float(rel.get("hostility", 0.0)) > 0.45 or float(rel.get("fear", 0.0)) > 0.55 \
+				or float(rel.get("trust", 0.0)) < REL_TRUST_FLOOR - 0.05
+		if not wounded:
+			continue
+		var harm := int(rel.get("harm_t", 0))
+		if harm > 0 and now_ms - harm < 60000:
+			continue # se hirieron hace nada: aun no es momento
+		var oaggro = ob.get("aggro_target")
+		if oaggro != null and oaggro == proxy:
+			continue # el otro le esta apuntando: no es momento
+		var odist := proxy.global_position.distance_to((op as Node3D).global_position)
+		if odist > PEACE_GESTURE_DIST or odist < 5.0:
+			continue
+		var score := float(rel.get("fear", 0.0)) + float(rel.get("hostility", 0.0))
+		if score > best_score:
+			best_score = score
+			best_id = oid
+			best_key = okey
+	if best_id <= 0:
+		b["_peace_cd"] = cds
+		return
+	# Probabilidad por personalidad: sociables y cooperativos dan el paso;
+	# el desconfiado casi nunca ofrece primero
+	var pers := _get_bot_personality(b)
+	var chance := float(pers.get("sociability", 0.5)) * 0.35 + float(pers.get("cooperation", 0.5)) * 0.45 \
+			+ maxf(0.0, 0.5 - float(pers.get("distrust", 0.35))) * 0.4
+	if randf() > chance:
+		return
+	# Algo regalable: comida sobrante o una venda — nunca su ultima comida
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var gift := ""
+	for it in inv:
+		if not (it is Dictionary):
+			continue
+		var iname := str(it.get("name", ""))
+		if str(it.get("type", "")) == "food" and int(it.get("quantity", 1)) > 1:
+			gift = iname
+			break
+		if gift.is_empty() and iname == "Vendaje":
+			gift = iname
+	if gift.is_empty():
+		for it in inv:
+			if it is Dictionary and str(it.get("type", "")) == "food" and float(it.get("use_value", it.get("use", 0.0))) > 0.0:
+				gift = str(it.get("name", ""))
+				break
+	if gift.is_empty():
+		cds[best_key] = now_ms + PEACE_GESTURE_CD_MS
+		b["_peace_cd"] = cds
+		return
+	if not _consume_bot_item(proxy, gift, 1):
+		return
+	_bot_drop_to_ground(b, {"name": gift, "type": "food", "weight": 0.3, "quantity": 1, "use_value": 15.0})
+	var oname := str((bots.get(best_id, {}) as Dictionary).get("name", best_key))
+	var my_name := str(b.get("name", my_key))
+	record_social_event(my_id, best_key, oname, "help", 0.30, "peace_offering")
+	record_social_event(best_id, my_key, my_name, "help", 0.30, "peace_received")
+	cds[best_key] = now_ms + PEACE_GESTURE_CD_MS
+	b["_peace_cd"] = cds
+	_bot_chat_send(b, best_id, oname, "Oye, %s... te dejo %s aquí. No quiero más guerra, ¿vale?" % [oname, gift], "gift")
+	record_bot_event(my_id, "peace_gesture", best_key, _poi_kind_near(proxy.global_position), proxy.global_position, "ofrece paz a " + oname + " (" + gift + ")")
+
 # Llamado al escaneo de sentidos (~5 Hz); el trabajo real se cadencia a ~4 s
 # para no disparar eventos sociales ni reevaluar alianzas cada decima.
 func _bot_social_update(b: Dictionary) -> void:
@@ -4026,6 +4178,8 @@ func _bot_social_update(b: Dictionary) -> void:
 	b["_soc_t"] = 3.2 + fmod(float(b["bot_id"]) * 0.11, 0.9)
 	var my_id := int(b["bot_id"])
 	var my_key := "bot_%d" % my_id
+	_rel_time_decay(b)
+	_bot_try_peace_gesture(b)
 	var lid := int(b.get("team_leader_id", 0))
 	if lid > 0:
 		b["_meet_id"] = 0 # ya esta en equipo: no busca a nadie
@@ -4077,7 +4231,11 @@ func _bot_social_update(b: Dictionary) -> void:
 			var rel_in := get_bot_relationship(oid, my_key)
 			# Los bandidos parten con desconfianza alta entre ellos: su puerta
 			# de convivencia es mas laxa (una banda tarda mas en fraguarse).
-			var host_gate := 0.40 if my_faction == "hostile" else 0.05
+			# Los bandidos se juntan por agresividad, no por cariño: su puerta
+			# de convivencia y su confianza de equipo son mas laxas — una
+			# banda de conveniencia nace para dar el golpe sin llevarse bien.
+			var host_gate := 0.55 if my_faction == "hostile" else 0.05
+			var form_trust := 0.18 if my_faction == "hostile" else BOT_TEAM_FORM_TRUST
 			var civil := float(rel_out.get("hostility", 0.0)) <= host_gate and float(rel_in.get("hostility", 0.0)) <= host_gate
 			if odist > BOT_TEAM_FORM_DIST:
 				# Iman social: lejos para convivir pero al alcance — un bot que
@@ -4092,7 +4250,7 @@ func _bot_social_update(b: Dictionary) -> void:
 				rel_out = get_bot_relationship(my_id, okey)
 				rel_in = get_bot_relationship(oid, my_key)
 			var mutual := minf(float(rel_out.get("trust", 0.0)), float(rel_in.get("trust", 0.0)))
-			if mutual < BOT_TEAM_FORM_TRUST:
+			if mutual < form_trust:
 				continue
 			# Si ya milita en un equipo, el candidato es su lider (el equipo crece);
 			# si esta libre, solo me uno si lidera mejor que yo — si no, el se
@@ -4107,7 +4265,7 @@ func _bot_social_update(b: Dictionary) -> void:
 				var lrel := get_bot_relationship(my_id, "bot_%d" % target_id)
 				var lrel_in := get_bot_relationship(target_id, my_key)
 				mutual = minf(float(lrel.get("trust", 0.0)), float(lrel_in.get("trust", 0.0)))
-				if mutual < BOT_TEAM_FORM_TRUST:
+				if mutual < form_trust:
 					continue
 			if mutual > best_trust:
 				best_trust = mutual
@@ -5849,6 +6007,8 @@ func _chat_attempt_llm(b: Dictionary, kind: String, to_id: int, to_name: String,
 		return false
 	if Time.get_ticks_msec() < _chat_backoff_until_msec:
 		return false
+	if _chat_conn_status.begins_with("rate_limited") or _chat_conn_status.begins_with("pacing"):
+		_chat_conn_status = "ready (post-backoff)"
 	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
 	if key.is_empty() or _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
 		return false
@@ -8014,10 +8174,17 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	var exhausted := _bot_is_exhausted(b)
 	if not is_night and not exhausted:
 		return false
-	if float(b["hunger"]) < 20.0 or float(b["thirst"]) < 16.0:
-		return false
-	if st.body_temperature < 34.9 or st.body_temperature > 38.4:
-		return false
+	# Colapso por agotamiento letal: con el sueno al borde de la muerte el
+	# cuerpo se apaga — se desploma dormido donde este, ignorando hambre, sed
+	# y temperatura. Mejor inconsciente que muerto de pie: un bot al que
+	# estas puertas le niegan el suelo no recupera sleep NUNCA (sentado solo
+	# deja de gastar) y acaba muerto de agotamiento pese a estar descansando.
+	var collapse := st.sleep <= 4.0
+	if not collapse:
+		if float(b["hunger"]) < 20.0 or float(b["thirst"]) < 16.0:
+			return false
+		if st.body_temperature < 34.9 or st.body_temperature > 38.4:
+			return false
 	if st.sleep >= 99.0 and st.energy >= 98.0 and float(b["health"]) >= 99.0:
 		return false # nada que recuperar: queda sentado de vigilancia
 	b["sleeping"] = true
@@ -9063,6 +9230,8 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 			var surv := float(pers.get("survival_instinct", 0.7))
 			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) + step * (0.45 + agg * 0.55), 0.0, 1.0), 0.001)
 			rel["fear"] = snappedf(clampf(float(rel.get("fear", 0.0)) + step * (0.35 + surv * 0.50), 0.0, 1.0), 0.001)
+			rel["harm_t"] = Time.get_ticks_msec()
+			rel["scar_t"] = Time.get_ticks_msec()
 			if not b.is_empty():
 				_evolve_personality(b, "player_attacked", step)
 				if Time.get_ticks_msec() - int(_ai_last_call_msec.get(bot_id, -999999)) > 120000:
@@ -9301,6 +9470,10 @@ func _ai_tick(_delta: float) -> void:
 		_ai_tokens_day = 0
 	if now < _ai_backoff_until_msec:
 		return
+	# El backoff ya paso: el cartel de rate_limited/pacing se quedaba viejo
+	# en el monitor mucho despues de recuperar el servicio — se limpia aqui.
+	if _ai_conn_status.begins_with("rate_limited") or _ai_conn_status.begins_with("pacing"):
+		_ai_conn_status = "ready (post-backoff)"
 	if _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
 		_ai_conn_status = "quota_reached (local_brain)"
 		return

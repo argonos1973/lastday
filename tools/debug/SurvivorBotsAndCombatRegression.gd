@@ -2712,6 +2712,172 @@ func run() -> void:
 		"SpawnReal 10w9: sin lecciones sigue cabeceando por debajo de 14")
 	fresh_b["sleeping"] = false
 
+	# Colapso por agotamiento letal: con sleep<=4 el cuerpo se apaga — el bot
+	# se desploma dormido donde este aunque haga frio y tenga hambre. Antes
+	# esas puertas le negaban el suelo: el sleep caia a 0 sentado y moria de
+	# agotamiento (Carlos, 165 muertes) pese a estar "descansando".
+	vs.sleep = 3.0
+	vs.body_temperature = 34.6 # demasiado frio para dormir en condiciones normales
+	fresh_b["hunger"] = 10.0   # y demasiado hambre
+	fresh_b["thirst"] = 8.0    # y demasiada sed
+	check(mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
+		"SpawnReal 10x1: al borde de la muerte por sueno se desploma dormido pese a frio y hambre")
+	fresh_b["sleeping"] = false
+	vs.sleep = 8.0 # por encima del colapso las puertas de confort siguen cerrando
+	check(not mgr._bot_try_start_sleep(fresh_b, false),
+		"SpawnReal 10x2: con sueno 8 aun no hay colapso (frio/hambre bloquean el suelo normal)")
+	vs.sleep = 18.0
+	vs.body_temperature = 36.6
+	fresh_b["hunger"] = 90.0
+	fresh_b["thirst"] = 90.0
+
+	# El tiempo enfria las heridas: sin agresiones recientes decaen odio,
+	# miedo y rencor y la cicatriz de ataques se erosiona (suelo de 2); con
+	# dano fresco nada decae — la reconciliacion empieza cuando cesa el fuego.
+	var rels_dec: Dictionary = (fresh_b.get("_mem", {}) as Dictionary).get("relationships", {})
+	var old_harm := Time.get_ticks_msec() - 120000 # herida vieja (o negativa: tambien vale "hace mucho")
+	rels_dec["bot_999"] = {"id": "bot_999", "name": "Rival", "trust": -0.9, "hostility": 1.0, "fear": 1.0, "helped": 0, "attacked": 5, "harm_t": old_harm, "scar_t": old_harm}
+	(fresh_b["_mem"] as Dictionary)["relationships"] = rels_dec
+	mgr._rel_time_decay(fresh_b)
+	var rd: Dictionary = mgr.get_bot_relationship(int(fresh_b["bot_id"]), "bot_999")
+	check(float(rd.get("hostility", 0.0)) < 1.0 and float(rd.get("fear", 0.0)) < 1.0 and float(rd.get("trust", -1.0)) > -0.9,
+		"SpawnReal 10x3: sin agresiones recientes odio, miedo y rencor enfrian (h=%.3f f=%.3f t=%.3f)" % [float(rd.get("hostility", 0.0)), float(rd.get("fear", 0.0)), float(rd.get("trust", 0.0))])
+	check(int(rd.get("attacked", 0)) == 4,
+		"SpawnReal 10x4: la cicatriz de ataques se erosiona una por tramo de paz (attacked=%d)" % int(rd.get("attacked", 0)))
+	rd["harm_t"] = Time.get_ticks_msec()
+	rd["hostility"] = 1.0
+	(fresh_b["_mem"] as Dictionary)["relationships"]["bot_999"] = rd
+	mgr._rel_time_decay(fresh_b)
+	rd = mgr.get_bot_relationship(int(fresh_b["bot_id"]), "bot_999")
+	check(float(rd.get("hostility", 0.0)) == 1.0,
+		"SpawnReal 10x5: con dano fresco no enfria")
+	rels_dec.erase("bot_999")
+
+	# Gesto de paz: deja comida a un rival cercano con herida abierta y la
+	# relacion mejora por los dos lados — rompe el circulo del miedo (quien
+	# teme evita el contacto y sin contacto no llegan eventos positivos).
+	var elena_g: Dictionary = mgr.bots[901]
+	# Snapshot del estado que esta seccion toca: las pruebas reales mutan
+	# facciones, equipo, relaciones y personalidad de Carlos/Elena y las
+	# secciones 10y/10z/10B posteriores dependen de ese estado.
+	var mem_c0: Dictionary = fresh_b["_mem"]
+	var mem_e0: Dictionary = elena_g["_mem"]
+	var snap_x: Dictionary = {
+		"c_faction": str(fresh_b.get("faction", "")),
+		"e_faction": str(elena_g.get("faction", "")),
+		"c_lid": int(fresh_b.get("team_leader_id", 0)),
+		"e_lid": int(elena_g.get("team_leader_id", 0)),
+		"c_follow": str(fresh_b.get("follow_mode", "")),
+		"e_follow": str(elena_g.get("follow_mode", "")),
+		"c_rel_e": (mem_c0.get("relationships", {}) as Dictionary).get("bot_901", {}).duplicate(true),
+		"e_rel_c": (mem_e0.get("relationships", {}) as Dictionary).get("bot_902", {}).duplicate(true),
+		"c_pers": (mem_c0.get("personality", {}) as Dictionary).duplicate(true),
+		"c_pos": fresh_b["proxy"].global_position,
+		"e_pos": elena_g["proxy"].global_position,
+		"c_dead_meta": bool(fresh_b["proxy"].get_meta("proxy_dead", false)),
+		"e_dead_meta": bool(elena_g["proxy"].get_meta("proxy_dead", false)),
+		"c_dead": bool(fresh_b.get("dead", false)),
+		"e_dead": bool(elena_g.get("dead", false)),
+		"c_sleep": bool(fresh_b.get("sleeping", false)),
+		"e_sleep": bool(elena_g.get("sleeping", false)),
+		"c_aggro": fresh_b.get("aggro_target"),
+		"e_aggro": elena_g.get("aggro_target"),
+		"c_inv": (fresh_b["proxy"].get_meta("saved_inventory", []) as Array).duplicate(true),
+	}
+	rels_dec["bot_901"] = {"id": "bot_901", "name": "Elena", "trust": -0.8, "hostility": 1.0, "fear": 1.0, "helped": 0, "attacked": 4, "harm_t": old_harm}
+	fresh_b["hunger"] = 90.0
+	fresh_b["thirst"] = 90.0
+	fresh_b["aggro_target"] = null
+	fresh_b["hide_timer"] = 0.0
+	fresh_b["flee_until"] = 0.0
+	fresh_b["sleeping"] = false
+	fresh_b["proxy"].global_position = (elena_g["proxy"] as Node3D).global_position + Vector3(10.0, 0.0, 0.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	var pers_g: Dictionary = mgr._get_bot_personality(fresh_b)
+	pers_g["sociability"] = 1.0
+	pers_g["cooperation"] = 1.0
+	pers_g["distrust"] = 0.0
+	fresh_b["proxy"].set_meta("saved_inventory", [{"name": "Carne asada", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 25.0}])
+	var drops_before_g: int = (world._dropped_items as Array).size()
+	mgr._bot_try_peace_gesture(fresh_b)
+	var r_out: Dictionary = mgr.get_bot_relationship(902, "bot_901")
+	var r_in: Dictionary = mgr.get_bot_relationship(901, "bot_902")
+	check(float(r_out.get("trust", -1.0)) > -0.8 and int(r_out.get("helped", 0)) >= 1 and float(r_in.get("trust", 0.0)) > 0.0 and int(r_in.get("helped", 0)) >= 1,
+		"SpawnReal 10x6: el gesto de paz repara la relacion por los dos lados (out=%.2f in=%.2f)" % [float(r_out.get("trust", 0.0)), float(r_in.get("trust", 0.0))])
+	check(mgr._bot_item_count(fresh_b["proxy"], "Carne asada") == 2 and (world._dropped_items as Array).size() > drops_before_g,
+		"SpawnReal 10x7: el regalo sale de su inventario y queda en el suelo")
+	# Con dano reciente no hay gesto — no perdona en caliente
+	rels_dec["bot_901"]["harm_t"] = Time.get_ticks_msec()
+	r_out["trust"] = -0.8
+	(fresh_b["_mem"] as Dictionary)["relationships"]["bot_901"] = r_out
+	fresh_b["proxy"].set_meta("saved_inventory", [{"name": "Carne asada", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 25.0}])
+	var helped_before := int(mgr.get_bot_relationship(902, "bot_901").get("helped", 0))
+	(fresh_b["_mem"] as Dictionary)["relationships"]["bot_901"]["harm_t"] = Time.get_ticks_msec()
+	mgr._bot_try_peace_gesture(fresh_b)
+	check(int(mgr.get_bot_relationship(902, "bot_901").get("helped", 0)) == helped_before,
+		"SpawnReal 10x8: con herida fresca no ofrece paz todavia")
+	rels_dec.erase("bot_901")
+
+	# Convivencia de banda: entre hostiles la puerta civil sube a 0.55 — dos
+	# rivales templados (hostility 0.50) ya conviven aunque aun no se quieran
+	var rels_e2: Dictionary = (elena_g.get("_mem", {}) as Dictionary).get("relationships", {})
+	rels_dec["bot_901"] = {"id": "bot_901", "name": "Elena", "trust": 0.2, "hostility": 0.50, "fear": 0.4, "helped": 0, "attacked": 1, "harm_t": old_harm}
+	rels_e2["bot_902"] = {"id": "bot_902", "name": "Carlos", "trust": 0.2, "hostility": 0.50, "fear": 0.4, "helped": 0, "attacked": 1, "harm_t": old_harm}
+	(elena_g["_mem"] as Dictionary)["relationships"] = rels_e2
+	fresh_b["proxy"].global_position = (elena_g["proxy"] as Node3D).global_position + Vector3(8.0, 0.0, 0.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	var tr_c0 := float(mgr.get_bot_relationship(902, "bot_901").get("trust", 0.0))
+	fresh_b["team_leader_id"] = 0
+	elena_g["team_leader_id"] = 0
+	fresh_b["faction"] = "hostile"
+	elena_g["faction"] = "hostile"
+	for bb in [fresh_b, elena_g]:
+		(bb["proxy"] as Node3D).set_meta("proxy_dead", false)
+		bb["dead"] = false
+		bb["sleeping"] = false
+	fresh_b["_soc_t"] = 0.0
+	elena_g["_soc_t"] = 0.0
+	mgr._bot_social_update(fresh_b)
+	fresh_b["_soc_t"] = 0.0
+	elena_g["_soc_t"] = 0.0
+	mgr._bot_social_update(elena_g)
+	check(float(mgr.get_bot_relationship(902, "bot_901").get("trust", 0.0)) > tr_c0 or int(fresh_b.get("team_leader_id", 0)) > 0 or int(elena_g.get("team_leader_id", 0)) > 0,
+		"SpawnReal 10x9: dos hostiles a media hostilidad ya conviven y crecen el vinculo")
+	# Restauracion: facciones del dict (el mem.identity no se toco — se
+	# cambiaron en crudo a proposito para el early-return de _set_bot_faction),
+	# equipo, relaciones Carlos<->Elena, personalidad, flags e inventario.
+	fresh_b["faction"] = str(snap_x["c_faction"])
+	elena_g["faction"] = str(snap_x["e_faction"])
+	fresh_b["team_leader_id"] = int(snap_x["c_lid"])
+	elena_g["team_leader_id"] = int(snap_x["e_lid"])
+	fresh_b["proxy"].set_meta("team_leader_id", int(snap_x["c_lid"]))
+	elena_g["proxy"].set_meta("team_leader_id", int(snap_x["e_lid"]))
+	fresh_b["follow_mode"] = str(snap_x["c_follow"])
+	elena_g["follow_mode"] = str(snap_x["e_follow"])
+	if (snap_x["c_rel_e"] as Dictionary).is_empty():
+		rels_dec.erase("bot_901")
+	else:
+		rels_dec["bot_901"] = snap_x["c_rel_e"]
+	if (snap_x["e_rel_c"] as Dictionary).is_empty():
+		rels_e2.erase("bot_902")
+	else:
+		rels_e2["bot_902"] = snap_x["e_rel_c"]
+	mem_c0["personality"] = snap_x["c_pers"]
+	fresh_b["proxy"].set_meta("saved_inventory", snap_x["c_inv"])
+	fresh_b["_peace_cd"] = {}
+	fresh_b["proxy"].set_meta("proxy_dead", bool(snap_x["c_dead_meta"]))
+	elena_g["proxy"].set_meta("proxy_dead", bool(snap_x["e_dead_meta"]))
+	fresh_b["dead"] = bool(snap_x["c_dead"])
+	elena_g["dead"] = bool(snap_x["e_dead"])
+	fresh_b["sleeping"] = bool(snap_x["c_sleep"])
+	elena_g["sleeping"] = bool(snap_x["e_sleep"])
+	fresh_b["aggro_target"] = snap_x["c_aggro"]
+	elena_g["aggro_target"] = snap_x["e_aggro"]
+	fresh_b["proxy"].global_position = snap_x["c_pos"]
+	elena_g["proxy"].global_position = snap_x["e_pos"]
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	elena_g["pos"] = elena_g["proxy"].global_position
+
 	# Frio ambiental y calor de hoguera (mismo modelo SurvivalStats del jugador)
 	dc.time_of_day = 14.0
 	dc.ambient_temp = -14.0
