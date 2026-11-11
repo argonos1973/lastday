@@ -917,6 +917,65 @@ func run() -> void:
 	world.server_proxies.erase(77)
 	nem_proxy.queue_free()
 
+	# --- 10j) Aprende de morir de sed/hambre: reservas, alijo y prevencion ---
+	# La particion guarda mas provisiones encima tras cada muerte de ese tipo.
+	var dl_j: Dictionary = mem_c.get("death_lessons", {})
+	dl_j["starved"] = 1
+	dl_j["dehydrated"] = 1
+	mem_c["death_lessons"] = dl_j
+	var plan_j: Dictionary = mgr._bot_partition_inventory_for_shelter(carlos, [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0},
+		{"name": "Lata de fabada abierta", "type": "food", "weight": 0.5, "quantity": 2, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Pan", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 22.0},
+		{"name": "Cantimplora", "type": "water", "weight": 0.6, "quantity": 1, "use_value": 40.0},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
+	])
+	var k_food := 0
+	var k_drink := 0
+	for itk in (plan_j.get("keep", []) as Array):
+		var tpk := str((itk as Dictionary).get("type", ""))
+		if tpk == "food":
+			k_food += int((itk as Dictionary).get("quantity", 1))
+		elif tpk == "water":
+			k_drink += int((itk as Dictionary).get("quantity", 1))
+	check(k_food >= 2 and k_drink >= 2,
+		"Tras morir de hambre y sed lleva doble reserva encima (food=%d drink=%d)" % [k_food, k_drink])
+	# No sale de casa sin su provision aprendida (comida si murio de hambre)
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0},
+		{"name": "Cantimplora", "type": "water", "weight": 0.6, "quantity": 1, "use_value": 40.0},
+	])
+	carlos["hunger"] = 90.0
+	carlos["thirst"] = 90.0
+	check(mgr._bot_needs_outing(carlos), "Con leccion 'starved' no sale de casa sin comida encima")
+	# Y el alijo se revisa antes de que apriete la sed (umbral subido)
+	mgr._commit_shelter_contents(str(carlos["shelter_id"]), [
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
+	])
+	carlos["thirst"] = 66.0
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0},
+	])
+	check(mgr._own_shelter_has_needed_item(carlos), "Con leccion 'dehydrated' recoge agua del alijo antes de tener sed de verdad")
+	# Bebida preventiva: junto a una fuente y sin botella, para a rellenar
+	var wp_j: Vector3 = mgr._nearest_water_pos(carlos_proxy.global_position, carlos)
+	if wp_j == Vector3.INF:
+		wp_j = mgr._nearest_water_pos(Vector3.ZERO, carlos)
+	check(wp_j != Vector3.INF, "Existe una fuente de agua localizable en el mundo")
+	carlos_proxy.global_position = wp_j + Vector3(3.0, 0.0, 0.0)
+	carlos["pos"] = carlos_proxy.global_position
+	carlos["thirst"] = 70.0
+	carlos["drink_at"] = Vector3.INF
+	carlos["drink_giveup"] = 0.0
+	carlos["drinking_timer"] = 0.0
+	carlos["sense_t"] = 0.0
+	mgr._tick_bot(carlos, 0.2)
+	check(str(carlos["_act"]) == "drink" and carlos["drink_at"] != Vector3.INF,
+		"Con leccion 'dehydrated' se desvia a beber/rellenar junto a la fuente (act=%s)" % str(carlos["_act"]))
+	mem_c["death_lessons"] = dl_bak
+	carlos["thirst"] = 90.0
+	carlos["drink_at"] = Vector3.INF
+
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()
 	mgr.on_bot_damaged(901, 8.0, 1, "rifle")

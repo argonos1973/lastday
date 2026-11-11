@@ -1367,7 +1367,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["drink_giveup"] = maxf(0.0, float(b.get("drink_giveup", 0.0)) - delta)
 	var thirst_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
 	var thirsty_line := 32.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(18.0, float(thirst_lessons) * 6.0)
-	if float(b["thirst"]) < thirsty_line and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0):
+	# Sed preventiva: quien ya se deshidrato una vez no pasa de largo junto
+	# a una fuente — con sed moderada y agua a tiro se desvia a beber y a
+	# rellenar la botella antes de que la necesidad apriete.
+	var prevent_drink := false
+	if thirst_lessons > 0 and float(b["thirst"]) < 78.0 and not _bot_has_drink(proxy):
+		var wp_pre := _nearest_water_pos(proxy.global_position, b)
+		if wp_pre != Vector3.INF and Vector2(proxy.global_position.x - wp_pre.x, proxy.global_position.z - wp_pre.z).length() < 9.0:
+			prevent_drink = true
+			b["drink_at"] = wp_pre
+	if (float(b["thirst"]) < thirsty_line or prevent_drink) and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0 or prevent_drink):
 		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
 			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
@@ -2896,6 +2905,13 @@ func _bot_needs_outing(b: Dictionary) -> bool:
 		return true
 	if not _bot_has_edible_food(proxy, false) and not _bot_has_drink(proxy):
 		return true
+	# Leccion de supervivencia: quien se murio de hambre no sale sin comida;
+	# quien se murio de sed no sale sin su reserva de agua.
+	var dl_out: Dictionary = b.get("_mem", {}).get("death_lessons", {})
+	if int(dl_out.get("starved", 0)) > 0 and not _bot_has_edible_food(proxy, false):
+		return true
+	if int(dl_out.get("dehydrated", 0)) > 0 and not _bot_has_drink(proxy):
+		return true
 	if _best_weapon_name(proxy).is_empty() and not _own_shelter_has_needed_item(b):
 		return true
 	if bool(b.get("equip_mission", false)) or int(b.get("_meet_id", 0)) > 0:
@@ -3751,10 +3767,10 @@ func _bot_death_adaptations(mem: Dictionary) -> Array:
 	var out: Array = []
 	var deh := int(lessons.get("dehydrated", 0))
 	if deh > 0:
-		out.append("💧 Hidratación preventiva (+%d%% umbral de sed)" % mini(18, deh * 6))
+		out.append("💧 Hidratación preventiva (+%d%% umbral, reserva ×%d, bebe al pasar por agua)" % [mini(18, deh * 6), 1 + mini(2, deh)])
 	var stv := int(lessons.get("starved", 0))
 	if stv > 0:
-		out.append("🍄 Forrajeo temprano (+%d%% umbral de hambre)" % mini(18, stv * 6))
+		out.append("🍄 Forrajeo temprano (+%d%% umbral, reserva ×%d comida encima)" % [mini(18, stv * 6), 1 + mini(2, stv)])
 	var prd := int(lessons.get("predator", 0))
 	if prd > 0:
 		out.append("🐺 Alerta anti-depredadores (+%d m radio de detección)" % mini(12, prd * 4))
@@ -6631,8 +6647,11 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	if contents.is_empty():
 		return false
 	var proxy: Node3D = b["proxy"]
-	var need_food: bool = float(b["hunger"]) < 60.0 and not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0)
-	var need_water: bool = float(b["thirst"]) < 60.0 and not _bot_has_drink(proxy)
+	# Quien ya se murio de hambre/sed revisa su alijo antes de que la
+	# necesidad apriete: las lecciones suben el umbral de "lo necesito".
+	var dl_need: Dictionary = b.get("_mem", {}).get("death_lessons", {})
+	var need_food: bool = float(b["hunger"]) < 60.0 + minf(16.0, float(int(dl_need.get("starved", 0))) * 8.0) and not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0)
+	var need_water: bool = float(b["thirst"]) < 60.0 + minf(16.0, float(int(dl_need.get("dehydrated", 0))) * 8.0) and not _bot_has_drink(proxy)
 	var need_weapon: bool = _best_weapon_name(proxy).is_empty()
 	var need_med: bool = float(b["health"]) < 78.0 and _bot_item_count(proxy, "Venda") == 0
 	for cd in contents:
@@ -6688,6 +6707,11 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 	var kept_camo := false
 	var keep: Array = []
 	var store: Array = []
+	# Reservas aprendidas: quien se murio de hambre o de sed no vuelve a salir
+	# de casa con una sola provision — cada muerte sube el minimo que lleva.
+	var dl_res: Dictionary = b.get("_mem", {}).get("death_lessons", {})
+	var food_cap := 1 + mini(2, int(dl_res.get("starved", 0)))
+	var drink_cap := 1 + mini(2, int(dl_res.get("dehydrated", 0)))
 	for raw_it in inv:
 		if not (raw_it is Dictionary):
 			continue
@@ -6749,8 +6773,8 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			if nm == "Carne ensartada" or nm == "Pez ensartado" or (nm.begins_with("Carne cruda") and _bot_item_count(proxy, "Palo afilado") > 0):
 				keep.append(it)
 				continue
-			if food_kept < 1:
-				var take_k := mini(1 - food_kept, qty)
+			if food_kept < food_cap:
+				var take_k := mini(food_cap - food_kept, qty)
 				food_kept += take_k
 				var kf := it.duplicate(true); kf["quantity"] = take_k; keep.append(kf)
 				if qty - take_k > 0:
@@ -6759,7 +6783,7 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 				store.append(it)
 			continue
 		if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora") or nm == "Botella de plastico":
-			if drink_kept < 1:
+			if drink_kept < drink_cap:
 				drink_kept += 1
 				var kd := it.duplicate(true); kd["quantity"] = 1; keep.append(kd)
 				if qty > 1:
