@@ -252,6 +252,7 @@ func run() -> void:
 	# --- 11) La allegiance persiste: respawn con memoria -> friendly ---
 	mgr.force_memory_io = true
 	mgr._ai_save_memory()
+	mgr._ai_flush_writes()
 	var mgr2 := SurvivorBotManagerScript.new()
 	mgr2.name = "SurvivorBotManager2"
 	world.add_child(mgr2)

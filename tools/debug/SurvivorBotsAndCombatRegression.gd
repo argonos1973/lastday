@@ -1590,6 +1590,7 @@ func run() -> void:
 	mgr.record_social_event(901, "client_sami_77", "Sami", "help", 0.65, "shared_water_and_bandage")
 	mgr.observe_location(901, "house:120:140", "house", Vector3(120.0, 0.0, 140.0), "observed", true)
 	mgr._ai_save_memory()
+	mgr._ai_flush_writes()
 	# Simular reinicio del servidor con un nuevo SurvivorBotManager que carga desde disco
 	var mgr_restarted := SurvivorBotManagerScript.new()
 	mgr_restarted.memory_path = test_mem_path
@@ -3575,6 +3576,7 @@ func run() -> void:
 	mgr.memory_path = tmp_mem_path
 	mgr.force_memory_io = true
 	mgr._ai_save_memory()
+	mgr._ai_flush_writes()
 	var mgr_reload := SurvivorBotManagerScript.new()
 	mgr_reload.memory_path = tmp_mem_path
 	mgr_reload.force_memory_io = true

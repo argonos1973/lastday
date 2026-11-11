@@ -194,6 +194,8 @@ var _ai_rr := 0
 var _mem_accum := 0.0
 var _status_accum := 0.0
 var _ai_queue: Array = [] # [{bot_id, priority, reason, t}]
+var _status_write_task := -1
+var _mem_write_task := -1
 var _ai_last_sig: Dictionary = {} # bot_id -> String firma de situacion
 var _ai_last_call_msec: Dictionary = {} # bot_id -> msec ultima llamada remota
 var _ai_backoff_until_msec := 0
@@ -9131,11 +9133,35 @@ func _ai_save_memory() -> void:
 		var lp = mem.get("last_death_pos", Vector3.INF)
 		sd["last_death_pos"] = [lp.x, lp.y, lp.z] if lp is Vector3 and lp != Vector3.INF else []
 		out["bots"][str(bid)] = sd
-	var f := FileAccess.open(memory_path, FileAccess.WRITE)
+	# Serializar y escribir en worker: el deep-duplicate aísla el snapshot del
+	# estado vivo para que el JSON pueda generarse sin pisar el hilo principal.
+	if _mem_write_task >= 0:
+		if not WorkerThreadPool.is_task_completed(_mem_write_task):
+			return
+		_mem_write_task = -1
+	_mem_write_task = WorkerThreadPool.add_task(_memory_write_worker.bind(out.duplicate(true)))
+
+# Atomic JSON write: a crash mid-write would truncate the file and lose all bot
+# memory; write to .tmp and rename so the file is always whole.
+func _memory_write_worker(snapshot: Dictionary) -> void:
+	var tmp := memory_path + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
 		return
-	f.store_string(JSON.stringify(out))
+	f.store_string(JSON.stringify(snapshot))
 	f.close()
+	DirAccess.rename_absolute(tmp, memory_path)
+
+func _ai_flush_writes() -> void:
+	if _status_write_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_status_write_task)
+		_status_write_task = -1
+	if _mem_write_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_mem_write_task)
+		_mem_write_task = -1
+
+func _exit_tree() -> void:
+	_ai_flush_writes()
 
 # Registra qué botín dio la zona donde se recogió y actualiza la estrategia y ubicación.
 func _ai_note_loot(b: Dictionary, item_name: String, item_type: String) -> void:
@@ -9588,14 +9614,27 @@ func get_full_web_status() -> Dictionary:
 		"chat_log": chat_log.slice(-BOT_CHAT_LOG_MAX),
 	}
 
+# El status del monitor (~140 KB) se construye en el hilo principal porque lee
+# el estado vivo de los bots, pero stringify+write van a un worker para no
+# clavar el frame cada AI_STATUS_SAVE_SEC. Si la escritura anterior sigue en
+# vuelo se omite: el monitor se refresca en el siguiente ciclo de todos modos.
 func _ai_save_live_status() -> void:
 	if not _ai_memory_enabled():
 		return
-	var f := FileAccess.open(AI_STATUS_PATH, FileAccess.WRITE)
+	if _status_write_task >= 0:
+		if not WorkerThreadPool.is_task_completed(_status_write_task):
+			return
+		_status_write_task = -1
+	_status_write_task = WorkerThreadPool.add_task(_status_write_worker.bind(get_full_web_status().duplicate(true)))
+
+func _status_write_worker(snapshot: Dictionary) -> void:
+	var tmp := AI_STATUS_PATH + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
 		return
-	f.store_string(JSON.stringify(get_full_web_status()))
+	f.store_string(JSON.stringify(snapshot))
 	f.close()
+	DirAccess.rename_absolute(tmp, AI_STATUS_PATH)
 
 # ==================== FORRAJEO: SETAS Y FRUTA ====================
 # Con hambre y sin comida comestible en la mochila, el bot busca lo que un
