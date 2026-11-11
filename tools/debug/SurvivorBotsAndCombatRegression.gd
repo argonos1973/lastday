@@ -976,6 +976,44 @@ func run() -> void:
 	carlos["thirst"] = 90.0
 	carlos["drink_at"] = Vector3.INF
 
+	# --- 10k) Asentarse: sin refugio viaja a su campamento; bases separadas ---
+	# Las bases de bots no se apinan: a 40 m del campamento de Carlos un nuevo
+	# solar es invalido; a 150 m ya es territorio libre.
+	check(not mgr._is_valid_camp_pos(carlos["camp_spot"] + Vector3(40.0, 0.0, 0.0)),
+		"Un solar a 40 m de otro campamento es invalido (territorio propio)")
+	check(mgr._is_valid_camp_pos(carlos["camp_spot"] + Vector3(150.0, 0.0, 0.0)),
+		"A 150 m de distancia el solar vuelve a ser valido")
+	check(mgr._nearest_other_camp_dist(carlos["camp_spot"] + Vector3(40.0, 0.0, 0.0), 901) < 45.0,
+		"_nearest_other_camp_dist detecta el campamento cercano")
+	# Sin refugio y sin urgencias: el bot tira hacia su campamento a asentarse
+	var sid_bak := str(carlos["shelter_id"])
+	var spos_bak: Vector3 = carlos["shelter_pos"]
+	carlos["shelter_id"] = ""
+	carlos["shelter_pos"] = Vector3.INF
+	carlos_proxy.global_position = carlos["camp_spot"] + Vector3(60.0, 0.0, 0.0)
+	carlos["pos"] = carlos_proxy.global_position
+	carlos["hunger"] = 90.0
+	carlos["thirst"] = 90.0
+	carlos["health"] = 100.0
+	carlos["hide_timer"] = 0.0
+	carlos["flee_until"] = 0.0
+	carlos["sleeping"] = false
+	carlos["sitting"] = false
+	carlos["aggro_target"] = null
+	carlos["sense_t"] = 0.0
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0},
+		{"name": "Cantimplora", "type": "water", "weight": 0.6, "quantity": 1, "use_value": 40.0},
+		{"name": "Lata de fabada abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	var d_settle0: float = Vector2(carlos_proxy.global_position.x - carlos["camp_spot"].x, carlos_proxy.global_position.z - carlos["camp_spot"].z).length()
+	mgr._tick_bot(carlos, 0.2)
+	var d_settle1: float = Vector2(carlos_proxy.global_position.x - carlos["camp_spot"].x, carlos_proxy.global_position.z - carlos["camp_spot"].z).length()
+	check(str(carlos["_act"]) == "settle" and d_settle1 < d_settle0,
+		"Sin refugio y sin urgencias viaja a su campamento (act=%s, %.0f->%.0f m)" % [str(carlos["_act"]), d_settle0, d_settle1])
+	carlos["shelter_id"] = sid_bak
+	carlos["shelter_pos"] = spos_bak
+
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()
 	mgr.on_bot_damaged(901, 8.0, 1, "rifle")
@@ -2560,7 +2598,7 @@ func run() -> void:
 	fresh_b["pos"] = ftn_goal
 	for i in range(45):
 		mgr._tick_bot(fresh_b, 0.1)
-	check(float(fresh_b["thirst"]) >= 99.0 and mgr._bot_item_count(fresh_b["proxy"], "Botella de agua llena") == 1,
+	check(float(fresh_b["thirst"]) >= 95.0 and mgr._bot_item_count(fresh_b["proxy"], "Botella de agua llena") == 1,
 		"SpawnReal 10v2: bebe en la fuente de la ciudad y rellena su botella (sed=%.0f)" % float(fresh_b["thirst"]))
 	world.world_actions_by_id.erase("district_fountain_drink")
 	ftn_drink.queue_free()

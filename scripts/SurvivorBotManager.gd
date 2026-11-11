@@ -318,7 +318,7 @@ func _is_valid_camp_pos(pos: Vector3, ally_id: int = 0, avoid_spots: Array = [])
 		return false
 	for other_id in bots.keys():
 		var ob: Dictionary = bots[other_id]
-		var min_d := 14.0 if int(other_id) == ally_id else 35.0
+		var min_d := 14.0 if int(other_id) == ally_id else 120.0
 		if ob.get("shelter_pos", Vector3.INF) != Vector3.INF and pos.distance_to(ob["shelter_pos"]) < min_d:
 			return false
 		if ob.get("camp_spot", Vector3.INF) != Vector3.INF and pos.distance_to(ob["camp_spot"]) < min_d:
@@ -339,6 +339,20 @@ func _nearest_poi_dist(pos: Vector3, kinds: Array) -> float:
 		if str(p.get("kind", "")) in kinds:
 			var pp: Vector3 = p["pos"]
 			best = minf(best, Vector2(pos.x - pp.x, pos.z - pp.z).length())
+	return best
+
+# Distancia al campamento/refugio de otro bot mas cercano: las bases no se
+# apiñan — cada superviviente reclama su propio territorio alejado.
+func _nearest_other_camp_dist(pos: Vector3, self_id: int) -> float:
+	var best := 10000.0
+	for other_id in bots.keys():
+		if int(other_id) == self_id:
+			continue
+		var ob: Dictionary = bots[other_id]
+		for k in ["camp_spot", "shelter_pos"]:
+			var op: Vector3 = ob.get(k, Vector3.INF)
+			if op != Vector3.INF:
+				best = minf(best, Vector2(pos.x - op.x, pos.z - op.z).length())
 	return best
 
 # Emplazamiento de la base propia en zona alejada: anclada a los POIs "wild"
@@ -377,6 +391,9 @@ func _pick_remote_base_spot(bot_id: int, spawn_pos: Vector3, mem: Dictionary) ->
 			continue
 		var score := d_center * 0.5 + clampf(hot_d, 0.0, 120.0) * 0.8 - cp.distance_to(anchor) * 0.6
 		score += _base_spot_safety(mem, cp)
+		# Territorio propio: las bases de los bots no se apiñan — cada solar
+		# puntua mejor cuanto mas lejos quede de los campamentos de los demas.
+		score += minf(_nearest_other_camp_dist(cp, bot_id), 160.0) * 0.6
 		if score > best_score:
 			best_score = score
 			best = cp
@@ -1683,6 +1700,23 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			proxy.set_meta("proxy_health", healed_home)
 			proxy.set_meta("saved_health", healed_home)
 		return
+
+	# 6d) Asentarse: con el campamento elegido pero el refugio aun sin
+	# levantar, el superviviente tira hacia su solar. El viaje es productivo:
+	# por el camino la cadena de arriba sigue cazando, destripando (tendon),
+	# recogiendo materiales y fabricando cuerda/palos — al llegar monta la
+	# base. Las urgencias (amenazas, sed, hambre, equipo) van antes.
+	if str(b["shelter_id"]).is_empty() and not starving_or_parched \
+			and float(b.get("hide_timer", 0.0)) <= 0.0 and not bool(b.get("sleeping", false)):
+		var settle_pos := _bot_build_camp_pos(b)
+		if settle_pos != Vector3.INF:
+			var d_settle := Vector2(proxy.global_position.x - settle_pos.x, proxy.global_position.z - settle_pos.z).length()
+			if d_settle > 22.0:
+				b["_act"] = "settle"
+				b["sitting"] = false
+				b["crouching"] = false
+				_move_bot_towards(b, settle_pos, 6.0, delta, "run")
+				return
 
 	# 7) Exploracion como un jugador real: viaja por puntos de interes (casas,
 	# tiendas militares, ciudad, graneros, zonas salvajes) recordando los ya
