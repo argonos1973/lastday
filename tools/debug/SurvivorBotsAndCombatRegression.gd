@@ -4304,6 +4304,95 @@ func run() -> void:
 	mgr_reload.free()
 	mgr.memory_path = SurvivorBotManagerScript.AI_MEMORY_PATH
 
+	# 10J5: Mejoras de IA — no quedarse parado de noche sin refugio estando
+	# descansado, apilado/tope de flechas para proteger los 11 palos del
+	# refugio, filtro de duplicados de armas/arcos, reserva multiple de agua
+	# con lecciones de sed, y no fuego fratricida ni falso verdugo por causas naturales.
+	var b_ai: Dictionary = mgr.bots[902]
+	var p_ai: Node3D = b_ai["proxy"]
+	var vs_ai: SurvivalStats = b_ai["vstats"]
+	b_ai["shelter_id"] = ""
+	b_ai["shelter_pos"] = Vector3.INF
+	b_ai["camp_spot"] = Vector3(300.0, 0.4, 300.0)
+	b_ai["explore_target"] = Vector3.INF
+	b_ai["hide_timer"] = 0.0
+	b_ai["flee_until"] = 0.0
+	b_ai["sleeping"] = false
+	b_ai["sitting"] = false
+	b_ai["health"] = 100.0
+	b_ai["hunger"] = 85.0
+	b_ai["thirst"] = 85.0
+	vs_ai.sleep = 95.0
+	vs_ai.energy = 95.0
+	vs_ai.body_temperature = 36.6
+	p_ai.global_position = Vector3(100.0, 0.4, -140.0)
+	b_ai["pos"] = p_ai.global_position
+	p_ai.set_meta("saved_inventory", [])
+	dc.time_of_day = 20.5
+	mgr._tick_bot(b_ai, 0.1)
+	check(str(b_ai.get("_act", "")) != "rest" and not bool(b_ai.get("sitting", false)),
+		"10J5a: De noche sin refugio y descansado (sleep=95) el bot NO se queda clavado en rest (act=%s)" % str(b_ai.get("_act", "")))
+	dc.time_of_day = 14.0
+
+	# Apilado de flechas y tope de crafteo mientras faltan los 11 palos del refugio
+	var arr_inv: Array = []
+	mgr._bot_add_inventory_item(arr_inv, {"name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.08, "quantity": 5})
+	mgr._bot_add_inventory_item(arr_inv, {"name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.08, "quantity": 5})
+	check(arr_inv.size() == 1 and int(arr_inv[0].get("quantity", 0)) == 10,
+		"10J5b: Las flechas (ammo_arrow) se apilan en un solo hueco de mochila")
+	p_ai.set_meta("saved_inventory", [
+		{"name": "Arco reforzado", "type": "weapon_bow", "weight": 1.1, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+		{"name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.08, "quantity": 5},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 6},
+	])
+	var r_fmad := {}
+	var r_amad := {}
+	for r in CraftingSystem.RECIPES:
+		var onm := str((r.get("output", {}) as Dictionary).get("name", ""))
+		if onm == "Flecha de madera":
+			r_fmad = r
+		elif onm == "Arco de madera":
+			r_amad = r
+	check(mgr._bot_recipe_score(b_ai, r_fmad) < 0.0 and mgr._bot_recipe_score(b_ai, r_amad) < 0.0,
+		"10J5c: Sin refugio y con 5 flechas + Arco reforzado no gasta los palos del refugio en mas flechas ni en arco inferior")
+	check(not mgr._is_loot_desirable(b_ai, "Arco de madera", "weapon_bow")
+		and not mgr._is_loot_desirable(b_ai, "Arco reforzado", "weapon_bow")
+		and not mgr._is_loot_desirable(b_ai, "Cuchillo", "weapon"),
+		"10J5d: No saquea arcos ni cuchillos duplicados/inferiores que atasquen su mochila")
+
+	# Reserva multiple de agua con lecciones de sed
+	mem_evo["death_lessons"] = {"dehydrated": 2}
+	p_ai.set_meta("saved_inventory", [
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0},
+	])
+	check(mgr._bot_desired_drink_cap(b_ai) == 3 and mgr._is_loot_desirable(b_ai, "Botella de agua llena", "water") and mgr._is_loot_desirable(b_ai, "Botella de plastico", "misc"),
+		"10J5e: Con 2 muertes de sed busca hasta 3 reservas de agua/botellas")
+
+	# Disparo entre hostiles sin agresion previa no activa fuego fratricida
+	var b901_h: Dictionary = mgr.bots[901]
+	var b903_h: Dictionary = mgr.bots[903]
+	mgr._set_bot_faction(b901_h, "hostile")
+	mgr._set_bot_faction(b903_h, "hostile")
+	mgr._ensure_bot_memory(901)["relationships"].erase("bot_903")
+	mgr._ensure_bot_memory(903)["relationships"].erase("bot_901")
+	b903_h["aggro_target"] = null
+	b901_h["proxy"].global_position = Vector3(10.0, 0.4, 10.0)
+	b903_h["proxy"].global_position = Vector3(50.0, 0.4, 10.0)
+	b903_h["proxy"].set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1}])
+	mgr.notify_sound_event(901, b901_h["proxy"].global_position, "gunshot", 220.0)
+	check(b903_h.get("aggro_target") == null,
+		"10J5f: El disparo de un bot de la misma faccion (cazando) no provoca aggro fratricida")
+
+	# Muerte natural no culpa a un atacante antiguo como verdugo
+	b_ai["_last_attacker_id"] = 903
+	b_ai["_last_attacker_msec"] = Time.get_ticks_msec()
+	mem_evo["killers"] = {}
+	mgr._kill_bot(b_ai, "exhausted")
+	check(str(mem_evo.get("last_death_killer", "")) == "" and (mem_evo.get("killers", {}) as Dictionary).is_empty(),
+		"10J5g: Morir por agotamiento/sed no registra como asesino ni nemesis a un atacante previo")
+	mgr._respawn_bot(b_ai)
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
