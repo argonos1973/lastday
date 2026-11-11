@@ -2293,6 +2293,20 @@ func run() -> void:
 	mgr._abandon_unreachable_goal(fresh_b, unreach)
 	check(fresh_b["explore_target"] == Vector3.INF and mgr._is_goal_blacklisted(fresh_b, unreach),
 		"SpawnReal 10f: objetivo inalcanzable se abandona y queda en lista negra para no oscilar")
+	# Un nodo de material inalcanzable tambien suelta el _gather y su claim:
+	# sin esto el bot quedaba en act=mats empujando siempre contra el mismo sitio
+	fresh_b["_gather"] = {"id": "mat_unreach", "pos": unreach, "kind": "stone"}
+	fresh_b["explore_target"] = Vector3.INF
+	mgr._abandon_unreachable_goal(fresh_b, unreach)
+	check((fresh_b["_gather"] as Dictionary).is_empty() and mgr._is_goal_blacklisted(fresh_b, unreach),
+		"SpawnReal 10f: nodo de material inalcanzable libera el gather y no se re-elige")
+	# Un _gather LEJOS del objetivo abandonado no se ve afectado (p.ej. una
+	# interrupcion de loot): sigue suyo, con claim y todo
+	fresh_b["_gather"] = {"id": "mat_far", "pos": unreach + Vector3(80.0, 0.0, 0.0), "kind": "stone"}
+	mgr._abandon_unreachable_goal(fresh_b, Vector3(-900.0, 0.4, -900.0))
+	check(not (fresh_b["_gather"] as Dictionary).is_empty(),
+		"SpawnReal 10f: un gather en curso ajeno al objetivo fallido se conserva")
+	fresh_b["_gather"] = {}
 
 	# 10g: bot situado DETRAS de una casa cerrada con bot_nav activa rodea el
 	# edificio hasta la puerta frontal, la abre y entra a recoger el loot

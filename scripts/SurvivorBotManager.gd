@@ -1950,6 +1950,11 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	if str(b.get("_act", "")) == "drink" and b.get("drink_at", Vector3.INF) != Vector3.INF and Vector2(goal.x - b["drink_at"].x, goal.z - b["drink_at"].z).length() < 6.0:
 		b["drink_at"] = Vector3.INF
 		b["drink_giveup"] = 12.0
+	var gst: Dictionary = b.get("_gather", {})
+	var gpos = gst.get("pos")
+	if not gst.is_empty() and gpos is Vector3 and Vector2(goal.x - (gpos as Vector3).x, goal.z - (gpos as Vector3).z).length() < 6.0:
+		_bot_release_gather_claim(b, gst)
+		b["_gather"] = {}
 	if not (b.get("_forage", {}) as Dictionary).is_empty():
 		b["_forage"] = {}
 	var pat: Array = b.get("patrol", [])
