@@ -5347,6 +5347,8 @@ func _chat_ensure_http() -> void:
 func _chat_attempt_qwen(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String, intent: String) -> bool:
 	if not _chat_pending.is_empty() or not _ai_can_query_remote():
 		return false
+	if Time.get_ticks_msec() < _ai_backoff_until_msec:
+		return false
 	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
 	if key.is_empty() or _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
 		return false
@@ -5426,7 +5428,9 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 	var kind := str(req.get("kind", "talk"))
 	var intent := str(req.get("intent", ""))
 	var text := ""
-	if result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
+	if response_code == 429:
+		_ai_register_429(_headers)
+	elif result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
 		var parsed = JSON.parse_string(body.get_string_from_utf8())
 		if parsed is Dictionary:
 			var usage = parsed.get("usage", {})
@@ -8815,20 +8819,37 @@ func _ai_build_prompt(b: Dictionary) -> String:
 	}
 	return JSON.stringify(state)
 
+# Groq devuelve "retry-after" (segundos) en los 429: si llega lo respetamos tal
+# cual en vez de duplicar a ciegas — el tier gratis castiga rachas cortas y la
+# espera real suele ser mucho menor que el backoff exponencial de 60..600 s.
+func _ai_register_429(headers: PackedStringArray) -> void:
+	_ai_429_count += 1
+	var wait := -1.0
+	for h in headers:
+		var hl := str(h).to_lower()
+		if hl.begins_with("retry-after:"):
+			wait = float(hl.get_slice(":", 1).strip_edges())
+			break
+	if wait < 0.0:
+		wait = _ai_backoff_sec
+		_ai_backoff_sec = minf(_ai_backoff_sec * 2.0, 600.0)
+	_ai_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
+	_ai_conn_status = "rate_limited (429, retry_in=%ds)" % int(maxf(wait, 2.0))
+
 func _ai_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var bot_id := _ai_pending_bot
 	_ai_pending_bot = 0
 	if bot_id == 0 or not bots.has(bot_id):
 		return
 	if response_code == 429:
-		_ai_429_count += 1
-		_ai_backoff_until_msec = Time.get_ticks_msec() + int(_ai_backoff_sec * 1000.0)
-		_ai_backoff_sec = minf(_ai_backoff_sec * 2.0, 600.0)
-		_ai_conn_status = "rate_limited (429)"
+		_ai_register_429(_headers)
 		_ai_apply_local_fallback_decision(bot_id, "http_429_backoff")
 		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		_ai_conn_status = "offline_fallback (%d)" % response_code
+		var snippet := body.get_string_from_utf8().strip_edges().substr(0, 160)
+		if not snippet.is_empty():
+			print("[AI-ADV] HTTP %d: %s" % [response_code, snippet])
 		_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
 		return
 	_ai_backoff_sec = 60.0
