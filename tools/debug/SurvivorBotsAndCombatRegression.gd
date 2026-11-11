@@ -2667,6 +2667,28 @@ func run() -> void:
 	check(not bool(fresh_b["sleeping"]),
 		"SpawnReal 10w6: al amanecer se despierta solo")
 
+	# La siesta diurna usa el mismo umbral de agotamiento que el acampada
+	# (_bot_is_exhausted sube con las lecciones de frio): antes quedaba un
+	# hueco "cansado para acampar pero no para dormir" y el bot se pasaba
+	# el dia sentado sin recuperar sueño ni salir a buscar recursos.
+	var mem_sl: Dictionary = fresh_b.get("_mem", {})
+	fresh_b["sleeping"] = false
+	vs.sleep = 18.0
+	vs.body_temperature = 36.6
+	fresh_b["hunger"] = 80.0
+	fresh_b["thirst"] = 80.0
+	check(not mgr._bot_is_exhausted(fresh_b) and not mgr._bot_try_start_sleep(fresh_b, false),
+		"SpawnReal 10w7: sin lecciones no cabecea de dia con sueno 18")
+	mem_sl["death_lessons"] = {"cold": 4.0}
+	check(mgr._bot_is_exhausted(fresh_b) and mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
+		"SpawnReal 10w8: con lecciones de frio el umbral sube y cabecea de dia (sleeping=%s)" % str(fresh_b["sleeping"]))
+	fresh_b["sleeping"] = false
+	mem_sl["death_lessons"] = {}
+	vs.sleep = 10.0
+	check(mgr._bot_try_start_sleep(fresh_b, false),
+		"SpawnReal 10w9: sin lecciones sigue cabeceando por debajo de 14")
+	fresh_b["sleeping"] = false
+
 	# Frio ambiental y calor de hoguera (mismo modelo SurvivalStats del jugador)
 	dc.time_of_day = 14.0
 	dc.ambient_temp = -14.0

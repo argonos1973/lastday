@@ -7987,8 +7987,11 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	var st: SurvivalStats = b.get("vstats")
 	if st == null or st.dead:
 		return false
-	# Duerme de noche; si esta agotado de verdad cabecea incluso de dia.
-	var exhausted := st.sleep < 14.0
+	# Duerme de noche; si esta agotado de verdad cabecea incluso de dia. El
+	# umbral es el mismo que fuerza el acampada (_bot_is_exhausted, sube con
+	# las lecciones de frio) — si difieren, el bot queda "cansado para
+	# acampar pero no para dormir" y se pasa el dia sentado sin recuperar.
+	var exhausted := _bot_is_exhausted(b)
 	if not is_night and not exhausted:
 		return false
 	if float(b["hunger"]) < 20.0 or float(b["thirst"]) < 16.0:
