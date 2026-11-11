@@ -1611,7 +1611,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var refuge_radius := 85.0
 	if _bot_is_freezing(b) or _bot_is_exhausted(b):
 		refuge_radius = 220.0
-	var rest_pos: Vector3 = sh_pos if sh_pos != Vector3.INF else _nearest_safe_refuge(b, refuge_radius)
+	# "Estar en la base" exige refugio levantado: el solar reclamado sin
+	# edificio no sirve para acampar — ahi se va a construir, no a dormir.
+	var has_built_sh := not str(b["shelter_id"]).is_empty()
+	var rest_pos: Vector3 = sh_pos if has_built_sh else _nearest_safe_refuge(b, refuge_radius)
 	if rest_pos != Vector3.INF and wants_camp:
 		b["_act"] = "rest"
 		b["hide_timer"] = maxf(0.0, float(b["hide_timer"]) - delta)
@@ -1620,7 +1623,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_move_bot_towards(b, rest_pos, 3.8, delta, "walk")
 			return
 		# Dentro del refugio: encender fogata si se apagó, asar carne (solo si tiene Palo afilado / Carne ensartada) y descansar/ocultarse
-		if sh_pos != Vector3.INF:
+		if has_built_sh:
 			_ensure_bot_campfire_lit(b)
 		# Sin fogata aun y con material a mano: la monta junto a donde acampa —
 		# la lena y las piedras que junto al caer la tarde se vuelven luz y
@@ -2474,6 +2477,10 @@ func _validate_shelter_claim(b: Dictionary) -> void:
 		var mm = b.get("_mem", {})
 		if mm is Dictionary and mm.has("shelter"):
 			(mm as Dictionary)["shelter"] = {}
+		# Le tumbaron/desmontaron el refugio: lo aprende — el solar sigue
+		# reclamado en shelter_pos y puede reconstruir, pero ya no es casa.
+		var lost_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
+		record_bot_event(int(b["bot_id"]), "shelter_lost", sid, "shelter", lost_pos, "le destruyeron el refugio")
 
 # True solo si el bot esta dentro de un refugio REALMENTE construido (el dict
 # del edificio sigue existiendo), no solo parado en su solar.
@@ -2511,9 +2518,12 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 		to_threat = threat_pos - cur
 		to_threat.y = 0.0
 	var candidates: Array = []
-	var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
-	if sh_pos != Vector3.INF:
-		candidates.append(sh_pos)
+	# Solo un refugio de verdad da cobijo: el solar reclamado sin edificio
+	# (demolido o aun sin levantar) no es refugio — ahi no se acampa.
+	if not str(b.get("shelter_id", "")).is_empty():
+		var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
+		if sh_pos != Vector3.INF:
+			candidates.append(sh_pos)
 	if world != null and "_lit_campfires" in world:
 		for lc in world._lit_campfires:
 			if lc is Dictionary and lc.get("pos") is Vector3:
@@ -6241,9 +6251,12 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 	# Botella vacia = recipiente para rellenar en el rio; solo si no tiene ninguno
 	if nm == "Botella de plastico":
 		return _bot_container_count(b["proxy"]) < 1
-	# Materiales base de campamento: stock modesto, no acaparar "por si acaso"
+	# Materiales base de campamento: stock modesto, no acaparar "por si acaso".
+	# Palo: el refugio cuesta 11 igual que al jugador — hasta levantarlo no
+	# se pasa de largo junto a un palo suelto.
 	if nm in ["Palo", "Piedra", "Cuerda", "Tela de camuflaje"]:
-		var caps := {"Palo": 8, "Piedra": 6, "Cuerda": 4, "Tela de camuflaje": 2}
+		var palo_cap := 13 if str(b.get("shelter_id", "")).is_empty() else 8
+		var caps := {"Palo": palo_cap, "Piedra": 6, "Cuerda": 4, "Tela de camuflaje": 2}
 		return _bot_item_count(b["proxy"], nm) < int(caps.get(nm, 99))
 	# Ingredientes de crafteo: solo si una receta util los necesita ahora mismo
 	# (p.ej. Trapos solo si busca venda, cuerda, boleadoras o ropa de piel)
@@ -6420,8 +6433,10 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.world_action_completed.rpc_id(pid, id, [], "", _loot_entry_pos(entry))
 
+# Mismo coste que el refugio del jugador (ShelterPlacement): 11 palos —
+# nada de atajo con cuerda. Con el material en la mano construye igual.
 func _can_bot_build_shelter(proxy: Node3D) -> bool:
-	return _bot_item_count(proxy, "Palo") >= 4 and _bot_item_count(proxy, "Cuerda") >= 1
+	return _bot_item_count(proxy, "Palo") >= 11
 
 # Donde levantar el refugio: el solar propio reclamado si ya lo tiene (reobrar
 # sobre su base), junto al refugio del lider de equipo si milita en uno (base
@@ -6447,8 +6462,7 @@ func _can_bot_build_campfire(proxy: Node3D) -> bool:
 
 func _bot_build_shelter(b: Dictionary, pos: Vector3) -> void:
 	var proxy: Node3D = b["proxy"]
-	_consume_bot_item(proxy, "Palo", 4)
-	_consume_bot_item(proxy, "Cuerda", 1)
+	_consume_bot_item(proxy, "Palo", 11)
 	var has_pelts := _bot_pelt_count(proxy) >= 4
 	if has_pelts:
 		var used := 0
@@ -7801,8 +7815,7 @@ func _bot_weather_observation() -> Dictionary:
 
 # Bajo techo: refugio propio/ajeno construido, o casa con la puerta cerrada.
 func _bot_is_sheltered(b: Dictionary, pos: Vector3) -> bool:
-	var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
-	if sh_pos != Vector3.INF and pos.distance_to(sh_pos) < 3.4:
+	if _bot_at_own_built_shelter(b, pos):
 		return true
 	if world.has_method("_is_near_built_shelter") and world._is_near_built_shelter(pos):
 		return true
@@ -8523,8 +8536,9 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 		# boleadoras o ropa de piel — nunca por acumular
 		return 5.5 if _bot_wants_craft_input(b, "Trapos") else 1.5
 	if oname == "Palo":
-		# Tronco -> 2 palos: habilitador cuando escasean las ramas
-		return 4.0 if _bot_item_count(proxy, "Palo") < 4 else 1.5
+		# Tronco -> 2 palos: habilitador cuando escasean las ramas; el
+		# refugio pide 11 — sin el, cada palo cuenta.
+		return 4.0 if _bot_item_count(proxy, "Palo") < 11 else 1.5
 	if oname == "Piedra afilada":
 		return 4.3
 	if oname == "Antorcha":
@@ -10857,7 +10871,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var palo_need := 0
 	if str(b["shelter_id"]).is_empty():
-		palo_need = 4
+		palo_need = 11 # refugio: mismo coste que el del jugador
 	elif str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)):
 		palo_need = 2
 	# La antorcha de la noche tambien pide su palo: uno de repuesto siempre

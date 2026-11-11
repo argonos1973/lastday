@@ -215,7 +215,7 @@ func run() -> void:
 	# probar que sigue construyendo campamento cuando los consigue.
 	var k_inv: Array = kael_proxy.get_meta("saved_inventory", [])
 	for it in [
-		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 6, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 14, "use_value": 0.0},
 		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 4, "use_value": 0.0},
 		{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 2, "use_value": 0.0},
 		{"name": "Piel de lobo", "type": "resource", "weight": 0.65, "quantity": 4, "use_value": 0.0},
@@ -686,8 +686,7 @@ func run() -> void:
 	carlos["thirst"] = 90.0
 	carlos["hide_timer"] = 0.0
 	carlos_proxy.set_meta("saved_inventory", [
-		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 4, "use_value": 0.0},
-		{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 1, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11, "use_value": 0.0},
 	])
 	carlos_proxy.global_position = carlos["camp_spot"]
 	carlos["pos"] = carlos_proxy.global_position
@@ -1403,13 +1402,13 @@ func run() -> void:
 		"Con arco y sin flechas: las plumas interesan (para fabricarlas)")
 	check(mgr._is_loot_desirable(elena, "Hueso", "resource"),
 		"El cuchillo de hueso mejora su cuchillo: el hueso interesa")
-	# Con 8 palos no recoge mas palos
+	# Con 13 palos (mas que el coste del refugio) no recoge mas palos
 	var palo_stack := []
-	for i in range(8):
+	for i in range(13):
 		palo_stack.append({"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0})
 	elena_proxy.set_meta("saved_inventory", palo_stack)
 	check(not mgr._is_loot_desirable(elena, "Palo", "resource"),
-		"Con 8 palos no sigue acumulando")
+		"Con 13 palos no sigue acumulando")
 	# Herido sin venda: los trapos y la ropa cortable SI interesan
 	elena["health"] = 55.0
 	elena["_want_cache"] = {}
@@ -2732,12 +2731,19 @@ func run() -> void:
 		"SpawnReal 10w10: la lluvia lo empapa igual que al jugador (wet=%.2f)" % vs.wetness)
 	var wet_peak := vs.wetness
 	fresh_b["shelter_pos"] = fresh_b["proxy"].global_position
+	fresh_b["shelter_id"] = "bot_shelter_902_w10"
+	world._built_shelters.append({"id": "bot_shelter_902_w10", "pos": fresh_b["shelter_pos"], "yaw": 0.0, "contents": []})
 	fresh_b["hide_timer"] = 30.0 # se queda agazapado en su refugio, sin deambular
 	for i in range(40):
 		mgr._tick_bot(fresh_b, 0.1)
 	check(vs.wetness < wet_peak,
 		"SpawnReal 10w11: bajo techo deja de mojarse y se va secando (wet=%.2f)" % vs.wetness)
 	fresh_b["hide_timer"] = 0.0
+	fresh_b["shelter_id"] = ""
+	fresh_b["shelter_pos"] = Vector3.INF
+	for i_sh in range(world._built_shelters.size() - 1, -1, -1):
+		if str(world._built_shelters[i_sh].get("id", "")) == "bot_shelter_902_w10":
+			world._built_shelters.remove_at(i_sh)
 	fnet.authoritative_weather = {}
 	fnet.is_connected = false
 
@@ -3357,8 +3363,7 @@ func run() -> void:
 
 	# 10B1: al construir, id unico + el refugio queda en mem.shelter
 	sb["proxy"].set_meta("saved_inventory", [
-		{"name": "Palo", "type": "material", "weight": 0.3, "quantity": 5, "use_value": 0.0},
-		{"name": "Cuerda", "type": "resource", "weight": 0.2, "quantity": 1, "use_value": 0.0},
+		{"name": "Palo", "type": "material", "weight": 0.3, "quantity": 12, "use_value": 0.0},
 	])
 	mgr._bot_build_shelter(sb, Vector3(60.0, 0.4, 60.0))
 	var built_id := str(sb.get("shelter_id", ""))
@@ -3406,6 +3411,18 @@ func run() -> void:
 		"10B5: al reaparecer olvida el refugio que ya no existe")
 	sb["_salvage"] = {}
 	world._built_shelters.clear()
+
+	# 10B6: la base sin refugio no es "casa": un solar reclamado cuyo edificio
+	# fue demolido/robado no da cobijo ni vale para acampar — se reconstruye.
+	sb["shelter_id"] = "bot_shelter_902_lost"
+	sb["shelter_pos"] = Vector3(60.0, 0.4, 60.0)
+	sb["proxy"].global_position = Vector3(60.5, 0.4, 60.0)
+	mgr._validate_shelter_claim(sb)
+	check(str(sb["shelter_id"]).is_empty() and not mgr._bot_is_sheltered(sb, sb["proxy"].global_position) \
+			and mgr._nearest_safe_refuge(sb, 40.0) != sb["shelter_pos"],
+		"10B6: sin edificio el solar no da cobijo ni vale como refugio")
+	sb["shelter_pos"] = Vector3.INF
+	sb["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
 
 	OS.set_environment("GROQ_API_KEY", saved_key)
 	mgr._chat_pair_until.clear()
