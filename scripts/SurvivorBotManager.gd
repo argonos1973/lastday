@@ -1071,6 +1071,11 @@ func _publish_bot_to_net_players(b: Dictionary) -> void:
 				if not is_bot_peer_id(pid):
 					net.sync_bot_team_state.rpc_id(pid, bot_id, int(b["team_leader_id"]), str(b["follow_mode"]), int(b.get("health", 100)), int(b.get("hunger", 100)), int(b.get("thirst", 100)))
 
+var perf_seg := {}
+
+func _pbm(seg_name: String, t0: int) -> void:
+	perf_seg[seg_name] = int(perf_seg.get(seg_name, 0)) + (Time.get_ticks_usec() - t0)
+
 func tick(delta: float) -> void:
 	if world == null:
 		return
@@ -1079,10 +1084,17 @@ func tick(delta: float) -> void:
 	if net != null and net.is_connected and not net.is_host:
 		_refresh_client_bot_avatars()
 		return
+	var _pt := Time.get_ticks_usec()
 	_voice_tick(delta)
+	_pbm("voice", _pt)
+	_pt = Time.get_ticks_usec()
 	for bot_id in bots.keys():
 		_tick_bot(bots[bot_id], delta)
+	_pbm("tick_bot", _pt)
+	_pt = Time.get_ticks_usec()
 	_ai_tick(delta)
+	_pbm("ai_tick", _pt)
+	_pt = Time.get_ticks_usec()
 	_mem_accum += delta
 	if _mem_accum >= AI_MEMORY_SAVE_SEC:
 		_mem_accum = 0.0
@@ -1091,10 +1103,13 @@ func tick(delta: float) -> void:
 	if _status_accum >= AI_STATUS_SAVE_SEC:
 		_status_accum = 0.0
 		_ai_save_live_status()
+	_pbm("saves", _pt)
+	_pt = Time.get_ticks_usec()
 	_sync_accum += delta
 	if _sync_accum >= 0.05:
 		_sync_accum = fmod(_sync_accum, 0.05)
 		_broadcast_bots()
+	_pbm("bcast_bots", _pt)
 
 func _refresh_client_bot_avatars() -> void:
 	if world == null or world.get("net") == null or not ("remote_players" in world):

@@ -235,6 +235,10 @@ func _wildlife_respawn_ready(species: String) -> bool:
 var _server_save_timer := 0.0
 var _server_save_task := -1
 var _perf_probe := 0.0
+var _perf_seg := {}
+
+func _pm(seg_name: String, t0: int) -> void:
+	_perf_seg[seg_name] = int(_perf_seg.get(seg_name, 0)) + (Time.get_ticks_usec() - t0)
 # Dedicated-server graceful shutdown: stdin console commands, stop-file poll
 # (tools/stop_server.sh touches it) and the OS close request.
 const SERVER_STOP_FLAG := "user://stop_server.flag"
@@ -1236,33 +1240,47 @@ func _process(delta: float) -> void:
 				_request_server_shutdown()
 				return
 		# Update proxy positions from client sync data
+		var _pt := Time.get_ticks_usec()
 		_update_server_proxies(delta)
+		_pm("proxies", _pt)
+		_pt = Time.get_ticks_usec()
 		if survivor_bot_mgr != null:
 			survivor_bot_mgr.tick(delta)
+		_pm("bot_tick", _pt)
 		# Server broadcasts animal state to clients
 		_animal_sync_timer += delta
+		_pt = Time.get_ticks_usec()
 		if _animal_sync_timer >= 0.10:
 			# Keep the 10 Hz cadence stable when a frame runs late instead of
 			# adding the full frame time to every interval.
 			_animal_sync_timer = fmod(_animal_sync_timer, 0.10)
 			_broadcast_animals()
+		_pm("bcast_animals", _pt)
 		# Tick campfire fires on server
+		_pt = Time.get_ticks_usec()
 		_tick_campfire_fires()
+		_pm("fires", _pt)
 		# Respawn wildlife periodically (server)
 		_wildlife_respawn_timer += delta
+		_pt = Time.get_ticks_usec()
 		if _wildlife_respawn_timer >= 30.0:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
+		_pm("wild_respawn", _pt)
 		_door_cache_timer += delta
+		_pt = Time.get_ticks_usec()
 		if _door_cache_timer >= 1.0:
 			_door_cache_timer = 0.0
 			_refresh_nav_door_caches()
+		_pm("door_cache", _pt)
 		# Periodic save: SIGTERM kills never reach NOTIFICATION_WM_CLOSE_REQUEST,
 		# so without this a killed server loses every change since the last save.
 		_server_save_timer += delta
+		_pt = Time.get_ticks_usec()
 		if _server_save_timer >= 60.0:
 			_server_save_timer = 0.0
 			_save_world_change_silent()
+		_pm("save", _pt)
 		_perf_probe += delta
 		if _perf_probe >= 10.0:
 			_perf_probe = 0.0
@@ -1280,6 +1298,15 @@ func _process(delta: float) -> void:
 				print("[PERF]   %s: %d ms/s" % [k, int(WildlifeController.perf_parts[k]) / 10 / 1000])
 			WildlifeController.perf_usec = 0
 			WildlifeController.perf_parts.clear()
+			for k in _perf_seg.keys():
+				print("[PERF]   main.%s: %d ms/s" % [k, int(_perf_seg[k]) / 10 / 1000])
+			_perf_seg.clear()
+			if survivor_bot_mgr != null:
+				var bseg: Dictionary = survivor_bot_mgr.get("perf_seg")
+				if bseg != null:
+					for k in bseg.keys():
+						print("[PERF]   bot.%s: %d ms/s" % [k, int(bseg[k]) / 10 / 1000])
+					bseg.clear()
 		return
 	# Single player: respawn wildlife periodically (no net)
 	if net == null or not net.is_connected:
