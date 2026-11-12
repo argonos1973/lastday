@@ -2718,6 +2718,20 @@ func run() -> void:
 		"SpawnReal 10w9: sin lecciones sigue cabeceando por debajo de 14")
 	fresh_b["sleeping"] = false
 
+	# La IA asesora mando descansar al campamento: con la directiva activa la
+	# siesta diurna funciona aunque el sueño no llegue al umbral letal — si
+	# no, el bot orbita su solar en dwell infinito sin recuperar (Carlos).
+	vs.sleep = 23.0
+	fresh_b["ai_directive"] = {"action": "rest", "mode": "pos", "pos": fresh_b["proxy"].global_position, "until": Time.get_ticks_msec() + 60000}
+	check(mgr._bot_wants_day_rest(fresh_b) and mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
+		"10J5u1: con orden de descanso de la IA cabecea de dia con sueno 23 (sleeping=%s)" % str(fresh_b["sleeping"]))
+	fresh_b["sleeping"] = false
+	fresh_b["ai_directive"] = {"action": "explore", "mode": "poi", "until": Time.get_ticks_msec() + 60000}
+	check(not mgr._bot_wants_day_rest(fresh_b) and not mgr._bot_try_start_sleep(fresh_b, false),
+		"10J5u2: con otra directiva no cabecea de dia")
+	fresh_b["ai_directive"] = {}
+	vs.sleep = 80.0
+
 	# Colapso por agotamiento letal: con sleep<=4 el cuerpo se apaga — el bot
 	# se desploma dormido donde este aunque haga frio y tenga hambre. Antes
 	# esas puertas le negaban el suelo: el sleep caia a 0 sentado y moria de

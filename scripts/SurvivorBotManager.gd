@@ -1746,7 +1746,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var has_built_sh := not str(b["shelter_id"]).is_empty()
 	var vst: SurvivalStats = b.get("vstats")
 	var night_needs_sleep: bool = is_night and ((vst != null and vst.sleep < 65.0) or (has_built_sh and (not has_night_light or not _bot_needs_outing(b))))
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light and not desperate_needs) or (not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b)))
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light and not desperate_needs) or (not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -8683,6 +8683,18 @@ func _bot_is_exhausted(b: Dictionary) -> bool:
 	var thresh := 14.0 + minf(9.0, float(cold_lessons) * 3.0)
 	return st != null and not st.dead and st.sleep < thresh
 
+# La IA asesora mando "descansa/vuelve a casa" y el deposito no esta lleno:
+# de dia eso habilita la siesta donde acampa (se despierta al llegar a 55
+# via _bot_should_wake). Sin esto el bot marchaba al campamento por la
+# directiva y se pasaba horas de pie sin poder dormir — cansado pero no
+# "letalmente agotado", orbitando su solar en explore_dwell infinito.
+func _bot_wants_day_rest(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	if st == null or st.dead or st.sleep >= 55.0:
+		return false
+	var d := _ai_active_directive(b)
+	return str(d.get("action", "")) in ["rest", "return_home"]
+
 # Necesidades que rompen CUALQUIER formacion — la prioridad real es:
 # amenaza > salud/hambre/sed/frio/sueño > orden humana > marcha del lider >
 # loot de camino > recado de la IA > comportamiento independiente. Vendar,
@@ -8856,7 +8868,7 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# las lecciones de frio) — si difieren, el bot queda "cansado para
 	# acampar pero no para dormir" y se pasa el dia sentado sin recuperar.
 	var exhausted := _bot_is_exhausted(b)
-	if not is_night and not exhausted:
+	if not is_night and not exhausted and not _bot_wants_day_rest(b):
 		return false
 	# Colapso por agotamiento letal: con el sueno al borde de la muerte el
 	# cuerpo se apaga — se desploma dormido donde este, ignorando hambre, sed
