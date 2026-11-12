@@ -436,6 +436,7 @@ function renderSummary(data) {
         else if (b.team_role === "member") t = `<span class="badge info">miembro</span>${roleLbl ? ` <span class="badge ok">${roleLbl}</span>` : ""} con ${esc(mates)}`;
         else t = `<span style="color:var(--muted)">solo</span>`;
         if (b.team_danger > 0 && b.team_role === "member") t += ` <span class="badge" style="color:var(--danger)">⚠️ peligro ×${b.team_danger}</span>`;
+        if (b.team_refused > 0 && b.team_role === "member") t += ` <span class="badge" style="color:var(--warn)">🙅 niega ayuda ×${b.team_refused}</span>`;
         const mt = b.meet || {};
         if (mt.target) t += `<br/><span style="color:var(--accent)">🔎 busca a ${esc(mt.target)}${mt.dist >= 0 ? ` (${mt.dist} m)` : ""}</span>`;
         const amb = b.ambush || {};

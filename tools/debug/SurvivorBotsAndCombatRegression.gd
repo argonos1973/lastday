@@ -5073,6 +5073,89 @@ func run() -> void:
 	(b_nt["_mem"] as Dictionary)["team_danger_n"] = save_dg_nt
 	b_nt["flee_until"] = 0.0
 	b_nt["_team_danger_ms"] = -120000
+
+	# 10J5x: conversacion -> supervivencia. Negativa a una peticion pendiente:
+	# queda en memoria (refused), el bot reevalua (negociar/robar/atacar/
+	# forrajear) y el equipo echa a quien niega ayuda a compañeros.
+	var save_asked_x: Variant = b_nt.get("_asked", {})
+	var save_surv_x: Variant = b_nt.get("_survive_decision", {})
+	var save_steal_x: Variant = b_nt.get("_steal_target", {})
+	var save_hun_x := float(b_nt.get("hunger", 100.0))
+	var h9 := Node3D.new()
+	world.add_child(h9)
+	h9.global_position = p_nt.global_position + Vector3(4.0, 0.0, 0.0)
+	world.server_proxies[9] = h9
+	fnet.players[9] = {"char_name": "Negador", "name": "Negador", "is_ai_bot": false, "offline": false}
+	var sk9 := mgr._actor_persist_key(9)
+	b_nt["hunger"] = 20.0
+	b_nt["_asked"] = {"id": 9, "need": "comida", "t": Time.get_ticks_msec()}
+	mgr.on_chat_received(902, 9, "Negador", "no, vete, no te doy nada")
+	var rel_x := mgr.get_bot_relationship(902, sk9)
+	check(int(rel_x.get("refused", 0)) == 1 and float(rel_x.get("hostility", 0.0)) > 0.0
+		and (b_nt["_asked"] as Dictionary).is_empty(),
+		"10J5x1: la negativa queda en memoria (refused=%d host=%.2f) y cierra la peticion" % [
+			int(rel_x.get("refused", 0)), float(rel_x.get("hostility", 0.0))])
+	# Primera negativa con confianza -> ruego otra vez (negotiate).
+	rel_x["trust"] = 0.5
+	rel_x["hostility"] = 0.0
+	var dec_n := mgr._bot_evaluate_after_refusal(b_nt, 9, "comida")
+	check(dec_n == "negotiate",
+		"10J5x2: primera negativa con confianza -> negociar otra vez (got %s)" % dec_n)
+	# Rencor + arma + agresivo -> por la fuerza.
+	rel_x["refused"] = 3
+	rel_x["hostility"] = 0.5
+	p_nt.set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 10.0, "durability": 100.0, "max_durability": 100.0}])
+	var pers_save_x: Dictionary = ((b_nt["_mem"] as Dictionary).get("personality", {}) as Dictionary).duplicate()
+	(b_nt["_mem"] as Dictionary)["personality"] = {"bravery": 0.8, "aggression": 0.7, "curiosity": 0.4, "sociability": 0.4, "distrust": 0.6, "cooperation": 0.3, "survival_instinct": 0.5}
+	b_nt["aggro_target"] = null
+	var dec_a := mgr._bot_evaluate_after_refusal(b_nt, 9, "comida")
+	check(dec_a == "attack" and b_nt.get("aggro_target") == h9,
+		"10J5x3: 3 negativas + arma + agresivo -> toma por la fuerza (aggro=%s)" % str(b_nt.get("aggro_target") != null))
+	# Desarmado y no tan bravo -> robarle en su refugio.
+	b_nt["aggro_target"] = null
+	p_nt.set_meta("saved_inventory", [])
+	(b_nt["_mem"] as Dictionary)["personality"] = {"bravery": 0.4, "aggression": 0.3, "curiosity": 0.4, "sociability": 0.4, "distrust": 0.6, "cooperation": 0.3, "survival_instinct": 0.7}
+	var sh9 := {"id": "player_shelter_9_x1", "pos": [p_nt.global_position.x + 8.0, 0.0, p_nt.global_position.z], "contents": [{"name": "Lata", "type": "food", "quantity": 2}]}
+	world._built_shelters.append(sh9)
+	var dec_s := mgr._bot_evaluate_after_refusal(b_nt, 9, "comida")
+	check(dec_s == "steal" and str(b_nt.get("_s_raid_shelter", {}).get("id", "")) == "player_shelter_9_x1",
+		"10J5x4: desarmado + refugio conocido -> robarle el alijo (dec=%s target=%s)" % [dec_s, str(b_nt.get("_steal_target", {}).get("id", ""))])
+	world._built_shelters.erase(sh9)
+	# Negar ayuda a compañeros 3 veces -> expulsion del equipo.
+	b_nt["team_leader_id"] = 901
+	b_nt["flee_until"] = 0.0
+	b_nt["hide_timer"] = 0.0
+	b_nt["_s_predator"] = null
+	var rel_ld_vs_nt2 := mgr.get_bot_relationship(901, "bot_902")
+	rel_ld_vs_nt2["refused"] = 3
+	rel_ld_vs_nt2["attacked"] = 0
+	rel_ld_vs_nt2["hostility"] = 0.2
+	# El snapshot del monitor expone las negativas antes de la expulsion.
+	b_nt["team_leader_id"] = 901
+	rel_ld_vs_nt2["refused"] = 2
+	var snap_x5 := {}
+	for bx in mgr.get_full_web_status().get("bots", []):
+		if int((bx as Dictionary).get("bot_id", 0)) == 902:
+			snap_x5 = bx
+	check(int(snap_x5.get("team_refused", -1)) == 2,
+		"10J5x5a: el monitor expone las negativas de ayuda (team_refused=%s)" % str(snap_x5.get("team_refused", -1)))
+	rel_ld_vs_nt2["refused"] = 3
+	mgr._sync_team_base(b_nt)
+	check(int(b_nt.get("team_leader_id", -1)) == 0 and str(b_nt.get("faction", "")) == "hostile",
+		"10J5x5: 3 negativas de ayuda al grupo tambien expulsan")
+	# Restaurar x.
+	b_nt["_asked"] = save_asked_x
+	b_nt["_survive_decision"] = save_surv_x
+	b_nt["_steal_target"] = save_steal_x
+	b_nt["_s_raid_shelter"] = {}
+	b_nt["hunger"] = save_hun_x
+	b_nt["aggro_target"] = null
+	(b_nt["_mem"] as Dictionary)["personality"] = pers_save_x
+	var rels9x: Dictionary = ((b_nt["_mem"] as Dictionary).get("relationships", {}))
+	rels9x.erase(sk9)
+	world.server_proxies.erase(9)
+	fnet.players.erase(9)
+	h9.queue_free()
 	# Restaurar.
 	p_nt.set_meta("saved_inventory", save_inv_nt)
 	p_nt.global_position = save_pos_ntw

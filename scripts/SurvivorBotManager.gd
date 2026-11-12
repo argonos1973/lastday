@@ -1278,6 +1278,15 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				and (_is_pre_night() or _is_world_night()) and not _bot_night_fire_ready(b, proxy):
 			b["_s_loot"] = _find_fire_prep_loot(b, 60.0)
 		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
+		# Robo dirigido tras una negativa: el refugio de quien le nego ayuda
+		# tiene prioridad sobre cualquier otro alijo cercano (caduca en 5 min).
+		var steal_t: Dictionary = b.get("_steal_target", {})
+		if not steal_t.is_empty():
+			var st_sh := _find_shelter_dict(str(steal_t.get("id", ""))) if Time.get_ticks_msec() - int(steal_t.get("t", 0)) <= 300000 else {}
+			if st_sh.is_empty():
+				b["_steal_target"] = {}
+			else:
+				b["_s_raid_shelter"] = st_sh
 		_observe_nearby_world(b)
 		_try_share_allied_knowledge(b)
 		_bot_social_update(b)
@@ -1625,6 +1634,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_bot_raid_shelter(b, raid_sh)
 			if not _bot_try_dismantle_shelter(b, raid_sh):
 				b["_s_raid_shelter"] = {}
+				if str(b.get("_steal_target", {}).get("id", "")) == str(raid_sh.get("id", "")):
+					b["_steal_target"] = {} # venganza consumada: objetivo cumplido
 		else:
 			_move_bot_towards(b, rpos, 6.2, delta, "run")
 		return
@@ -2792,6 +2803,11 @@ func _team_check_expulsion(b: Dictionary) -> bool:
 		var rel = rels.get("bot_%d" % my_id)
 		if rel is Dictionary and int((rel as Dictionary).get("attacked", 0)) >= 3:
 			_team_expel(b, "traicion")
+			return true
+		# Negativas constantes de ayuda a compañeros: quien rechaza 3+ veces las
+		# peticiones del grupo ya no aporta nada — el equipo tambien le echa.
+		if rel is Dictionary and int((rel as Dictionary).get("refused", 0)) >= 3:
+			_team_expel(b, "negado ayuda")
 			return true
 	if int(_ensure_bot_memory(my_id, b.get("cfg", {})).get("team_danger_n", 0)) >= 4:
 		_team_expel(b, "peligro")
@@ -5255,6 +5271,10 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 	if not sender_is_bot:
 		var order := _chat_parse_order(clean)
 		if not order.is_empty():
+			# "vete"/"largate" con una peticion pendiente tambien es una negativa:
+			# queda en memoria y el bot reevalua (la orden de irse sigue saliendo).
+			if str(order["cmd"]) == "dismiss":
+				_chat_maybe_refuse(tb, target_id, sender_id, sender_name, skey)
 			_chat_handle_order(tb, sender_id, sender_name, skey, str(order["cmd"]), str(order.get("arg", "")))
 			return
 	# Peticiones entre cualquiera ("tienes comida?", "necesito vendas",
@@ -5263,6 +5283,14 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 	if not req.is_empty():
 		_chat_handle_request(tb, sender_id, sender_name, skey, sender_is_bot, str(req["cmd"]), str(req.get("arg", "")))
 		return
+	# Negativa a una peticion pendiente de este emisor ("no", "ni de cona"):
+	# queda en memoria (refused) y el bot reevalua que hacer — volver a rogar,
+	# robar, atacar o buscarse la vida — y contesta acorde a la decision.
+	if intent == "refuse":
+		var refuse_ctx := _chat_maybe_refuse(tb, target_id, sender_id, sender_name, skey)
+		if refuse_ctx != "":
+			_chat_dispatch(tb, "refused", sender_id, sender_name, refuse_ctx, "refuse")
+			return
 	# Encolar respuesta (la ultima gana); los turnos cortan el ping-pong.
 	# Si el emisor es humano, responder en el siguiente tick sin esperar el
 	# ciclo social de ~3.5 s ni descartar por enfriamiento entre bots.
@@ -5298,6 +5326,11 @@ func _chat_classify(text: String) -> String:
 	for kw in ["hola", "buenas", "saludos", "que tal", "ey ", "ei ", "oye "]:
 		if t.contains(kw):
 			return "greet"
+	# Negativa a una peticion: solo llega a efecto si el bot tiene una peticion
+	# pendiente de ese emisor (_asked); si no, cae a la charla generica.
+	for kw in [" ni de cona", "largate", "largo ", " vete ", "buscate la vida", "no te doy", "no pienso", "olvidate", "ni lo suenes", "no comparto", "no me pidas", "ni una ", "ni un ", "no puedo", "no tengo", "me falta a mi", "voy justo", "no me queda", "imposible", "jamás", "jamas", "nunca", " no ", " nanai ", " que no "]:
+		if t.contains(kw):
+			return "refuse"
 	return "talk"
 
 # ==================== ORDENES POR CHAT ====================
@@ -5821,6 +5854,13 @@ func _chat_handle_request(b: Dictionary, sender_id: int, sname: String, skey: St
 	var line := _chat_request_line(b, cmd, ok, why)
 	if not line.is_empty():
 		_bot_chat_send(b, sender_id, sname, line, "request")
+	# Negarse pudiendo (desconfianza/hostilidad/guardarse el arma) queda en la
+	# memoria del que pidio — las negativas constantes de ayuda a compañeros
+	# de equipo acaban en expulsion. "No me queda nada" no es una negativa.
+	if not ok and sender_is_bot and why in ["distrust", "hostile", "betrayed", "keep_weapon", "scared"]:
+		record_social_event(sender_id, "bot_%d" % bot_id, str(b.get("name", "")), "refused", 0.16, "denied_" + cmd + "_" + why)
+		if bots.has(sender_id):
+			_bot_evaluate_after_refusal(bots[sender_id], bot_id, cmd)
 
 func _chat_request_line(b: Dictionary, cmd: String, ok: bool, why: String) -> String:
 	var pers := _get_bot_personality(b)
@@ -5845,6 +5885,89 @@ func _chat_request_line(b: Dictionary, cmd: String, ok: bool, why: String) -> St
 		"no_target":
 			return "No veo a nadie cerca a quien atacar."
 	return "Lo siento mucho, yo también voy muy justo." if warm else "No tengo nada de sobra para repartir."
+
+# ==================== NEGATIVA A UNA PETICION → DECISION DE SUPERVIVENCIA ====================
+# El ciclo conversacion↔supervivencia: el bot pidio algo que necesitaba de
+# verdad y se lo negaron. Pesa la urgencia (hambre/sed/vida), la relacion con
+# quien le nego (confianza/hostilidad/nº de negativas) y su caracter: rogar
+# otra vez, robarle en su refugio, tomarlo por la fuerza o buscarse la vida.
+# Peticion pendiente a este emisor que acaba de negar ("no", "largate",
+# "ni de cona"): la niega queda en memoria (refused) y el bot reevalua —
+# devuelve "decision:necesidad" para la respuesta, o "" si no habia peticion.
+func _chat_maybe_refuse(tb: Dictionary, target_id: int, sender_id: int, sender_name: String, skey: String) -> String:
+	var asked: Dictionary = tb.get("_asked", {})
+	if asked.is_empty() or int(asked.get("id", 0)) != sender_id:
+		return ""
+	if Time.get_ticks_msec() - int(asked.get("t", 0)) >= 120000:
+		tb["_asked"] = {}
+		return ""
+	var need := str(asked.get("need", "algo"))
+	record_social_event(target_id, skey, sender_name, "refused", 0.16, "denied_" + need)
+	tb["_asked"] = {}
+	return _bot_evaluate_after_refusal(tb, sender_id, need) + ":" + need
+
+func _bot_evaluate_after_refusal(b: Dictionary, refuser_id: int, need: String = "algo") -> String:
+	var my_id := int(b["bot_id"])
+	var skey := _actor_persist_key(refuser_id)
+	var rel := get_bot_relationship(my_id, skey)
+	var refused_n := int(rel.get("refused", 0))
+	var pers := _get_bot_personality(b)
+	var proxy: Node3D = b["proxy"]
+	var urgent := float(b.get("hunger", 100.0)) < 30.0 or float(b.get("thirst", 100.0)) < 25.0 or float(b.get("health", 100.0)) < 40.0
+	var decision := "forage"
+	if urgent:
+		var tr := float(rel.get("trust", 0.0))
+		var host := float(rel.get("hostility", 0.0))
+		var armed := not _best_weapon_name(proxy).is_empty()
+		var brave := float(pers.get("bravery", 0.5))
+		var aggr := float(pers.get("aggression", 0.35))
+		# Primera negativa y aun confia: insiste una vez mas con un ruego.
+		if refused_n < 2 and tr > 0.10 and host < 0.35:
+			decision = "negotiate"
+		# Por la fuerza: armado, agresivo o con rencor, y suficientemente valiente.
+		elif armed and brave > 0.45 and (aggr > 0.55 or host > 0.45 or refused_n >= 3):
+			decision = "attack"
+		# Robarle en su refugio si tiene uno conocido (los cautos prefieren hurtar).
+		elif not _find_shelter_by_owner(refuser_id).is_empty() and (brave < 0.6 or not armed):
+			decision = "steal"
+	b["_survive_decision"] = {"kind": decision, "target_id": refuser_id, "t": Time.get_ticks_msec(), "need": need}
+	_bot_apply_refusal_decision(b)
+	record_bot_event(my_id, "refused_decide", skey, _poi_kind_near(proxy.global_position), proxy.global_position, "%s por denied %s" % [decision, need])
+	return decision
+
+# Refugio construido por ese actor (bot o humano): ids bot_shelter_<id>_ y
+# player_shelter_<id>_ — donde guarda su alijo para robarselo.
+func _find_shelter_by_owner(actor_id: int) -> Dictionary:
+	if world == null or not ("_built_shelters" in world):
+		return {}
+	var prefix := ("bot_shelter_%d" if is_bot_peer_id(actor_id) else "player_shelter_%d") % actor_id
+	for sh in world._built_shelters:
+		if sh is Dictionary and str((sh as Dictionary).get("id", "")).begins_with(prefix):
+			return sh
+	return {}
+
+# Ejecuta la decision tomada tras la negativa: rogar=pedir otra vez pronto,
+# robar=marchar a su refugio, atacar=aggro directo, forrajear=la IA normal.
+func _bot_apply_refusal_decision(b: Dictionary) -> void:
+	var dec: Dictionary = b.get("_survive_decision", {})
+	var kind := str(dec.get("kind", ""))
+	var tid := int(dec.get("target_id", 0))
+	match kind:
+		"attack":
+			var node := _find_actor_by_peer_id(tid)
+			if node != null and is_instance_valid(node):
+				b["aggro_target"] = node
+				b["aggro_timer"] = 30.0
+				_command_bot_wolf_against(b, node)
+		"steal":
+			var sh := _find_shelter_by_owner(tid)
+			if not sh.is_empty():
+				b["_steal_target"] = {"id": str(sh.get("id", "")), "t": Time.get_ticks_msec()}
+				b["_s_raid_shelter"] = sh
+		"negotiate":
+			# Ruego otra vez pronto: la proxima peticion llega antes del CD normal.
+			_chat_req_until[int(b["bot_id"])] = Time.get_ticks_msec() + 35000
+	# "forage": nada que forzar — el hambre manda por la via normal.
 
 # ==================== REGALOS POR CHAT/VOZ ====================
 # "te doy pan", "toma esto", "aqui tienes vendas": el jugador ofrece un objeto
@@ -5981,6 +6104,8 @@ func _chat_handle_gift(b: Dictionary, sender_id: int, sname: String, skey: Strin
 	_gift_remove_from_sender(sender_id, found)
 	var msg := interact_with_bot(bot_id, sender_id, "give:%s|%s|%s|%s" % [str(found["name"]), str(found["type"]), str(found["weight"]), str(found["use_value"])])
 	_deliver_notice_to_sender(sender_id, msg)
+	if int(b.get("_asked", {}).get("id", 0)) == sender_id:
+		b["_asked"] = {} # la peticion pendiente quedo respondida con ayuda
 	# El bot reacciona en voz al regalo como a un mensaje de chat normal.
 	b["_chat_inbox"] = {"from_id": sender_id, "from_name": sname, "text": clean_text, "intent": "gift"}
 	b["_chat_reply_ready"] = 0
@@ -6472,6 +6597,9 @@ func _bot_chat_tick(b: Dictionary) -> void:
 			var rec := _chat_req_recipient(b)
 			if not rec.is_empty():
 				_chat_req_until[my_id] = now + int(BOT_CHAT_REQ_CD * 1000.0)
+				# Peticion pendiente: una negativa de este actor dentro de 2 min
+				# cuenta como "refused" y dispara la reevaluacion de supervivencia.
+				b["_asked"] = {"id": int(rec["id"]), "need": need, "t": now}
 				_chat_dispatch(b, "request", int(rec["id"]), str(rec["name"]), need)
 				return
 	var amb: Dictionary = b.get("_ambush", {})
@@ -6663,6 +6791,18 @@ func _chat_fallback_line(b: Dictionary, kind: String, to_name: String, ctx: Stri
 				"arma":
 					return "Voy desarmado, %s. ¿Te sobra un arma, un cuchillo o lo que sea?" % nm
 			return "%s, me hace falta %s. ¿Tienes algo por ahí?" % [nm, ctx]
+		"refused":
+			var dkind := ctx.split(":")[0] if not ctx.is_empty() else "forage"
+			match dkind:
+				"negotiate":
+					return str(["Por favor, %s... llevo horas así. Solo un poco." % nm,
+						"Anda %s, que me hace mucha falta de verdad." % nm][randi() % 2])
+				"attack":
+					return "Pues lo siento, %s, pero me lo vas a dar por las malas." % nm
+				"steal":
+					return "Vale, %s. Sin problemas." % nm
+			return str(["Vale, %s. Me buscaré la vida por mi cuenta." % nm,
+				"De acuerdo. Me las apañaré, %s." % nm][randi() % 2])
 		"reply":
 			return _chat_fallback_reply(b, intent, nm)
 	return ""
@@ -6758,6 +6898,12 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 			sit = "Estas a punto de atacar a %s para robarle. Escribe una frase intimidante." % to_name
 		"request":
 			sit = "Te falta %s de verdad y le pides ayuda a %s. Escribele la peticion, breve y natural." % [ctx, to_name]
+		"refused":
+			var parts := ctx.split(":")
+			var dkind := parts[0] if parts.size() > 0 else "forage"
+			var dneed := parts[1] if parts.size() > 1 else "algo"
+			var plan: String = {"negotiate": "Vas a rogarle otra vez: lo necesitas de verdad", "steal": "Piensas quitarselo de su refugio sin que te vea", "attack": "Vas a obligarle a dartelo por la fuerza", "forage": "Te buscaras la vida por tu cuenta"}.get(dkind, "")
+			sit = "%s acaba de negarte %s que necesitabas. %s. Reacciona en una frase segun tu caracter y ese plan." % [to_name, dneed, plan]
 		"reply":
 			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "threat": "te amenaza"}.get(intent, "te habla")
 			sit = "%s %s. Dice: \"%s\". Responde hablando en voz alta, breve (1 frase), segun tu caracter y tu relacion con el." % [to_name, intent_txt, ctx]
@@ -10120,6 +10266,14 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 				_evolve_personality(b, "player_attacked", step)
 				if Time.get_ticks_msec() - int(_ai_last_call_msec.get(bot_id, -999999)) > 120000:
 					_ai_enqueue_request(bot_id, 5, "attacked_by_" + actor_key)
+		"refused":
+			# Le nego ayuda que el bot pedia de verdad: confianza abajo, rencor
+			# arriba. El contador alimenta la reevaluacion (negociar/robar/
+			# atacar/forrajear) y la expulsion del equipo por negarse a ayudar.
+			rel["refused"] = int(rel.get("refused", 0)) + 1
+			var dist_mul2 := 0.8 + float(pers.get("distrust", 0.4)) * 0.6
+			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) - step * 0.55 * dist_mul2, -1.0, 1.0), 0.001)
+			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) + step * 0.40, 0.0, 1.0), 0.001)
 	var pos := Vector3.ZERO
 	if not b.is_empty() and b.get("proxy") != null and is_instance_valid(b["proxy"]):
 		pos = (b["proxy"] as Node3D).global_position
@@ -11175,6 +11329,14 @@ func get_full_web_status() -> Dictionary:
 		snap["team_role"] = _bot_team_role(b)
 		snap["member_role"] = _bot_member_role(b)
 		snap["team_danger"] = int(_ensure_bot_memory(int(bid), b.get("cfg", {})).get("team_danger_n", 0))
+		# Ayuda negada a compañeros: max de negativas que cualquier compañero le
+		# apunta (a 3 lo echan) — mismo calculo que _team_check_expulsion.
+		var refused_max := 0
+		var my_skey2 := "bot_%d" % int(bid)
+		for tid2 in _bot_team_ids(b):
+			if tid2 != int(bid) and bots.has(tid2):
+				refused_max = maxi(refused_max, int(get_bot_relationship(tid2, my_skey2).get("refused", 0)))
+		snap["team_refused"] = refused_max
 		var mates: Array = []
 		for tid in _bot_team_ids(b):
 			if tid != int(bid):
