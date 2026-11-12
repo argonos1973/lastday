@@ -87,6 +87,14 @@ func run() -> void:
 	check(moved > 0.03, "Route is re-solved over the jacket (%.3f)" % moved)
 	var jacket_clear: float = _min_rest_clearance(sys)
 	check(jacket_clear >= sys.CLEARANCE - 0.003, "Band rests on the jacket, not inside it (%.4f)" % jacket_clear)
+	# A twist changes the band even if its centerline stays fixed. The cached
+	# connectivity must not suppress normal-only pose updates.
+	var before_twist: Mesh = strap.mesh
+	var twisted: PackedVector3Array = sys._last_normals.duplicate()
+	for i in twisted.size(): twisted[i] = twisted[i].rotated(Vector3.FORWARD, .15)
+	sys._update_mesh(model, sys._last_points, twisted)
+	check(strap.mesh != before_twist, "Normal-only rotation updates the band")
+	check(strap.mesh.surface_get_array_index_len(0) == (expected_rings-1)*24, "Cached connectivity covers every band face")
 	actor._clear_rifle_on_back()
 	check(model.find_child("ProceduralStrapMesh", false, false) == null, "Band is removed with the rifle")
 	check(model.find_child("RifleSlingHardware", false, false) == null, "Hardware is removed with the rifle")

@@ -191,7 +191,12 @@ var _shared_trunk_cylinder_mesh: CylinderMesh = null
 var _snap_offset_cache := {}
 var _shared_foliage_green_mat: StandardMaterial3D = null
 var _display_props_stripped := {}
-var river_segments_data: Array = []
+# Replace the array when editing river geometry; invalidate even if its length
+# is unchanged (e.g. loading another map with moved water segments).
+var river_segments_data: Array = []:
+	set(value):
+		river_segments_data = value
+		_river_cells_valid = false
 var wildlife_blockers: Array = []
 # Spatial index for wildlife_blockers: Vector2i cell -> Array of blocker indices.
 # Registration inserts a blocker into every cell its footprint can touch
@@ -2468,6 +2473,7 @@ func _create_player() -> void:
 	player.set_meta("protection_timer", 30.0)
 	if net == null or not net.is_dedicated_server:
 		player.prepare_combat_effects()
+		WildlifeControllerScript.prepare_combat_audio()
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
 	# Apply pending spawn position if received before player was ready
@@ -17267,9 +17273,14 @@ func _river_cell_index() -> Dictionary:
 		# is guaranteed to land in a cell the segment was indexed into.
 		var hx: float = float(seg["size"].x)*.5 + RIVER_MAX_MARGIN + 1.0
 		var hz: float = float(seg["size"].y)*.5 + RIVER_MAX_MARGIN + 1.0
-		var rad := sqrt(hx*hx + hz*hz)
-		var min_c := Vector2i(((Vector2(c.x,c.z)-Vector2(rad,rad))/RIVER_CELL_SIZE).floor())
-		var max_c := Vector2i(((Vector2(c.x,c.z)+Vector2(rad,rad))/RIVER_CELL_SIZE).floor())
+		# Tight rotated rectangle instead of a bounding circle. Long narrow
+		# rivers otherwise enter many cells that contain no water at all.
+		var angle := deg_to_rad(float(seg["yaw"]))
+		var co := absf(cos(angle))
+		var sn := absf(sin(angle))
+		var extent := Vector2(co*hx+sn*hz, sn*hx+co*hz)
+		var min_c := Vector2i(((Vector2(c.x,c.z)-extent)/RIVER_CELL_SIZE).floor())
+		var max_c := Vector2i(((Vector2(c.x,c.z)+extent)/RIVER_CELL_SIZE).floor())
 		for cy in range(min_c.y, max_c.y+1):
 			for cx in range(min_c.x, max_c.x+1):
 				var key := Vector2i(cx,cy)

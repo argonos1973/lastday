@@ -13,9 +13,20 @@ var drag_coeff := 0.12
 var align_flight := false
 var launch_speed := 0.0
 var spin_speed := 0.0
+# One query per projectile, reused by every swept integration step.
+var _ray_query := PhysicsRayQueryParameters3D.new()
 
 func _physics_process(delta: float) -> void:
 	if is_queued_for_deletion(): return
+	var space := get_world_3d().direct_space_state
+	var world := get_tree().current_scene
+	var has_distant_props := world != null and world.has_method("raycast_distant_props")
+	var has_water := world != null and world.has_method("get_river_surface_y_at") and world.has_method("get_river_depth_at")
+	var query := _ray_query
+	query.collision_mask = 5
+	query.exclude = excluded
+	query.collide_with_areas = true
+	query.hit_from_inside = true
 	var remaining := delta
 	while remaining > 0.000001:
 		var step := minf(remaining, 1.0 / 240.0)
@@ -24,26 +35,23 @@ func _physics_process(delta: float) -> void:
 		var displacement := velocity * step + acceleration * (0.5 * step * step)
 		velocity += acceleration * step
 		displacement = displacement.limit_length(max_distance - traveled)
-		var query := PhysicsRayQueryParameters3D.create(global_position, global_position + displacement, 5)
-		query.exclude = excluded
-		query.collide_with_areas = true
-		query.hit_from_inside = true
-		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		query.from = global_position
+		query.to = global_position + displacement
+		var hit := space.intersect_ray(query)
 		# Las Area3D que no son hitboxes de daño (zonas de interaccion,
 		# triggers, volumenes) no detienen la bala: se atraviesan.
 		while not hit.is_empty() and _is_passthrough_area(hit.collider):
 			excluded.append(hit.rid)
 			query.exclude = excluded
-			hit = get_world_3d().direct_space_state.intersect_ray(query)
-		var world := get_tree().current_scene
-		if world != null and world.has_method("raycast_distant_props"):
+			hit = space.intersect_ray(query)
+		if has_distant_props:
 			var endpoint: Vector3 = hit.position if not hit.is_empty() else global_position+displacement
 			var distant: Dictionary = world.raycast_distant_props(global_position, endpoint)
 			if not distant.is_empty(): hit = distant
 		# Transparent rivers/lakes have no physics surface: stop at the water
 		# before a submerged terrain hit, and use the existing splash/ripple FX.
 		var end: Vector3 = hit.position if not hit.is_empty() else global_position+displacement
-		if world != null and world.has_method("get_river_surface_y_at") and world.has_method("get_river_depth_at"):
+		if has_water:
 			var surface_y: float = world.get_river_surface_y_at(end)
 			if global_position.y > surface_y and end.y <= surface_y:
 				var t := (global_position.y-surface_y)/maxf(.00001,global_position.y-end.y)

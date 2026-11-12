@@ -117,6 +117,7 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func run() -> void:
+	seed(472) # Reproducible personalities, positions and social decisions.
 	var world := TestWorld.new()
 	root.add_child(world)
 	current_scene = world
@@ -2829,6 +2830,14 @@ func run() -> void:
 		"e_aggro": elena_g.get("aggro_target"),
 		"c_inv": (fresh_b["proxy"].get_meta("saved_inventory", []) as Array).duplicate(true),
 	}
+	# Establish eligibility explicitly: earlier cases can leave different
+	# factions, dead metadata or an active fight on the receiving bot.
+	fresh_b["faction"] = "hostile"
+	elena_g["faction"] = "hostile"
+	for participant in [fresh_b, elena_g]:
+		participant["proxy"].set_meta("proxy_dead", false)
+		participant["dead"] = false
+		participant["aggro_target"] = null
 	rels_dec["bot_901"] = {"id": "bot_901", "name": "Elena", "trust": -0.8, "hostility": 1.0, "fear": 1.0, "helped": 0, "attacked": 4, "harm_t": old_harm}
 	fresh_b["hunger"] = 90.0
 	fresh_b["thirst"] = 90.0
@@ -2844,7 +2853,12 @@ func run() -> void:
 	pers_g["distrust"] = 0.0
 	fresh_b["proxy"].set_meta("saved_inventory", [{"name": "Carne asada", "type": "food", "weight": 0.3, "quantity": 3, "use_value": 25.0}])
 	var drops_before_g: int = (world._dropped_items as Array).size()
-	mgr._bot_try_peace_gesture(fresh_b)
+	# Personality is clamped to the bot's temperament; even a cooperative
+	# bot may decline one attempt. Exercise bounded opportunities in peace.
+	for attempt in range(16):
+		mgr._bot_try_peace_gesture(fresh_b)
+		if (world._dropped_items as Array).size() > drops_before_g:
+			break
 	var r_out: Dictionary = mgr.get_bot_relationship(902, "bot_901")
 	var r_in: Dictionary = mgr.get_bot_relationship(901, "bot_902")
 	check(float(r_out.get("trust", -1.0)) > -0.8 and int(r_out.get("helped", 0)) >= 1 and float(r_in.get("trust", 0.0)) > 0.0 and int(r_in.get("helped", 0)) >= 1,
@@ -3233,6 +3247,12 @@ func run() -> void:
 	carlos_y["proxy"].global_position = Vector3(-500.0, 0.4, -500.0)
 	var band_formed := false
 	for i in range(30):
+		# Simulate twenty seconds between social ticks; the test runs these
+		# calls immediately, while shared-time credit uses a real clock.
+		for bid in [901, 903]:
+			for relation in mgr._ensure_bot_memory(bid)["relationships"].values():
+				if relation is Dictionary and relation.has("bond_t"):
+					relation["bond_t"] = int(relation["bond_t"]) - 20000
 		kael_y["_soc_t"] = 0.0
 		elena_y["_soc_t"] = 0.0
 		mgr._bot_social_update(kael_y)

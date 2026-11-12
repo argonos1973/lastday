@@ -67,6 +67,9 @@ var _previous := PackedVector3Array()
 var _mesh_instance: MeshInstance3D = null
 var _hardware: Node3D = null
 var _last_points := PackedVector3Array()
+var _last_normals := PackedVector3Array()
+var _band_indices := PackedInt32Array()
+var _band_ring_count := -1
 # Rest-space surface of the last build (kept for diagnostics/regressions).
 var _grid: Dictionary = {}
 var _rest_body_points := PackedVector3Array()
@@ -540,6 +543,7 @@ func _relax(points: Array[Vector3], amount: float) -> Array[Vector3]:
 
 func _skinned_body(model: Node3D, skel: Skeleton3D) -> Array:
 	var poses := {}
+	var skeleton_to_model := model.global_transform.affine_inverse() * skel.global_transform
 	var points := PackedVector3Array()
 	var normals := PackedVector3Array()
 	points.resize(_route.size())
@@ -551,7 +555,7 @@ func _skinned_body(model: Node3D, skel: Skeleton3D) -> Array:
 		for k in entry.b.size():
 			var idx: int = entry.b[k]
 			if not poses.has(idx):
-				poses[idx] = _pose_model(model, skel, idx)
+				poses[idx] = skeleton_to_model * skel.get_bone_global_pose(idx)
 			var pose: Transform3D = poses[idx]
 			p += (pose * (entry.o[k] as Vector3)) * float(entry.w[k])
 			n += (pose.basis * (entry.n[k] as Vector3)) * float(entry.w[k])
@@ -615,20 +619,20 @@ func _update_mesh(model: Node3D, points: PackedVector3Array, normals: PackedVect
 			model.add_child(_mesh_instance)
 		_mesh_instance.material_override = _get_webbing_material()
 		_mesh_instance.custom_aabb = AABB(Vector3(-5, -5, -5), Vector3(10, 10, 10))
-	if _last_points.size() == points.size():
+	if _last_points.size() == points.size() and _last_normals.size() == normals.size():
 		var moved := false
 		for i in points.size():
-			if points[i].distance_squared_to(_last_points[i]) > 0.0000004:
+			if points[i].distance_squared_to(_last_points[i]) > 0.0000004 or normals[i].distance_squared_to(_last_normals[i]) > 0.0000004:
 				moved = true
 				break
 		if not moved:
 			return
 	_last_points = points.duplicate()
+	_last_normals = normals.duplicate()
 	var count := points.size()
 	var verts := PackedVector3Array()
 	var norms := PackedVector3Array()
 	var uvs := PackedVector2Array()
-	var indices := PackedInt32Array()
 	verts.resize(count * 8)
 	norms.resize(count * 8)
 	uvs.resize(count * 8)
@@ -652,28 +656,51 @@ func _update_mesh(model: Node3D, points: PackedVector3Array, normals: PackedVect
 		var top := base + up * THICKNESS
 		var v := distance / UV_REPEAT
 		# 0-1 top face, 2-3 bottom face, 4-5 near edge, 6-7 far edge.
-		var ring := [
-			[top - side * half_w, up, Vector2(0.0, v)], [top + side * half_w, up, Vector2(1.0, v)],
-			[base + side * half_w, -up, Vector2(1.0, v)], [base - side * half_w, -up, Vector2(0.0, v)],
-			[base - side * half_w, -side, Vector2(0.0, v)], [top - side * half_w, -side, Vector2(0.04, v)],
-			[top + side * half_w, side, Vector2(0.96, v)], [base + side * half_w, side, Vector2(1.0, v)],
-		]
-		for k in 8:
-			verts[i * 8 + k] = ring[k][0]
-			norms[i * 8 + k] = ring[k][1]
-			uvs[i * 8 + k] = ring[k][2]
-	for i in count - 1:
-		var a := i * 8
-		var b := a + 8
-		for face in 4:
-			var f := face * 2
-			indices.append_array([a + f, b + f, a + f + 1, a + f + 1, b + f, b + f + 1])
+		var offset := i * 8
+		verts[offset + 0] = top - side * half_w
+		norms[offset + 0] = up
+		uvs[offset + 0] = Vector2(0.0, v)
+		verts[offset + 1] = top + side * half_w
+		norms[offset + 1] = up
+		uvs[offset + 1] = Vector2(1.0, v)
+		verts[offset + 2] = base + side * half_w
+		norms[offset + 2] = -up
+		uvs[offset + 2] = Vector2(1.0, v)
+		verts[offset + 3] = base - side * half_w
+		norms[offset + 3] = -up
+		uvs[offset + 3] = Vector2(0.0, v)
+		verts[offset + 4] = base - side * half_w
+		norms[offset + 4] = -side
+		uvs[offset + 4] = Vector2(0.0, v)
+		verts[offset + 5] = top - side * half_w
+		norms[offset + 5] = -side
+		uvs[offset + 5] = Vector2(0.04, v)
+		verts[offset + 6] = top + side * half_w
+		norms[offset + 6] = side
+		uvs[offset + 6] = Vector2(0.96, v)
+		verts[offset + 7] = base + side * half_w
+		norms[offset + 7] = side
+		uvs[offset + 7] = Vector2(1.0, v)
+	# Connectivity never changes with animation: build it only when the
+	# number of rings changes, avoiding thousands of temporary arrays/frame.
+	if _band_ring_count != count:
+		_band_ring_count = count
+		_band_indices.resize(maxi(0,count-1)*24)
+		var index := 0
+		for i in count - 1:
+			var a := i * 8
+			var b := a + 8
+			for face in 4:
+				var f := face * 2
+				for vertex in [a+f,b+f,a+f+1,a+f+1,b+f,b+f+1]:
+					_band_indices[index] = vertex
+					index += 1
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = norms
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_INDEX] = _band_indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	_mesh_instance.mesh = mesh

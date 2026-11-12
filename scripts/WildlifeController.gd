@@ -3780,7 +3780,13 @@ func _spawn_local_blood_burst(at_pos: Vector3) -> void:
 	drops.emitting = true
 	drops.finished.connect(drops.queue_free)
 
-func _get_cached_audio_stream(path: String) -> AudioStream:
+static func prepare_combat_audio() -> void:
+	# Decode shared attack/pain sounds while loading, not on the first bite.
+	for path in ["res://assets/audio/loboherido.wav", "res://assets/audio/animal_herido.wav",
+		"res://assets/audio/mordedura.mp3", "res://assets/external/audio/downloaded/wolf_growl.wav"]:
+		_get_cached_audio_stream(path)
+
+static func _get_cached_audio_stream(path: String) -> AudioStream:
 	if _audio_cache.has(path):
 		return _audio_cache[path]
 	var stream: AudioStream = null

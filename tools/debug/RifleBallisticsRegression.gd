@@ -33,7 +33,9 @@ func run():
 	var world:=World.new();root.add_child(world);current_scene=world
 	var a=bullet(world);var b=bullet(world)
 	a.wind_velocity=Vector3(10,0,0);b.wind_velocity=a.wind_velocity
+	var query_id: int = a._ray_query.get_instance_id()
 	for i in 60:a._physics_process(1.0/60.0)
+	check(a._ray_query.get_instance_id() == query_id, "Swept integration reuses its physics query")
 	for i in 30:b._physics_process(1.0/30.0)
 	check(a.global_position.distance_to(b.global_position)<.01,"Trajectory must not depend on frame rate")
 	check(a.global_position.y<5.4 and a.global_position.y>5.1,"Gravity must cause drop during flight")

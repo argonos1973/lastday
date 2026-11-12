@@ -2545,6 +2545,12 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 	# el depredador está muy cerca (< 8.5 m) corre alejándose de frente (nunca
 	# caminando de espaldas) y solo se gira al instante de disparar.
 	if is_rifle and dist > 3.6:
+		if not _has_clear_shot(proxy.global_position, ppos):
+			# Use the normal obstacle/door navigation instead of firing forever
+			# from the same blocked position.
+			b["is_aiming"] = false
+			_move_bot_towards(b, ppos, 6.2, delta, "run")
+			return
 		var ready_shot := float(b["shoot_cooldown"]) <= 0.15
 		if dist < 8.5 and to_pred.length_squared() > 0.01 and not ready_shot:
 			b["is_aiming"] = false
@@ -2568,7 +2574,7 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 	if dist > melee_reach + 2.2:
 		_flee_predator(b, predator, delta)
 		return
-	if dist <= melee_reach:
+	if dist <= melee_reach and absf(ppos.y - proxy.global_position.y) <= 1.8 and _has_clear_shot(proxy.global_position, ppos):
 		# Paso lateral ágil mientras golpea para no quedarse quieto bajo las fauces
 		var side := Vector3(-to_pred.z, 0.0, to_pred.x).normalized() if to_pred.length_squared() > 0.01 else Vector3.RIGHT
 		_move_bot_towards(b, proxy.global_position + side * 2.2, 3.4, delta, "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION)
@@ -3476,6 +3482,10 @@ func _can_bot_hear_actor(b: Dictionary, target: Node3D, dist: float) -> bool:
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
 	if float(b.get("last_heard_until", 0.0)) > now_s:
 		var hpos: Vector3 = b.get("last_heard_pos", Vector3.INF)
+		var heard_actor := int(b.get("last_heard_actor", 0))
+		# A known shooter's noise must not reveal a different silent actor.
+		if heard_actor > 0 and _peer_id_for_actor(target) != heard_actor:
+			return false
 		if hpos != Vector3.INF and target.global_position.distance_to(hpos) <= 18.0:
 			return true
 	return false
@@ -3574,7 +3584,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			var heard := _can_bot_hear_actor(b, p3, proxy.global_position.distance_to(p3.global_position))
 			var max_r := minf(best_d, maxf(34.0 if heard else 0.0, _effective_human_sight(p3, sight)))
 			var d := proxy.global_position.distance_to(p3.global_position)
-			if d < max_r and (d <= 10.0 or heard or _has_clear_shot(proxy.global_position, p3.global_position)):
+			if d < max_r and (heard or _has_clear_shot(proxy.global_position, p3.global_position)):
 				best_d = d
 				best = p3
 		var local_p = world.get("player")
@@ -3587,7 +3597,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 				var heard_l := _can_bot_hear_actor(b, lp3, proxy.global_position.distance_to(lp3.global_position))
 				var max_rl := minf(best_d, maxf(34.0 if heard_l else 0.0, _effective_human_sight(lp3, sight)))
 				var dl := proxy.global_position.distance_to(lp3.global_position)
-				if dl < max_rl and (dl <= 10.0 or heard_l or _has_clear_shot(proxy.global_position, lp3.global_position)):
+				if dl < max_rl and (heard_l or _has_clear_shot(proxy.global_position, lp3.global_position)):
 					best_d = dl
 					best = lp3
 	else:
@@ -3604,7 +3614,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			var eff_d := minf(d, dl)
 			var heard_o := _can_bot_hear_actor(b, op, eff_d)
 			var max_ro := minf(best_d, maxf(34.0 if heard_o else 0.0, _effective_human_sight(op, sight)))
-			if eff_d < max_ro and (eff_d <= 10.0 or heard_o or _has_clear_shot(proxy.global_position, op.global_position)):
+			if eff_d < max_ro and (heard_o or _has_clear_shot(proxy.global_position, op.global_position)):
 				best_d = eff_d
 				best = op
 	return best
@@ -3814,6 +3824,9 @@ func _bot_melee_dodge_chance(target_speed: float) -> float:
 
 func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 	var proxy: Node3D = b["proxy"]
+	# Recheck at release: navigation can move the shooter after perception.
+	if not is_instance_valid(target) or not _has_clear_shot(proxy.global_position, target.global_position):
+		return
 	var bot_id := int(b["bot_id"])
 	var origin := proxy.global_position + Vector3(0.0, 1.4, 0.0)
 	var aim_pos := target.global_position + Vector3(0.0, 1.0, 0.0)
@@ -4716,7 +4729,7 @@ func _rel_time_decay(b: Dictionary) -> void:
 		if not (rel is Dictionary):
 			continue
 		var harm := int(rel.get("harm_t", 0))
-		if harm > 0 and now_ms - harm < REL_PEACE_MS:
+		if rel.has("harm_t") and now_ms - harm < REL_PEACE_MS:
 			continue # se hicieron dano hace nada: la herida esta fresca
 		var host := float(rel.get("hostility", 0.0))
 		if host > 0.0:
@@ -4739,6 +4752,35 @@ func _rel_time_decay(b: Dictionary) -> void:
 # nunca llegan los eventos positivos que bajarian el miedo.
 const PEACE_GESTURE_DIST := 40.0
 const PEACE_GESTURE_CD_MS := 150000
+
+# Select and remove exactly one real item, retaining its type and value.
+# Keep a meal for survival even when food is split across several stacks.
+func _take_peace_gift(proxy: Node3D) -> Dictionary:
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var meals := 0
+	for it in inv:
+		if it is Dictionary and str(it.get("type", "")) == "food" and float(it.get("use_value", it.get("use", 0.0))) > 0.0:
+			meals += maxi(0, int(it.get("quantity", 1)))
+	var selected := -1
+	for i in range(inv.size()):
+		var it = inv[i]
+		if not (it is Dictionary) or int(it.get("quantity", 1)) <= 0:
+			continue
+		if str(it.get("type", "")) == "food" and meals > 1 and float(it.get("use_value", it.get("use", 0.0))) > 0.0:
+			selected = i
+			break
+		if selected < 0 and str(it.get("name", "")) == "Vendaje":
+			selected = i
+	if selected < 0:
+		return {}
+	var gift: Dictionary = inv[selected].duplicate(true)
+	gift["quantity"] = 1
+	gift["use_value"] = float(gift.get("use_value", gift.get("use", 0.0)))
+	inv[selected]["quantity"] = int(inv[selected].get("quantity", 1)) - 1
+	if int(inv[selected]["quantity"]) <= 0:
+		inv.remove_at(selected)
+	proxy.set_meta("saved_inventory", inv)
+	return gift
 
 func _bot_try_peace_gesture(b: Dictionary) -> void:
 	var proxy: Node3D = b["proxy"]
@@ -4783,7 +4825,7 @@ func _bot_try_peace_gesture(b: Dictionary) -> void:
 		if not wounded:
 			continue
 		var harm := int(rel.get("harm_t", 0))
-		if harm > 0 and now_ms - harm < 60000:
+		if rel.has("harm_t") and now_ms - harm < 60000:
 			continue # se hirieron hace nada: aun no es momento
 		var oaggro = ob.get("aggro_target")
 		if oaggro != null and oaggro == proxy:
@@ -4806,30 +4848,13 @@ func _bot_try_peace_gesture(b: Dictionary) -> void:
 			+ maxf(0.0, 0.5 - float(pers.get("distrust", 0.35))) * 0.4
 	if randf() > chance:
 		return
-	# Algo regalable: comida sobrante o una venda — nunca su ultima comida
-	var inv: Array = proxy.get_meta("saved_inventory", [])
-	var gift := ""
-	for it in inv:
-		if not (it is Dictionary):
-			continue
-		var iname := str(it.get("name", ""))
-		if str(it.get("type", "")) == "food" and int(it.get("quantity", 1)) > 1:
-			gift = iname
-			break
-		if gift.is_empty() and iname == "Vendaje":
-			gift = iname
-	if gift.is_empty():
-		for it in inv:
-			if it is Dictionary and str(it.get("type", "")) == "food" and float(it.get("use_value", it.get("use", 0.0))) > 0.0:
-				gift = str(it.get("name", ""))
-				break
-	if gift.is_empty():
+	var gift_item := _take_peace_gift(proxy)
+	if gift_item.is_empty():
 		cds[best_key] = now_ms + PEACE_GESTURE_CD_MS
 		b["_peace_cd"] = cds
 		return
-	if not _consume_bot_item(proxy, gift, 1):
-		return
-	_bot_drop_to_ground(b, {"name": gift, "type": "food", "weight": 0.3, "quantity": 1, "use_value": 15.0})
+	var gift := str(gift_item["name"])
+	_bot_drop_to_ground(b, gift_item)
 	var oname := str((bots.get(best_id, {}) as Dictionary).get("name", best_key))
 	var my_name := str(b.get("name", my_key))
 	record_social_event(my_id, best_key, oname, "help", 0.30, "peace_offering")
@@ -8847,7 +8872,14 @@ func _has_clear_shot(from_pos: Vector3, to_pos: Vector3) -> bool:
 	var query := PhysicsRayQueryParameters3D.create(from_pos + Vector3(0, 1.3, 0), to_pos + Vector3(0, 1.1, 0), 1)
 	query.collide_with_areas = false
 	var hit: Dictionary = space.intersect_ray(query)
-	return hit.is_empty()
+	if not hit.is_empty():
+		return false
+	# Distant trees/rocks may use analytical collisions rather than bodies.
+	if world.has_method("raycast_distant_props"):
+		var distant: Dictionary = world.raycast_distant_props(query.from, query.to)
+		if not distant.is_empty():
+			return false
+	return true
 
 func _is_world_night() -> bool:
 	if world != null and world.get("day_cycle") != null:
@@ -10243,9 +10275,21 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 	if not actor_name.is_empty():
 		rel["name"] = actor_name
 	var step := clampf(intensity, 0.05, 1.0)
+	if kind == "ally":
+		# Both bots observe the same meeting: credit shared time at most once
+		# per interval, without counting it as a gift or rescue.
+		var now := Time.get_ticks_msec()
+		if rel.has("bond_t") and now - int(rel["bond_t"]) < 20000:
+			return
+		if rel.has("harm_t") and now - int(rel["harm_t"]) < REL_PEACE_MS:
+			return
+		rel["bond_t"] = now
+		rel["shared_experiences"] = int(rel.get("shared_experiences", 0)) + 1
+		step = clampf(intensity, 0.0, 0.05)
 	match kind:
 		"help", "ally":
-			rel["helped"] = int(rel.get("helped", 0)) + 1
+			if kind == "help":
+				rel["helped"] = int(rel.get("helped", 0)) + 1
 			var coop_mul := 0.75 + float(pers.get("cooperation", 0.6)) * 0.6
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + step * 0.75 * coop_mul, -1.0, 1.0), 0.001)
 			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) - step * 0.55, 0.0, 1.0), 0.001)
@@ -10935,6 +10979,25 @@ func _ai_active_directive(b: Dictionary) -> Dictionary:
 func _ai_memory_enabled() -> bool:
 	return force_memory_io or OS.has_feature("dedicated_server")
 
+# Runtime clocks reset each launch. Rebase saved ages, including time offline,
+# while keeping trust, grudges and learned personality intact.
+func _restore_relationship_clocks(rels: Dictionary, snapshot: Dictionary, now_ms: int, now_unix: float) -> void:
+	var has_clock := snapshot.has("saved_tick_msec")
+	var saved_tick := int(snapshot.get("saved_tick_msec", 0))
+	var offline_ms := int(clampf(now_unix - float(snapshot.get("saved_unix", now_unix)), 0.0, 31536000.0) * 1000.0)
+	for value in rels.values():
+		if not (value is Dictionary):
+			continue
+		for key in ["harm_t", "scar_t", "bond_t"]:
+			if not value.has(key):
+				continue
+			if has_clock:
+				value[key] = now_ms - maxi(0, saved_tick - int(value[key])) - offline_ms
+			else:
+				# Legacy uptimes have no portable age; retain the relationship,
+				# but do not invent a fresh injury after every restart.
+				value.erase(key)
+
 func _ai_load_memory() -> void:
 	if not _ai_memory_enabled() or not FileAccess.file_exists(memory_path):
 		return
@@ -10957,13 +11020,14 @@ func _ai_load_memory() -> void:
 		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
 			if sd.has(field):
 				mem[field] = sd[field]
+		_restore_relationship_clocks(mem.get("relationships", {}), parsed, Time.get_ticks_msec(), Time.get_unix_time_from_system())
 		# Migracion: las relaciones bot<->bot creadas sin agresion arrastran la
 		# hostilidad 0.65 del init viejo (pensado para humanos) y eso bloquea la
 		# puerta de convivencia de _bot_social_update. Los rencores de verdad
 		# (attacked>0) se respetan; el resto baja al recelo de bandido.
 		for akey in (mem.get("relationships", {}) as Dictionary).keys():
 			var rel2 = mem["relationships"][akey]
-			if rel2 is Dictionary and str(akey).begins_with("bot_"):
+			if int(parsed.get("version", 0)) < 3 and rel2 is Dictionary and str(akey).begins_with("bot_"):
 				if int(rel2.get("attacked", 0)) == 0:
 					rel2["hostility"] = minf(float(rel2.get("hostility", 0.0)), 0.30)
 				elif int(rel2.get("attacked", 0)) > 6:
@@ -11028,7 +11092,7 @@ func _ai_save_memory() -> void:
 		var bp: Node3D = b.get("proxy")
 		if bp != null and is_instance_valid(bp) and not bool(bp.get_meta("proxy_dead", false)):
 			_bot_flush_alive_time(b)
-	var out := {"version": 2, "bots": {}}
+	var out := {"version": 3, "saved_tick_msec": Time.get_ticks_msec(), "saved_unix": Time.get_unix_time_from_system(), "bots": {}}
 	for bid in _memory.keys():
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)

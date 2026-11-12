@@ -2,7 +2,6 @@ extends MeshInstance3D
 class_name RiverWater
 
 var _time := 0.0
-var _base_y := 0.0
 var _material: Material
 var _night_amount := 0.0
 var _is_lake := false
@@ -18,7 +17,6 @@ func set_is_lake(value: bool) -> void:
 	_is_lake = value
 
 func _ready() -> void:
-	_base_y = position.y
 	if material_override != null:
 		_material = material_override.duplicate()
 		material_override = _material
@@ -40,8 +38,7 @@ func _ready() -> void:
 		_reflection.ambient_mode = ReflectionProbe.AMBIENT_DISABLED
 		_reflection.update_mode = ReflectionProbe.UPDATE_ONCE
 		add_child(_reflection)
-		# UPDATE_ONCE is invalidated by transform changes. The water bobs every
-		# frame; the capture must stay fixed in world space to remain cached.
+		# Keep the cached capture fixed even if the water node is repositioned.
 		var capture_transform := _reflection.global_transform
 		_reflection.top_level = true
 		_reflection.global_transform = capture_transform
@@ -66,6 +63,9 @@ func _ready() -> void:
 			_material.set_shader_parameter("use_foam", true)
 		_material.set_shader_parameter("night_amount", _night_amount)
 	_update_mirror()
+	# Shader TIME already animates river flow. Only legacy UV animation and
+	# lake reflection maintenance need a CPU callback.
+	set_process(_reflection != null or _material is StandardMaterial3D)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -83,7 +83,6 @@ func _process(delta: float) -> void:
 			_reflection.global_position.y += 0.001 if _reflection.get_meta("raised", false) == false else -0.001
 			_reflection.set_meta("raised", not _reflection.get_meta("raised", false))
 	# Waves belong to the shader; moving whole segments separates their seams.
-	position.y = _base_y
 	if _material is StandardMaterial3D:
 		var standard := _material as StandardMaterial3D
 		standard.uv1_offset.x = fmod(_time * 0.055, 1.0)
