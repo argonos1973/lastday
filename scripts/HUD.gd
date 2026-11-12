@@ -950,7 +950,7 @@ func _scroll_chat_to_bottom() -> void:
 	if chat_messages_scroller != null and is_instance_valid(chat_messages_scroller):
 		chat_messages_scroller.scroll_vertical = int(chat_messages_scroller.get_v_scroll_bar().max_value)
 
-func add_chat_message(sender_name: String, text: String, is_self: bool = false, _is_private: bool = true, target_name: String = "", peer_key_id: int = 0, group_id: String = "") -> void:
+func add_chat_message(sender_name: String, text: String, is_self: bool = false, _is_private: bool = true, target_name: String = "", peer_key_id: int = 0, group_id: String = "", silent: bool = false) -> void:
 	if chat_messages_box == null:
 		return
 	var conv_key := ""
@@ -976,6 +976,10 @@ func add_chat_message(sender_name: String, text: String, is_self: bool = false, 
 			chat_target_peer_id = peer_key_id
 			chat_target_group_id = ""
 	_render_active_conversation()
+	# Mensajes silent (bots que hablan): quedan en el historial pero no hacen
+	# saltar la ventana de chat — se leen al abrirla a mano.
+	if silent:
+		return
 	_chat_fade_timer = CHAT_VISIBLE_SECONDS
 	if chat_panel != null and can_use_chat():
 		chat_panel.visible = true

@@ -146,6 +146,22 @@ func _run() -> void:
 	net.send_chat_message("Hola Alex", 9, "")
 	check(hud._chat_conversations.has("dm_9") and (hud._chat_conversations["dm_9"] as Array).size() == 1, "Direct message to peer 9 stored in dm_9 conversation")
 
+	# 4b. Un mensaje de bot (ids 901-909) NO hace saltar la ventana de chat:
+	# queda guardado en su conversacion pero el panel sigue oculto — se lee
+	# al abrir el chat a mano.
+	hud.close_chat()
+	hud.chat_panel.visible = false
+	hud._chat_fade_timer = 0.0
+	world._net_receive_chat_message(901, "Carlos", "hola, llevas comida?", 0, "", "")
+	check(not hud.chat_panel.visible, "Bot text does not pop the chat window")
+	check(hud._chat_conversations.has("dm_901") and str((hud._chat_conversations["dm_901"] as Array).back().get("text", "")) == "hola, llevas comida?",
+		"Bot text is stored silently in its own conversation")
+	# Un humano sigue haciendo saltar la ventana como antes.
+	world._net_receive_chat_message(7, "Remy", "bip bup", 0, "", "")
+	check(hud.chat_panel.visible, "Human text still pops the chat window")
+	hud.chat_panel.visible = false
+	hud._chat_fade_timer = 0.0
+
 	# 5. Crear un grupo poniendo solo el nombre del grupo; queda listado para poderse unir después
 	hud.open_chat_group_builder()
 	check(hud.chat_group_builder_open and hud.chat_group_name_input != null, "Group builder opens with group name input")

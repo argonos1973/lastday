@@ -4392,7 +4392,10 @@ func _net_receive_chat_message(sender_id: int, sender_name: String, text: String
 	var is_self: bool = sender_id == my_id
 	var peer_key := target_id if is_self else sender_id
 	if hud != null and hud.has_method("add_chat_message"):
-		hud.add_chat_message(sender_name, text, is_self, true, target_name, peer_key, group_id)
+		# Cuando habla un bot la voz suena pero la ventana de chat no salta sola;
+		# el texto igualmente queda guardado en su conversacion.
+		var from_bot := SurvivorBotManagerScript.is_bot_peer_id(sender_id)
+		hud.add_chat_message(sender_name, text, is_self, true, target_name, peer_key, group_id, from_bot)
 
 func _net_receive_voice_packet(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
 	if hud != null and hud.has_method("on_voice_packet_received"):
