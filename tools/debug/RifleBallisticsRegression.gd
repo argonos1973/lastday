@@ -103,7 +103,8 @@ func run():
 		var before=mark.global_position
 		wall.position.x+=1
 		check(mark.global_position.distance_to(before+Vector3.RIGHT)<.001, "Impact marks follow their hit object")
-	check(world.get_node_or_null("BulletDustMotes") != null, "Solid impacts produce dust")
+	var motes := world.get_node_or_null("CombatImpactEffects/BulletDustMotes") as GPUParticles3D
+	check(motes != null and motes.emitting and motes.amount_ratio > 0.0, "Solid impacts emit pooled dust")
 	# --- Fusil de asalto M4: perfil propio por nombre de item ---
 	actor.is_puppet = true
 	actor._puppet_held = "Fusil de asalto"

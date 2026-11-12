@@ -14454,16 +14454,11 @@ static var _blood_mist_scale: CurveTexture = null
 static var _blood_drops_mat: ParticleProcessMaterial = null
 static var _blood_mist_mat: ParticleProcessMaterial = null
 
-# Cada impacto instancia 2 GPUParticles3D; bajo fuego sostenido (rafagas de
-# bots) la creacion masiva de sistemas de particulas por segundo pegaba
-# tirones. Se limita el numero de salpicaduras vivas a la vez.
-const MAX_LIVE_BLOOD_SYSTEMS := 8
-var _live_blood_systems := 0
-
-func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
+func _prepare_blood_effects() -> Node3D:
 	var scene := get_tree().current_scene
-	if scene == null or _live_blood_systems >= MAX_LIVE_BLOOD_SYSTEMS:
-		return
+	if scene == null: return null
+	var pool := scene.get_node_or_null("CombatBloodEffects")
+	if pool != null: return pool
 	if _blood_drops_ramp == null:
 		_blood_drops_ramp = _make_fade_ramp(0.03, 0.75)
 		_blood_mist_ramp = _make_fade_ramp(0.08, 0.5)
@@ -14499,42 +14494,31 @@ func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0
 		_blood_mist_mat.color = Color(0.35, 0.0, 0.0, 0.55)
 		_blood_mist_mat.color_ramp = _blood_mist_ramp
 		_blood_mist_mat.scale_curve = _blood_mist_scale
-	var pos := at_pos if at_pos != Vector3.ZERO else global_position + Vector3(0, 1.2, 0)
-	# Gotas: pequenas, rapidas, con gravedad fuerte
-	var drops := GPUParticles3D.new()
-	drops.name = "BloodDrops"
-	drops.amount = max(4, int(40 * strength))
-	drops.lifetime = 0.8
-	drops.explosiveness = 1.0
-	drops.randomness = 0.9
-	drops.one_shot = true
-	drops.process_material = _blood_drops_mat
-	drops.draw_pass_1 = _blood_drops_mesh
-	scene.add_child(drops)
-	drops.global_position = pos
-	drops.emitting = true
-	# Niebla: nube roja oscura que se expande y disipa
-	var mist := GPUParticles3D.new()
-	mist.name = "BloodMist"
-	mist.amount = max(2, int(14 * strength))
-	mist.lifetime = 0.7
-	mist.explosiveness = 0.8
-	mist.randomness = 1.0
-	mist.one_shot = true
-	mist.process_material = _blood_mist_mat
-	mist.draw_pass_1 = _blood_mist_mesh
-	scene.add_child(mist)
-	mist.global_position = pos
-	mist.emitting = true
-	_live_blood_systems += 2
-	drops.tree_exited.connect(func(): _live_blood_systems -= 1)
-	mist.tree_exited.connect(func(): _live_blood_systems -= 1)
-	get_tree().create_timer(2.0).timeout.connect(func():
-		if is_instance_valid(drops):
-			drops.queue_free()
-		if is_instance_valid(mist):
-			mist.queue_free()
-	)
+	pool = preload("res://scripts/CombatBloodEffects.gd").new()
+	pool.name = "CombatBloodEffects"
+	scene.add_child(pool)
+	pool.configure(_blood_drops_mat, _blood_drops_mesh, _blood_mist_mat, _blood_mist_mesh)
+	return pool
+
+func prepare_combat_effects() -> void:
+	var pool := _prepare_blood_effects()
+	if pool != null: pool.warm_up()
+	var impacts := _prepare_impact_effects()
+	if impacts != null: impacts.warm_up()
+	_get_bullet_hole_texture()
+	# Small shared audio assets are decoded during loading, not the first bite.
+	for path in ["res://assets/audio/recibirdisparo.mp3", "res://assets/audio/punch_impact.wav",
+		"res://assets/external/audio/downloaded/pain1.wav", "res://assets/external/audio/downloaded/pain2.wav",
+		"res://assets/external/audio/downloaded/pain3.wav"]:
+		_load_audio_stream(path)
+
+func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
+	var net_node := get_tree().root.get_node_or_null("NetworkManager")
+	if net_node != null and net_node.get("is_dedicated_server") == true: return
+	var pool := _prepare_blood_effects()
+	if pool != null:
+		var pos := at_pos if at_pos != Vector3.ZERO else global_position + Vector3(0,1.2,0)
+		pool.burst(pos, strength)
 
 # --- Impactos en superficies no vivas ---
 static var _bullet_hole_texture: Texture2D = null
@@ -14624,112 +14608,24 @@ func _guess_surface_dust_color(hit_normal: Vector3, collider) -> Color:
 		return Color(0.48, 0.38, 0.26, 0.8)  # tierra
 	return Color(0.55, 0.52, 0.46, 0.8)    # generico
 
-func _spawn_impact_dust(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> void:
+func _prepare_impact_effects() -> Node3D:
 	var scene := get_tree().current_scene
-	if scene == null:
-		return
-	var particles := GPUParticles3D.new()
-	particles.name = "BulletDust"
-	particles.amount = 36
-	particles.lifetime = 1.65
-	particles.explosiveness = 0.82
-	particles.randomness = 0.92
-	particles.one_shot = true
-	var mat := ParticleProcessMaterial.new()
-	mat.direction = hit_normal
-	mat.spread = 68.0
-	mat.initial_velocity_min = 0.9
-	mat.initial_velocity_max = 3.8
-	mat.gravity = Vector3(0, -0.35, 0)
-	mat.damping_min = 2.2
-	mat.damping_max = 4.8
-	mat.scale_min = 0.32
-	mat.scale_max = 0.88
-	mat.color = Color(minf(1.0, color.r + 0.08), minf(1.0, color.g + 0.08), minf(1.0, color.b + 0.08), 0.92)
-	mat.hue_variation_min = -0.02
-	mat.hue_variation_max = 0.02
-	mat.color_ramp = _make_fade_ramp(0.08, 0.55)
-	var scale_tex := CurveTexture.new()
-	var scale_curve := Curve.new()
-	scale_curve.add_point(Vector2(0.0, 0.4))
-	scale_curve.add_point(Vector2(0.35, 1.0))
-	scale_curve.add_point(Vector2(1.0, 1.85))
-	scale_tex.curve = scale_curve
-	mat.scale_curve = scale_tex
-	particles.process_material = mat
-	particles.draw_pass_1 = _make_soft_mesh(Vector2(0.16, 0.16), Color.WHITE)
-	scene.add_child(particles)
-	particles.global_position = hit_pos + hit_normal * 0.05
-	particles.emitting = true
-	# Motas finas de polvo en suspensión alrededor del punto de impacto
-	var motes := GPUParticles3D.new()
-	motes.name = "BulletDustMotes"
-	motes.amount = 28
-	motes.lifetime = 2.1
-	motes.explosiveness = 0.92
-	motes.randomness = 0.95
-	motes.one_shot = true
-	var mmat := ParticleProcessMaterial.new()
-	mmat.direction = (hit_normal + Vector3(0, 0.35, 0)).normalized()
-	mmat.spread = 78.0
-	mmat.initial_velocity_min = 0.45
-	mmat.initial_velocity_max = 2.4
-	mmat.gravity = Vector3(0, -0.65, 0)
-	mmat.damping_min = 1.2
-	mmat.damping_max = 2.6
-	mmat.scale_min = 0.35
-	mmat.scale_max = 0.95
-	mmat.color = Color(minf(1.0, color.r + 0.16), minf(1.0, color.g + 0.15), minf(1.0, color.b + 0.12), 0.95)
-	mmat.color_ramp = _make_fade_ramp(0.04, 0.65)
-	motes.process_material = mmat
-	motes.draw_pass_1 = _make_soft_mesh(Vector2(0.032, 0.032), Color.WHITE)
-	scene.add_child(motes)
-	motes.global_position = hit_pos + hit_normal * 0.04
-	motes.emitting = true
-	get_tree().create_timer(3.2).timeout.connect(func():
-		if is_instance_valid(particles):
-			particles.queue_free()
-		if is_instance_valid(motes):
-			motes.queue_free()
-	)
+	if scene == null: return null
+	var pool := scene.get_node_or_null("CombatImpactEffects")
+	if pool == null:
+		pool = preload("res://scripts/CombatImpactEffects.gd").new()
+		pool.name = "CombatImpactEffects"
+		scene.add_child(pool)
+		pool.configure(self)
+	return pool
+
+func _spawn_impact_dust(hit_pos: Vector3, hit_normal: Vector3, color: Color) -> void:
+	var pool := _prepare_impact_effects()
+	if pool != null: pool.burst("dust", hit_pos, hit_normal, color)
 
 func _spawn_impact_chips(hit_pos: Vector3, hit_normal: Vector3, color: Color, sparks: bool = false) -> void:
-	var scene := get_tree().current_scene
-	if scene == null:
-		return
-	var particles := GPUParticles3D.new()
-	particles.name = "BulletChips"
-	particles.amount = 22
-	particles.lifetime = 0.55
-	particles.explosiveness = 1.0
-	particles.randomness = 0.75
-	particles.one_shot = true
-	var mat := ParticleProcessMaterial.new()
-	mat.direction = hit_normal
-	mat.spread = 70.0
-	mat.initial_velocity_min = 3.5
-	mat.initial_velocity_max = 9.0
-	mat.gravity = Vector3(0, -16.0, 0)
-	mat.scale_min = 0.5
-	mat.scale_max = 1.4
-	mat.color = Color(color.r + 0.08, color.g + 0.08, color.b + 0.08, 0.95)
-	mat.color_ramp = _make_fade_ramp(0.05, 0.7)
-	particles.process_material = mat
-	particles.draw_pass_1 = _make_soft_mesh(Vector2(.012,.045) if sparks else Vector2(.025,.025), Color.WHITE)
-	if sparks:
-		mat.color = Color(1.0,.65,.18,1.0)
-		var spark_material := particles.draw_pass_1.material as StandardMaterial3D
-		if spark_material != null:
-			spark_material.emission_enabled = true
-			spark_material.emission = Color(1,.35,.06)
-			spark_material.emission_energy_multiplier = 3.0
-	scene.add_child(particles)
-	particles.global_position = hit_pos + hit_normal * 0.025
-	particles.emitting = true
-	get_tree().create_timer(1.2).timeout.connect(func():
-		if is_instance_valid(particles):
-			particles.queue_free()
-	)
+	var pool := _prepare_impact_effects()
+	if pool != null: pool.burst("sparks" if sparks else "chips", hit_pos, hit_normal, color)
 
 func _get_bullet_hole_texture() -> Texture2D:
 	if _bullet_hole_texture != null:

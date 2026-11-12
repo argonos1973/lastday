@@ -2466,6 +2466,8 @@ func _create_player() -> void:
 	# cargada puede soltar al personaje dentro del territorio de un lobo
 	# y sin protección moría durante la propia entrada al mundo.
 	player.set_meta("protection_timer", 30.0)
+	if net == null or not net.is_dedicated_server:
+		player.prepare_combat_effects()
 	player.stats.died.connect(_on_player_died)
 	player.item_dropped.connect(_on_item_dropped)
 	# Apply pending spawn position if received before player was ready
@@ -5171,6 +5173,7 @@ func _spawn_remote_player(id: int) -> void:
 	_pending_puppets.append(avatar)
 
 var _pending_puppets: Array = []
+var _puppet_setup_frame := -1
 
 func _process_pending_puppets() -> void:
 	if _pending_puppets.is_empty():
@@ -5182,6 +5185,13 @@ func _process_pending_puppets() -> void:
 			continue
 		# Check if local player model is cached
 		if player != null and player.third_person_model != null:
+			# Model/wardrobe setup can be expensive even when resources are
+			# cached. During play admit one per rendered frame, including when
+			# this method is reached twice; the queue survives to the next frame.
+			var frame := Engine.get_process_frames()
+			if _loading_overlay == null and _puppet_setup_frame == frame:
+				break
+			_puppet_setup_frame = frame
 			avatar.setup_as_puppet()
 			# Copy ground offset from local player (same model, same offset)
 			avatar.third_person_ground_offset = player.third_person_ground_offset
