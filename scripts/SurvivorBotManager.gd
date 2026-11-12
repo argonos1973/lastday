@@ -147,6 +147,7 @@ var world: Node = null
 var bots: Dictionary = {} # bot_id -> Dictionary state
 var _sync_accum := 0.0
 var _ai_accum := 0.0
+var _bot_shelter_seq := 0
 # Aprendizaje persistente por personaje: sobrevive a la muerte/respawn, asi el
 # superviviente "recuerda" donde murio, por que, que zonas ya exploro y que la
 # ropa de piel es la mejor equipacion.
@@ -1289,6 +1290,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if not _is_pre_night():
 		b["_prep_logged"] = false
 	_validate_shelter_claim(b)
+	_sync_team_base(b)
 	var sh_pos: Vector3 = b["shelter_pos"]
 	var hiding_in_shelter: bool = float(b["hide_timer"]) > 0.0 and sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 2.6
 	b["torch_lit"] = is_night and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
@@ -1573,7 +1575,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# supervivencia manda sobre la orden) o cuando un miembro bot-bot ya tiene
 	# los 11 palos para levantar su refugio junto al campamento del líder).
 	var bot_team_member := is_bot_peer_id(int(b.get("team_leader_id", 0)))
-	var desperate_team_break: bool = desperate_food or _bot_vital_break(b) or (bot_team_member and str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy))
+	var desperate_team_break: bool = desperate_food or _bot_vital_break(b)
 	# Un recado de la IA dentro del radio de escolta gana al seguimiento: el
 	# follower cae al pipeline normal (la directiva dirige su exploracion),
 	# ejecuta el encargo y reengancha al leader al expirar. El leader sigue
@@ -1669,9 +1671,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				return
 
 	# 6b) Construir refugio propio si ya reunio los materiales: en su solar
-	# reclamado si lo tiene, junto a la base de su lider de equipo si milita
-	# (bases compartidas de varios refugios) o en su campamento remoto.
-	if str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy):
+	# reclamado si lo tiene o en su campamento remoto. Quien milita en un
+	# equipo no levanta refugio propio — la base del equipo es la del lider.
+	if str(b["shelter_id"]).is_empty() and int(b.get("team_leader_id", 0)) == 0 and _can_bot_build_shelter(proxy):
 		var build_pos := _bot_build_camp_pos(b)
 		var d_camp := Vector2(proxy.global_position.x - build_pos.x, proxy.global_position.z - build_pos.z).length()
 		if d_camp > 170.0 and not bool(b.get("_camp_reanchored", false)) and b.get("shelter_pos", Vector3.INF) == Vector3.INF and int(b.get("team_leader_id", 0)) == 0:
@@ -2655,6 +2657,87 @@ func _validate_shelter_claim(b: Dictionary) -> void:
 		# reclamado en shelter_pos y puede reconstruir, pero ya no es casa.
 		var lost_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
 		record_bot_event(int(b["bot_id"]), "shelter_lost", sid, "shelter", lost_pos, "le destruyeron el refugio")
+
+# "bot_shelter_903_1794..." -> 903 ; 0 si el refugio no es de un bot.
+func _shelter_owner_id(sh_id: String) -> int:
+	if not sh_id.begins_with("bot_shelter_"):
+		return 0
+	var tail := sh_id.substr(12)
+	var sep := tail.find("_")
+	return int(tail.substr(0, sep)) if sep > 0 else 0
+
+# Refugio del lider (bot o humano) mas cercano al bot: la base compartida del
+# equipo. Los ids de refugio empiezan por bot_shelter_<id>_ / player_shelter_<id>.
+func _team_leader_shelter_id(b: Dictionary) -> String:
+	var lid := int(b.get("team_leader_id", 0))
+	if lid <= 0 or world == null or not ("_built_shelters" in world):
+		return ""
+	var prefix := ("bot_shelter_%d" if is_bot_peer_id(lid) else "player_shelter_%d") % lid
+	var proxy: Node3D = b["proxy"]
+	var best := ""
+	var best_d := INF
+	for sh in world._built_shelters:
+		if not (sh is Dictionary):
+			continue
+		var sid := str(sh.get("id", ""))
+		if not sid.begins_with(prefix):
+			continue
+		var spos := _shelter_entry_pos(sh)
+		var d := Vector2(proxy.global_position.x - spos.x, proxy.global_position.z - spos.z).length()
+		if d < best_d:
+			best_d = d
+			best = sid
+	return best
+
+# Base unica del equipo: solo el lider tiene refugio. Al incorporarse, el
+# miembro desmonta el suyo (recupera alijo y palos), suelta su solar y adopta
+# el refugio del lider — descanso, alijo y hogar pasan a la base del equipo.
+# Al salir del equipo suelta la referencia adoptada y vuelve a su propio solar.
+func _sync_team_base(b: Dictionary) -> void:
+	var my_id := int(b.get("bot_id", 0))
+	var lid := int(b.get("team_leader_id", 0))
+	var sid := str(b.get("shelter_id", ""))
+	if lid > 0 and lid != my_id:
+		if _shelter_owner_id(sid) == my_id:
+			_team_dismantle_own_base(b)
+			sid = ""
+		var lsid := _team_leader_shelter_id(b)
+		if not lsid.is_empty() and lsid != sid:
+			b["shelter_id"] = lsid
+			b["shelter_pos"] = _shelter_entry_pos(_find_shelter_dict(lsid))
+		if is_bot_peer_id(lid) and bots.has(lid):
+			var lc: Variant = bots[lid].get("camp_spot", Vector3.INF)
+			if lc is Vector3 and lc != Vector3.INF:
+				b["camp_spot"] = lc
+	elif _shelter_owner_id(sid) != 0 and _shelter_owner_id(sid) != my_id:
+		b["shelter_id"] = ""
+		b["shelter_pos"] = Vector3.INF
+		var back: Variant = b.get("_solo_camp_spot", Vector3.INF)
+		if back is Vector3 and back != Vector3.INF:
+			b["camp_spot"] = back
+		b["_solo_camp_spot"] = null
+
+# El miembro recoge su campamento al entrar en el equipo: salva el alijo a la
+# mochila (el sobrante cae a sus pies), desmonta el refugio del mapa (vuelven
+# los 11 palos) y libera su fogata y su solar reclamado.
+func _team_dismantle_own_base(b: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	var sid := str(b.get("shelter_id", ""))
+	b["_solo_camp_spot"] = b.get("camp_spot", Vector3.INF)
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for cd in _get_shelter_contents(sid):
+		if cd is Dictionary and not _bot_try_add_inventory_item(b, inv, cd):
+			_bot_drop_to_ground(b, cd)
+	proxy.set_meta("saved_inventory", inv)
+	if not _find_shelter_dict(sid).is_empty():
+		_bot_dismantle_shelter_exec(b, sid)
+	b["shelter_id"] = ""
+	b["shelter_pos"] = Vector3.INF
+	b["campfire_id"] = ""
+	var mm = b.get("_mem", {})
+	if mm is Dictionary and (mm as Dictionary).has("shelter"):
+		(mm as Dictionary)["shelter"] = {}
+	record_bot_event(int(b["bot_id"]), "team_base_merge", sid, "shelter", proxy.global_position, "desmonta su refugio: la base pasa a ser la del lider")
 
 # True solo si el bot esta dentro de un refugio REALMENTE construido (el dict
 # del edificio sigue existiendo), no solo parado en su solar.
@@ -4185,19 +4268,40 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 				_collect_loot_entry(b, nearby_loot)
 				return
 			# Botin de camino o de la zona de escolta: desvio corto (<=4 m) si
-			# el leader va en marcha, recado completo (<=16 m) si esta quieto.
-			var grab_limit := 4.0 if leader_moving else 16.0
+			# el leader va en marcha, recado completo si esta quieto — el rol
+			# marca el radio: el soldado no abandona la guardia por chatarra.
+			var idle_grab := 16.0
+			var grab_role := _bot_member_role(b)
+			if grab_role == "soldier":
+				idle_grab = 10.0
+			elif grab_role == "scout":
+				idle_grab = 20.0
+			elif grab_role == "forager":
+				idle_grab = 18.0
+			var grab_limit := 4.0 if leader_moving else idle_grab
 			if d_nl <= grab_limit and absf(cur.y - lp.y) <= 1.8 and dist <= 20.0:
 				_move_bot_towards(b, lp, 4.2, delta, "walk")
 				return
 		if not leader_moving and _bot_escort_patrol(b, leader, delta):
 			return
-	if dist > 3.0 or separated_by_structure:
+	# Con amenaza a la vista el escolta no se mueve a su puesto de formacion:
+	# se queda quieto junto al lider listo para reaccionar.
+	if (b.get("aggro_target") != null or float(b.get("hide_timer", 0.0)) > 0.0) and dist <= 6.0 and not separated_by_structure:
+		b["anim"] = "idle"
+		return
+	# En marcha la escolta va en formacion de cuña: cada miembro cubre su slot
+	# separado del lider (nada de fila india pegada a su espalda). La cuña es
+	# tactica de campo abierto — en interiores (casa, piso compartido) o con
+	# muro/escalera de por medio se va directo a la posicion real del lider.
+	var in_close := _pos_in_house_bounds(lpos) or _pos_in_house_bounds(cur)
+	var fgoal := lpos if (separated_by_structure or in_close) else _bot_formation_slot(b, leader, lpos)
+	var d_goal := Vector2(cur.x - fgoal.x, cur.z - fgoal.z).length()
+	if d_goal > 1.7 or separated_by_structure:
 		var leader_sprinting: bool = bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true)
-		var should_run: bool = not bool(b["crouching"]) and (dist > 5.2 or (dist > 3.2 and leader_sprinting))
+		var should_run: bool = not bool(b["crouching"]) and (d_goal > 7.0 or (d_goal > 3.0 and leader_sprinting))
 		var spd := 6.8 if should_run else 4.2
 		var clip := "run" if should_run else "walk"
-		_move_bot_towards(b, lpos, spd, delta, clip)
+		_move_bot_towards(b, fgoal, spd, delta, clip)
 	else:
 		b["anim"] = "idle"
 
@@ -4230,13 +4334,27 @@ func _bot_escort_patrol(b: Dictionary, leader: Node3D, delta: float) -> bool:
 		esc["pos"] = null
 		b["_escort"] = esc
 		return false
+	# El rol marca el radio de la ronda: el explorador barre lejos, el
+	# proveedor medio y el soldado cierra la guardia pegado al lider.
+	var role_esc := _bot_member_role(b)
+	var rmin := 6.0
+	var rmax := 14.0
+	if role_esc == "soldier":
+		rmin = 4.0
+		rmax = 9.0
+	elif role_esc == "scout":
+		rmin = 10.0
+		rmax = 22.0
+	elif role_esc == "forager":
+		rmin = 7.0
+		rmax = 16.0
 	var tgt: Variant = esc.get("pos", null)
 	var has_tgt: bool = tgt is Vector3 and Vector2(proxy.global_position.x - (tgt as Vector3).x, proxy.global_position.z - (tgt as Vector3).z).length() > 1.6 \
-		and Vector2(lpos.x - (tgt as Vector3).x, lpos.z - (tgt as Vector3).z).length() <= 18.0
+		and Vector2(lpos.x - (tgt as Vector3).x, lpos.z - (tgt as Vector3).z).length() <= rmax + 4.0
 	if not has_tgt:
-		# ~9 s aparcado junto al líder antes de cada ronda: vigía periódica,
-		# no paseo continuo — en marcha detrás del líder la calma no crece.
-		if dist > 5.0:
+		# ~9 s apostado en su puesto de formacion antes de cada ronda: vigia
+		# periodica, no paseo continuo — en marcha detras del lider no crece.
+		if dist > 9.0:
 			esc["idle_t"] = 0.0
 			b["_escort"] = esc
 			return false
@@ -4248,7 +4366,7 @@ func _bot_escort_patrol(b: Dictionary, leader: Node3D, delta: float) -> bool:
 		rng.seed = int(b["bot_id"]) * 15485863 + int(esc.get("n", 0)) * 32452843
 		for i in range(6):
 			var ang := rng.randf() * TAU
-			var rr := rng.randf_range(6.0, 14.0)
+			var rr := rng.randf_range(rmin, rmax)
 			var cand := lpos + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
 			cand.y = proxy.global_position.y
 			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
@@ -4288,7 +4406,8 @@ func _bot_ai_errand_target(b: Dictionary, leader: Node3D) -> Vector3:
 	if _is_goal_blacklisted(b, dp):
 		return Vector3.INF
 	var lpos := leader.global_position if leader != null and is_instance_valid(leader) else Vector3.INF
-	if lpos == Vector3.INF or Vector2((dp as Vector3).x - lpos.x, (dp as Vector3).z - lpos.z).length() > BOT_ESCORT_AI_DIST:
+	var ai_dist := 62.0 if _bot_member_role(b) == "scout" else BOT_ESCORT_AI_DIST
+	if lpos == Vector3.INF or Vector2((dp as Vector3).x - lpos.x, (dp as Vector3).z - lpos.z).length() > ai_dist:
 		return Vector3.INF
 	return dp
 
@@ -4342,6 +4461,107 @@ func _bot_team_role(b: Dictionary) -> String:
 		if int(bots[bid].get("team_leader_id", 0)) == int(b["bot_id"]):
 			return "leader"
 	return ""
+
+# Rol de cada miembro segun sus habilidades (personalidad): scout/explorador
+# para el mas curioso, soldier/soldado para el mas agresivo y valiente,
+# forager/proveedor para el de mayor instinto y cooperacion. Asignacion
+# determinista y unica dentro del equipo — el rol decide cuanto se separa,
+# cuanto botin agarra de camino y que puesto ocupa en la formacion.
+func _bot_member_role(b: Dictionary) -> String:
+	var my_id := int(b.get("bot_id", 0))
+	var lid := int(b.get("team_leader_id", 0))
+	if lid <= 0:
+		return "lider" if _bot_team_role(b) == "leader" else ""
+	var members: Array = []
+	for bid in bots.keys():
+		if int(bots[bid].get("team_leader_id", 0)) == lid:
+			members.append(bid)
+	members.sort()
+	var scores := {}
+	for bid in members:
+		var p: Dictionary = (bots[bid].get("_mem", {}) as Dictionary).get("personality", {})
+		scores[bid] = {
+			"scout": float(p.get("curiosity", 0.5)) + float(p.get("survival_instinct", 0.5)) * 0.35,
+			"soldier": float(p.get("bravery", 0.5)) * 0.6 + float(p.get("aggression", 0.5)) * 0.6 + float(p.get("distrust", 0.5)) * 0.2,
+			"forager": float(p.get("survival_instinct", 0.5)) * 0.6 + float(p.get("cooperation", 0.5)) * 0.5,
+		}
+	var assigned := {}
+	var pool := members.duplicate()
+	var roles_left := ["scout", "soldier", "forager"]
+	while not pool.is_empty() and not roles_left.is_empty():
+		var best_s := -INF
+		var best_b := -1
+		var best_r := ""
+		for bid in pool:
+			for r in roles_left:
+				var s: float = (scores[bid] as Dictionary).get(r, 0.0)
+				if s > best_s:
+					best_s = s
+					best_b = bid
+					best_r = r
+		assigned[best_b] = best_r
+		pool.erase(best_b)
+		roles_left.erase(best_r)
+	return str(assigned.get(my_id, "member"))
+
+# Punto dentro del rectangulo de una casa registrada (wildlife_blockers) —
+# la cuña de escolta no se usa en interiores, solo en campo abierto.
+func _pos_in_house_bounds(pos: Vector3) -> bool:
+	if world != null and "wildlife_blockers" in world:
+		var p2 := Vector2(pos.x, pos.z)
+		for blk in world.wildlife_blockers:
+			if blk is Dictionary and (blk as Dictionary).has("house_bounds") \
+					and ((blk as Dictionary)["house_bounds"] as Rect2).has_point(p2):
+				return true
+	return world != null and world.has_method("_is_player_in_house") and bool(world._is_player_in_house(pos))
+
+# Orden deterministico del miembro dentro de la escolta del lider (0, 1...).
+func _bot_member_index(b: Dictionary) -> int:
+	var lid := int(b.get("team_leader_id", 0))
+	var my_id := int(b.get("bot_id", 0))
+	var idx := 0
+	for bid in bots.keys():
+		if int(bid) != my_id and int(bots[bid].get("team_leader_id", 0)) == lid and int(bid) < my_id:
+			idx += 1
+	return idx
+
+# Formacion tactica de marcha: cada miembro ocupa un slot separado respecto al
+# vector de avance del lider — el explorador va adelantado al flanco, el
+# soldado cubre la retaguardia derecha y el proveedor la izquierda, a 6-9 m
+# entre si. Nada de columna pegada a la espalda del lider. Slot tapado por
+# obstaculo -> se prueba el lado espejo -> como ultimo recurso el propio lpos.
+func _bot_formation_slot(b: Dictionary, leader: Node3D, lpos: Vector3) -> Vector3:
+	var proxy: Node3D = b["proxy"]
+	var dir := Vector3(-sin(leader.rotation.y), 0.0, -cos(leader.rotation.y))
+	var esc: Dictionary = b.get("_escort", {})
+	var lprev: Variant = esc.get("ldir_pos", null)
+	if lprev is Vector3:
+		var dm := lpos - (lprev as Vector3)
+		dm.y = 0.0
+		if dm.length() > 0.15:
+			dir = dm.normalized()
+	esc["ldir_pos"] = lpos
+	b["_escort"] = esc
+	var right := Vector3(-dir.z, 0.0, dir.x)
+	var off := Vector3.ZERO
+	match _bot_member_role(b):
+		"scout":
+			off = dir * 5.2 - right * 3.0
+		"soldier":
+			off = -dir * 3.8 + right * 3.4
+		"forager":
+			off = -dir * 4.8 - right * 4.2
+		_:
+			off = -dir * 4.4 + right * (3.6 if _bot_member_index(b) % 2 == 0 else -3.6)
+	var cand := lpos + off
+	cand.y = proxy.global_position.y
+	if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
+		var side := off.dot(right)
+		cand = lpos + (off - right * 2.0 * side)
+		cand.y = proxy.global_position.y
+		if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
+			cand = lpos
+	return cand
 
 # ¿Quiere este bot compañia? Los sociables/cooperativos viajan a reunirse con
 # un aliado potencial; un vinculo previo (confianza o ayudas) siempre tira.
@@ -7048,8 +7268,12 @@ func _bot_build_shelter(b: Dictionary, pos: Vector3) -> void:
 				used += 1
 	var has_camo := _consume_bot_item(proxy, "Tela de camuflaje", 1)
 	# Id unico por construccion: el refugio viejo queda en pie (huerfano
-	# saqueable) si el bot levanta otro lejos tras reaparecer.
-	var sh_id := "bot_shelter_%d_%d" % [int(b["bot_id"]), int(Time.get_unix_time_from_system())]
+	# saqueable) si el bot levanta otro lejos tras reaparecer. El contador
+	# evita colisiones cuando el mismo bot reconstruye dentro del mismo
+	# segundo (desmontar+levantar seguidos): un id repetido haria early
+	# return en _spawn_player_shelter_with_id y el refugio quedaria fantasma.
+	var sh_id := "bot_shelter_%d_%d_%d" % [int(b["bot_id"]), int(Time.get_unix_time_from_system()), _bot_shelter_seq]
+	_bot_shelter_seq += 1
 	var yaw := float(b["rot"])
 	b["shelter_id"] = sh_id
 	b["shelter_pos"] = pos
@@ -10825,6 +11049,7 @@ func get_full_web_status() -> Dictionary:
 		# Equipo bot-bot autonomo: rol, compañeros y emboscada en curso para el
 		# panel web (JSON-safe: solo strings, ints y arrays).
 		snap["team_role"] = _bot_team_role(b)
+		snap["member_role"] = _bot_member_role(b)
 		var mates: Array = []
 		for tid in _bot_team_ids(b):
 			if tid != int(bid):

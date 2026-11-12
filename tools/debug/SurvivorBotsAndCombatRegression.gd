@@ -4861,6 +4861,94 @@ func run() -> void:
 		"10J5r8: Agotamiento letal rompe la formacion")
 	vs_nt.sleep = 100.0
 
+	# 10J5s: Una sola base por equipo (la del lider), roles por habilidades y
+	# formacion tactica con separacion en la marcha.
+	dc.time_of_day = 14.0
+	var b_ld: Dictionary = mgr.bots[901]
+	var p_ld: Node3D = b_ld["proxy"]
+	var save_inv_ld: Array = p_ld.get_meta("saved_inventory", [])
+	var save_inv_nt: Array = p_nt.get_meta("saved_inventory", [])
+	var save_lid_nt: int = int(b_nt.get("team_leader_id", 0))
+	var save_lid_k: int = int((mgr.bots[903] as Dictionary).get("team_leader_id", 0))
+	var pers_nt: Dictionary = ((b_nt["_mem"] as Dictionary).get("personality", {}) as Dictionary).duplicate()
+	var pers_k: Dictionary = (((mgr.bots[903] as Dictionary)["_mem"] as Dictionary).get("personality", {}) as Dictionary).duplicate()
+	# s1: el lider tiene su refugio; el miembro levanta el suyo con alijo y al
+	# unirse lo desmonta — solo queda la base del lider y el material se salva.
+	var save_bp_nt := str(b_nt.get("backpack", ""))
+	b_nt["backpack"] = "Mochila militar" # para que quepa todo el salvamento
+	p_ld.set_meta("saved_inventory", [{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11}])
+	p_ld.global_position = Vector3(260.0, 0.4, 200.0)
+	mgr._bot_build_shelter(b_ld, p_ld.global_position)
+	var sh_lead := str(b_ld.get("shelter_id", ""))
+	p_nt.set_meta("saved_inventory", [{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11}])
+	mgr._bot_build_shelter(b_nt, p_nt.global_position + Vector3(40.0, 0.0, 0.0))
+	var sh_own := str(b_nt.get("shelter_id", ""))
+	mgr._commit_shelter_contents(sh_own, [{"name": "Piel de lobo", "type": "resource", "weight": 0.35, "quantity": 1}])
+	b_nt["team_leader_id"] = 901
+	mgr._sync_team_base(b_nt)
+	check(sh_own != "" and mgr._find_shelter_dict(sh_own).is_empty() and str(b_nt.get("shelter_id", "")) == sh_lead,
+		"10J5s1: Al entrar en equipo su refugio desaparece y adopta la base del lider")
+	check(mgr._bot_item_count(p_nt, "Palo") >= 11 and mgr._bot_item_count(p_nt, "Piel de lobo") >= 1,
+		"10J5s2: Los 11 palos y el alijo del refugio desmontado se salvan a la mochila (palo=%d piel=%d inv=%s)" % [mgr._bot_item_count(p_nt, "Palo"), mgr._bot_item_count(p_nt, "Piel de lobo"), str(p_nt.get_meta("saved_inventory", []))])
+	# s2: roles por habilidad — el curioso explora, el agresivo hace de soldado.
+	(b_nt["_mem"] as Dictionary)["personality"] = {"bravery": 0.9, "aggression": 0.85, "curiosity": 0.2, "sociability": 0.5, "distrust": 0.4, "cooperation": 0.5, "survival_instinct": 0.5}
+	((mgr.bots[903] as Dictionary)["_mem"] as Dictionary)["personality"] = {"bravery": 0.3, "aggression": 0.2, "curiosity": 0.95, "sociability": 0.5, "distrust": 0.4, "cooperation": 0.5, "survival_instinct": 0.5}
+	(mgr.bots[903] as Dictionary)["team_leader_id"] = 901
+	check(mgr._bot_member_role(b_nt) == "soldier" and mgr._bot_member_role(mgr.bots[903]) == "scout",
+		"10J5s3: Roles por habilidad: agresivo->soldado, curioso->explorador (got %s/%s)" % [mgr._bot_member_role(b_nt), mgr._bot_member_role(mgr.bots[903])])
+	# s3: formacion de cuña — slots separados, el explorador adelantado.
+	var f_lead := Node3D.new()
+	world.add_child(f_lead)
+	f_lead.global_position = Vector3(200.0, 0.4, 200.0)
+	f_lead.rotation.y = 0.0
+	p_nt.global_position = Vector3(198.0, 0.4, 203.0)
+	(mgr.bots[903] as Dictionary)["proxy"].global_position = Vector3(203.0, 0.4, 203.0)
+	var slot_sol := mgr._bot_formation_slot(b_nt, f_lead, f_lead.global_position)
+	var slot_sct := mgr._bot_formation_slot(mgr.bots[903], f_lead, f_lead.global_position)
+	var fwd_s := Vector3(-sin(f_lead.rotation.y), 0.0, -cos(f_lead.rotation.y))
+	check(slot_sol.distance_to(f_lead.global_position) > 3.0 and slot_sct.distance_to(f_lead.global_position) > 3.0
+		and slot_sol.distance_to(slot_sct) > 5.0,
+		"10J5s4: La cuña separa a los miembros (d_leader=%.1f/%.1f entre si=%.1f)" % [slot_sol.distance_to(f_lead.global_position), slot_sct.distance_to(f_lead.global_position), slot_sol.distance_to(slot_sct)])
+	check((slot_sct - f_lead.global_position).normalized().dot(fwd_s) > 0.5,
+		"10J5s5: El explorador marcha adelantado en la formacion")
+	# s4: el miembro no levanta refugio propio aunque tenga los 11 palos.
+	p_nt.set_meta("saved_inventory", [{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 12}])
+	b_nt["shelter_id"] = ""
+	b_nt["shelter_pos"] = Vector3.INF
+	b_nt["hunger"] = 85.0
+	b_nt["thirst"] = 85.0
+	b_nt["health"] = 100.0
+	b_nt["aggro_target"] = null
+	for k3 in ["_s_predator", "_s_foe", "_s_tame_wolf", "_s_prey", "_s_corpse"]:
+		b_nt[k3] = null
+	b_nt["_s_loot"] = {}
+	b_nt["_s_leader"] = {"id": 901, "proxy": f_lead, "pos": f_lead.global_position, "dist": 6.0}
+	b_nt["_craft_state"] = {}
+	b_nt["_gather"] = {}
+	mgr._tick_bot(b_nt, 0.1)
+	check(str(b_nt.get("_act", "")) != "build" and str(b_nt.get("shelter_id", "")) != sh_own,
+		"10J5s6: Militando en equipo con 11 palos NO construye base propia (act=%s)" % str(b_nt.get("_act", "")))
+	# s5: al salir del equipo suelta el refugio adoptado del lider.
+	b_nt["team_leader_id"] = 0
+	mgr._sync_team_base(b_nt)
+	check(str(b_nt.get("shelter_id", "")) == "",
+		"10J5s7: Al salir del equipo suelta el refugio adoptado del lider")
+	# Limpieza del escenario de equipo.
+	(mgr.bots[903] as Dictionary)["team_leader_id"] = save_lid_k
+	b_nt["team_leader_id"] = save_lid_nt
+	(b_nt["_mem"] as Dictionary)["personality"] = pers_nt
+	((mgr.bots[903] as Dictionary)["_mem"] as Dictionary)["personality"] = pers_k
+	p_ld.set_meta("saved_inventory", save_inv_ld)
+	p_nt.set_meta("saved_inventory", save_inv_nt)
+	b_nt["shelter_id"] = ""
+	b_nt["shelter_pos"] = Vector3.INF
+	b_nt["backpack"] = save_bp_nt
+	if not mgr._find_shelter_dict(sh_lead).is_empty():
+		mgr._bot_dismantle_shelter_exec(b_ld, sh_lead)
+	b_ld["shelter_id"] = ""
+	b_ld["shelter_pos"] = Vector3.INF
+	f_lead.queue_free()
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
