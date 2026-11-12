@@ -193,3 +193,4 @@ a12c3e5|Antes de cruzar el mapa de noche para levantar su refugio, los bots fabr
 ef126cf|Corregidas muertes de bots por agotamiento y frio al descansar en casas, eliminados los enganches al atacar a jugadores tras muros o cuerpo a cuerpo, uso tactico de boleadoras y vendaje al sangrar, activada la doma real de lobos por bots reservando carne cruda y ampliado el alcance de voz a 55-90 m
 63ff429|Optimizado el buscador de rutas de los bots: si un destino queda en una orilla o isla desconectada ya no recalcula el A* completo en cada frame, evitando caidas puntuales de FPS junto al rio
 9fc2260|Expulsión de equipo: un miembro que agrede 3+ veces al grupo es echado, pasa a hostil, vive solo y ataca a sus ex-compañeros
+8b0a726|Expulsión también por traer peligro al grupo: llegar huyendo junto al líder 4+ veces echa al bot sin necesidad de agresiones
