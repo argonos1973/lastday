@@ -1360,6 +1360,15 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		_handle_predator_encounter(b, predator, delta)
 		return
 
+	# Incoming fire takes priority over an ambush pose or domestic chores.
+	var shooter := _sensed_node(b, "_s_foe")
+	var under_fire := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 5000 and str(b.get("_last_hit_weapon", "")) in ["rifle", "m4"]
+	var cover_experience := int(b.get("_mem", {}).get("experience", {}).get("cover", 0))
+	var anticipates_cover := shooter != null and cover_experience > 0 and _actor_holds_ranged(shooter) and float(b["health"]) < 45.0 + 5.0*cover_experience
+	if shooter != null and (under_fire or anticipates_cover) and _bot_seek_ballistic_cover(b, shooter, delta):
+		b["_act"] = "cover"
+		return
+
 	# 2b) Emboscada: hostiles (solos o en equipo) acechan agachados a una
 	#     victima con recursos y golpean a la vez. Cede ante depredadores.
 	if _bot_try_ambush(b, delta):
@@ -3370,6 +3379,94 @@ func _actor_holds_ranged(node: Node3D) -> bool:
 
 # Retirada ante la nemesis: aprendio a no repetir el enfrentamiento. Se
 # parapeta en su refugio si existe; si no, huye en zigzag lejos del verdugo.
+# Small local search, cached per bot: cover must block the shooter's view
+# and be reachable by a clear ground segment, not merely be a named shelter.
+func _learn_practical_skill(b: Dictionary, skill: String, reason: String) -> void:
+	var mem: Dictionary = b.get("_mem", {})
+	if mem.is_empty():
+		return
+	var experience: Dictionary = mem.get("experience", {})
+	var level := int(experience.get(skill, 0))
+	if level >= 3:
+		return
+	experience[skill] = level + 1
+	mem["experience"] = experience
+	var proxy: Node3D = b.get("proxy")
+	var pos := proxy.global_position if is_instance_valid(proxy) else Vector3.ZERO
+	record_bot_event(int(b["bot_id"]), "learned", skill, _poi_kind_near(pos), pos, reason)
+
+func _cover_learning_tick(b: Dictionary, delta: float, protected: bool) -> void:
+	var hit := int(b.get("_last_attacker_msec", -999999))
+	if not protected or Time.get_ticks_msec()-hit > 5000:
+		b["_cover_training_hold"] = 0.0
+		return
+	if int(b.get("_cover_training_hit", -1)) != hit:
+		b["_cover_training_hit"] = hit
+		b["_cover_training_hold"] = 0.0
+	b["_cover_training_hold"] = float(b.get("_cover_training_hold", 0.0))+delta
+	# Two seconds actually sheltered after a hit, at most once per minute.
+	if float(b["_cover_training_hold"]) >= 2.0 and Time.get_ticks_msec()-int(b.get("_cover_learned_at", -60000)) >= 60000:
+		b["_cover_learned_at"] = Time.get_ticks_msec()
+		_learn_practical_skill(b, "cover", "Sobrevivió a disparos protegido: buscará cobertura antes cuando esté herido")
+
+func _find_ballistic_cover(b: Dictionary, foe: Node3D) -> Vector3:
+	var proxy: Node3D = b["proxy"]
+	var origin := proxy.global_position
+	var away := origin - foe.global_position
+	away.y = 0.0
+	away = away.normalized() if away.length_squared() > .01 else Vector3.RIGHT
+	for radius in [4.0, 8.0, 12.0]:
+		for angle in [0.0, .6, -.6, 1.2, -1.2, 1.8, -1.8, PI]:
+			var point: Vector3 = origin + away.rotated(Vector3.UP, angle) * radius
+			point.y = _ground_y(point.x, point.z, origin.y)
+			if absf(point.y-origin.y) > 1.0 or _is_goal_blacklisted(b, point):
+				continue
+			if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(point)) > WADE_DEPTH:
+				continue
+			if _is_step_blocked(origin, point) or _has_clear_shot(foe.global_position, point):
+				continue
+			return point
+	return Vector3.INF
+
+func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	b["_cover_scan_t"] = maxf(0.0, float(b.get("_cover_scan_t", 0.0))-delta)
+	b["sitting"] = false
+	b["sleeping"] = false
+	b["is_aiming"] = false
+	var goal: Vector3 = b.get("_cover_goal", Vector3.INF)
+	if float(b["_cover_scan_t"]) <= 0.0:
+		b["_cover_scan_t"] = 1.5
+		if goal == Vector3.INF or _has_clear_shot(foe.global_position, goal):
+			goal = _find_ballistic_cover(b, foe)
+			b["_cover_goal"] = goal
+	if goal != Vector3.INF:
+		if proxy.global_position.distance_to(goal) > .8:
+			_cover_learning_tick(b, delta, false)
+			b["crouching"] = false
+			proxy.set_meta("crouching", false)
+			_move_bot_towards(b, goal, 6.4, delta, "run")
+			return true
+		# Check the actual position too: arriving near cover is not enough.
+		if not _has_clear_shot(foe.global_position, proxy.global_position):
+			_cover_learning_tick(b, delta, true)
+			b["crouching"] = true
+			proxy.set_meta("crouching", true)
+			b["anim"] = "idle"
+			return true
+		b["_cover_goal"] = Vector3.INF
+	_cover_learning_tick(b, delta, false)
+	# No solid cover nearby: keep moving instead of crouching in the open.
+	b["crouching"] = false
+	proxy.set_meta("crouching", false)
+	var away := proxy.global_position - foe.global_position
+	away.y = 0.0
+	away = away.normalized() if away.length_squared() > .01 else Vector3.RIGHT
+	var side := Vector3(-away.z, 0, away.x)
+	var sign_side := 1.0 if int(Time.get_ticks_msec()/900 + int(b["bot_id"])) % 2 == 0 else -1.0
+	_move_bot_towards(b, proxy.global_position + (away+side*sign_side*.8).normalized()*6.0, 6.4, delta, "run")
+	return true
+
 func _bot_avoid_nemesis(b: Dictionary, foe: Node3D, nem_name: String, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	b["is_aiming"] = false
@@ -4270,6 +4367,13 @@ func _bot_death_adaptations(mem: Dictionary) -> Array:
 	var cld := int(lessons.get("cold", 0))
 	if cld > 0:
 		out.append("🔥 Prioridad térmica (abrigo y fogata temprana)")
+	var experience: Dictionary = mem.get("experience", {})
+	var cover_level := int(experience.get("cover", 0))
+	if cover_level > 0:
+		out.append("Cobertura aprendida %d/3: ante un tirador busca protección por debajo de %d de salud, sin esperar otro impacto" % [cover_level, 45+5*cover_level])
+	var forage_level := int(experience.get("forage", 0))
+	if forage_level > 0:
+		out.append("Recolección aprendida %d/3: busca comida con %d puntos más de reserva" % [forage_level, 4*forage_level])
 	var raided := int(mem.get("base_raided", 0))
 	if raided > 0:
 		out.append("🏚 Base quemada ×%d (se mudó a zona alejada)" % raided)
@@ -11017,7 +11121,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		_restore_relationship_clocks(mem.get("relationships", {}), parsed, Time.get_ticks_msec(), Time.get_unix_time_from_system())
@@ -11097,7 +11201,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
@@ -11714,7 +11818,8 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var desperate := hunger < 24.0
 	var scarcity := bool(b.get("_mem", {}).get("scarcity", false))
 	var starved_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("starved", 0))
-	var line := 58.0 + (14.0 if scarcity else 0.0) + minf(18.0, float(starved_lessons) * 6.0)
+	var foraging_experience := int(b.get("_mem", {}).get("experience", {}).get("forage", 0))
+	var line := minf(90.0, 58.0 + (14.0 if scarcity else 0.0) + minf(18.0, float(starved_lessons) * 6.0) + 4.0*foraging_experience)
 	var leader := _sensed_node(b, "_s_leader")
 	var allowed := hunger < line and (leader == null or desperate or _bot_vital_break(b))
 	# De noche o oculto solo sale a comer si se esta muriendo de hambre:
@@ -11868,6 +11973,8 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 				gnet.ground_craft_state_changed.rpc(aid, new_qty, maxf(new_dur, 0.0))
 	elif kind == "fruit":
 		var now := Time.get_unix_time_from_system()
+		if now < float(action.get_meta("fruit_ready_time", 0.0)):
+			return
 		action.set_meta("fruit_ready_time", now + 300.0)
 		if "_pending_fruit_cooldowns" in world:
 			(world._pending_fruit_cooldowns as Dictionary)[aid] = now + 300.0
@@ -11875,6 +11982,7 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 		var fruit_use := 20.0 if fruit_name == "Naranja" else 12.0
 		var fruit_w := 0.20 if fruit_name == "Naranja" else 0.10
 		var net2 = world.get("net")
+		var produced_fruit := false
 		for fi in range(2):
 			var fpos := pos + Vector3(randf_range(-1.8, 1.8), 0.0, randf_range(-1.8, 1.8))
 			fpos.y = _ground_y(fpos.x, fpos.z) + 0.06
@@ -11886,11 +11994,14 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 			# objeto, crea su WorldAction y la visual en el servidor; luego se
 			# reenvia a cada cliente para que lo vea y pueda recogerlo.
 			if world.has_method("_net_item_dropped"):
+				produced_fruit = true
 				world._net_item_dropped(drop_id, fruit_name, "food", fruit_w, 1, fruit_use, fpos, Color(0, 0, 0, 0), 0)
 			if net2 != null and net2.is_host and net2.peer != null:
 				for pid in net2.players.keys():
 					if pid != net2.get_my_id() and not is_bot_peer_id(pid) and not net2.players[pid].get("offline", false) and net2.peer_alive(pid):
 						net2.item_dropped.rpc_id(pid, drop_id, fruit_name, "food", fruit_w, 1, fruit_use, fpos, Color(0, 0, 0, 0))
+		if produced_fruit:
+			_learn_practical_skill(b, "forage", "Recolectó fruta: buscará alimento antes de quedarse sin reservas")
 		b["eat_cooldown"] = 4.0
 
 # ==================== RECOLECCION DE MATERIALES: TALAR ARBUSTOS ====================
@@ -12067,14 +12178,14 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 		b["_farm"] = {}
 		match phase:
 			"plant", "replant":
-				var consumed := _bot_consume_one_item(proxy, "Semillas")
-				if not consumed:
+				if _bot_item_count(proxy, "Semillas") <= 0:
 					return true
-				_bot_wear_farm_tool(proxy)
 				if phase == "replant":
 					var rec := _bot_crop_record(str(st.get("crop_id", "")))
-					if rec.is_empty():
+					if rec.is_empty() or str(_crop_effective_state(rec).get("state", "")) != "empty":
 						return true
+					_bot_consume_one_item(proxy, "Semillas")
+					_bot_wear_farm_tool(proxy)
 					rec["crop_state"] = "planted"
 					rec["growth"] = 0.0
 					rec["updated_unix"] = now
@@ -12082,9 +12193,13 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 					rec["ready_unix"] = 0.0
 					_bot_crop_broadcast("crop_replanted", fpos)
 				else:
+					var count_before: int = world._planted_crops.size()
 					var cid: String = world._plant_crop(fpos) if world.has_method("_plant_crop") else ""
-					if not cid.is_empty():
-						plots.append({"id": cid, "pos": [fpos.x, fpos.y, fpos.z]})
+					if cid.is_empty() or world._planted_crops.size() == count_before:
+						return true
+					_bot_consume_one_item(proxy, "Semillas")
+					_bot_wear_farm_tool(proxy)
+					plots.append({"id": cid, "pos": [fpos.x, fpos.y, fpos.z]})
 					_bot_crop_broadcast("planted_crop", fpos)
 				mem["farm_plots"] = plots
 				observe_location(int(b["bot_id"]), "farm:%d:%d" % [int(fpos.x), int(fpos.z)], "farm", fpos, "visited")

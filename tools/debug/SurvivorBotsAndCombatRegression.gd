@@ -1698,6 +1698,9 @@ func run() -> void:
 	mgr._bot_try_forage(elena, 3.1)
 	check((world._dropped_items as Array).size() >= drops_before + 2,
 		"Forrajeo: la cosecha deja 2 frutas en el suelo")
+	var fruit_count_after: int = world._dropped_items.size()
+	mgr._bot_forage_complete(carlos, ft)
+	check(world._dropped_items.size() == fruit_count_after, "Forrajeo: segundo recolector no duplica fruta durante cooldown")
 	check(float(arbol.get_meta("fruit_ready_time", 0.0)) > Time.get_unix_time_from_system(),
 		"Forrajeo: el arbol entra en cooldown de 5 minutos")
 	# Latas: la cerrada no se come, la abierta si; y se abren con Hacha tambien
@@ -3099,6 +3102,12 @@ func run() -> void:
 				break
 		check(str(frec.get("crop_state", "")) == "planted",
 			"SpawnReal 10x8: replanta el bancal vacio con la semilla restante")
+
+		# Another actor already replanted while this bot was completing its action.
+		farm_b["proxy"].set_meta("saved_inventory", [{"name":"Semillas", "type":"resource", "quantity":1}, {"name":"Azada", "type":"tool_hoe", "quantity":1, "durability":100.0}])
+		farm_b["_farm"] = {"phase":"replant", "crop_id":str(frec["id"]), "pos":frec["pos"], "t":4.0, "t_need":4.0}
+		mgr._bot_try_farm(farm_b, .1)
+		check(mgr._bot_item_count(farm_b["proxy"], "Semillas") == 1, "Huerto: no consume semillas si otro ya replanto")
 
 		# Riego: con botella llena humedece el bancal y acelera el cultivo.
 		frec["watered_until"] = 0.0
