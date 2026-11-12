@@ -2697,8 +2697,10 @@ func _sync_team_base(b: Dictionary) -> void:
 	var my_id := int(b.get("bot_id", 0))
 	var lid := int(b.get("team_leader_id", 0))
 	var sid := str(b.get("shelter_id", ""))
-	if lid > 0 and lid != my_id and _team_check_expulsion(b):
-		return
+	if lid > 0 and lid != my_id:
+		_team_danger_tick(b)
+		if _team_check_expulsion(b):
+			return
 	if lid > 0 and lid != my_id:
 		if _shelter_owner_id(sid) == my_id:
 			_team_dismantle_own_base(b)
@@ -2741,10 +2743,46 @@ func _team_dismantle_own_base(b: Dictionary) -> void:
 		(mm as Dictionary)["shelter"] = {}
 	record_bot_event(int(b["bot_id"]), "team_base_merge", sid, "shelter", proxy.global_position, "desmonta su refugio: la base pasa a ser la del lider")
 
+# Traer una amenaza al grupo cuenta como ponerlo en peligro: el miembro llega
+# perseguido (depredador/enemigo), en huida o escondido mientras esta junto al
+# lider y el lider no esta amenazado — el peligro es suyo y lo trajo a casa.
+# Un incidente cada 60 s como maximo; el contador vive en _mem y persiste.
+func _team_danger_tick(b: Dictionary) -> void:
+	var my_id := int(b["bot_id"])
+	var lid := int(b.get("team_leader_id", 0))
+	if lid <= 0 or lid == my_id or not bots.has(lid):
+		return
+	var now_ms := Time.get_ticks_msec()
+	# Por defecto -120 s: el primer incidente cuenta aunque el servidor acabe
+	# de arrancar (ticks_msec cuenta desde el arranque del motor, no del mundo).
+	if now_ms - int(b.get("_team_danger_ms", -120000)) < 60000:
+		return
+	var lb: Dictionary = bots[lid]
+	var lp: Node3D = lb.get("proxy")
+	if lp == null or not is_instance_valid(lp):
+		return
+	var proxy: Node3D = b["proxy"]
+	if proxy.global_position.distance_to(lp.global_position) > 40.0:
+		return
+	var my_threat := b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null \
+		or float(b.get("flee_until", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0
+	if not my_threat:
+		return
+	# Si el propio grupo ya esta bajo amenaza el peligro no lo trajo el.
+	var leader_threat := lb.get("aggro_target") != null or _sensed_node(lb, "_s_predator") != null \
+		or float(lb.get("flee_until", 0.0)) > 0.0
+	if leader_threat:
+		return
+	b["_team_danger_ms"] = now_ms
+	var mem := _ensure_bot_memory(my_id, b.get("cfg", {}))
+	mem["team_danger_n"] = int(mem.get("team_danger_n", 0)) + 1
+	record_bot_event(my_id, "team_danger", "bot_%d" % lid, _poi_kind_near(proxy.global_position), proxy.global_position,
+		"trae peligro al grupo (%d)" % int(mem["team_danger_n"]))
+
 # Un miembro que pone en peligro al grupo demasiadas veces (3+ agresiones
-# registradas por cualquier compañero, contando al lider) es expulsado:
-# sale del equipo, pasa a faccion hostil, vive solo y los ex-compañeros le
-# guardan hostilidad maxima — se atacan mutuamente al cruzarse.
+# registradas por cualquier compañero o 4+ incidentes de peligro traido al
+# equipo) es expulsado: sale del equipo, pasa a faccion hostil, vive solo y
+# los ex-compañeros le guardan hostilidad maxima — se atacan al cruzarse.
 func _team_check_expulsion(b: Dictionary) -> bool:
 	var my_id := int(b["bot_id"])
 	for oid in _bot_team_ids(b):
@@ -2753,11 +2791,14 @@ func _team_check_expulsion(b: Dictionary) -> bool:
 		var rels: Dictionary = ((bots[oid] as Dictionary).get("_mem", {}) as Dictionary).get("relationships", {})
 		var rel = rels.get("bot_%d" % my_id)
 		if rel is Dictionary and int((rel as Dictionary).get("attacked", 0)) >= 3:
-			_team_expel(b)
+			_team_expel(b, "traicion")
 			return true
+	if int(_ensure_bot_memory(my_id, b.get("cfg", {})).get("team_danger_n", 0)) >= 4:
+		_team_expel(b, "peligro")
+		return true
 	return false
 
-func _team_expel(b: Dictionary) -> void:
+func _team_expel(b: Dictionary, reason: String = "traicion") -> void:
 	var my_id := int(b["bot_id"])
 	var mate_ids := _bot_team_ids(b) # captura antes de soltar la alianza
 	b["team_leader_id"] = 0
@@ -2790,7 +2831,8 @@ func _team_expel(b: Dictionary) -> void:
 			orels[ok] = or_
 			_ensure_bot_memory(oid, ob.get("cfg", {}))["relationships"] = orels
 	_ensure_bot_memory(my_id, b.get("cfg", {}))["relationships"] = my_rels
-	record_bot_event(my_id, "team_expelled", "bot_%d" % int(mate_ids[0] if mate_ids.size() > 0 else 0), "team", proxy.global_position, "expulsado del equipo: hostil")
+	record_bot_event(my_id, "team_expelled", "bot_%d" % int(mate_ids[0] if mate_ids.size() > 0 else 0), "team", proxy.global_position,
+		"expulsado del equipo (%s): hostil" % reason)
 
 # True solo si el bot esta dentro de un refugio REALMENTE construido (el dict
 # del edificio sigue existiendo), no solo parado en su solar.
@@ -4922,6 +4964,7 @@ func _bot_social_update(b: Dictionary) -> void:
 			b["follow_mode"] = "follow"
 			b["sense_t"] = 0.0
 			b["_meet_id"] = 0
+			_ensure_bot_memory(my_id, b.get("cfg", {}))["team_danger_n"] = 0 # hoja limpia en el nuevo equipo
 			var tn := str((bots.get(best_target, {}) as Dictionary).get("name", str(best_target)))
 			record_bot_event(my_id, "team_join", "bot_%d" % best_target, _poi_kind_near(proxy.global_position), proxy.global_position, "sigue a " + tn)
 			_record_milestone(my_id, "first_team")
@@ -11131,6 +11174,7 @@ func get_full_web_status() -> Dictionary:
 		# panel web (JSON-safe: solo strings, ints y arrays).
 		snap["team_role"] = _bot_team_role(b)
 		snap["member_role"] = _bot_member_role(b)
+		snap["team_danger"] = int(_ensure_bot_memory(int(bid), b.get("cfg", {})).get("team_danger_n", 0))
 		var mates: Array = []
 		for tid in _bot_team_ids(b):
 			if tid != int(bid):

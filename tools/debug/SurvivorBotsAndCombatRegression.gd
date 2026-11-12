@@ -5033,8 +5033,46 @@ func run() -> void:
 	b_nt["_truce_t"] = 0.0
 	check(mgr._find_combat_foe(b_nt) == p_ld,
 		"10J5w5: El expulsado ataca a su ex-lider pese a compartir faccion hostile")
-	# w4: reincorporacion bloqueada — sin el rencor la puerta civil le habria dejado.
-	# (rel trust=-1.0 + hostility=1.0 => mutual<form_trust y civil=false)
+	# w4: peligro traido al grupo — sin agresiones: basta llegar huyendo junto
+	# al lider repetidas veces para ser expulsado.
+	var save_dg_nt: Variant = (b_nt["_mem"] as Dictionary).get("team_danger_n", 0)
+	(b_nt["_mem"] as Dictionary)["team_danger_n"] = 0
+	b_nt["team_leader_id"] = 901
+	b_nt["_team_danger_ms"] = -120000
+	b_nt["flee_until"] = 10.0
+	b_nt["hide_timer"] = 0.0
+	b_nt["aggro_target"] = null
+	b_nt["_s_predator"] = null
+	b_ld["flee_until"] = 0.0
+	b_ld["hide_timer"] = 0.0
+	b_ld["aggro_target"] = null
+	b_ld["_s_predator"] = null
+	p_nt.global_position = Vector3(306.0, 0.4, 300.0)
+	mgr._team_danger_tick(b_nt)
+	check(int((b_nt["_mem"] as Dictionary).get("team_danger_n", 0)) == 1,
+		"10J5w6: Llegar huyendo junto al lider sano cuenta como poner en peligro al grupo")
+	b_nt["_team_danger_ms"] = -120000
+	b_ld["flee_until"] = 10.0
+	mgr._team_danger_tick(b_nt)
+	check(int((b_nt["_mem"] as Dictionary).get("team_danger_n", 0)) == 1,
+		"10J5w7: Si el lider ya esta amenazado el incidente no cuenta contra el miembro")
+	b_ld["flee_until"] = 0.0
+	b_nt["_team_danger_ms"] = -120000
+	p_nt.global_position = Vector3(400.0, 0.4, 300.0)
+	mgr._team_danger_tick(b_nt)
+	check(int((b_nt["_mem"] as Dictionary).get("team_danger_n", 0)) == 1,
+		"10J5w8: Huyendo lejos del lider no cuenta — el peligro no llega al grupo")
+	# La expulsion por peligro no exige agresiones: rel limpia de ataques.
+	var rel_clean := mgr.get_bot_relationship(901, nt_key_w)
+	rel_clean["attacked"] = 0
+	rel_clean["hostility"] = 0.0
+	(b_nt["_mem"] as Dictionary)["team_danger_n"] = 4
+	mgr._sync_team_base(b_nt)
+	check(int(b_nt.get("team_leader_id", -1)) == 0 and str(b_nt.get("faction", "")) == "hostile",
+		"10J5w9: 4 incidentes de peligro bastan para la expulsion sin agresiones")
+	(b_nt["_mem"] as Dictionary)["team_danger_n"] = save_dg_nt
+	b_nt["flee_until"] = 0.0
+	b_nt["_team_danger_ms"] = -120000
 	# Restaurar.
 	p_nt.set_meta("saved_inventory", save_inv_nt)
 	p_nt.global_position = save_pos_ntw

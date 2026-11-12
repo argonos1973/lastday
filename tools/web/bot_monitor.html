@@ -435,6 +435,7 @@ function renderSummary(data) {
         if (b.team_role === "leader") t = `<span class="badge ok">👑 líder</span> ${esc(mates)}`;
         else if (b.team_role === "member") t = `<span class="badge info">miembro</span>${roleLbl ? ` <span class="badge ok">${roleLbl}</span>` : ""} con ${esc(mates)}`;
         else t = `<span style="color:var(--muted)">solo</span>`;
+        if (b.team_danger > 0 && b.team_role === "member") t += ` <span class="badge" style="color:var(--danger)">⚠️ peligro ×${b.team_danger}</span>`;
         const mt = b.meet || {};
         if (mt.target) t += `<br/><span style="color:var(--accent)">🔎 busca a ${esc(mt.target)}${mt.dist >= 0 ? ` (${mt.dist} m)` : ""}</span>`;
         const amb = b.ambush || {};
@@ -889,13 +890,14 @@ function renderBots(data) {
         const farm = b.farm || {};
         const mt = b.meet || {};
         const hasTeam = b.team_role === "leader" || b.team_role === "member";
-        if (!hasTeam && !amb.target && !(farm.plots > 0) && !mt.target) return "";
+        if (!hasTeam && !amb.target && !(farm.plots > 0) && !mt.target && !(b.team_danger > 0)) return "";
         const roleName = {lider: "👑 Líder", scout: "🧭 Explorador", soldier: "🛡️ Soldado", forager: "🎒 Proveedor"}[b.member_role] || "";
         return `<div class="section-label">Equipo, Emboscada y Huerto</div>
         <div class="decision-box" style="border-left-color:${col}">
           ${hasTeam ? `<div class="meta-line">${b.team_role === "leader" ? "👑 <b>Líder</b> de:" : `🤝 <b>Miembro</b>${roleName ? ` — rol <b>${roleName}</b>` : ""}, sigue a:`} ${mates}</div>` : `<div class="meta-line" style="color:var(--muted)">Sin equipo — supervivencia en solitario</div>`}
           ${mt.target ? `<div class="meta-line">🔎 <b>Reagrupándose:</b> viaja a buscar a <b>${esc(mt.target)}</b>${mt.dist >= 0 ? ` a ${mt.dist} m` : ""}</div>` : ""}
           ${amb.target ? `<div class="meta-line" style="color:var(--danger)">🗡 <b>Emboscada en curso:</b> acechando a <b>${esc(amb.target)}</b>${amb.dist >= 0 ? ` a ${amb.dist} m` : ""} (${amb.t || 0}s de acecho)</div>` : ""}
+          ${b.team_danger > 0 && b.team_role === "member" ? `<div class="meta-line" style="color:var(--danger)">⚠️ <b>Peligro traído al grupo:</b> ×${b.team_danger} — a ${4 - b.team_danger} de la expulsión</div>` : ""}
           ${farm.plots > 0 ? `<div class="meta-line">🌱 <b>Huerto:</b> ${farm.plots} bancal${farm.plots > 1 ? "es" : ""} · ${farm.ready} listo${farm.ready === 1 ? "" : "s"} para cosechar</div>` : ""}
         </div>`;
       })()}
