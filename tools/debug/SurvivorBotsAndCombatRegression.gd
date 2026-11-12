@@ -4990,6 +4990,63 @@ func run() -> void:
 	b_ld["shelter_pos"] = Vector3.INF
 	f_lead.queue_free()
 
+	# 10J5w: traicion reiterada — un miembro que agrede 3+ veces a alguien del
+	# equipo es expulsado, pasa a hostil y la hostilidad mutua rompe la tregua
+	# de faccion (se atacan aunque ambos sean 'hostile').
+	var save_f_nt := str(b_nt.get("faction", ""))
+	var save_f_ld := str(b_ld.get("faction", ""))
+	var rels_nt_w: Dictionary = ((b_nt["_mem"] as Dictionary).get("relationships", {}) as Dictionary).duplicate(true)
+	var rels_ld_w: Dictionary = ((b_ld["_mem"] as Dictionary).get("relationships", {}) as Dictionary).duplicate(true)
+	var save_pos_ntw := p_nt.global_position
+	var save_pos_ldw := p_ld.global_position
+	var save_pos_903w: Vector3 = (mgr.bots[903] as Dictionary)["proxy"].global_position
+	var save_ppos_w: Vector3 = world.player.global_position
+	# w1: dos agresiones no bastan — el miembro sigue en el equipo.
+	b_nt["team_leader_id"] = 901
+	var nt_key_w := "bot_%d" % int(b_nt["bot_id"])
+	for i in 2:
+		mgr.record_social_event(901, nt_key_w, str(b_nt.get("name", nt_key_w)), "attack", 0.5, "hit_test")
+	mgr._sync_team_base(b_nt)
+	check(int(b_nt.get("team_leader_id", 0)) == 901,
+		"10J5w1: Con 2 agresiones el miembro NO es expulsado aun")
+	# w2: la tercera agresion lo echa — hostil, solo y con rencor mutuo.
+	mgr.record_social_event(901, nt_key_w, str(b_nt.get("name", nt_key_w)), "attack", 0.5, "hit_test")
+	mgr._sync_team_base(b_nt)
+	var rel_nt_vs_ld := mgr.get_bot_relationship(int(b_nt["bot_id"]), "bot_901")
+	var rel_ld_vs_nt := mgr.get_bot_relationship(901, nt_key_w)
+	check(int(b_nt.get("team_leader_id", -1)) == 0 and str(b_nt.get("faction", "")) == "hostile"
+		and str(p_nt.get_meta("bot_faction", "")) == "hostile",
+		"10J5w2: A la 3a agresion es expulsado y pasa a faccion hostil")
+	check(float(rel_nt_vs_ld.get("hostility", 0.0)) >= 0.99 and float(rel_nt_vs_ld.get("trust", 0.0)) < 0.0,
+		"10J5w3: El expulsado odia a su antiguo grupo (ataca a sus ex-compañeros)")
+	check(float(rel_ld_vs_nt.get("hostility", 0.0)) >= 0.99 and float(rel_ld_vs_nt.get("trust", 0.0)) < 0.0,
+		"10J5w4: El grupo le devuelve la hostilidad al expulsado")
+	# w3: la hostilidad rompe la tregua de faccion — dos 'hostile' con rencor se atacan.
+	mgr._set_bot_faction(b_ld, "hostile")
+	p_nt.set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 10.0, "durability": 100.0, "max_durability": 100.0}])
+	p_nt.global_position = Vector3(300.0, 0.4, 300.0)
+	p_ld.global_position = Vector3(305.0, 0.4, 300.0)
+	(mgr.bots[903] as Dictionary)["proxy"].global_position = Vector3(4000.0, 0.4, 4000.0)
+	world.player.global_position = Vector3(5000.0, 0.4, 5000.0)
+	b_nt["aggro_target"] = null
+	b_nt["_truce_peer"] = 0
+	b_nt["_truce_t"] = 0.0
+	check(mgr._find_combat_foe(b_nt) == p_ld,
+		"10J5w5: El expulsado ataca a su ex-lider pese a compartir faccion hostile")
+	# w4: reincorporacion bloqueada — sin el rencor la puerta civil le habria dejado.
+	# (rel trust=-1.0 + hostility=1.0 => mutual<form_trust y civil=false)
+	# Restaurar.
+	p_nt.set_meta("saved_inventory", save_inv_nt)
+	p_nt.global_position = save_pos_ntw
+	p_ld.global_position = save_pos_ldw
+	(mgr.bots[903] as Dictionary)["proxy"].global_position = save_pos_903w
+	world.player.global_position = save_ppos_w
+	(b_nt["_mem"] as Dictionary)["relationships"] = rels_nt_w
+	(b_ld["_mem"] as Dictionary)["relationships"] = rels_ld_w
+	mgr._set_bot_faction(b_nt, save_f_nt)
+	mgr._set_bot_faction(b_ld, save_f_ld)
+	b_nt["team_leader_id"] = save_lid_nt
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()

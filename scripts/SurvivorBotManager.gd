@@ -2697,6 +2697,8 @@ func _sync_team_base(b: Dictionary) -> void:
 	var my_id := int(b.get("bot_id", 0))
 	var lid := int(b.get("team_leader_id", 0))
 	var sid := str(b.get("shelter_id", ""))
+	if lid > 0 and lid != my_id and _team_check_expulsion(b):
+		return
 	if lid > 0 and lid != my_id:
 		if _shelter_owner_id(sid) == my_id:
 			_team_dismantle_own_base(b)
@@ -2738,6 +2740,57 @@ func _team_dismantle_own_base(b: Dictionary) -> void:
 	if mm is Dictionary and (mm as Dictionary).has("shelter"):
 		(mm as Dictionary)["shelter"] = {}
 	record_bot_event(int(b["bot_id"]), "team_base_merge", sid, "shelter", proxy.global_position, "desmonta su refugio: la base pasa a ser la del lider")
+
+# Un miembro que pone en peligro al grupo demasiadas veces (3+ agresiones
+# registradas por cualquier compañero, contando al lider) es expulsado:
+# sale del equipo, pasa a faccion hostil, vive solo y los ex-compañeros le
+# guardan hostilidad maxima — se atacan mutuamente al cruzarse.
+func _team_check_expulsion(b: Dictionary) -> bool:
+	var my_id := int(b["bot_id"])
+	for oid in _bot_team_ids(b):
+		if oid == my_id or not bots.has(oid):
+			continue
+		var rels: Dictionary = ((bots[oid] as Dictionary).get("_mem", {}) as Dictionary).get("relationships", {})
+		var rel = rels.get("bot_%d" % my_id)
+		if rel is Dictionary and int((rel as Dictionary).get("attacked", 0)) >= 3:
+			_team_expel(b)
+			return true
+	return false
+
+func _team_expel(b: Dictionary) -> void:
+	var my_id := int(b["bot_id"])
+	var mate_ids := _bot_team_ids(b) # captura antes de soltar la alianza
+	b["team_leader_id"] = 0
+	var proxy: Node3D = b["proxy"]
+	proxy.set_meta("team_leader_id", 0)
+	_set_bot_faction(b, "hostile")
+	var now_ms := Time.get_ticks_msec()
+	var my_rels: Dictionary = _ensure_bot_memory(my_id, b.get("cfg", {})).get("relationships", {})
+	for oid in mate_ids:
+		if oid == my_id:
+			continue
+		# El expulsado odia a su antiguo grupo: los ataca al verlos.
+		var k := "bot_%d" % oid
+		var r: Dictionary = my_rels.get(k, {"id": k, "name": str((bots.get(oid, {}) as Dictionary).get("name", k)), "trust": 0.0, "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0})
+		r["trust"] = -1.0
+		r["hostility"] = 1.0
+		r["fear"] = 0.0
+		r["scar_t"] = now_ms
+		my_rels[k] = r
+		# Y el grupo le devuelve la misma hostilidad: fuera del equipo es un enemigo mas.
+		if bots.has(oid):
+			var ob: Dictionary = bots[oid]
+			var orels: Dictionary = _ensure_bot_memory(oid, ob.get("cfg", {})).get("relationships", {})
+			var ok := "bot_%d" % my_id
+			var or_: Dictionary = orels.get(ok, {"id": ok, "name": str(b.get("name", ok)), "trust": 0.0, "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0})
+			or_["trust"] = -1.0
+			or_["hostility"] = 1.0
+			or_["fear"] = 0.0
+			or_["scar_t"] = now_ms
+			orels[ok] = or_
+			_ensure_bot_memory(oid, ob.get("cfg", {}))["relationships"] = orels
+	_ensure_bot_memory(my_id, b.get("cfg", {}))["relationships"] = my_rels
+	record_bot_event(my_id, "team_expelled", "bot_%d" % int(mate_ids[0] if mate_ids.size() > 0 else 0), "team", proxy.global_position, "expulsado del equipo: hostil")
 
 # True solo si el bot esta dentro de un refugio REALMENTE construido (el dict
 # del edificio sigue existiendo), no solo parado en su solar.
@@ -3447,7 +3500,11 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			if bool(p.get_meta("proxy_dead", false)) or not bool(p.get_meta("has_real_pos", false)):
 				continue
 			if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
-				continue
+				# Ex-compañero con rencor maximo (p.ej. expulsado por traicion o el
+				# grupo contra el): la hostilidad personal rompe la tregua de faccion.
+				var pid_h := _peer_id_for_actor(p as Node3D)
+				if pid_h <= 0 or float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid_h)).get("hostility", 0.0)) < 0.9:
+					continue
 			var p3 := p as Node3D
 			var pid3 := _peer_id_for_actor(p3)
 			# Tregua vigente: el bot no retoma la ofensiva contra quien la acordo.
