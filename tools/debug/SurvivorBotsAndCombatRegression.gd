@@ -56,6 +56,14 @@ class TestPlayer extends "res://scripts/PlayerController.gd":
 class StubDeadPuppet extends Node3D:
 	var is_dead := false
 
+class StubRifleShooter extends Node3D:
+	var shot_calls := 0
+	var last_origin := Vector3.ZERO
+	var _puppet_held := "Rifle francotirador"
+	func play_rifle_shot_remote(o: Vector3, _d: Vector3, _w: Vector3 = Vector3.ZERO) -> void:
+		shot_calls += 1
+		last_origin = o
+
 class TestWorld extends "res://scripts/Main.gd":
 	var water_rect := Rect2(100000.0, 100000.0, 4.0, 4.0) # lejos por defecto
 	var water_depth := 1.0
@@ -5196,6 +5204,42 @@ func run() -> void:
 	mgr._set_bot_faction(b_nt, save_f_nt)
 	mgr._set_bot_faction(b_ld, save_f_ld)
 	b_nt["team_leader_id"] = save_lid_nt
+
+	# --- 10R) Chasquido de bala entrante: el tiro suena antes que el grito ---
+	# El RPC reliable player_shot_rifle llega antes que apply_damage_to_client;
+	# si el rayo pasa a <7 m del jugador, el chasquido local debe activarse en
+	# ese instante — el estampido 3D del tirador llega atenuado a distancia.
+	var save_ppos_r: Vector3 = world.player.global_position
+	var stub_shooter := StubRifleShooter.new()
+	world.add_child(stub_shooter)
+	world.remote_players[901] = stub_shooter
+	world.player.global_position = Vector3(100.0, 0.4, 100.0)
+	var shot_origin := Vector3(0.0, 1.4, 0.0)
+	var shot_dir: Vector3 = ((world.player.global_position + Vector3(0.0, 1.5, 0.0)) - shot_origin).normalized()
+	world._incoming_shot_last = -10.0
+	world._net_player_shot_rifle(901, shot_origin, shot_dir)
+	check(stub_shooter.shot_calls == 1 and stub_shooter.last_origin.is_equal_approx(shot_origin),
+		"10R1: el puppet del tirador reproduce su disparo (calls=%d)" % stub_shooter.shot_calls)
+	check(world._incoming_shot_player != null and world._incoming_shot_player.playing,
+		"10R2: trayectoria hacia el jugador -> chasquido local antes del dano")
+	var first_shot_last := float(world._incoming_shot_last)
+	# Segundo tiro inmediato: el cooldown evita reiniciar el clip a mitad.
+	world._net_player_shot_rifle(901, shot_origin, shot_dir)
+	check(float(world._incoming_shot_last) == first_shot_last,
+		"10R3: cooldown del chasquido (rafagas no reinician el clip)")
+	# Tiro que pasa lejos del jugador: sin chasquido local.
+	world._incoming_shot_last = -10.0
+	var miss_dir := (Vector3(-50.0, 1.5, -50.0) - shot_origin).normalized()
+	world._net_player_shot_rifle(901, shot_origin, miss_dir)
+	check(float(world._incoming_shot_last) == -10.0,
+		"10R4: tiro alejado del jugador no dispara el chasquido local")
+	# El propio jugador al disparar no oye chasquido entrante de su tiro.
+	world._net_player_shot_rifle(1, shot_origin, shot_dir)
+	check(float(world._incoming_shot_last) == -10.0,
+		"10R5: el disparo propio no genera chasquido entrante")
+	world.remote_players.erase(901)
+	stub_shooter.queue_free()
+	world.player.global_position = save_ppos_r
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")

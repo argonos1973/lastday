@@ -3947,14 +3947,32 @@ func _is_shooter_valid(shooter_id: int) -> bool:
 	var sp: Node3D = server_proxies.get(shooter_id)
 	return sp != null and not sp.get_meta("proxy_dead", false)
 
+var _incoming_shot_player: AudioStreamPlayer3D = null
+var _incoming_shot_last := -10.0
+
 func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
+	var ndir := dir.normalized() if dir.length_squared() > 0.001 else Vector3.FORWARD
+	var shooter_node: Node3D = null
 	if remote_players.has(shooter_id):
 		var rp: Node3D = remote_players[shooter_id]
 		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
 			rp.play_rifle_shot_remote(origin, dir, wind)
+			shooter_node = rp
+	# Balas que pasan cerca del jugador local: el chasquido supersonico suena en
+	# el punto mas proximo de la trayectoria aunque el tirador este a 200 m. Este
+	# RPC reliable siempre llega antes que el de dano, asi el tiro se oye antes
+	# que el grito de dolor — el estampido 3D del tirador llegaba atenuado y la
+	# reaccion local lo tapaba.
+	if player != null and is_instance_valid(player) and (net == null or shooter_id != net.get_my_id()):
+		var ear: Vector3 = player.global_position + Vector3(0.0, 1.5, 0.0)
+		var to_ear: Vector3 = ear - origin
+		var along := ndir.dot(to_ear)
+		if along > 0.0 and along < PlayerControllerScript.RIFLE_RANGE:
+			var closest := origin + ndir * along
+			if closest.distance_to(ear) < 7.0:
+				_play_incoming_shot(closest, shooter_node)
 	# Server and remote clients alert all nearby wildlife so wolves, deer, foxes,
 	# bears and birds flee running when they hear a gunshot or bullet impact zone.
-	var ndir := dir.normalized() if dir.length_squared() > 0.001 else Vector3.FORWARD
 	var mid_impact := origin + ndir * 65.0
 	for w in get_tree().get_nodes_in_group("wildlife"):
 		if w == null or not is_instance_valid(w):
@@ -3965,6 +3983,31 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 				w.flee_from_gunshot(mid_impact, 75.0)
 	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
 		survivor_bot_mgr.notify_sound_event(shooter_id, origin, "gunshot", 220.0)
+
+# Chasquido local del tiro que pasa pegado al jugador: direccional (se posiciona
+# en el punto mas proximo del rayo al oido) y distinto del estampido 3D del
+# tirador — este sigue sonando atenuado a distancia como referencia posicional.
+func _play_incoming_shot(at_pos: Vector3, shooter: Node = null) -> void:
+	var is_m4 := shooter != null and is_instance_valid(shooter) and str(shooter.get("_puppet_held")) == PlayerControllerScript.M4_NAME
+	var now := Time.get_ticks_msec() / 1000.0
+	# El clip del M4 ya encadena la rafaga: no reiniciarlo mientras suene.
+	if now - _incoming_shot_last < (1.15 if is_m4 else 0.55):
+		return
+	_incoming_shot_last = now
+	var path := "res://assets/audio/m4_disparo.mp3" if is_m4 else "res://assets/audio/disparo.wav"
+	if not ResourceLoader.exists(path):
+		return
+	if _incoming_shot_player == null:
+		_incoming_shot_player = AudioStreamPlayer3D.new()
+		_incoming_shot_player.name = "IncomingShot"
+		_incoming_shot_player.unit_size = 10.0
+		_incoming_shot_player.max_distance = 80.0
+		add_child(_incoming_shot_player)
+	_incoming_shot_player.global_position = at_pos
+	_incoming_shot_player.stream = load(path)
+	_incoming_shot_player.volume_db = -1.0
+	_incoming_shot_player.pitch_scale = randf_range(1.05, 1.2)
+	_incoming_shot_player.play()
 
 # El servidor dedicado no instancia nodos Door — deriva la posición de la
 # puerta desde la tabla _HOUSE_DOOR_LAYOUT (bisagra del marco).

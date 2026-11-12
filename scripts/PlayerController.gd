@@ -14792,9 +14792,9 @@ func _make_action_sound_player(player_name: String, unit_size: float = 6.0, max_
 
 func _play_shoot_sound(is_m4 := false) -> void:
 	if _shoot_audio_player == null:
-		# A gunshot carries far: full volume inside ~30 m, still audible at
+		# A gunshot carries far: full volume inside ~55 m, still audible at
 		# the rifle's own max reach (320 m, matches the server reach check).
-		_shoot_audio_player = _make_action_sound_player("ShootSound", 30.0, 320.0)
+		_shoot_audio_player = _make_action_sound_player("ShootSound", 55.0, 320.0)
 	var use_m4 := is_m4 or _held_is_m4()
 	var stream := _load_audio_stream(M4_SHOOT_SOUND if use_m4 else "res://assets/audio/disparo.wav")
 	if stream == null:
