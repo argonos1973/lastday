@@ -134,11 +134,12 @@ func run() -> void:
 	if hip_fire:
 		current_scene = actor
 		actor._spawn_muzzle_flash(Vector3(99, 99, 99), Vector3.BACK)
-		var flash := actor._rifle_muzzle.get_node_or_null("MuzzleFlash") as Node3D
+		var flash := actor.get_node_or_null("MuzzleFlash") as Node3D
 		if flash == null or flash.global_position.distance_to(actor._rifle_muzzle.global_position) > 0.001:
 			errors += 1
 			push_error("Flash must originate at visible muzzle, not collision-adjusted bullet origin")
 		actor.rotation.y += 0.5
+		if flash != null: flash._process(0.0)
 		if flash != null and flash.global_position.distance_to(actor._rifle_muzzle.global_position) > 0.001:
 			errors += 1
 			push_error("Flash must follow barrel during recoil/turn")

@@ -14501,13 +14501,16 @@ func _prepare_blood_effects() -> Node3D:
 	return pool
 
 func prepare_combat_effects() -> void:
+	_prepare_muzzle_flash().warm_up()
 	var pool := _prepare_blood_effects()
 	if pool != null: pool.warm_up()
 	var impacts := _prepare_impact_effects()
 	if impacts != null: impacts.warm_up()
 	_get_bullet_hole_texture()
+	_get_bullet_hole_mesh_pair(false)
+	_get_bullet_hole_mesh_pair(true)
 	# Small shared audio assets are decoded during loading, not the first bite.
-	for path in ["res://assets/audio/recibirdisparo.mp3", "res://assets/audio/punch_impact.wav",
+	for path in [M4_SHOOT_SOUND, "res://assets/audio/disparo.wav", "res://assets/audio/punch_swing.wav", "res://assets/audio/recibirdisparo.mp3", "res://assets/audio/punch_impact.wav",
 		"res://assets/external/audio/downloaded/pain1.wav", "res://assets/external/audio/downloaded/pain2.wav",
 		"res://assets/external/audio/downloaded/pain3.wav"]:
 		_load_audio_stream(path)
@@ -14649,6 +14652,38 @@ func _get_bullet_hole_texture() -> Texture2D:
 	_bullet_hole_texture = ImageTexture.create_from_image(img)
 	return _bullet_hole_texture
 
+static var _bullet_hole_mesh_pairs: Dictionary = {}
+
+func _get_bullet_hole_mesh_pair(is_ground: bool) -> Array:
+	if _bullet_hole_mesh_pairs.has(is_ground):
+		return _bullet_hole_mesh_pairs[is_ground]
+	var quad := QuadMesh.new()
+	var hole_size := 0.20 if is_ground else 0.16
+	quad.size = Vector2(hole_size, hole_size)
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = _get_bullet_hole_texture()
+	m.albedo_color = Color.WHITE
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.render_priority = 4
+	quad.material = m
+	# Núcleo volumétrico achatado: garantiza que en troncos curvos de árboles,
+	# rocas y terreno con desnivel o hierba la marca nunca quede enterrada.
+	var core_sphere := SphereMesh.new()
+	core_sphere.radius = hole_size * 0.28
+	core_sphere.height = hole_size * 0.22
+	core_sphere.radial_segments = 10
+	core_sphere.rings = 5
+	var core_mat := StandardMaterial3D.new()
+	core_mat.albedo_color = Color(0.05, 0.04, 0.035, 0.96)
+	core_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	core_mat.render_priority = 5
+	core_sphere.material = core_mat
+	var pair: Array = [quad, core_sphere]
+	_bullet_hole_mesh_pairs[is_ground] = pair
+	return pair
+
 func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = null) -> void:
 	var scene := get_tree().current_scene
 	if scene == null:
@@ -14671,34 +14706,12 @@ func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = 
 			can_parent_to_collider = true
 	var mi := MeshInstance3D.new()
 	mi.name = "BulletHole"
-	var quad := QuadMesh.new()
-	var hole_size := 0.20 if is_ground else 0.16
-	quad.size = Vector2(hole_size, hole_size)
-	var m := StandardMaterial3D.new()
-	m.albedo_texture = _get_bullet_hole_texture()
-	m.albedo_color = Color.WHITE
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	m.render_priority = 4
-	quad.material = m
-	mi.mesh = quad
+	var pair := _get_bullet_hole_mesh_pair(is_ground)
+	mi.mesh = pair[0]
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	# Núcleo volumétrico achatado: garantiza que en troncos curvos de árboles,
-	# rocas y terreno con desnivel o hierba la marca nunca quede enterrada.
 	var core := MeshInstance3D.new()
 	core.name = "BulletHoleCore"
-	var core_sphere := SphereMesh.new()
-	core_sphere.radius = hole_size * 0.28
-	core_sphere.height = hole_size * 0.22
-	core_sphere.radial_segments = 10
-	core_sphere.rings = 5
-	var core_mat := StandardMaterial3D.new()
-	core_mat.albedo_color = Color(0.05, 0.04, 0.035, 0.96)
-	core_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	core_mat.render_priority = 5
-	core_sphere.material = core_mat
-	core.mesh = core_sphere
+	core.mesh = pair[1]
 	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.add_child(core)
 	if can_parent_to_collider:
@@ -14716,65 +14729,19 @@ func _spawn_bullet_hole_decal(hit_pos: Vector3, hit_normal: Vector3, collider = 
 		if is_instance_valid(old):
 			old.queue_free()
 
+func _prepare_muzzle_flash() -> Node3D:
+	var flash := get_node_or_null("MuzzleFlash")
+	if flash == null:
+		flash = preload("res://scripts/CombatMuzzleFlash.gd").new()
+		flash.name = "MuzzleFlash"
+		add_child(flash)
+	return flash
+
 func _spawn_muzzle_flash(at_pos: Vector3, dir: Vector3) -> void:
-	var scene := get_tree().current_scene
-	if scene == null:
+	if get_tree().current_scene == null:
 		return
-	var flash_root := Node3D.new()
-	flash_root.name = "MuzzleFlash"
-	var flash_direction := dir
-	if is_instance_valid(_rifle_muzzle):
-		_rifle_muzzle.add_child(flash_root)
-		flash_root.global_transform = Transform3D(Basis.IDENTITY, _rifle_muzzle.global_position)
-		flash_direction = -_rifle_muzzle.global_basis.z.normalized()
-	else:
-		scene.add_child(flash_root)
-		flash_root.global_position = at_pos
-	var light := OmniLight3D.new()
-	light.light_color = Color(1.0, 0.72, 0.3)
-	light.light_energy = 5.0
-	light.omni_range = 7.0
-	light.omni_attenuation = 1.5
-	flash_root.add_child(light)
-	var particles := GPUParticles3D.new()
-	particles.amount = 10
-	particles.lifetime = 0.09
-	particles.one_shot = true
-	particles.explosiveness = 1.0
-	var mat := ParticleProcessMaterial.new()
-	mat.direction = flash_direction
-	mat.spread = 12.0
-	mat.initial_velocity_min = 6.0
-	mat.initial_velocity_max = 14.0
-	mat.gravity = Vector3.ZERO
-	mat.scale_min = 0.05
-	mat.scale_max = 0.12
-	mat.color = Color(1.0, 0.75, 0.3, 0.9)
-	particles.process_material = mat
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.1, 0.1)
-	var quad_mat := StandardMaterial3D.new()
-	quad_mat.albedo_color = Color(1.0, 0.72, 0.25, 0.9)
-	quad_mat.emission_enabled = true
-	quad_mat.emission = Color(1.0, 0.6, 0.2)
-	quad_mat.emission_energy_multiplier = 3.0
-	quad_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	quad_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	quad_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	quad.material = quad_mat
-	particles.draw_pass_1 = quad
-	flash_root.add_child(particles)
-	particles.emitting = true
-	var light_ref := weakref(light)
-	var flash_ref := weakref(flash_root)
-	get_tree().create_timer(0.15).timeout.connect(func():
-		var live_light = light_ref.get_ref()
-		if live_light != null:
-			live_light.light_energy = 0.0)
-	get_tree().create_timer(0.4).timeout.connect(func():
-		var live_flash = flash_ref.get_ref()
-		if live_flash != null:
-			live_flash.queue_free())
+	_prepare_muzzle_flash().burst(at_pos, dir, _rifle_muzzle)
+
 
 func _make_action_sound_player(player_name: String, unit_size: float = 6.0, max_distance: float = 45.0) -> Node:
 	var p: Node
@@ -14801,7 +14768,8 @@ func _play_shoot_sound(is_m4 := false) -> void:
 		return
 	if use_m4 and _shoot_audio_player.playing and _shoot_audio_player.stream == stream and _shoot_audio_player.get_playback_position() < 1.15:
 		return
-	_shoot_audio_player.stream = stream
+	if _shoot_audio_player.stream != stream:
+		_shoot_audio_player.stream = stream
 	_shoot_audio_player.volume_db = 3.0
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
@@ -15577,7 +15545,7 @@ func _load_wav_stream(path: String) -> AudioStream:
 		_audio_cache[path] = stream
 	return stream
 
-func _load_audio_stream(path: String) -> AudioStream:
+static func _load_audio_stream(path: String) -> AudioStream:
 	if _audio_cache.has(path):
 		return _audio_cache[path]
 	var stream: AudioStream = null

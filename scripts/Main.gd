@@ -3995,7 +3995,8 @@ func _play_incoming_shot(at_pos: Vector3, shooter: Node = null) -> void:
 		return
 	_incoming_shot_last = now
 	var path := "res://assets/audio/m4_disparo.mp3" if is_m4 else "res://assets/audio/disparo.wav"
-	if not ResourceLoader.exists(path):
+	var stream := PlayerControllerScript._load_audio_stream(path)
+	if stream == null:
 		return
 	if _incoming_shot_player == null:
 		_incoming_shot_player = AudioStreamPlayer3D.new()
@@ -4004,7 +4005,8 @@ func _play_incoming_shot(at_pos: Vector3, shooter: Node = null) -> void:
 		_incoming_shot_player.max_distance = 80.0
 		add_child(_incoming_shot_player)
 	_incoming_shot_player.global_position = at_pos
-	_incoming_shot_player.stream = load(path)
+	if _incoming_shot_player.stream != stream:
+		_incoming_shot_player.stream = stream
 	_incoming_shot_player.volume_db = -1.0
 	_incoming_shot_player.pitch_scale = randf_range(1.05, 1.2)
 	_incoming_shot_player.play()

@@ -3104,6 +3104,8 @@ func _find_huntable_prey(b: Dictionary, max_dist: float) -> Node3D:
 		var at := str(w.get("animal_type"))
 		if at != "deer" and at != "fox":
 			continue
+		if _is_goal_blacklisted(b, w.global_position):
+			continue
 		var d := proxy.global_position.distance_to((w as Node3D).global_position)
 		if d < best_d:
 			best_d = d
@@ -5266,7 +5268,12 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	var abort := func(cd: float) -> bool:
 		b["_ambush"] = {}
 		b["_ambush_cd_until"] = now_s + cd
+		b["crouching"] = false
+		proxy.set_meta("crouching", false)
 		return false
+	var aggressor = b.get("aggro_target")
+	if is_instance_valid(aggressor) and not bool(aggressor.get_meta("proxy_dead", false)) and aggressor.get("is_dead") != true:
+		return abort.call(60.0)
 	var target := _find_actor_by_peer_id(int(amb.get("target_id", 0)))
 	if target == null or not is_instance_valid(target) or bool(target.get_meta("proxy_dead", false)) or target.get("is_dead") == true:
 		return abort.call(70.0)
@@ -7253,6 +7260,11 @@ func _command_bot_wolf_against(b: Dictionary, target: Node3D) -> void:
 func _sensed_node(b: Dictionary, key: String) -> Node3D:
 	var n = b.get(key, null)
 	if n != null and is_instance_valid(n):
+		if n.is_queued_for_deletion():
+			return null
+		if key in ["_s_foe", "_s_predator", "_s_prey", "_s_tame_wolf"] and (n.get("is_dead") == true or n.get("_is_dead") == true or bool(n.get_meta("proxy_dead", false))):
+			b[key] = null
+			return null
 		return n as Node3D
 	return null
 
@@ -11884,6 +11896,8 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 			continue
 		if str(a.get("action_type")) != "eat_food" or claims.has(aid) or depleted.has(aid):
 			continue
+		if _is_goal_blacklisted(b, a.global_position):
+			continue
 		var d := proxy.global_position.distance_to(a.global_position)
 		if d < best_d:
 			best_d = d
@@ -11898,6 +11912,8 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 			if str(a.get("action_type")) != "pick_fruit" or claims.has(aid) or depleted.has(aid):
 				continue
 			if now < float(a.get_meta("fruit_ready_time", 0.0)):
+				continue
+			if _is_goal_blacklisted(b, a.global_position):
 				continue
 			var d2 := proxy.global_position.distance_to(a.global_position)
 			if d2 < best_d:
@@ -12450,6 +12466,8 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 	for aid in _cached_mat_ids:
 		var a = world.world_actions_by_id.get(aid)
 		if a == null or not is_instance_valid(a):
+			continue
+		if _is_goal_blacklisted(b, a.global_position):
 			continue
 		var atype := str(a.get("action_type"))
 		var serves := false
