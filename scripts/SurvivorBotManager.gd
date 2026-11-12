@@ -1319,6 +1319,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if _bot_should_wake(b, is_night):
 			b["sleeping"] = false
 			b["anim"] = "idle"
+			# Los buenos dias al despertar de dia — salvo que lo haya despertado
+			# una amenaza (dar los buenos dias con un lobo encima no tiene sentido).
+			if not is_night and _world_time_of_day() < 12.0 and b.get("aggro_target") == null \
+				and b.get("_s_predator") == null and b.get("_s_foe") == null:
+				_bot_say_farewell(b, "goodmorning")
 		else:
 			b["anim"] = "sleep"
 			b["sitting"] = false
@@ -1468,7 +1473,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var leader := _sensed_node(b, "_s_leader")
 	b["drink_giveup"] = maxf(0.0, float(b.get("drink_giveup", 0.0)) - delta)
 	var thirst_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
-	var thirsty_line := 32.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(18.0, float(thirst_lessons) * 6.0)
+	var thirsty_line := 35.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(18.0, float(thirst_lessons) * 6.0)
 	# Sed preventiva: quien ya se deshidrato una vez no pasa de largo junto
 	# a una fuente — con sed moderada y agua a tiro se desvia a beber y a
 	# rellenar la botella antes de que la necesidad apriete.
@@ -1762,11 +1767,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# clavado sentado en mitad del campo toda la noche — pero solo mientras
 	# pueda trabajar la luz: sin antorcha ni fogata propia no sale a explorar.
 	var has_night_light := bool(b["torch_lit"]) or _bot_has_item(proxy, "Antorcha")
-	var desperate_needs := (float(b["hunger"]) < 14.0 and not _bot_has_edible_food(proxy, true)) or (float(b["thirst"]) < 10.0 and not _bot_has_drink(proxy))
+	var desperate_needs := _bot_needs_food_or_water(b)
 	var has_built_sh := not str(b["shelter_id"]).is_empty()
 	var vst: SurvivalStats = b.get("vstats")
 	var night_needs_sleep: bool = is_night and ((vst != null and vst.sleep < 65.0) or (has_built_sh and (not has_night_light or not _bot_needs_outing(b))))
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light and not desperate_needs) or (not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light and not desperate_needs) or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -3079,7 +3084,7 @@ func _bot_should_hunt_prey(b: Dictionary) -> bool:
 	if _sensed_node(b, "_s_leader") != null:
 		return false
 	var hunger := float(b["hunger"])
-	if (_is_world_night() or _bot_is_exhausted(b) or _bot_is_freezing(b)) and hunger >= 24.0:
+	if (_is_world_night() or _bot_is_exhausted(b) or _bot_is_freezing(b)) and hunger >= 40.0:
 		return false
 	var starved_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("starved", 0))
 	var hunt_hunger_line := 62.0 + minf(15.0, float(starved_lessons) * 5.0)
@@ -5366,7 +5371,7 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 		"alliance":
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + 0.04, -1.0, 1.0), 0.001)
 			rel["hostility"] = snappedf(maxf(0.0, float(rel.get("hostility", 0.0)) - 0.03), 0.001)
-		"greet":
+		"greet", "goodnight", "goodmorning":
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + 0.02, -1.0, 1.0), 0.001)
 			rel["hostility"] = snappedf(maxf(0.0, float(rel.get("hostility", 0.0)) - 0.02), 0.001)
 		"threat":
@@ -5459,6 +5464,12 @@ func _chat_classify(text: String) -> String:
 	for kw in ["te mat", "te reviento", "muere", "te quito", "voy a por ti", "te voy a", "te espero", "entrega"]:
 		if t.contains(kw):
 			return "threat"
+	for kw in ["buenas noches", "que descanses", "a dormir", "voy a dormir", "me retiro", "me acuesto", "a la cama"]:
+		if t.contains(kw):
+			return "goodnight"
+	for kw in ["buenos dias", "buen dia", "que tengas buen dia", "buen despertar"]:
+		if t.contains(kw):
+			return "goodmorning"
 	for kw in ["hola", "buenas", "saludos", "que tal", "ey ", "ei ", "oye "]:
 		if t.contains(kw):
 			return "greet"
@@ -6901,6 +6912,14 @@ func _chat_fallback_line(b: Dictionary, kind: String, to_name: String, ctx: Stri
 			if float(pers.get("sociability", 0.5)) > 0.7:
 				return str(["Oye %s, ¿qué tal todo por ahí?" % nm, "Buenas %s, me alegro de ver a alguien con vida." % nm][randi() % 2])
 			return "Ey, %s." % nm
+		"goodnight":
+			return str(["Buenas noches, %s. Que descanses." % nm,
+				"Me retiro ya, %s. Buenas noches." % nm,
+				"Voy a dormir, %s. Buenas noches." % nm][randi() % 3])
+		"goodmorning":
+			return str(["Buenos días, %s." % nm,
+				"Ey, buenos días %s. ¿Dormiste bien?" % nm,
+				"Buen día, %s. Otro más que seguimos aquí." % nm][randi() % 3])
 		"help":
 			var threat := ctx if not ctx.is_empty() else "algo"
 			return str(["¡Tengo %s encima! ¡%s, ven rápido, estoy en %s!" % [threat, nm, _chat_zone_name(proxy.global_position)],
@@ -6954,6 +6973,10 @@ func _chat_fallback_reply(b: Dictionary, intent: String, nm: String) -> String:
 			return "Prefiero ir por mi cuenta." if (hostile or float(_get_bot_personality(b).get("distrust", 0.3)) > 0.6) else "Por mí vale, vamos juntos."
 		"greet":
 			return "Buenas, %s. ¿Todo bien?" % nm
+		"goodnight":
+			return "Buenas noches, %s. Descansa." % nm
+		"goodmorning":
+			return "Buenos días, %s." % nm
 		"threat":
 			return "Vale, tranquilo..." if float(_get_bot_personality(b).get("bravery", 0.5)) < 0.4 else "No me busques las cosquillas."
 	return "Dime, %s, te escucho." % nm
@@ -7041,7 +7064,7 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 			var plan: String = {"negotiate": "Vas a rogarle otra vez: lo necesitas de verdad", "steal": "Piensas quitarselo de su refugio sin que te vea", "attack": "Vas a obligarle a dartelo por la fuerza", "forage": "Te buscaras la vida por tu cuenta"}.get(dkind, "")
 			sit = "%s acaba de negarte %s que necesitabas. %s. Reacciona en una frase segun tu caracter y ese plan." % [to_name, dneed, plan]
 		"reply":
-			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "threat": "te amenaza"}.get(intent, "te habla")
+			var intent_txt: String = {"help": "te pide ayuda", "alliance": "te propone hacer equipo", "greet": "te saluda", "goodnight": "te da las buenas noches", "goodmorning": "te da los buenos días", "threat": "te amenaza"}.get(intent, "te habla")
 			sit = "%s %s. Dice: \"%s\". Responde hablando en voz alta, breve (1 frase), segun tu caracter y tu relacion con el." % [to_name, intent_txt, ctx]
 	var faction_desc := "bandido hostil y peligroso" if str(b.get("faction", "friendly")) == "hostile" else "superviviente pacifico, cooperativo y amable (nunca amenaces ni busques pelea salvo que te ataquen; si algo no se entiende, pregunta con naturalidad)"
 	var anti_repeat := ""
@@ -9003,6 +9026,59 @@ func _is_world_night() -> bool:
 		return tod < 6.2 or tod > 19.3
 	return false
 
+func _world_time_of_day() -> float:
+	if world != null and world.get("day_cycle") != null:
+		return float(world.day_cycle.get("time_of_day"))
+	return 12.0
+
+# Despedida ritual del ciclo de sueño: al acostarse de noche ("goodnight") o al
+# despertar de dia ("goodmorning") el bot saluda por chat a cada bot o jugador
+# cercano con el que no tiene mala relacion — una vez por pareja y por ciclo
+# (_gn_pairs/_gm_pairs), reseteadas al cerrarse el ciclo contrario.
+func _bot_say_farewell(b: Dictionary, kind: String) -> void:
+	var proxy: Node3D = b["proxy"]
+	if proxy == null:
+		return
+	var pairs_key := "_gn_pairs" if kind == "goodnight" else "_gm_pairs"
+	b["_gm_pairs" if kind == "goodnight" else "_gn_pairs"] = []
+	var done: Array = b.get(pairs_key, [])
+	var my_id := int(b["bot_id"])
+	for oid in bots.keys():
+		if int(oid) == my_id or int(oid) in done:
+			continue
+		var ob: Dictionary = bots[oid]
+		var op: Node3D = ob.get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		var rel := get_bot_relationship(my_id, "bot_%d" % oid)
+		if float(rel.get("hostility", 0.0)) > 0.4 or float(rel.get("fear", 0.0)) > 0.55:
+			continue
+		if proxy.global_position.distance_to(op.global_position) > BOT_CHAT_GREET_RANGE:
+			continue
+		var oname := str(ob.get("name", str(oid)))
+		_bot_chat_send(b, int(oid), oname, _chat_fallback_line(b, kind, oname), kind)
+		done.append(int(oid))
+	var net = world.get("net") if world != null else null
+	if net != null and "players" in net:
+		for pid in net.players.keys():
+			if int(pid) == int(net.get_my_id()) or is_bot_peer_id(int(pid)) or int(pid) in done:
+				continue
+			var pdata: Dictionary = net.players[pid]
+			if bool(pdata.get("is_ai_bot", false)) or bool(pdata.get("offline", false)):
+				continue
+			var rel := get_bot_relationship(my_id, _actor_persist_key(int(pid)))
+			if float(rel.get("hostility", 0.0)) > 0.4 or float(rel.get("fear", 0.0)) > 0.55:
+				continue
+			var pp := _find_actor_by_peer_id(int(pid))
+			if pp == null or not is_instance_valid(pp):
+				continue
+			if proxy.global_position.distance_to(pp.global_position) > BOT_CHAT_GREET_RANGE:
+				continue
+			var pname := str(pdata.get("char_name", pdata.get("name", "Jugador")))
+			_bot_chat_send(b, int(pid), pname, _chat_fallback_line(b, kind, pname), kind)
+			done.append(int(pid))
+	b[pairs_key] = done
+
 # Las ultimas horas de luz (~16.5-19.3): ventana en la que un superviviente
 # precavido ya junta el fuego y la luz que va a necesitar de noche.
 func _is_pre_night() -> bool:
@@ -9098,9 +9174,9 @@ func _bot_vital_break(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	if _bot_is_freezing(b) or _bot_is_exhausted(b):
 		return true
-	if float(b["thirst"]) < 30.0 and not _bot_has_drink(proxy):
+	if float(b["thirst"]) < 35.0 and not _bot_has_drink(proxy):
 		return true
-	if float(b["hunger"]) < 30.0 and not _bot_has_edible_food(proxy, true):
+	if float(b["hunger"]) < 40.0 and not _bot_has_edible_food(proxy, true):
 		return true
 	if float(b["health"]) < 45.0:
 		return true
@@ -9256,7 +9332,7 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# — dormir en el escondite gana a morir de pie por agotamiento (Kael
 	# murio asi: amenaza activa + sueño 0 y ni el colapso podia tumbarlo).
 	# El aggro en plena pelea sigue bloqueando: no se duerme peleando.
-	var collapse := st != null and not st.dead and st.sleep <= 4.0
+	var collapse := st != null and not st.dead and st.sleep <= 4.0 and float(b.get("hunger", 100.0)) >= 14.0 and float(b.get("thirst", 100.0)) >= 10.0
 	# Un bot reclutado en tu equipo no se duerme: te sigue dia y noche.
 	if bool(b.get("sleeping", false)) or (int(b.get("team_leader_id", 0)) > 0 and not is_bot_peer_id(int(b.get("team_leader_id", 0)))) or (float(b.get("hide_timer", 0.0)) > 0.0 and not collapse) or b.get("aggro_target") != null:
 		return false
@@ -9270,12 +9346,12 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	if not is_night and not exhausted and not _bot_wants_day_rest(b):
 		return false
 	# Colapso por agotamiento letal: con el sueno al borde de la muerte el
-	# cuerpo se apaga — se desploma dormido donde este, ignorando hambre, sed
-	# y temperatura. Mejor inconsciente que muerto de pie: un bot al que
+	# cuerpo se apaga — se desploma donde este si conserva reservas para
+	# una siesta breve, incluso con frio. Mejor inconsciente que muerto de pie: un bot al que
 	# estas puertas le niegan el suelo no recupera sleep NUNCA (sentado solo
 	# deja de gastar) y acaba muerto de agotamiento pese a estar descansando.
 	if not collapse:
-		if float(b["hunger"]) < 20.0 or float(b["thirst"]) < 16.0:
+		if _bot_needs_food_or_water(b):
 			return false
 		if st.body_temperature < 35.4 or st.body_temperature > 38.4:
 			return false
@@ -9286,7 +9362,17 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	b["crouching"] = false
 	b["prone"] = false
 	b["anim"] = "sleep"
+	# Las buenas noches a quienes hay cerca — un superviviente se despide al
+	# acostarse. El colapso letal no charla: el cuerpo se apaga, no se despide.
+	if is_night and not collapse:
+		_bot_say_farewell(b, "goodnight")
 	return true
+
+# Leave enough reserves for the trip to food/water, not just to stand up.
+# Shared by wake-up, bedtime and camp selection so a hungry bot cannot
+# wake and immediately return to sleep while resources are out of reach.
+func _bot_needs_food_or_water(b: Dictionary) -> bool:
+	return float(b.get("hunger", 100.0)) < 40.0 or float(b.get("thirst", 100.0)) < 35.0
 
 func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	if b.get("aggro_target") != null or b.get("_s_predator") != null or b.get("_s_foe") != null:
@@ -9299,8 +9385,11 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 		var st_w: SurvivalStats = b.get("vstats")
 		if st_w == null or st_w.sleep > 4.0:
 			return true
-	if float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
-		return true
+	if _bot_needs_food_or_water(b):
+		var nap: SurvivalStats = b.get("vstats")
+		# A short exhaustion nap is allowed, but never until starvation.
+		if nap == null or nap.sleep > 8.0 or float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
+			return true
 	var st: SurvivalStats = b.get("vstats")
 	if st == null:
 		return true
@@ -11834,9 +11923,9 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var line := minf(90.0, 58.0 + (14.0 if scarcity else 0.0) + minf(18.0, float(starved_lessons) * 6.0) + 4.0*foraging_experience)
 	var leader := _sensed_node(b, "_s_leader")
 	var allowed := hunger < line and (leader == null or desperate or _bot_vital_break(b))
-	# De noche o oculto solo sale a comer si se esta muriendo de hambre:
-	# un superviviente precavido no abandona el refugio por un capricho.
-	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or _is_world_night()):
+	# A threat can still keep it hidden, but darkness alone must not stop
+	# a hungry survivor from finding food after waking up.
+	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or (_is_world_night() and hunger >= 40.0)):
 		allowed = false
 	var st0: Dictionary = b.get("_forage", {})
 	if not allowed or _bot_has_edible_food(proxy, desperate):

@@ -260,8 +260,8 @@ func run() -> void:
 	mgr._tick_bot(kael, 0.2)
 	check(not bool(kael["torch_lit"]) and bool(kael["sitting"]),
 		"Al ocultarse en su refugio apaga la antorcha y se sienta/agacha a resguardo")
-	# De noche sin antorcha no sale a buscar recursos: aunque pase hambre
-	# vuelve a su refugio (rest) en vez de explorar. Con antorcha si puede.
+	# El hambre rompe el descanso nocturno incluso sin antorcha: debe
+	# buscar recursos antes de agotar las reservas.
 	var k_no_torch: Array = (kael_proxy.get_meta("saved_inventory", []) as Array).filter(func(it): return str(it.get("name", "")) != "Antorcha")
 	kael_proxy.set_meta("saved_inventory", k_no_torch)
 	kael["hunger"] = 15.0
@@ -271,8 +271,8 @@ func run() -> void:
 	kael_proxy.global_position = kael["shelter_pos"] + Vector3(20.0, 0.0, 0.0)
 	kael["pos"] = kael_proxy.global_position
 	mgr._tick_bot(kael, 0.1)
-	check(str(kael["_act"]) == "rest" and not bool(kael["torch_lit"]),
-		"De noche sin antorcha no busca recursos: vuelve al refugio (act=%s)" % str(kael["_act"]))
+	check(str(kael["_act"]) != "rest" and not bool(kael["sleeping"]) and not bool(kael["torch_lit"]),
+		"De noche sin antorcha el hambre obliga a buscar recursos (act=%s)" % str(kael["_act"]))
 	k_no_torch.append({"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0})
 	kael_proxy.set_meta("saved_inventory", k_no_torch)
 	kael["sleeping"] = false
@@ -2752,8 +2752,8 @@ func run() -> void:
 	vs.body_temperature = 34.6 # demasiado frio para dormir en condiciones normales
 	fresh_b["hunger"] = 10.0   # y demasiado hambre
 	fresh_b["thirst"] = 8.0    # y demasiada sed
-	check(mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
-		"SpawnReal 10x1: al borde de la muerte por sueno se desploma dormido pese a frio y hambre")
+	check(not mgr._bot_try_start_sleep(fresh_b, false),
+		"SpawnReal 10x1: inanicion y deshidratacion criticas impiden volver al bucle de colapso")
 	fresh_b["sleeping"] = false
 
 	# El colapso tambien tumba escondido o huyendo: el cuerpo se apaga donde
