@@ -1874,6 +1874,8 @@ func run() -> void:
 		if elena["gut_target"] == null:
 			break
 	check(bool(wolf3.get("_gutted")), "El destripado marca el cadáver como gutted tras dedicarle tiempo")
+	check(wolf3.is_queued_for_deletion(),
+		"10J5t: El destripado por bot retira el cadáver del servidor y emite animal_gutted (los clientes dejan de verlo)")
 	var inv_gut: Array = elena_proxy.get_meta("saved_inventory", [])
 	var got_pelt := false
 	for it in inv_gut:

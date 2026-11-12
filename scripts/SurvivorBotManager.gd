@@ -2899,15 +2899,19 @@ func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 		if not _bot_try_add_inventory_item(b, inv, bone):
 			_bot_drop_to_ground(b, bone)
 	proxy.set_meta("saved_inventory", inv)
-	animal.set("_gutted", true)
 	var hg_mem: Dictionary = _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
 	var hg_st: Dictionary = hg_mem.get("stats", {})
 	hg_st["animals_gutted"] = int(hg_st.get("animals_gutted", 0)) + 1
 	hg_mem["stats"] = hg_st
 	# collect_mode = true retira el cadáver y sincroniza animal_gutted sin
-	# duplicar otro juego de pieles/carne en el suelo.
+	# duplicar otro juego de pieles/carne en el suelo. La marca _gutted la
+	# pone la propia _net_gut_animal antes de liberar el cuerpo y emitir el
+	# RPC — marcarla aquí primero haría salir a la función por el guard de
+	# "ya destazado" y los clientes seguirían viendo el cadáver muerto.
 	if world != null and world.has_method("_net_gut_animal"):
 		world._net_gut_animal(animal.name, int(b["bot_id"]), true)
+	if is_instance_valid(animal) and not bool(animal.get("_gutted")):
+		animal.set("_gutted", true)
 
 # Acumula en mem.stats el tiempo vivo de la vida actual. Se llama al morir y
 # en cada guardado periodico; el resto sin volcar lo calcula la telemetria.
