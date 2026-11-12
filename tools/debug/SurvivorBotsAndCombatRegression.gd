@@ -993,6 +993,70 @@ func run() -> void:
 		"A 150 m de distancia el solar vuelve a ser valido")
 	check(mgr._nearest_other_camp_dist(carlos["camp_spot"] + Vector3(40.0, 0.0, 0.0), 901) < 45.0,
 		"_nearest_other_camp_dist detecta el campamento cercano")
+
+	# --- 10k-bis) Campamento de banda: quienes se toleran comparten el llano ---
+	# Elena y Carlos (pacificos) acampan juntos a 14-26 m; el bandido Kael sigue
+	# a 120 m de ellos. Sin relaciones registradas vale la faccion.
+	var rels_bak := {}
+	for bid in [901, 902, 903]:
+		var mm: Dictionary = mgr._ensure_bot_memory(bid)
+		rels_bak[bid] = mm.get("relationships", {})
+		mm["relationships"] = {}
+	check(mgr._camps_may_share(901, 902), "dos pacificos comparten el llano de campamento")
+	check(not mgr._camps_may_share(901, 903) and not mgr._camps_may_share(903, 901),
+		"bandido y pacifico NO comparten campamento")
+	var band_anchor: Vector3 = mgr._band_camp_anchor(901, Vector3(22.0, 0.0, 12.0))
+	check(band_anchor != Vector3.INF and band_anchor.distance_to(carlos["camp_spot"]) < 40.0,
+		"el ancla de banda tira del campamento tolerado (d=%.0f)" % (band_anchor.distance_to(carlos["camp_spot"]) if band_anchor != Vector3.INF else -1.0))
+	var shared_spot: Vector3 = mgr._find_valid_camp_spot(carlos["camp_spot"], carlos["camp_spot"], 0, [], 901)
+	var d_shared := shared_spot.distance_to(carlos["camp_spot"])
+	check(d_shared >= 10.0 and d_shared < 40.0,
+		"el espiral reclama un solar vecino junto al campamento tolerado (d=%.0f)" % d_shared)
+	var kael_spot: Vector3 = mgr._find_valid_camp_spot(carlos["camp_spot"], carlos["camp_spot"], 0, [], 903)
+	check(kael_spot.distance_to(carlos["camp_spot"]) >= 100.0,
+		"el bandido no consigue solar junto al campamento ajeno (d=%.0f)" % kael_spot.distance_to(carlos["camp_spot"]))
+	check(mgr._pick_camp_anchor(901, Vector3(22.0, 0.0, 12.0), {}) == band_anchor,
+		"la eleccion de solar prefiere la banda al territorio lejano")
+	check(mgr._band_camp_anchor(903, Vector3(22.0, 0.0, 12.0)) == Vector3.INF,
+		"el bandido no encuentra ancla de banda entre los pacificos")
+	for bid in rels_bak.keys():
+		(mgr._ensure_bot_memory(bid) as Dictionary)["relationships"] = rels_bak[bid]
+
+	# --- 10k-ter) Al caer la tarde vuelve a su refugio antes de la noche ---
+	var tod_bak := float(world.day_cycle.time_of_day)
+	world.day_cycle.time_of_day = 17.5 # ultimas horas de luz
+	carlos["hunger"] = 85.0
+	carlos["thirst"] = 85.0
+	carlos["health"] = 100.0
+	carlos["sleeping"] = false
+	carlos["sitting"] = false
+	carlos["hide_timer"] = 0.0
+	carlos["flee_until"] = 0.0
+	carlos["aggro_target"] = null
+	carlos["team_leader_id"] = 0
+	carlos["_s_leader"] = null
+	carlos["_s_prey"] = null
+	carlos["_s_corpse"] = null
+	carlos["_s_foe"] = null
+	carlos["_s_predator"] = null
+	carlos["_s_loot"] = {}
+	carlos["_s_raid_shelter"] = {}
+	carlos["explore_target"] = Vector3.INF
+	carlos["sense_t"] = 0.0
+	# Antorcha ya en mano: el material de noche esta cubierto — solo le queda
+	# volver a casa (si le falta, primero iria a por ello y no a casa).
+	carlos_proxy.set_meta("saved_inventory", [
+		{"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0},
+	])
+	carlos_proxy.global_position = carlos["camp_spot"] + Vector3(60.0, 0.0, 0.0)
+	carlos["pos"] = carlos_proxy.global_position
+	mgr._tick_bot(carlos, 0.2)
+	check(str(carlos["_act"]) == "rest",
+		"al caer la tarde vuelve a su refugio antes de la noche (act=%s)" % str(carlos["_act"]))
+	check(not bool(carlos["sleeping"]),
+		"en camino a casa aun no se duerme (espera la noche)")
+	world.day_cycle.time_of_day = tod_bak
+
 	# Sin refugio y sin urgencias: el bot tira hacia su campamento a asentarse
 	var sid_bak := str(carlos["shelter_id"])
 	var spos_bak: Vector3 = carlos["shelter_pos"]
@@ -4526,12 +4590,23 @@ func run() -> void:
 	b_log["hunger"] = 90.0
 	b_log["thirst"] = 90.0
 	b_log["health"] = 100.0
+	b_log["energy"] = 100.0
+	b_log["sleep"] = 100.0
+	var vs_log: SurvivalStats = b_log["vstats"]
+	vs_log.energy = 100.0
+	vs_log.sleep = 100.0
+	vs_log.body_temperature = 36.5
 	b_log["_craft_state"] = {}
+	# Sin distracciones sensadas heredadas: un loot/cadaver/presa vivo de una
+	# seccion anterior roba ticks al rajo y el refugio no llega a levantarse.
+	for s_key in ["_s_loot", "_s_prey", "_s_predator", "_s_foe", "_s_corpse",
+			"_s_tame_wolf", "_salvage", "_s_raid_shelter", "_steal_target"]:
+		b_log[s_key] = {}
 	p_log.set_meta("saved_inventory", [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
 		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 6},
 	])
-	for i in range(90):
+	for i in range(120):
 		mgr._tick_bot(b_log, 0.25)
 		if not str(b_log.get("shelter_id", "")).is_empty():
 			break

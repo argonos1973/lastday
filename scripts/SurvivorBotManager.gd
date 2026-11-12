@@ -314,12 +314,14 @@ func _is_settled_area(pos: Vector3, ignore_shelter_id: String = "") -> bool:
 # Un campamento ademas necesita estar a >=35 m de cualquier otro campamento IA
 # (salvo que el otro bot sea su lider de equipo: las bases compartidas juntan
 # refugios a ~14 m). avoid_spots marca solares quemados que nunca se repiten.
-func _is_valid_camp_pos(pos: Vector3, ally_id: int = 0, avoid_spots: Array = []) -> bool:
+func _is_valid_camp_pos(pos: Vector3, ally_id: int = 0, avoid_spots: Array = [], self_id: int = 0) -> bool:
 	if not _is_flat_dry_pos(pos):
 		return false
 	for other_id in bots.keys():
+		if int(other_id) == self_id:
+			continue # su propio solar no se bloquea a si mismo al re-anclar
 		var ob: Dictionary = bots[other_id]
-		var min_d := 14.0 if int(other_id) == ally_id else 120.0
+		var min_d := 14.0 if int(other_id) == ally_id or _camps_may_share(self_id, int(other_id)) else 120.0
 		if ob.get("shelter_pos", Vector3.INF) != Vector3.INF and pos.distance_to(ob["shelter_pos"]) < min_d:
 			return false
 		if ob.get("camp_spot", Vector3.INF) != Vector3.INF and pos.distance_to(ob["camp_spot"]) < min_d:
@@ -360,6 +362,53 @@ func _nearest_other_camp_dist(pos: Vector3, self_id: int) -> float:
 # del mapa, >=140 m del centro de spawn, lejos de POIs calientes y de los
 # puntos donde el bot ya murio o le quemaron la base. Cada bot tira hacia su
 # propio sector para que las bases queden repartidas por el mapa.
+# Acampar juntos exige tolerancia mutua: relacion sin hostilidad ni miedo en
+# ambos sentidos. Pareja nunca tratada usa la desconfianza de faccion — los
+# bandidos comparten llano (0.30), un bandido con un pacifico no (0.65).
+func _camp_rel(a_id: int, b_id: int) -> Dictionary:
+	var key := "bot_%d" % b_id
+	var mem := _ensure_bot_memory(a_id)
+	var rels: Dictionary = mem.get("relationships", {})
+	if rels.has(key) and rels[key] is Dictionary:
+		return rels[key]
+	return {"hostility": _rel_initial_hostility(a_id, key), "fear": 0.0}
+
+func _camps_may_share(a_id: int, b_id: int) -> bool:
+	if a_id <= 0 or b_id <= 0 or a_id == b_id:
+		return false
+	for rel in [_camp_rel(a_id, b_id), _camp_rel(b_id, a_id)]:
+		if float(rel.get("hostility", 0.0)) > 0.4 or float(rel.get("fear", 0.0)) > 0.55:
+			return false
+	return true
+
+# Ancla de campamento de banda: el campamento del superviviente tolerado mas
+# cercano a la posicion dada. Junto a el el nuevo solar queda a 14-26 m — un
+# mismo llano de refugios para socorrerse de noche, sin pisarse las fogatas.
+func _band_camp_anchor(bot_id: int, near_pos: Vector3) -> Vector3:
+	var best := Vector3.INF
+	var best_d := INF
+	for oid in bots.keys():
+		if int(oid) == bot_id or not _camps_may_share(bot_id, int(oid)):
+			continue
+		var ob: Dictionary = bots[oid]
+		var oc: Vector3 = ob.get("shelter_pos", Vector3.INF)
+		if oc == Vector3.INF:
+			oc = ob.get("camp_spot", Vector3.INF)
+		if oc == Vector3.INF:
+			continue
+		var d := near_pos.distance_to(oc)
+		if d < best_d:
+			best_d = d
+			best = oc
+	return best
+
+# Eleccion de solar: la banda antes que el territorio propio — si otro
+# superviviente tolerado ya tiene campamento, el nuevo solar se reclama junto
+# al suyo para pasar las noches en el mismo sitio y ayudarse entre ellos.
+func _pick_camp_anchor(bot_id: int, near_pos: Vector3, mem: Dictionary) -> Vector3:
+	var band := _band_camp_anchor(bot_id, near_pos)
+	return band if band != Vector3.INF else _pick_remote_base_spot(bot_id, near_pos, mem)
+
 func _pick_remote_base_spot(bot_id: int, spawn_pos: Vector3, mem: Dictionary) -> Vector3:
 	var bad: Array = []
 	bad.append_array(mem.get("bad_camp_spots", []))
@@ -448,7 +497,7 @@ func _base_spot_safety(mem: Dictionary, cp: Vector3) -> float:
 
 # Busca en espiral alrededor del punto preferido un sitio valido de campamento,
 # preferiblemente junto a arboles (oculto) en vez de en mitad del campo.
-func _find_valid_camp_spot(preferred: Vector3, _near: Vector3, ally_id: int = 0, avoid_spots: Array = []) -> Vector3:
+func _find_valid_camp_spot(preferred: Vector3, _near: Vector3, ally_id: int = 0, avoid_spots: Array = [], self_id: int = 0) -> Vector3:
 	var best := preferred
 	var best_score := -1.0
 	var found := false
@@ -458,7 +507,7 @@ func _find_valid_camp_spot(preferred: Vector3, _near: Vector3, ally_id: int = 0,
 			var ang := TAU * float(i) / float(steps)
 			var cand := preferred + Vector3(cos(ang) * radius, 0.0, sin(ang) * radius)
 			cand.y = _ground_y(cand.x, cand.z)
-			if not _is_valid_camp_pos(cand, ally_id, avoid_spots):
+			if not _is_valid_camp_pos(cand, ally_id, avoid_spots, self_id):
 				continue
 			var tree_dist := _nearest_tree_dist(cand, 25.0)
 			var score := 1.0 - clampf(tree_dist / 25.0, 0.0, 1.0)
@@ -751,7 +800,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	# carreteras/casas, terreno llano y lejos de otros campamentos. Ademas el
 	# bot elige una base propia en zona alejada del centro — salvo que su
 	# memoria ya tenga un refugio reclamado, en cuyo caso vuelve a su solar.
-	var preferred_camp: Vector3 = _pick_remote_base_spot(bot_id, spawn_pos, mem0)
+	var preferred_camp: Vector3 = _pick_camp_anchor(bot_id, spawn_pos, mem0)
 	# El solar solo se hereda si el refugio sigue EN PIE en este mundo: un
 	# mem.shelter cuyo edificio ya no existe (destruido o mundo nuevo) no
 	# puede anclar el campamento — mas abajo (restauracion) se olvida, y
@@ -761,7 +810,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	if not sh_id0.is_empty() and mem_sh0.get("pos") is Array and (mem_sh0["pos"] as Array).size() >= 3 \
 			and not _find_shelter_dict(sh_id0).is_empty():
 		preferred_camp = Vector3(float(mem_sh0["pos"][0]), float(mem_sh0["pos"][1]), float(mem_sh0["pos"][2]))
-	var camp_spot: Vector3 = _find_valid_camp_spot(preferred_camp, spawn_pos, 0, mem0.get("bad_camp_spots", []))
+	var camp_spot: Vector3 = _find_valid_camp_spot(preferred_camp, spawn_pos, 0, mem0.get("bad_camp_spots", []), bot_id)
 
 	var proxy := Node3D.new()
 	proxy.name = "ServerProxy_%d" % bot_id
@@ -1704,7 +1753,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if d_camp > 170.0 and not bool(b.get("_camp_reanchored", false)) and b.get("shelter_pos", Vector3.INF) == Vector3.INF and int(b.get("team_leader_id", 0)) == 0:
 			b["_camp_reanchored"] = true
 			var mem_re := _ensure_bot_memory(int(b["bot_id"]), b.get("cfg", {}))
-			var nearer := _find_valid_camp_spot(_pick_remote_base_spot(int(b["bot_id"]), proxy.global_position, mem_re), proxy.global_position, 0, mem_re.get("bad_camp_spots", []))
+			var nearer := _find_valid_camp_spot(_pick_camp_anchor(int(b["bot_id"]), proxy.global_position, mem_re), proxy.global_position, 0, mem_re.get("bad_camp_spots", []), int(b["bot_id"]))
 			var d_nearer := Vector2(proxy.global_position.x - nearer.x, proxy.global_position.z - nearer.z).length() if nearer != Vector3.INF else INF
 			if d_nearer < d_camp - 30.0:
 				b["camp_spot"] = nearer
@@ -1771,7 +1820,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var has_built_sh := not str(b["shelter_id"]).is_empty()
 	var vst: SurvivalStats = b.get("vstats")
 	var night_needs_sleep: bool = is_night and ((vst != null and vst.sleep < 65.0) or (has_built_sh and (not has_night_light or not _bot_needs_outing(b))))
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or (is_night and not has_night_light and not desperate_needs) or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
+	# Al caer la tarde quien tiene refugio levantado vuelve a casa ANTES de la
+	# noche: llega con luz, enciende la fogata, ordena el alijo y queda a
+	# resguardo — en el llano de la banda estan todos a tiro de ayuda.
+	var pre_night_home := _is_pre_night() and has_built_sh and not desperate_needs and not starving_or_parched
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or (is_night and not has_night_light and not desperate_needs) or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -7662,7 +7715,7 @@ func _bot_build_camp_pos(b: Dictionary) -> Vector3:
 			var lb: Dictionary = bots[lid]
 			var lsp: Vector3 = lb.get("shelter_pos", lb.get("camp_spot", Vector3.INF))
 			if lsp != Vector3.INF:
-				b["_team_camp"] = _find_valid_camp_spot(lsp, (b["proxy"] as Node3D).global_position, lid)
+				b["_team_camp"] = _find_valid_camp_spot(lsp, (b["proxy"] as Node3D).global_position, lid, [], int(b["bot_id"]))
 		if b.get("_team_camp") is Vector3:
 			return b["_team_camp"]
 	return b.get("camp_spot", Vector3.INF)

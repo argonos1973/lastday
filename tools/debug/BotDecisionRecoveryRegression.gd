@@ -94,15 +94,25 @@ func run():
 	sleeper["vstats"].sleep = 40.0
 	sleeper["vstats"].energy = 50.0
 	var log_n2 := manager.chat_log.size()
-	check(manager._bot_try_start_sleep(sleeper,true) and manager.chat_log.size() > log_n2
-		and str(manager.chat_log.back().get("kind","")) == "goodnight",
-		"dormirse de noche despide a los cercanos")
+	# Historial reciente del bot limpio: es una instancia nueva y el antirepeat
+	# de _bot_chat_send descartaria la misma variante de despedida ya dicha.
+	manager._chat_recent[901] = []
+	var said_gn := false
+	var slept := manager._bot_try_start_sleep(sleeper, true)
+	for e in manager.chat_log.slice(log_n2):
+		if str(e.get("kind", "")) == "goodnight" and int(e.get("from_id", 0)) == 901:
+			said_gn = true
+	check(slept and said_gn, "dormirse de noche despide a los cercanos")
 	var log_n3 := manager.chat_log.size()
 	sleeper["sleeping"] = false
 	sleeper["vstats"].sleep = 3.0 # colapso letal
 	manager.bots.erase(902) # sin nadie cerca
-	check(manager._bot_try_start_sleep(sleeper,true) and manager.chat_log.size() == log_n3,
-		"el colapso letal no despide")
+	var collapse_ok := manager._bot_try_start_sleep(sleeper, true)
+	var said_gn2 := false
+	for e in manager.chat_log.slice(log_n3):
+		if str(e.get("kind", "")) == "goodnight" and int(e.get("from_id", 0)) == 901:
+			said_gn2 = true
+	check(collapse_ok and not said_gn2, "el colapso letal no despide")
 	world.free()
 	print("BOT_DECISION_RECOVERY errors=",errors)
 	quit(errors)
