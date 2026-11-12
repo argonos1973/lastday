@@ -1573,7 +1573,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# los 11 palos para levantar su refugio junto al campamento del líder).
 	var bot_team_member := is_bot_peer_id(int(b.get("team_leader_id", 0)))
 	var desperate_team_break: bool = desperate_food or (bot_team_member and (_bot_is_exhausted(b) or _bot_is_freezing(b) or (str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy))))
-	if leader != null and not desperate_team_break:
+	# Un recado de la IA dentro del radio de escolta gana al seguimiento: el
+	# follower cae al pipeline normal (la directiva dirige su exploracion),
+	# ejecuta el encargo y reengancha al leader al expirar. El leader sigue
+	# decidiendo el destino macro — solo cuentan encargos dentro de su orbita.
+	if leader != null and not desperate_team_break and _bot_ai_errand_target(b, leader) == Vector3.INF:
 		b["_act"] = "team"
 		_tick_teammate_behavior(b, leader, delta)
 		return
@@ -4176,10 +4180,13 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 			var lp := _loot_entry_pos(nearby_loot)
 			var d_nl := Vector2(cur.x - lp.x, cur.z - lp.z).length()
 			var loot_reach: bool = d_nl <= 2.1 and absf(cur.y - lp.y) <= 1.8
-			if loot_reach and (dist <= 8.0 or not leader_moving):
+			if loot_reach:
 				_collect_loot_entry(b, nearby_loot)
 				return
-			if not leader_moving and d_nl <= 16.0 and absf(cur.y - lp.y) <= 1.8 and dist <= 20.0:
+			# Botin de camino o de la zona de escolta: desvio corto (<=4 m) si
+			# el leader va en marcha, recado completo (<=16 m) si esta quieto.
+			var grab_limit := 4.0 if leader_moving else 16.0
+			if d_nl <= grab_limit and absf(cur.y - lp.y) <= 1.8 and dist <= 20.0:
 				_move_bot_towards(b, lp, 4.2, delta, "walk")
 				return
 		if not leader_moving and _bot_escort_patrol(b, leader, delta):
@@ -4262,6 +4269,27 @@ func _bot_escort_patrol(b: Dictionary, leader: Node3D, delta: float) -> bool:
 		esc["idle_t"] = 0.0
 		b["_escort"] = esc
 	return true
+
+# La directiva de la IA (qwen/cerebro local) tambien manda sobre los
+# followers — pero solo dentro de la orbita del leader: un encargo 'pos'
+# cercano se devuelve como recado lateral que el pipeline normal ejecuta
+# (explore/loot con la directiva como destino), fuera del radio se ignora —
+# el leader decide el destino macro del equipo.
+const BOT_ESCORT_AI_DIST := 45.0
+
+func _bot_ai_errand_target(b: Dictionary, leader: Node3D) -> Vector3:
+	var d := _ai_active_directive(b)
+	if d.is_empty() or str(d.get("mode", "")) != "pos":
+		return Vector3.INF
+	var dp = d.get("pos")
+	if not (dp is Vector3) or (dp as Vector3) == Vector3.INF:
+		return Vector3.INF
+	if _is_goal_blacklisted(b, dp):
+		return Vector3.INF
+	var lpos := leader.global_position if leader != null and is_instance_valid(leader) else Vector3.INF
+	if lpos == Vector3.INF or Vector2((dp as Vector3).x - lpos.x, (dp as Vector3).z - lpos.z).length() > BOT_ESCORT_AI_DIST:
+		return Vector3.INF
+	return dp
 
 # --- Equipos bot-bot autonomos y emboscadas coordinadas ---------------------
 # Los bots exploran la colaboracion como estrategia: quienes se cruzan y
@@ -10004,7 +10032,8 @@ func _ai_bot_eligible(b: Dictionary) -> bool:
 		return false
 	if proxy.get_meta("proxy_dead", false):
 		return false
-	if int(b.get("team_leader_id", 0)) != 0:
+	var lid := int(b.get("team_leader_id", 0))
+	if lid != 0 and not is_bot_peer_id(lid):
 		return false # bajo ordenes del jugador: el asesor no interfiere
 	if float(b.get("hide_timer", 0.0)) > 0.0 or float(b.get("flee_until", 0.0)) > 0.0:
 		return false

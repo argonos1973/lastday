@@ -4765,6 +4765,62 @@ func run() -> void:
 	b_nt["team_leader_id"] = 0
 	esc_leader.queue_free()
 
+	# 10J5q: El follower tambien hace caso de la IA y recoge loot de camino.
+	# q1: elegibilidad del asesor — equipo bot-bot si cuenta, lider humano no.
+	b_nt["proxy"].set_meta("proxy_dead", false)
+	b_nt["hide_timer"] = 0.0
+	b_nt["flee_until"] = 0.0
+	b_nt["_craft_state"] = {}
+	b_nt["team_leader_id"] = 902
+	check(mgr._ai_bot_eligible(b_nt),
+		"10J5q1a: El follower de un equipo bot-bot recibe directivas de la IA")
+	b_nt["team_leader_id"] = 1
+	check(not mgr._ai_bot_eligible(b_nt),
+		"10J5q1b: Bajo ordenes de un jugador humano el asesor no interfiere")
+	b_nt["team_leader_id"] = 0
+	# q2: el recado de la IA solo cuenta dentro de la orbita del leader (45 m).
+	var q_leader := Node3D.new()
+	world.add_child(q_leader)
+	q_leader.global_position = p_nt.global_position + Vector3(2.0, 0.0, 0.0)
+	var near_dp: Vector3 = q_leader.global_position + Vector3(10.0, 0.0, 0.0)
+	var far_dp: Vector3 = q_leader.global_position + Vector3(60.0, 0.0, 0.0)
+	b_nt["ai_directive"] = {"mode": "pos", "pos": near_dp, "action": "explore", "until": Time.get_ticks_msec() + 60000}
+	check(mgr._bot_ai_errand_target(b_nt, q_leader) == near_dp,
+		"10J5q2a: Directiva pos dentro de la orbita del leader se ejecuta como recado")
+	b_nt["ai_directive"]["pos"] = far_dp
+	check(mgr._bot_ai_errand_target(b_nt, q_leader) == Vector3.INF,
+		"10J5q2b: Encargo lejos de la orbita se ignora — el leader decide el destino macro")
+	b_nt["ai_directive"]["pos"] = near_dp
+	b_nt["ai_directive"]["until"] = Time.get_ticks_msec() - 1000
+	check(mgr._bot_ai_errand_target(b_nt, q_leader) == Vector3.INF,
+		"10J5q2c: Directiva caducada no se ejecuta")
+	b_nt["ai_directive"] = {"mode": "poi", "only_kinds": ["house"], "until": Time.get_ticks_msec() + 60000}
+	check(mgr._bot_ai_errand_target(b_nt, q_leader) == Vector3.INF,
+		"10J5q2d: Modos sin pos concreta no son recado lateral")
+	b_nt["ai_directive"] = {}
+	# q3: loot de camino con el leader en marcha — desvio corto para recoger.
+	q_leader.set_meta("sprinting", true)
+	p_nt.global_position = Vector3(200.0, 0.4, 200.0)
+	b_nt["pos"] = p_nt.global_position
+	q_leader.global_position = p_nt.global_position + Vector3(6.0, 0.0, 0.0)
+	b_nt["team_leader_id"] = 901
+	b_nt["follow_mode"] = "follow"
+	b_nt["aggro_target"] = null
+	b_nt["crouching"] = false
+	b_nt["_s_loot"] = {"id": "q_loot", "pos": p_nt.global_position + Vector3(0.0, 0.0, 3.5), "name": "Palo"}
+	mgr._tick_teammate_behavior(b_nt, q_leader, 0.1)
+	check(str(b_nt.get("anim", "")) == "walk",
+		"10J5q3: Con el leader en marcha recoge el drop de camino a <=4 m (anim=%s)" % str(b_nt.get("anim", "")))
+	# Botin demasiado lejos para el desvio de camino: sigue al leader.
+	b_nt["_s_loot"] = {"id": "q_loot2", "pos": p_nt.global_position + Vector3(0.0, 0.0, 12.0), "name": "Palo"}
+	mgr._tick_teammate_behavior(b_nt, q_leader, 0.1)
+	check(str(b_nt.get("anim", "")) in ["walk", "run"] and (b_nt.get("_escort", {}) as Dictionary).get("pos") == null,
+		"10J5q4: Drop a 12 m con leader en marcha no desvia — sigue al leader (anim=%s)" % str(b_nt.get("anim", "")))
+	b_nt["_s_loot"] = {}
+	b_nt["team_leader_id"] = 0
+	b_nt["ai_directive"] = {}
+	q_leader.queue_free()
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
