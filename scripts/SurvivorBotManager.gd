@@ -4159,6 +4159,31 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 	var dist := cur.distance_to(lpos)
 	var step_wp := _resolve_building_interior_waypoint(b, cur, lpos)
 	var separated_by_structure: bool = step_wp != lpos or absf(cur.y - lpos.y) > 1.3
+	# Antes de reengancharse a la espalda del líder: con el líder QUIETO el
+	# seguidor no vive pegado a él — recoge el botín de la zona de escolta
+	# (<=16 m) y hace rondas de vigilancia. Líder en marcha (sprint, su
+	# propio anim de paso o desplazamiento real) = seguirle, sin recados.
+	var leader_moving := bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true) \
+		or str(leader.get_meta("anim", "")) in ["walk", "run", "riflewalk", "riflerun", "sneak_walk", "stairs", "climb"]
+	if leader_moving:
+		var esc0: Dictionary = b.get("_escort", {})
+		esc0["pos"] = null
+		esc0["idle_t"] = 0.0
+		b["_escort"] = esc0
+	if not separated_by_structure:
+		var nearby_loot: Dictionary = b.get("_s_loot", {})
+		if not nearby_loot.is_empty():
+			var lp := _loot_entry_pos(nearby_loot)
+			var d_nl := Vector2(cur.x - lp.x, cur.z - lp.z).length()
+			var loot_reach: bool = d_nl <= 2.1 and absf(cur.y - lp.y) <= 1.8
+			if loot_reach and (dist <= 8.0 or not leader_moving):
+				_collect_loot_entry(b, nearby_loot)
+				return
+			if not leader_moving and d_nl <= 16.0 and absf(cur.y - lp.y) <= 1.8 and dist <= 20.0:
+				_move_bot_towards(b, lp, 4.2, delta, "walk")
+				return
+		if not leader_moving and _bot_escort_patrol(b, leader, delta):
+			return
 	if dist > 3.0 or separated_by_structure:
 		var leader_sprinting: bool = bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true)
 		var should_run: bool = not bool(b["crouching"]) and (dist > 5.2 or (dist > 3.2 and leader_sprinting))
@@ -4166,20 +4191,77 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 		var clip := "run" if should_run else "walk"
 		_move_bot_towards(b, lpos, spd, delta, clip)
 	else:
-		# Cerca del líder en la misma planta: usa el botín cacheado a 5 Hz
-		# (_s_loot) en vez de escanear todos los drops del mundo a 60 Hz.
-		var nearby_loot: Dictionary = b.get("_s_loot", {})
-		if not nearby_loot.is_empty():
-			var lp := _loot_entry_pos(nearby_loot)
-			var d_nl := Vector2(cur.x - lp.x, cur.z - lp.z).length()
-			if d_nl <= 2.1 and absf(cur.y - lp.y) <= 1.8:
-				_collect_loot_entry(b, nearby_loot)
-			elif d_nl <= 8.5 and absf(cur.y - lp.y) <= 1.8:
-				_move_bot_towards(b, lp, 3.6, delta, "walk")
-			else:
-				b["anim"] = "idle"
-		else:
-			b["anim"] = "idle"
+		b["anim"] = "idle"
+
+# Escolta viva: con el líder parado el seguidor no se apila sobre su
+# posición — hace rondas cortas de vigilancia (6-14 m alrededor del líder,
+# con pausas) y vuelve. La ronda se corta si el líder se aleja, hay amenaza
+# o el escolta va agachado (sigilo compartido). RNG local por bot para no
+# tocar el azar global del mundo.
+func _bot_escort_patrol(b: Dictionary, leader: Node3D, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if b.get("aggro_target") != null or float(b.get("hide_timer", 0.0)) > 0.0:
+		return false
+	if bool(b.get("crouching", false)) or bool(b.get("sleeping", false)):
+		return false
+	var lpos := leader.global_position
+	var dist := proxy.global_position.distance_to(lpos)
+	var esc: Dictionary = b.get("_escort", {})
+	# Si el líder se fue o el propio bot se movió haciendo otra cosa desde la
+	# última llamada (persecución, loot, huida), la calma y el punto mueren.
+	var lp: Variant = esc.get("last_pos", null)
+	if lp is Vector3 and (lp as Vector3).distance_to(proxy.global_position) > 4.0:
+		esc["idle_t"] = 0.0
+		esc["pos"] = null
+	var llp: Variant = esc.get("last_leader", null)
+	if llp is Vector3 and (llp as Vector3).distance_to(lpos) > 8.0:
+		esc["pos"] = null
+	esc["last_pos"] = proxy.global_position
+	esc["last_leader"] = lpos
+	if dist > 20.0:
+		esc["pos"] = null
+		b["_escort"] = esc
+		return false
+	var tgt: Variant = esc.get("pos", null)
+	var has_tgt: bool = tgt is Vector3 and Vector2(proxy.global_position.x - (tgt as Vector3).x, proxy.global_position.z - (tgt as Vector3).z).length() > 1.6 \
+		and Vector2(lpos.x - (tgt as Vector3).x, lpos.z - (tgt as Vector3).z).length() <= 18.0
+	if not has_tgt:
+		# ~9 s aparcado junto al líder antes de cada ronda: vigía periódica,
+		# no paseo continuo — en marcha detrás del líder la calma no crece.
+		if dist > 5.0:
+			esc["idle_t"] = 0.0
+			b["_escort"] = esc
+			return false
+		esc["idle_t"] = float(esc.get("idle_t", 0.0)) + delta
+		if float(esc["idle_t"]) < 9.0:
+			b["_escort"] = esc
+			return false
+		var rng := RandomNumberGenerator.new()
+		rng.seed = int(b["bot_id"]) * 15485863 + int(esc.get("n", 0)) * 32452843
+		for i in range(6):
+			var ang := rng.randf() * TAU
+			var rr := rng.randf_range(6.0, 14.0)
+			var cand := lpos + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
+			cand.y = proxy.global_position.y
+			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
+				continue
+			esc["pos"] = cand
+			esc["n"] = int(esc.get("n", 0)) + 1
+			esc["idle_t"] = 0.0
+			b["_escort"] = esc
+			has_tgt = true
+			break
+		if not has_tgt:
+			b["_escort"] = esc
+			return false
+		tgt = esc["pos"]
+	var tp: Vector3 = tgt
+	_move_bot_towards(b, tp, 3.2, delta, "walk")
+	if Vector2(proxy.global_position.x - tp.x, proxy.global_position.z - tp.z).length() <= 1.6:
+		esc["pos"] = null
+		esc["idle_t"] = 0.0
+		b["_escort"] = esc
+	return true
 
 # --- Equipos bot-bot autonomos y emboscadas coordinadas ---------------------
 # Los bots exploran la colaboracion como estrategia: quienes se cruzan y

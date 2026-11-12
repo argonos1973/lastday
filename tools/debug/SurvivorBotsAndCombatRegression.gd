@@ -4716,6 +4716,55 @@ func run() -> void:
 		and float((mem_rst.get("death_lessons", {}) as Dictionary).get("cold", 0.0)) == 2.0,
 		"10J5o2: No se repite: las estadisticas nuevas y las lecciones de muerte se conservan")
 
+	# 10J5p: Escolta viva — el seguidor aparcado junto al líder no se pega a
+	# su espalda: hace rondas cortas de vigilancia alrededor y recoge el
+	# botín de la zona; el líder en marcha lo absorbe de vuelta al instante.
+	dc.time_of_day = 14.0
+	p_nt.global_position = Vector3(200.0, 0.4, 200.0)
+	b_nt["pos"] = p_nt.global_position
+	var esc_leader := Node3D.new()
+	world.add_child(esc_leader)
+	esc_leader.global_position = p_nt.global_position + Vector3(2.0, 0.0, 0.0)
+	b_nt["team_leader_id"] = 901
+	b_nt["follow_mode"] = "follow"
+	b_nt["aggro_target"] = null
+	b_nt["hide_timer"] = 0.0
+	b_nt["crouching"] = false
+	b_nt["sleeping"] = false
+	b_nt["_s_loot"] = {}
+	b_nt["_escort"] = {"idle_t": 10.0, "n": 0}
+	mgr._tick_teammate_behavior(b_nt, esc_leader, 0.1)
+	var esc_pos: Variant = (b_nt.get("_escort", {}) as Dictionary).get("pos", null)
+	check(esc_pos is Vector3 and esc_leader.global_position.distance_to(esc_pos) >= 5.0 and esc_leader.global_position.distance_to(esc_pos) <= 18.0,
+		"10J5p1: Aparcado junto al líder hace rondas de vigilancia cerca (d=%.1f)" % (esc_leader.global_position.distance_to(esc_pos) if esc_pos is Vector3 else -1.0))
+	check(str(b_nt.get("anim", "")) == "walk",
+		"10J5p2: En ronda el seguidor camina, no queda plantado (anim=%s)" % str(b_nt.get("anim", "")))
+	# El líder en marcha absorbe la ronda: se aleja y el seguidor le sigue.
+	esc_leader.global_position = esc_leader.global_position + Vector3(40.0, 0.0, 0.0)
+	mgr._tick_teammate_behavior(b_nt, esc_leader, 0.1)
+	check((b_nt.get("_escort", {}) as Dictionary).get("pos") == null and str(b_nt.get("anim", "")) in ["walk", "run"],
+		"10J5p3: El líder que se aleja corta la ronda y el seguidor le sigue (anim=%s)" % str(b_nt.get("anim", "")))
+	# Botín cercano con el líder quieto: sale a recogerlo en vez de quedarse.
+	esc_leader.global_position = p_nt.global_position + Vector3(2.0, 0.0, 0.0)
+	b_nt["pos"] = p_nt.global_position
+	b_nt["_escort"] = {}
+	b_nt["_s_loot"] = {"id": "esc_loot", "pos": p_nt.global_position + Vector3(0.0, 0.0, 8.0), "name": "Palo"}
+	mgr._tick_teammate_behavior(b_nt, esc_leader, 0.1)
+	check(str(b_nt.get("anim", "")) == "walk",
+		"10J5p4: Con botín a 8 m el seguidor sale a recogerlo (anim=%s)" % str(b_nt.get("anim", "")))
+	# Con amenaza activa no hay ronda: aguarda quieto como antes.
+	b_nt["_s_loot"] = {}
+	b_nt["aggro_target"] = esc_leader
+	b_nt["_escort"] = {"idle_t": 30.0, "n": 0}
+	mgr._tick_teammate_behavior(b_nt, esc_leader, 0.1)
+	check(str(b_nt.get("anim", "")) == "idle",
+		"10J5p5: Con amenaza el seguidor no patrulla (anim=%s)" % str(b_nt.get("anim", "")))
+	b_nt["aggro_target"] = null
+	b_nt["_escort"] = {}
+	b_nt["_s_loot"] = {}
+	b_nt["team_leader_id"] = 0
+	esc_leader.queue_free()
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
