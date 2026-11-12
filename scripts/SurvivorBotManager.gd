@@ -1458,7 +1458,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if wp_pre != Vector3.INF and Vector2(proxy.global_position.x - wp_pre.x, proxy.global_position.z - wp_pre.z).length() < 9.0:
 			prevent_drink = true
 			b["drink_at"] = wp_pre
-	if (float(b["thirst"]) < thirsty_line or prevent_drink) and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or float(b["thirst"]) < 18.0 or prevent_drink):
+	if (float(b["thirst"]) < thirsty_line or prevent_drink) and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or _bot_vital_break(b) or prevent_drink):
 		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
 			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
@@ -1564,15 +1564,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# 4c) Caza de presas (ciervos/zorros) y aprovechamiento de cadáveres cuando
 	# falta comida o materiales animales (pieles, tendón para cuerda, hueso).
-	if (leader == null or desperate_food) and _bot_try_hunt_or_scavenge(b, delta):
+	if (leader == null or desperate_food or _bot_vital_break(b)) and _bot_try_hunt_or_scavenge(b, delta):
 		b["_act"] = "hunt"
 		return
 
 	# 5) Si está reclutado en un equipo, seguir al líder — salvo emergencia
-	# vital (hambre, agotamiento o frío en equipos bot-bot, o cuando ya tiene
+	# vital (salud/hambre/sed/frío/sueño, en equipos de bots o de humanos: la
+	# supervivencia manda sobre la orden) o cuando un miembro bot-bot ya tiene
 	# los 11 palos para levantar su refugio junto al campamento del líder).
 	var bot_team_member := is_bot_peer_id(int(b.get("team_leader_id", 0)))
-	var desperate_team_break: bool = desperate_food or (bot_team_member and (_bot_is_exhausted(b) or _bot_is_freezing(b) or (str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy))))
+	var desperate_team_break: bool = desperate_food or _bot_vital_break(b) or (bot_team_member and str(b["shelter_id"]).is_empty() and _can_bot_build_shelter(proxy))
 	# Un recado de la IA dentro del radio de escolta gana al seguimiento: el
 	# follower cae al pipeline normal (la directiva dirige su exploracion),
 	# ejecuta el encargo y reengancha al leader al expirar. El leader sigue
@@ -8454,6 +8455,23 @@ func _bot_is_exhausted(b: Dictionary) -> bool:
 	var thresh := 14.0 + minf(9.0, float(cold_lessons) * 3.0)
 	return st != null and not st.dead and st.sleep < thresh
 
+# Necesidades que rompen CUALQUIER formacion — la prioridad real es:
+# amenaza > salud/hambre/sed/frio/sueño > orden humana > marcha del lider >
+# loot de camino > recado de la IA > comportamiento independiente. Vendar,
+# comer y beber del inventario ya ocurren en _maintain_bot_needs antes que
+# todo; esto cubre lo que exige moverse: rio, forrajeo, refugio, descanso.
+func _bot_vital_break(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if _bot_is_freezing(b) or _bot_is_exhausted(b):
+		return true
+	if float(b["thirst"]) < 30.0 and not _bot_has_drink(proxy):
+		return true
+	if float(b["hunger"]) < 30.0 and not _bot_has_edible_food(proxy, true):
+		return true
+	if float(b["health"]) < 45.0:
+		return true
+	return false
+
 func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var st: SurvivalStats = b.get("vstats")
 	var proxy: Node3D = b["proxy"]
@@ -11122,7 +11140,7 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var starved_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("starved", 0))
 	var line := 58.0 + (14.0 if scarcity else 0.0) + minf(18.0, float(starved_lessons) * 6.0)
 	var leader := _sensed_node(b, "_s_leader")
-	var allowed := hunger < line and (leader == null or desperate)
+	var allowed := hunger < line and (leader == null or desperate or _bot_vital_break(b))
 	# De noche o oculto solo sale a comer si se esta muriendo de hambre:
 	# un superviviente precavido no abandona el refugio por un capricho.
 	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or _is_world_night()):

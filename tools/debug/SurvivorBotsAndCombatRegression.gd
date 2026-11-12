@@ -4821,6 +4821,46 @@ func run() -> void:
 	b_nt["ai_directive"] = {}
 	q_leader.queue_free()
 
+	# 10J5r: La supervivencia rompe cualquier formacion — por encima del
+	# lider, del loot y de la IA van salud, hambre, sed, frio y agotamiento.
+	dc.time_of_day = 14.0
+	b_nt["health"] = 100.0
+	b_nt["hunger"] = 80.0
+	b_nt["thirst"] = 80.0
+	vs_nt.sleep = 100.0
+	vs_nt.body_temperature = 36.7
+	p_nt.set_meta("saved_inventory", [])
+	check(not mgr._bot_vital_break(b_nt),
+		"10J5r1: Sano y saciado no rompe la formacion")
+	b_nt["thirst"] = 25.0
+	check(mgr._bot_vital_break(b_nt),
+		"10J5r2: Sed baja sin agua rompe la formacion para ir al rio")
+	p_nt.set_meta("saved_inventory", [{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 1, "use_value": 45.0}])
+	check(not mgr._bot_vital_break(b_nt),
+		"10J5r3: Con botella la sed no rompe — bebe en marcha")
+	p_nt.set_meta("saved_inventory", [])
+	b_nt["thirst"] = 80.0
+	b_nt["hunger"] = 28.0
+	check(mgr._bot_vital_break(b_nt),
+		"10J5r4: Hambre sin comida rompe la formacion para forrajear/cazar")
+	p_nt.set_meta("saved_inventory", [{"name": "Pan", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 30.0}])
+	check(not mgr._bot_vital_break(b_nt),
+		"10J5r5: Con comida encima no rompe — come en marcha")
+	p_nt.set_meta("saved_inventory", [])
+	b_nt["hunger"] = 80.0
+	b_nt["health"] = 40.0
+	check(mgr._bot_vital_break(b_nt),
+		"10J5r6: Herido grave rompe para descansar y hacerse vendas")
+	b_nt["health"] = 100.0
+	vs_nt.body_temperature = 34.9
+	check(mgr._bot_vital_break(b_nt),
+		"10J5r7: Hipotermia rompe la formacion — tambien con lider humano")
+	vs_nt.body_temperature = 36.7
+	vs_nt.sleep = 10.0
+	check(mgr._bot_vital_break(b_nt),
+		"10J5r8: Agotamiento letal rompe la formacion")
+	vs_nt.sleep = 100.0
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
