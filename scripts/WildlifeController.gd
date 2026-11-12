@@ -544,7 +544,7 @@ func _process_body(delta: float) -> void:
 				var vis_spd := puppet_moved_xz / delta
 				if vis_spd > 0.65 and _puppet_attack_timer <= 0.18:
 					_puppet_attack_timer = 0.0
-					var loco_clip := "run" if vis_spd > move_speed * 2.2 else ("trot" if vis_spd > move_speed * 1.15 else "walk")
+					var loco_clip := _puppet_locomotion_gait(vis_spd)
 					_play_animation_by_name(loco_clip)
 					_update_animation_speed(vis_spd)
 				elif _puppet_attack_timer <= 0.0:
@@ -3892,7 +3892,7 @@ func _play_animation_by_name(keyword: String) -> void:
 				animation.loop_mode = Animation.LOOP_LINEAR
 	for cand_kw in candidates:
 		for animation_name in anim_list:
-			if animation_name.to_lower().find(cand_kw) >= 0:
+			if animation_name.to_lower().find(cand_kw) >= 0 and not (lower_keyword in ["walk", "trot", "run", "gallop"] and "frighten" in animation_name.to_lower()):
 				best = animation_name
 				break
 		if not best.is_empty():
@@ -3905,14 +3905,36 @@ func _play_animation_by_name(keyword: String) -> void:
 			_animation_player.speed_scale = 1.0
 		_animation_player.play(best, 0.65 if lower_keyword in ["sit", "lie"] else 0.2)
 
+func _puppet_locomotion_gait(speed: float) -> String:
+	# Hysteresis prevents snapshot interpolation noise from blending between
+	# two leg cycles every frame at the walk/trot/run boundaries.
+	var ratio := speed / maxf(move_speed, 0.01)
+	var running := current_anim_keyword in ["run", "gallop"]
+	if ratio > (2.0 if running else 2.3):
+		return "gallop" if _puppet_desired_anim == "gallop" else "run"
+	if ratio > (1.05 if current_anim_keyword == "trot" else 1.25):
+		return "trot"
+	return "walk"
+
 func _update_animation_speed(speed: float) -> void:
 	if _animation_player == null:
 		return
-	if current_anim_keyword in ["attack", "threaten", "shake"]:
+	if current_anim_keyword in ["idle", "sit", "lie", "eat", "attack", "threaten", "shake"]:
 		_animation_player.speed_scale = 1.0
 		return
-	var ratio := speed / move_speed
-	_animation_player.speed_scale = clamp(ratio, 0.5, 2.5)
+	var nominal_speed := maxf(move_speed, 0.01)
+	if animal_type in ["wolf", "deer"]:
+		# The imported run cycles already contain a fast stride (0.43 s).
+		# Dividing every gait by walking speed played those cycles at 2.5x.
+		# Inspect the actual clip so missing-gait fallbacks use its cadence.
+		var clip := _animation_player.current_animation.to_lower()
+		if "run" in clip or "gallop" in clip:
+			nominal_speed *= 3.2
+		elif "trot" in clip:
+			nominal_speed *= 1.65
+		_animation_player.speed_scale = clampf(speed / nominal_speed, 0.65, 1.35)
+	else:
+		_animation_player.speed_scale = clampf(speed / nominal_speed, 0.5, 2.5)
 
 func _update_wolf_sounds(delta: float) -> void:
 	_howl_timer -= delta
