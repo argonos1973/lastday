@@ -8857,10 +8857,15 @@ func _on_bot_stats_died(b: Dictionary) -> void:
 # Condiciones para tumbarse a dormir en el punto de descanso (llamado desde el
 # bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
 func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
-	# Un bot reclutado en tu equipo no se duerme: te sigue dia y noche.
-	if bool(b.get("sleeping", false)) or (int(b.get("team_leader_id", 0)) > 0 and not is_bot_peer_id(int(b.get("team_leader_id", 0)))) or float(b.get("hide_timer", 0.0)) > 0.0 or b.get("aggro_target") != null:
-		return false
 	var st: SurvivalStats = b.get("vstats")
+	# Colapso por agotamiento letal: el cuerpo se apaga aunque este escondido
+	# — dormir en el escondite gana a morir de pie por agotamiento (Kael
+	# murio asi: amenaza activa + sueño 0 y ni el colapso podia tumbarlo).
+	# El aggro en plena pelea sigue bloqueando: no se duerme peleando.
+	var collapse := st != null and not st.dead and st.sleep <= 4.0
+	# Un bot reclutado en tu equipo no se duerme: te sigue dia y noche.
+	if bool(b.get("sleeping", false)) or (int(b.get("team_leader_id", 0)) > 0 and not is_bot_peer_id(int(b.get("team_leader_id", 0)))) or (float(b.get("hide_timer", 0.0)) > 0.0 and not collapse) or b.get("aggro_target") != null:
+		return false
 	if st == null or st.dead:
 		return false
 	# Duerme de noche; si esta agotado de verdad cabecea incluso de dia. El
@@ -8875,7 +8880,6 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# y temperatura. Mejor inconsciente que muerto de pie: un bot al que
 	# estas puertas le niegan el suelo no recupera sleep NUNCA (sentado solo
 	# deja de gastar) y acaba muerto de agotamiento pese a estar descansando.
-	var collapse := st.sleep <= 4.0
 	if not collapse:
 		if float(b["hunger"]) < 20.0 or float(b["thirst"]) < 16.0:
 			return false
@@ -8896,7 +8900,11 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	if not (b.get("_ambush", {}) as Dictionary).is_empty():
 		return true # una emboscada activa lo saca de la cama
 	if float(b.get("hide_timer", 0.0)) > 0.0 or float(b.get("flee_until", 0.0)) > 0.0:
-		return true
+		# El colapso por agotamiento letal no obedece ni a esconderse ni a
+		# huir: el cuerpo apagado sigue dormido en el escondite (Kael).
+		var st_w: SurvivalStats = b.get("vstats")
+		if st_w == null or st_w.sleep > 4.0:
+			return true
 	if float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
 		return true
 	var st: SurvivalStats = b.get("vstats")

@@ -2743,6 +2743,31 @@ func run() -> void:
 	check(mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
 		"SpawnReal 10x1: al borde de la muerte por sueno se desploma dormido pese a frio y hambre")
 	fresh_b["sleeping"] = false
+
+	# El colapso tambien tumba escondido o huyendo: el cuerpo se apaga donde
+	# este en vez de morir de pie por agotamiento (Kael, sleep<=4 + amenaza).
+	fresh_b["hunger"] = 80.0
+	fresh_b["thirst"] = 80.0
+	vs.sleep = 3.0
+	vs.body_temperature = 36.6
+	fresh_b["hide_timer"] = 40.0
+	fresh_b["flee_until"] = 40.0
+	check(mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
+		"10J5v1: el colapso letal tumba al bot aunque este escondido/huyendo (sleeping=%s)" % str(fresh_b["sleeping"]))
+	check(not mgr._bot_should_wake(fresh_b, false),
+		"10J5v2: escondido/huyendo no despierta a un bot colapsado")
+	fresh_b["hide_timer"] = 0.0
+	fresh_b["flee_until"] = 0.0
+	fresh_b["sleeping"] = false
+	fresh_b["aggro_target"] = (mgr.bots[901] as Dictionary)["proxy"]
+	check(not mgr._bot_try_start_sleep(fresh_b, false),
+		"10J5v3: en combate activo el colapso no duerme al bot")
+	fresh_b["aggro_target"] = null
+	# Restauro el estado letal que 10x1 dejo para el check 10x2.
+	fresh_b["hunger"] = 10.0
+	fresh_b["thirst"] = 8.0
+	vs.body_temperature = 34.6
+
 	vs.sleep = 8.0 # por encima del colapso las puertas de confort siguen cerrando
 	check(not mgr._bot_try_start_sleep(fresh_b, false),
 		"SpawnReal 10x2: con sueno 8 aun no hay colapso (frio/hambre bloquean el suelo normal)")
