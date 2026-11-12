@@ -1769,6 +1769,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# hambre/sed urgente, o al oir/sufrir una amenaza.
 		if _bot_try_start_sleep(b, is_night):
 			return
+		# Sin refugio propio al que acurrucarse no se pasa toda la noche
+		# petrificado en mitad de la nada: ronda cerca — el saqueo y la
+		# recoleccion cercanos le siguen ganando si algo entra en sentidos.
+		if not has_built_sh and _bot_night_sentry_wander(b, delta):
+			return
 		b["sitting"] = true
 		b["crouching"] = str(b["faction"]) == "hostile"
 		proxy.set_meta("crouching", bool(b["crouching"]))
@@ -1793,10 +1798,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if float(b["health"]) >= 70.0 and float(b["hide_timer"]) <= 0.0 and not _bot_is_exhausted(b) and _bot_try_craft(b, delta):
 			return
 		if not _bot_try_start_sleep(b, is_night):
-			b["sitting"] = true
-			b["crouching"] = str(b["faction"]) == "hostile"
-			proxy.set_meta("crouching", bool(b["crouching"]))
-			b["anim"] = "sit"
+			# En vez de quedar petrificado en el campo abierto hasta el
+			# amanecer, ronda su zona en paseos cortos; con amenaza, de dia o
+			# junto a su fuego se queda quieto como antes.
+			if not _bot_night_sentry_wander(b, delta):
+				b["sitting"] = true
+				b["crouching"] = str(b["faction"]) == "hostile"
+				proxy.set_meta("crouching", bool(b["crouching"]))
+				b["anim"] = "sit"
 		return
 
 	# 6b) Crafteo: sin urgencias, fabrica con los mismos RECIPES que un jugador
@@ -11807,3 +11816,78 @@ func _bot_can_drop_for_fire(b: Dictionary, inv: Array, item_dict: Dictionary) ->
 	var inv2 := inv.duplicate()
 	inv2.remove_at(idx)
 	return _bot_would_fit(b, inv2, item_dict)
+
+# De noche sin luz propia ni nada que hacer no se queda petrificado hasta el
+# amanecer: ronda su zona en paseos cortos (8-16 m desde donde acampa), a
+# paso lento y con pausas largas entre tramos — un superviviente ojea sus
+# alrededores aunque no salga a explorar lejos. El saqueo y la recoleccion
+# cercanos le siguen ganando si algo aparece en los sentidos, y cualquier
+# amenaza corta el paseo. De dia, con antorcha o junto a un fuego encendido
+# no aplica: el descanso sentado es lo correcto ahi.
+func _bot_night_sentry_wander(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if b.get("aggro_target") != null or float(b.get("hide_timer", 0.0)) > 0.0:
+		return false
+	if not _is_world_night() or _bot_item_count(proxy, "Antorcha") > 0 \
+			or _is_near_any_lit_campfire(proxy.global_position, 8.0):
+		return false
+	var wander: Dictionary = b.get("_night_wander", {})
+	# Si se movio haciendo otra cosa desde la ultima vez (loot, huida,
+	# recoleccion), la calma empieza de cero — solo cuenta el rato sentado.
+	var lp: Variant = wander.get("last_pos", null)
+	if lp is Vector3 and (lp as Vector3).distance_to(proxy.global_position) > 4.0:
+		wander["idle_t"] = 0.0
+		wander["pos"] = null
+	wander["last_pos"] = proxy.global_position
+	var anchor_v: Variant = wander.get("anchor", proxy.global_position)
+	var anchor: Vector3 = anchor_v if anchor_v is Vector3 else proxy.global_position
+	if Vector2(proxy.global_position.x - anchor.x, proxy.global_position.z - anchor.z).length() > 25.0:
+		anchor = proxy.global_position
+	var camp_v: Variant = b.get("camp_spot", null)
+	if camp_v is Vector3 and Vector2(proxy.global_position.x - (camp_v as Vector3).x, proxy.global_position.z - (camp_v as Vector3).z).length() < 20.0:
+		anchor = camp_v
+	wander["anchor"] = anchor
+	var tgt: Variant = wander.get("pos", null)
+	var has_tgt: bool = tgt is Vector3 and Vector2(proxy.global_position.x - (tgt as Vector3).x, proxy.global_position.z - (tgt as Vector3).z).length() > 1.6
+	if not has_tgt:
+		# Primero se sienta un rato (~18 s de calma acumulada) antes de cada
+		# paseo: la ronda sale del aburrimiento, no de forma inmediata — es
+		# patrulla periodica, no paseo continuo ni deriva por la noche.
+		wander["idle_t"] = float(wander.get("idle_t", 0.0)) + delta
+		if float(wander["idle_t"]) < 18.0:
+			b["_night_wander"] = wander
+			return false
+		# RNG local por bot y por tramo: no consume el stream global — la ronda
+		# nocturna no altera el azar del resto del mundo (spawns, fauna, IA).
+		var rng := RandomNumberGenerator.new()
+		rng.seed = int(b["bot_id"]) * 7919 + int(wander.get("n", 0)) * 104729
+		for i in range(6):
+			var ang := rng.randf() * TAU
+			var rr := rng.randf_range(8.0, 16.0)
+			var cand := anchor + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
+			cand.y = proxy.global_position.y
+			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
+				continue
+			wander["pos"] = cand
+			wander["n"] = int(wander.get("n", 0)) + 1
+			wander["idle_t"] = 0.0
+			b["_night_wander"] = wander
+			has_tgt = true
+			break
+		if not has_tgt:
+			b["_night_wander"] = wander
+			return false
+		tgt = wander["pos"]
+	b["sitting"] = false
+	b["crouching"] = false
+	proxy.set_meta("crouching", false)
+	var tp: Vector3 = tgt
+	_move_bot_towards(b, tp, 2.6, delta, "walk")
+	b["_act"] = "wander"
+	b["anim"] = "walk"
+	if Vector2(proxy.global_position.x - tp.x, proxy.global_position.z - tp.z).length() <= 1.6:
+		wander["pos"] = null
+		wander["idle_t"] = 0.0
+		wander["n"] = int(wander.get("n", 0)) + 1
+		b["_night_wander"] = wander
+	return true

@@ -4557,11 +4557,17 @@ func run() -> void:
 	b_nt["_craft_state"] = {}
 	b_nt["_gather"] = {}
 	dc.time_of_day = 22.0
-	# Sin antorcha ni material para hacerla: no sale a explorar — se parapeta.
+	# Sin antorcha ni material para hacerla: no sale a explorar — se parapeta
+	# o, como mucho, ronda su zona en paseos cortos (nunca se va lejos).
 	p_nt.set_meta("saved_inventory", [])
+	var pos0_n1: Vector3 = p_nt.global_position
 	mgr._tick_bot(b_nt, 0.1)
-	check(str(b_nt.get("_act", "")) == "rest",
-		"10J5n1: De noche sin antorcha ni material no deambula a oscuras: se parapeta (act=%s)" % str(b_nt.get("_act", "")))
+	check(str(b_nt.get("_act", "")) in ["rest", "wander"],
+		"10J5n1: De noche sin antorcha ni material no sale lejos: se parapeta o ronda su zona (act=%s)" % str(b_nt.get("_act", "")))
+	for i in range(40):
+		mgr._tick_bot(b_nt, 0.2)
+	check(p_nt.global_position.distance_to(pos0_n1) < 30.0,
+		"10J5n1b: La ronda nocturna se mantiene junto a donde acampa, no explora lejos (d=%.1f)" % p_nt.global_position.distance_to(pos0_n1))
 	# Con palo+trapos de sobra para el refugio la fabrica en el acto.
 	p_nt.set_meta("saved_inventory", [
 		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 13},
@@ -4668,6 +4674,20 @@ func run() -> void:
 	dc.time_of_day = 14.0
 	check(not mgr._bot_can_drop_for_fire(b_nt, inv_lleno, palo_d),
 		"10J5n11c: De dia no suelta nada por material de fuego")
+	# El rondin nocturno sale de la calma acumulada (~18 s sentado), no del
+	# inmediato: con el temporizador ya cargado elige un punto cercano y anda.
+	dc.time_of_day = 22.0
+	p_nt.set_meta("saved_inventory", [])
+	b_nt["aggro_target"] = null
+	b_nt["hide_timer"] = 0.0
+	b_nt["_night_wander"] = {"idle_t": 20.0, "anchor": p_nt.global_position, "n": 0}
+	check(mgr._bot_night_sentry_wander(b_nt, 0.1) and str(b_nt.get("_act", "")) == "wander",
+		"10J5n12: Con la calma acumulada ronda su zona en vez de quedar petrificado (act=%s)" % str(b_nt.get("_act", "")))
+	var wpos: Variant = (b_nt.get("_night_wander", {}) as Dictionary).get("pos", null)
+	check(wpos is Vector3 and p_nt.global_position.distance_to(wpos) <= 16.5,
+		"10J5n12b: El punto de la ronda queda junto a su acampada (d=%.1f)" % (p_nt.global_position.distance_to(wpos) if wpos is Vector3 else -1.0))
+	b_nt["_night_wander"] = {}
+	b_nt["_act"] = ""
 	dc.time_of_day = 14.0
 	b_nt["hunger"] = 80.0
 	b_nt["thirst"] = 80.0
