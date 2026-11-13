@@ -72,6 +72,43 @@ func run():
 	foe.set_meta("sprinting", true)
 	check(manager._find_combat_foe(b3) == foe, "heard (sprinting) foe behind cover still tracked")
 	foe.set_meta("sprinting", false)
+
+	# Fuente de la pista: visto/oído/aviso de aliado con fiabilidad distinta
+	var b4 := b2.duplicate(true)
+	manager._ai_note_foe_intel(b4, foe, Vector3(9, 0, 9), "told")
+	check(str((b4["_foe_mem"] as Dictionary).get("src", "")) == "told"
+			and float((b4["_foe_mem"] as Dictionary).get("conf", 1.0)) < 1.0,
+		"allied warning is stored as lower-confidence intel")
+	manager._ai_note_foe_intel(b4, foe, Vector3(8, 0, 8), "seen")
+	check(str((b4["_foe_mem"] as Dictionary).get("src", "")) == "seen"
+			and float((b4["_foe_mem"] as Dictionary).get("conf", 0.0)) == 1.0,
+		"direct sight is stored as full-confidence intel")
+	# Una pista vieja (>120 s) no arma búsqueda: el rastro ya no vale nada
+	var b5 := b2.duplicate(true)
+	b5["aggro_target"] = foe
+	b5["aggro_timer"] = 20.0
+	manager._ai_note_foe_intel(b5, foe, Vector3(5, 0, 5), "seen")
+	(b5["_foe_mem"] as Dictionary)["t"] = Time.get_ticks_msec() - 150000
+	b5["_lost_foe_until_msec"] = 0
+	b5["_lost_foe_pos"] = Vector3.INF
+	foe.position = Vector3(40, 0, 0) # sin LOS ni oido
+	check(manager._find_combat_foe(b5) == null, "stale clue drops the live target")
+	check(int(b5["_lost_foe_until_msec"]) == 0,
+		"a clue older than 120s does NOT arm a search")
+	# Un aviso reciente de aliado sí arma búsqueda, pero más corta que una vista
+	var b6 := b2.duplicate(true)
+	b6["aggro_target"] = foe
+	b6["aggro_timer"] = 20.0
+	manager._ai_note_foe_intel(b6, foe, Vector3(5, 0, 5), "told")
+	(b6["_foe_mem"] as Dictionary)["t"] = Time.get_ticks_msec() - 10000
+	b6["_lost_foe_until_msec"] = 0
+	b6["_lost_foe_pos"] = Vector3.INF
+	manager._find_combat_foe(b6)
+	var seen_win := int(b2.get("_lost_foe_until_msec", 0))
+	var told_win := int(b6.get("_lost_foe_until_msec", 0))
+	check(told_win > 0, "fresh allied warning still arms a bounded search")
+	check(told_win < seen_win or seen_win <= 0,
+		"the told clue searches less time than a directly seen one")
 	world_stub.free()
 	proxy.free()
 	foe.free()

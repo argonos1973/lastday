@@ -157,7 +157,7 @@ func run() -> void:
 	check(int(st0.get("latency_ms_last", 0)) >= 1400,
 		"ai_stats.latency_ms_last mide la llamada real (%.0f ms)" % float(st0.get("latency_ms_last", 0)))
 	check(int(st0.get("latency_ms_avg", 0)) > 0, "ai_stats.latency_ms_avg acumula media movil")
-	check(int(st0.get("steps_done", 0)) >= 1, "ai_stats.steps_done cuenta el paso aplicado")
+	check(int(st0.get("steps_started", 0)) >= 1, "ai_stats.steps_started cuenta el paso iniciado")
 
 	# --- 3a) Respuesta invalida con plan vivo NO lo derriba (inercia) ---
 	(carlos["ai_directive"] as Dictionary)["priority"] = 5
@@ -323,6 +323,152 @@ func run() -> void:
 	mgr._ai_apply_decision(902, JSON.stringify(plan_old))
 	check(str(carlos.get("ai_directive", {}).get("goal", "")) == "old_replaced",
 		"Un plan viejo cede aunque llegue prioridad menor")
+
+	# === CORRECCIONES (revision posterior a las 5 fases) ===
+
+	# --- 13) Un POI inalcanzable NO se registra como visitado ---
+	var pois: Array = mgr._explore_pois()
+	var poi0: Dictionary = pois[0]
+	var poi0_id := mgr._poi_id(poi0)
+	var poi0_pos: Vector3 = poi0["pos"]
+	var vis_arr: Array = cmem.get("visited", [])
+	vis_arr.erase(poi0_id)
+	carlos["_visited"] = vis_arr
+	carlos["explore_target"] = poi0_pos
+	carlos["ai_directive"] = {"goal": "unreach", "action": "explore", "target": str(poi0.get("kind", "wild")), "mode": "pos", "pos": poi0_pos}
+	mgr._abandon_unreachable_goal(carlos, poi0_pos)
+	var vis1: Array = cmem.get("visited", [])
+	check(not vis1.has(poi0_id),
+		"El POI inalcanzable NO queda en visited (nunca llego)")
+	var un: Dictionary = cmem.get("unreachable_pois", {})
+	check(un.has(poi0_id),
+		"El POI queda vetado como inalcanzable en la memoria")
+	check((carlos.get("ai_directive", {}) as Dictionary).is_empty()
+			or not bool((carlos["ai_directive"] as Dictionary).get("_visit_done", false)),
+		"La directiva no gano _visit_done por un sitio no alcanzado")
+	check(str(carlos.get("_plan_last_result", "")) == "nav_unreachable",
+		"El abandono distingue la causa nav_unreachable")
+	check(int(cmem.get("ai_stats", {}).get("steps_failed", 0)) >= 1,
+		"ai_stats.steps_failed cuenta el paso no ejecutado")
+	check(mgr._is_poi_unreachable(carlos, poi0_id),
+		"_is_poi_unreachable veta el punto en futuras elecciones")
+	# La estrategia explore_<kind> NO recibio un exito falso
+	var strats_u: Dictionary = cmem.get("strategies", {})
+	var ek := "explore_" + str(poi0.get("kind", "wild"))
+	var suc_u := int((strats_u.get(ek, {}) as Dictionary).get("success", 0)) if strats_u.has(ek) else 0
+	check(suc_u == 0 or not un.has(poi0_id),
+		"El fallo de navegacion no suma exito de exploracion falso")
+
+	# --- 14) Llegar no es cumplir: scavenge exige botin real ---
+	carlos["ai_directive"] = {}
+	carlos["_loot_n"] = 0
+	mgr._ai_apply_decision(902, JSON.stringify({"action": "scavenge", "target": "city", "goal": "loot_trip", "priority": 4}))
+	var sc_d: Dictionary = carlos["ai_directive"]
+	check(str(sc_d.get("action", "")) == "scavenge", "Directiva scavenge aplicada")
+	carlos["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	check(not mgr._ai_directive_completed(carlos, sc_d),
+		"Estar en la ciudad sin botin NO completa el scavenge")
+	mgr._ai_note_loot(carlos, "Vendaje", "medical")
+	check(mgr._ai_directive_completed(carlos, sc_d),
+		"Recoger un objeto SI completa el scavenge")
+
+	# --- 15) Cada subobjetivo registra su resultado ---
+	cmem["strategies"] = {}
+	cmem["pending_goals"] = []
+	carlos["ai_directive"] = {}
+	var steps0 := int(cmem.get("ai_stats", {}).get("steps_started", 0))
+	var plan_sc := {"steps": [
+		{"action": "scavenge", "target": "city", "goal": "gear_up", "priority": 3},
+		{"action": "forage", "goal": "eat_after", "priority": 3}]}
+	mgr._ai_apply_decision(902, JSON.stringify(plan_sc))
+	check(int(cmem.get("ai_stats", {}).get("steps_started", 0)) == steps0 + 1,
+		"El paso 1 quedo registrado como iniciado")
+	# Paso 1 cumple de verdad (botin recogido) -> avanza al paso 2
+	mgr._ai_note_loot(carlos, "Chaleco", "gear")
+	mgr._ai_sig_poll(Time.get_ticks_msec())
+	mgr._ai_sig_poll(Time.get_ticks_msec())
+	mgr._ai_sig_poll(Time.get_ticks_msec())
+	var strats_sc: Dictionary = cmem.get("strategies", {})
+	check(strats_sc.has("scavenge") and int((strats_sc["scavenge"] as Dictionary).get("success", 0)) >= 1,
+		"El paso scavenge registro su propio exito")
+	check(int(cmem.get("ai_stats", {}).get("steps_completed", 0)) >= 1,
+		"ai_stats.steps_completed cuenta el paso cumplido")
+	check(str(carlos.get("ai_directive", {}).get("action", "")) == "forage",
+		"El plan avanzo al siguiente subobjetivo")
+	check(str(carlos.get("ai_directive", {}).get("_plan_root", "")) == "scavenge",
+		"La raiz del plan sobrevive al avance de paso")
+
+	# --- 16) Paso parado: sin progreso -> fallo rapido + alternativa ---
+	carlos["ai_directive"] = {}
+	carlos["hunger"] = 100.0
+	var plan_stall := {"steps": [
+		{"action": "return_home", "goal": "back", "priority": 3},
+		{"action": "forage", "goal": "then_eat", "priority": 3}]}
+	carlos["shelter_pos"] = Vector3(999999.0, 0.4, 999999.0)
+	mgr._ai_apply_decision(902, JSON.stringify(plan_stall))
+	carlos["proxy"].global_position = Vector3(10.0, 0.4, 10.0)
+	# Quieto y sin trabajo legitimo en el camino (saqueo/huida/combate eximen).
+	carlos["aggro_target"] = null
+	carlos["flee_until"] = 0.0
+	carlos["hide_timer"] = 0.0
+	for bk in ["_gather", "_s_loot", "_craft_state", "_ambush", "_forage", "_salvage"]:
+		carlos[bk] = {}
+	carlos["sitting"] = false
+	# Baseline fijada hace "2 min" (el reloj del test arranca en ~3 s: se
+	# simula llamando al watchdog con un now_ms adelantado).
+	(carlos["ai_directive"] as Dictionary)["_prog_ref_ms"] = 1
+	(carlos["ai_directive"] as Dictionary)["_prog_ref_m"] = 100.0
+	var stall_res := mgr._ai_step_stalled(carlos, carlos["ai_directive"], Time.get_ticks_msec() + 200000)
+	check(stall_res == "no_progress",
+		"Un paso sin ganancia de distancia se declara no_progress (=%s)" % stall_res)
+	mgr._ai_fail_stalled_step(902, carlos, carlos["ai_directive"], stall_res)
+	var fg: Dictionary = cmem.get("failed_goals", {})
+	check(not fg.is_empty(), "El objetivo parado queda en failed_goals")
+	check(int(cmem.get("ai_stats", {}).get("steps_failed", 0)) >= 1
+			and int(cmem.get("ai_stats", {}).get("blocked_recoveries", 0)) >= 1,
+		"El paso parado cuenta steps_failed + blocked_recoveries")
+	var act_now := str(carlos.get("ai_directive", {}).get("action", ""))
+	check(act_now == "forage" or not (carlos.get("ai_directive", {}) as Dictionary).is_empty(),
+		"Tras el fallo intenta alternativa (siguiente paso o decision local)")
+
+	# --- 17) Un objetivo fallido no se reemite ni se reanuda ---
+	carlos["ai_directive"] = {}
+	cmem["pending_goals"] = [{"action": "return_home", "goal": "back", "priority": 3}]
+	mgr._ai_resume_pending_plan(902)
+	check(str(carlos.get("ai_directive", {}).get("goal", "")) != "back",
+		"El plan que ya fracaso no reaparece al reanudar")
+	var reem := mgr._ai_parse_plan(JSON.stringify({"steps": [{"action": "return_home", "goal": "back"}]}), carlos)
+	check(reem.is_empty(),
+		"Un paso con firma recien fallida se rechaza en _ai_parse_plan")
+
+	# --- 18) La firma de situacion incluye los factores nuevos ---
+	carlos["ai_directive"] = {}
+	carlos["_unreachable"] = []
+	var sig_a := mgr._ai_situation_signature(carlos)
+	carlos["_unreachable"] = [{"pos": Vector3(1, 0, 1), "until": float(Time.get_ticks_msec()) / 1000.0 + 60.0}]
+	var sig_b := mgr._ai_situation_signature(carlos)
+	check(sig_a != sig_b, "La firma cambia cuando aparece un objetivo bloqueado")
+	carlos["_unreachable"] = []
+	check(sig_a == mgr._ai_situation_signature(carlos),
+		"La firma vuelve a su valor al resolverse el bloqueo")
+
+	# --- 19) Una emergencia interrumpe el plan sin destruirlo ---
+	carlos["ai_directive"] = {"goal": "resupply", "action": "scavenge", "mode": "pos",
+		"pos": Vector3(300.0, 0.4, 300.0), "until": Time.get_ticks_msec() + 600000,
+		"priority": 3, "source": "qwen"}
+	carlos["flee_until"] = 9.0
+	check(not mgr._ai_bot_eligible(carlos),
+		"Bajo huida el asesor no reevalua: la emergencia tiene prioridad")
+	check(mgr._ai_step_busy(carlos),
+		"La huida cuenta como actividad legitima (no es quedarse parado)")
+	var stall_flee := mgr._ai_step_stalled(carlos, carlos["ai_directive"], Time.get_ticks_msec() + 95000)
+	check(stall_flee == "" or stall_flee == "timeout",
+		"Huyendo no se declara no_progress (=%s)" % stall_flee)
+	check(not (carlos.get("ai_directive", {}) as Dictionary).is_empty(),
+		"El plan sobrevive a la emergencia y se reanuda despues")
+	carlos["flee_until"] = 0.0
+	check(mgr._ai_bot_eligible(carlos),
+		"Pasada la emergencia el asesor vuelve a evaluar al bot")
 
 	world.free()
 	if failures == 0:

@@ -1805,7 +1805,10 @@ func run() -> void:
 			and str((mgr._ai_queue[0] as Dictionary).get("reason", "")) == "plan_done",
 		"Asesor: el sondeo cierra el plan cumplido, da un objetivo local inmediato y encola el siguiente")
 	mgr._ai_queue.clear()
-	elena["ai_directive"] = {"action": "avoid_zone", "mode": "avoid", "avoid_kinds": ["city"], \
+	# La zona vetada debe ser la actual de Elena: evitar una zona lejana se
+	# completaria al instante (la correccion de cierre real lo exige).
+	var elena_here := mgr._poi_kind_near(elena_proxy.global_position)
+	elena["ai_directive"] = {"action": "avoid_zone", "mode": "avoid", "avoid_kinds": [elena_here], \
 		"until": now_ms - int(mgr.AI_PLAN_STALE_GRACE_SEC * 1000.0) - 1000}
 	mgr._ai_rr = ids_s.find(901) - 1
 	mgr._ai_sig_poll(now_ms)
@@ -3498,6 +3501,9 @@ func run() -> void:
 	mgr.rally_bot_team(int(member_y["bot_id"]), kael_y["proxy"])
 	check(leader_y.get("aggro_target") == kael_y["proxy"] and member_y.get("aggro_target") == kael_y["proxy"],
 		"10y4: miembro atacado -> todo el equipo recibe aggro sobre el agresor")
+	check(str((member_y.get("_foe_mem", {}) as Dictionary).get("src", "")) == "told"
+			and float((member_y.get("_foe_mem", {}) as Dictionary).get("conf", 1.0)) < 1.0,
+		"10y4b: la posición del agresor llega al equipo como pista 'told' de fiabilidad menor")
 	leader_y["aggro_target"] = null
 	member_y["aggro_target"] = null
 

@@ -347,6 +347,22 @@ func run() -> void:
 	check(str(mgr2.bots[903]["faction"]) == "friendly", "Kael tambien persiste como aliado")
 	check(str(mgr2.bots[902]["faction"]) == "hostile", "Carlos sigue hostil: nunca se convencio")
 
+	# --- 12) Sin GroqCloud el cerebro local sigue decidiendo ---
+	# El bot renacido por memoria no se congela esperando una IA que no existe:
+	# la revision offline le asigna un objetivo ejecutable.
+	var kael2: Dictionary = mgr2.bots[903]
+	kael2["ai_directive"] = {}
+	kael2["flee_until"] = 0.0
+	kael2["hide_timer"] = 0.0
+	kael2["_craft_state"] = {}
+	kael2["team_leader_id"] = 0
+	mgr2._ai_next_at[903] = 0
+	mgr2._ai_review_local_goal(903, Time.get_ticks_msec() + 60000)
+	check(not (kael2.get("ai_directive", {}) as Dictionary).is_empty(),
+		"Sin Groq la revision local asigna un objetivo ejecutable")
+	check(str((kael2.get("ai_directive", {}) as Dictionary).get("action", "")) != "",
+		"El objetivo local lleva una accion del catalogo")
+
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(mem_path))
 	print("BotConvinceRegression: %d failures" % failures)
 	quit(1 if failures > 0 else 0)

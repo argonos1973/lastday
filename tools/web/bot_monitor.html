@@ -917,6 +917,8 @@ function renderBots(data) {
             bits.push(`qwen ${a.qwen_ok|0}✓/${a.qwen_invalid|0}✗ · local ${a.local_decisions|0}`);
           if ((a.plans_completed|0) + (a.plans_failed|0) > 0)
             bits.push(`planes ${a.plans_completed|0}✓/${a.plans_failed|0}✗`);
+          if ((a.steps_started|0) + (a.steps_completed|0) + (a.steps_failed|0) + (a.steps_done|0) > 0)
+            bits.push(`pasos ${a.steps_completed|0}✓/${a.steps_failed|0}✗ de ${(a.steps_started|0) || (a.steps_done|0)}`);
           if ((a.latency_ms_last|0) > 0)
             bits.push(`${a.latency_ms_last|0} ms`);
           if ((a.blocked_recoveries|0) > 0)
