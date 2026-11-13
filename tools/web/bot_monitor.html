@@ -852,9 +852,8 @@ function renderBots(data) {
       ${(() => {
         const st = b.stats || {};
         return `<div class="kv-grid" style="margin-bottom:4px">
-          <div class="kv-item"><b>Caza — presas</b>${st.kills_prey || 0}</div>
-          <div class="kv-item"><b>Caza — depredadores</b>${st.kills_predator || 0}</div>
-          <div class="kv-item"><b>Animales destripados</b>${st.animals_gutted || 0}</div>
+          <div class="kv-item"><b>Bots matados</b>${st.kills_bot || 0}</div>
+          <div class="kv-item"><b>Personajes matados</b>${st.kills_player || 0}</div>
           <div class="kv-item"><b>Muertes</b>${b.deaths || 0}${b.last_death_killer ? ` — ${esc(b.last_death_killer)}` : ""}${b.last_death_cause ? ` (${esc(b.last_death_cause)})` : ""}</div>
         </div>`;
       })()}
