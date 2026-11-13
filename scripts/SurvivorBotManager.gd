@@ -6270,6 +6270,12 @@ func _convince_threshold(b: Dictionary) -> float:
 
 # Umbral de obediencia por orden: compromiso mayor exige mas confianza.
 func _chat_order_gate(b: Dictionary, sender_id: int, skey: String, cmd: String) -> Dictionary:
+	# Bajo fuego nadie acepta compromisos — ni siquiera la orden del propio
+	# lider (desacuerdo justificado: primero sobrevivir, luego obedecer).
+	# stay/dismiss/attack si pasan: son ordenes coherentes en combate.
+	if b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
+		if not cmd in ["stay", "dismiss", "attack"]:
+			return {"ok": false, "why": "busy"}
 	if int(b.get("team_leader_id", 0)) == sender_id:
 		return {"ok": true, "why": "team"}
 	if str(b.get("faction", "")) == "hostile":
@@ -6287,10 +6293,6 @@ func _chat_order_gate(b: Dictionary, sender_id: int, skey: String, cmd: String) 
 	var rel := get_bot_relationship(int(b["bot_id"]), skey)
 	if int(rel.get("attacked", 0)) >= 1 and float(rel.get("hostility", 0.0)) >= 0.5:
 		return {"ok": false, "why": "betrayed"}
-	# Bajo fuego no acepta compromisos (puede quedarse, irse o defenderse)
-	if b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
-		if not cmd in ["stay", "dismiss", "attack"]:
-			return {"ok": false, "why": "busy"}
 	var pers := _get_bot_personality(b)
 	var score := float(rel.get("trust", 0.0)) * 0.75 \
 		+ float(pers.get("cooperation", 0.5)) * 0.30 \
@@ -11492,7 +11494,43 @@ func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 			shared_count += 1
 	mem_a["known_locations"] = ka
 	mem_b["known_locations"] = kb
+	# Las advertencias tambien viajan: los aliados comparten quien mato a
+	# supervivientes y a quien temen/odian — un verdugo conocido por uno es
+	# sospechoso para todos ("Kael mato a dos; no te fies").
+	_share_enemy_knowledge(mem_a, mem_b, _actor_persist_key(bot_id_b), _actor_persist_key(bot_id_a))
+	_share_enemy_knowledge(mem_b, mem_a, _actor_persist_key(bot_id_a), _actor_persist_key(bot_id_b))
 	return shared_count
+
+func _share_enemy_knowledge(mem_from: Dictionary, mem_to: Dictionary, to_key: String, from_key: String) -> void:
+	var killers_from: Dictionary = mem_from.get("killers", {})
+	var killers_to: Dictionary = mem_to.get("killers", {})
+	for k in killers_from.keys():
+		var src: Dictionary = killers_from[k]
+		var dst: Dictionary = killers_to.get(k, {"name": "", "count": 0})
+		dst["name"] = str(src.get("name", dst.get("name", "")))
+		dst["count"] = maxi(int(dst.get("count", 0)), int(src.get("count", 0)))
+		killers_to[k] = dst
+	mem_to["killers"] = killers_to
+	var rels_from: Dictionary = mem_from.get("relationships", {})
+	var rels_to: Dictionary = mem_to.get("relationships", {})
+	for k2 in rels_from.keys():
+		# Solo advertencias de TERCEROS: ni uno mismo ni el interlocutor —
+		# "temo a bot_903" no se le cuenta a bot_903 como rumor.
+		if str(k2) == to_key or str(k2) == from_key:
+			continue
+		var rf: Dictionary = rels_from[k2]
+		# Solo viaja mala reputacion demostrada (ataco o da miedo/odio real).
+		var warn := int(rf.get("attacked", 0)) > 0 or float(rf.get("hostility", 0.0)) >= 0.4 or float(rf.get("fear", 0.0)) >= 0.5
+		if not warn:
+			continue
+		var rt: Dictionary = rels_to.get(k2, {})
+		# El rumor levanta desconfianza sin inventar la agresion: nunca supera
+		# la hostilidad que el receptor ya sufrio en carne propia.
+		rt["hostility"] = snappedf(maxf(float(rt.get("hostility", 0.0)), float(rf.get("hostility", 0.0)) * 0.8), 0.01)
+		rt["fear"] = snappedf(maxf(float(rt.get("fear", 0.0)), float(rf.get("fear", 0.0)) * 0.8), 0.01)
+		rt["heard_about"] = true
+		rels_to[k2] = rt
+	mem_to["relationships"] = rels_to
 
 func _actor_persist_key(peer_id: int) -> String:
 	if peer_id <= 0:

@@ -292,6 +292,47 @@ func run() -> void:
 	rel_e2 = mgr.get_bot_relationship(901, "tester_7")
 	check(float(rel_e2.get("trust", 0.0)) < tr_before_atk, "Atacar al bot baja su confianza")
 
+	# --- 10b) Orden de lider bajo fuego: el peligro gana a la obediencia ---
+	# Elena (friendly, team_leader=7) recibe un "come" del lider estando en
+	# combate: debe negarse ("busy"); en calma lo acepta como antes.
+	elena["team_leader_id"] = 7
+	elena["aggro_target"] = human
+	var gate_busy := mgr._chat_order_gate(elena, 7, "tester_7", "come")
+	check(not bool(gate_busy.get("ok", true)) and str(gate_busy.get("why", "")) == "busy",
+		"Miembro bajo fuego desobedece el 'ven' del lider (busy)")
+	var gate_stay := mgr._chat_order_gate(elena, 7, "tester_7", "stay")
+	check(bool(gate_stay.get("ok", false)), "La orden 'stay' del lider si pasa bajo fuego")
+	elena["aggro_target"] = null
+	var gate_calm := mgr._chat_order_gate(elena, 7, "tester_7", "come")
+	check(bool(gate_calm.get("ok", false)), "En calma la orden del lider sigue siendo automatica")
+	elena["team_leader_id"] = 0
+
+	# --- 10c) Las advertencias viajan entre aliados ---
+	# Elena sabe que "sami_nem" mato a 2 y teme a "bot_902" (Carlos); al
+	# compartir con Kael, su memoria aprende la amenaza sin haberla sufrido.
+	var mem_e: Dictionary = mgr._ensure_bot_memory(901)
+	var mem_k: Dictionary = mgr._ensure_bot_memory(903)
+	(mem_e["killers"] as Dictionary)["sami_nem"] = {"name": "Sami", "count": 2}
+	var rel_e3 := mgr._chat_touch_rel(901, "bot_902", "Carlos")
+	rel_e3["hostility"] = 0.9
+	rel_e3["fear"] = 0.7
+	rel_e3["attacked"] = 1
+	# Una relacion sana NO viaja como advertencia (clave limpia dedicada)
+	var rel_e4 := mgr._chat_touch_rel(901, "friend_a", "Amigo")
+	rel_e4["trust"] = 0.9
+	mgr.share_bot_knowledge(901, 903)
+	var killers_k: Dictionary = mem_k.get("killers", {})
+	check(killers_k.has("sami_nem") and int((killers_k["sami_nem"] as Dictionary).get("count", 0)) == 2,
+		"El aliado hereda la ficha del asesino conocido")
+	var rel_k3 := mgr.get_bot_relationship(903, "bot_902")
+	check(float(rel_k3.get("hostility", 0.0)) > 0.0 and bool(rel_k3.get("heard_about", false)),
+		"El rumor enemigo levanta desconfianza marcada como oida (x0.8, sin inventar ataque)")
+	check(not (rel_k3 as Dictionary).has("attacked") or int(rel_k3.get("attacked", 0)) == 0,
+		"El rumor no inventa la agresion sufrida")
+	var rel_k7 := mgr.get_bot_relationship(903, "friend_a")
+	check(not bool((rel_k7 as Dictionary).get("heard_about", false)),
+		"Las relaciones sanas no viajan como advertencias")
+
 	# --- 11) La allegiance persiste: respawn con memoria -> friendly ---
 	mgr.force_memory_io = true
 	mgr._ai_save_memory()
