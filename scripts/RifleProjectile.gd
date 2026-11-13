@@ -17,6 +17,7 @@ var spin_speed := 0.0
 var _ray_query := PhysicsRayQueryParameters3D.new()
 
 func _physics_process(delta: float) -> void:
+	var _cpt := Time.get_ticks_usec()
 	if is_queued_for_deletion(): return
 	var space := get_world_3d().direct_space_state
 	var world := get_tree().current_scene
@@ -63,6 +64,7 @@ func _physics_process(delta: float) -> void:
 		if not hit.is_empty():
 			traveled += global_position.distance_to(hit.position)
 			impact.emit(hit.collider, hit.position, traveled, hit.normal)
+			if CombatProf.enabled: CombatProf.mark("proj.phys_impact", _cpt)
 			queue_free()
 			return
 		global_position += displacement
@@ -77,8 +79,10 @@ func _physics_process(delta: float) -> void:
 			rotate_y(spin_speed * step)
 		if traveled >= max_distance - 0.001 or velocity.length_squared() < 1.0:
 			expired.emit(global_position)
+			if CombatProf.enabled: CombatProf.mark("proj.phys_expired", _cpt)
 			queue_free()
 			return
+	if CombatProf.enabled: CombatProf.mark("proj.phys_frame", _cpt)
 
 func _is_passthrough_area(collider) -> bool:
 	# Solo las hitboxes de daño detienen la bala; el resto de areas son

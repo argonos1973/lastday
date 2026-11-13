@@ -817,6 +817,11 @@ var _stored_back_items: Array = [null, null]
 var _stored_back_visuals: Array = [null, null]
 var _rifle_on_back_strap: Node3D = null
 var _strap_skeleton: Skeleton3D = null
+# Bolsa estatica de escenas del sling desmontadas: instanciarla son ~40-50 ms
+# por build dentro del RPC de disparo (el congelamiento del primer tiro). Los
+# clears la devuelven aqui y la proxima build de CUALQUIER puppet la reutiliza.
+static var _sling_root_pool: Array = []
+const SLING_POOL_MAX := 8
 var _strap_barrel_marker: Marker3D = null
 var _strap_stock_marker: Marker3D = null
 var _strap_guide_upper: BoneAttachment3D = null
@@ -9135,7 +9140,13 @@ func _build_rifle_on_back() -> void:
 	_strap_initialized = false
 	_strap_prev_pts = PackedVector3Array()
 
+static var _strap_texture_cache: ImageTexture = null
+
 func _create_strap_texture() -> ImageTexture:
+	# Deterministic 256x256 pattern: 65k set_pixel calls per rifle build were
+	# ~70 ms on the combat path — cache it like the other shared strap assets.
+	if _strap_texture_cache != null:
+		return _strap_texture_cache
 	var w := 256
 	var h := 256
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
@@ -9176,6 +9187,7 @@ func _create_strap_texture() -> ImageTexture:
 				col.b = clampf(col.b + n, 0.0, 1.0)
 			img.set_pixel(x, y, col)
 	var tex := ImageTexture.create_from_image(img)
+	_strap_texture_cache = tex
 	return tex
 
 func _get_chest_target_from_mesh() -> Dictionary:
@@ -9236,26 +9248,38 @@ func _create_strap_skin() -> Skin:
 func _build_rifle_strap() -> void:
 	if third_person_model == null or not is_instance_valid(third_person_model):
 		return
+	var _spt := Time.get_ticks_usec()
 	# Prevent double instantiation
 	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap):
 		return
-	# Load the rigged sling asset
-	var sling_scene := load("res://assets/models/props/rifle_sling_unfolded.tscn") as PackedScene
-	if sling_scene == null:
-		push_warning("RIFLE STRAP: could not load rifle_sling_unfolded.tscn")
-		return
-	var sling_root := sling_scene.instantiate() as Node3D
-	if sling_root == null:
-		push_warning("RIFLE STRAP: sling scene root is not Node3D")
-		return
-	sling_root.name = "RifleSlingRoot"
+	var sling_root: Node3D = null
+	while not _sling_root_pool.is_empty():
+		var cand: Node3D = _sling_root_pool.pop_back()
+		if is_instance_valid(cand):
+			sling_root = cand
+			break
+	if sling_root != null:
+		if sling_root.get_parent() != null:
+			sling_root.get_parent().remove_child(sling_root)
+	else:
+		# Load the rigged sling asset
+		var sling_scene := load("res://assets/models/props/rifle_sling_unfolded.tscn") as PackedScene
+		if sling_scene == null:
+			push_warning("RIFLE STRAP: could not load rifle_sling_unfolded.tscn")
+			return
+		sling_root = sling_scene.instantiate() as Node3D
+		if sling_root == null:
+			push_warning("RIFLE STRAP: sling scene root is not Node3D")
+			return
+		sling_root.name = "RifleSlingRoot"
 	sling_root.visible = false # The fitted procedural band owns the visible sling.
-	# Initial identity transforms
+	third_person_model.add_child(sling_root)
+	# Initial identity transforms (tambien al reutilizar: el padre puede variar)
 	sling_root.position = Vector3.ZERO
 	sling_root.rotation = Vector3.ZERO
 	sling_root.scale = Vector3.ONE
-	third_person_model.add_child(sling_root)
 	_rifle_on_back_strap = sling_root
+	if CombatProf.enabled: CombatProf.mark("strap.scene", _spt)
 	# Find the skeleton and mesh inside
 	_strap_skeleton = null
 	var strap_mi: MeshInstance3D = null
@@ -9267,7 +9291,7 @@ func _build_rifle_strap() -> void:
 			child.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	if _strap_skeleton == null:
 		push_warning("RIFLE STRAP: no Skeleton3D found in sling scene")
-	elif strap_mi != null:
+	elif strap_mi != null and not sling_root.has_meta("strap_ready"):
 		# PASO 1: assign skeleton and skin for GPU skinning
 		strap_mi.skeleton = NodePath("../SlingSkeleton")
 		strap_mi.skin = _create_strap_skin()
@@ -9280,9 +9304,11 @@ func _build_rifle_strap() -> void:
 		strap_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		strap_mi.material_override = strap_mat
 		strap_mi.custom_aabb = AABB(Vector3(-10.0, -10.0, -10.0), Vector3(20.0, 20.0, 20.0))
+		sling_root.set_meta("strap_ready", true)
 
 	# Do NOT create Skin resource / CPU skinning cache — want pure rest pose
 	_strap_mesh_cached = false
+	if CombatProf.enabled: CombatProf.mark("strap.res", _spt)
 	# PASO 2: Align SlingMesh AABB center with real chest bone position
 	if strap_mi != null and _strap_skeleton != null:
 		var char_skel: Skeleton3D = _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
@@ -9325,6 +9351,7 @@ func _build_rifle_strap() -> void:
 				push_warning("[STRAP] Could not find chest bone for alignment")
 		else:
 			push_warning("[STRAP] Could not find character skeleton for alignment")
+	if CombatProf.enabled: CombatProf.mark("strap.chest", _spt)
 
 func _setup_strap_reference_visuals(strap_root: Node3D, strap_mi: MeshInstance3D) -> void:
 	if strap_root == null or not is_instance_valid(strap_root) or strap_mi == null or not is_instance_valid(strap_mi):
@@ -9525,7 +9552,11 @@ func _clear_rifle_on_back() -> void:
 		var p = _rifle_on_back_strap.get_parent()
 		if p != null:
 			p.remove_child(_rifle_on_back_strap)
-		_rifle_on_back_strap.free()
+		# ~40-50 ms instanciarla: vuelve a la bolsa para el proximo build.
+		if _sling_root_pool.size() < SLING_POOL_MAX:
+			_sling_root_pool.append(_rifle_on_back_strap)
+		else:
+			_rifle_on_back_strap.free()
 	_rifle_on_back_strap = null
 	_strap_skeleton = null
 	if _strap_guide_upper != null and is_instance_valid(_strap_guide_upper):
@@ -9547,14 +9578,22 @@ func _clear_rifle_on_back() -> void:
 	if third_person_model != null and is_instance_valid(third_person_model):
 		for child in third_person_model.get_children():
 			if child is Node3D and (child.name == "RifleSlingRoot" or child.name.begins_with("RifleSling") or child.name == "ProceduralStrapMesh"):
-				child.free()
+				# La escena rigged del sling cuesta ~40-50 ms instanciarla: no
+				# la destruimos, vuelve a la bolsa para el proximo build.
+				if child.name == "RifleSlingRoot" and _sling_root_pool.size() < SLING_POOL_MAX:
+					third_person_model.remove_child(child)
+					_sling_root_pool.append(child)
+				else:
+					child.free()
 
 func _build_third_person_rifle(item_name := "") -> void:
 	if third_person_hand_item_root == null or not is_instance_valid(third_person_hand_item_root):
 		return
 	if item_name.is_empty():
 		item_name = _held_rifle_name()
+	var _bpt := Time.get_ticks_usec()
 	_clear_rifle_attachment()
+	if CombatProf.enabled: CombatProf.mark("rifle_build.clear", _bpt)
 	var is_m4 := item_name == M4_NAME
 	_mounted_rifle_is_m4 = is_m4
 	if is_m4:
@@ -9575,6 +9614,7 @@ func _build_third_person_rifle(item_name := "") -> void:
 		_rg_right_grip = Vector3(0.5000, -0.5000, 1.2000)
 		_rg_left_grip = Vector3(-1.5, -0.5, -3.8)
 	var model := _load_external_node3d(_rifle_model_path_for(item_name))
+	if CombatProf.enabled: CombatProf.mark("rifle_build.model_load", _bpt)
 	if model == null:
 		return
 	var skeleton := _spine_skeleton if _spine_skeleton != null else _find_skeleton(third_person_model)
@@ -9640,6 +9680,7 @@ func _build_third_person_rifle(item_name := "") -> void:
 		stock_y = combined_aabb.get_center().y
 		muzzle_x = combined_aabb.get_center().x
 		muzzle_y = combined_aabb.get_center().y
+	if CombatProf.enabled: CombatProf.mark("rifle_build.aabb", _bpt)
 	# 4. Reference markers inside RifleRoot (positions in model-local space, scaled by weapon_scale)
 	# RightGrip: centro de la empuñadura/palma, sobre el gatillo, ligeramente a la derecha del eje del rifle
 	_rifle_right_grip = Marker3D.new()
@@ -9657,6 +9698,7 @@ func _build_third_person_rifle(item_name := "") -> void:
 	_rifle_left_elbow_pole.name = "LeftElbowPole"
 	self.add_child(_rifle_left_elbow_pole)
 	_setup_rifle_left_arm_ik(skeleton, _rifle_left_hand_grip)
+	if CombatProf.enabled: CombatProf.mark("rifle_build.ik_markers", _bpt)
 	# StockReference: extremo trasero fisico de la culata (max Z del AABB — model barrel points -Z)
 	_rifle_stock_ref = Marker3D.new()
 	_rifle_stock_ref.name = "StockReference"
@@ -9679,8 +9721,10 @@ func _build_third_person_rifle(item_name := "") -> void:
 	_strap_stock_marker.position = Vector3(stock_x, stock_y + 0.05, stock_z * 0.90 + muzzle_z * 0.10)
 	_rifle_root.add_child(_strap_stock_marker)
 	RifleStrapScript.attach_swivels(_strap_barrel_marker, _strap_stock_marker, model)
+	if CombatProf.enabled: CombatProf.mark("rifle_build.swivels", _bpt)
 
 	_build_rifle_strap()
+	if CombatProf.enabled: CombatProf.mark("rifle_build.strap", _bpt)
 
 	# Two-point alignment targets. No IK targets, poles, or arm solvers are created.
 	_rifle_stock_target = Marker3D.new()
@@ -9722,6 +9766,7 @@ func _build_third_person_rifle(item_name := "") -> void:
 	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
 		_rifle_left_arm_ik.active = true
 		_rifle_left_arm_ik.influence = 0.0
+	if CombatProf.enabled: CombatProf.mark("rifle_build.targets", _bpt)
 
 #endregion
 
@@ -10597,7 +10642,11 @@ func _clear_rifle_attachment() -> void:
 		var p2 = _rifle_on_back_strap.get_parent()
 		if p2 != null:
 			p2.remove_child(_rifle_on_back_strap)
-		_rifle_on_back_strap.free()
+		# ~40-50 ms instanciarla: vuelve a la bolsa para el proximo build.
+		if _sling_root_pool.size() < SLING_POOL_MAX:
+			_sling_root_pool.append(_rifle_on_back_strap)
+		else:
+			_rifle_on_back_strap.free()
 	_rifle_on_back_strap = null
 	_strap_skeleton = null
 	if _strap_guide_upper != null and is_instance_valid(_strap_guide_upper):
@@ -10615,7 +10664,13 @@ func _clear_rifle_attachment() -> void:
 	if third_person_model != null and is_instance_valid(third_person_model):
 		for child in third_person_model.get_children():
 			if child is Node3D and (child.name == "RifleSlingRoot" or child.name.begins_with("RifleSling") or child.name == "ProceduralStrapMesh"):
-				child.free()
+				# La escena rigged del sling cuesta ~40-50 ms instanciarla: no
+				# la destruimos, vuelve a la bolsa para el proximo build.
+				if child.name == "RifleSlingRoot" and _sling_root_pool.size() < SLING_POOL_MAX:
+					third_person_model.remove_child(child)
+					_sling_root_pool.append(child)
+				else:
+					child.free()
 
 func _setup_rifle_left_arm_ik(skel: Skeleton3D, target: Node3D) -> void:
 	var upper_arm := _resolve_bone_name_safe("mixamorig:LeftArm", skel)
@@ -13441,6 +13496,7 @@ func _land_after_fall() -> void:
 func apply_damage(amount: float, cause: String = "") -> void:
 	if is_puppet or is_dead:
 		return
+	var _cpt := Time.get_ticks_usec()
 	if is_sleeping:
 		stop_sleep()
 		notice.emit("Te han despertado!")
@@ -13504,6 +13560,7 @@ func apply_damage(amount: float, cause: String = "") -> void:
 	notice.emit("Has recibido dano.")
 	_play_pain_sound()
 	_spawn_blood_splatter()
+	if CombatProf.enabled: CombatProf.mark("pc.apply_damage", _cpt)
 
 func _melee_attack() -> void:
 	if is_dead or _attack_cooldown > 0.0:
@@ -14302,6 +14359,7 @@ func _shoot_rifle() -> void:
 		main.hud._update_equipment_labels()
 
 func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3 = Vector3.UP, is_m4 := false) -> void:
+	var _cpt := Time.get_ticks_usec()
 	# Smooth energy loss; damage remains a game abstraction rather than a medical model.
 	var damage := (M4_DAMAGE if is_m4 else RIFLE_DAMAGE) * exp(-0.0002 * hit_dist)
 	var is_headshot := false
@@ -14396,7 +14454,9 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			node.apply_damage(damage)
 	# Non-living surface: dust puff, debris chips and a bullet hole decal
 	_alert_wildlife_near_point(hit_pos, 85.0)
+	if CombatProf.enabled: CombatProf.mark("pc.rifle_alert_wild", _cpt)
 	_spawn_bullet_impact(hit_pos, hit_normal, collider)
+	if CombatProf.enabled: CombatProf.mark("pc.apply_rifle_damage", _cpt)
 
 func _is_rifle_damage_target(node: Node) -> bool:
 	return node.is_in_group("wildlife") or node.is_in_group("npc") or node.is_in_group("net_player_proxy") or node.is_in_group("remote_player")
@@ -14509,6 +14569,31 @@ func prepare_combat_effects() -> void:
 	_get_bullet_hole_texture()
 	_get_bullet_hole_mesh_pair(false)
 	_get_bullet_hole_mesh_pair(true)
+	# Los GLB de armas se instancian la primera vez que un puppet las muestra;
+	# un load() frio dentro del RPC de disparo eran ~100 ms de parseo GLB en
+	# pleno combate (el congelamiento del primer tiro). _model_cache es
+	# estatico: calentarlo una vez cubre puppets y proyectiles de la sesion.
+	for _wpath in [M4_MODEL, REAL_RIFLE_MODEL, M4_MAGAZINE_MODEL, RIFLE_MAGAZINE_MODEL,
+			WOODEN_BOW_MODEL, REINFORCED_BOW_MODEL,
+			ARROW_WOOD_MODEL, ARROW_STONE_MODEL, ARROW_BONE_MODEL,
+			REAL_AXE_MODEL, REAL_TORCH_MODEL]:
+		var _warm := _load_external_node3d(_wpath)
+		if _warm != null:
+			_warm.free()
+	# La textura procedural de la correa del rifle son ~70 ms de set_pixel la
+	# primera vez — generarla aqui deja el primer rifle visual en milisegundos.
+	_create_strap_texture()
+	# La escena rigged de la correa tarda ~40-50 ms en instanciarse; dejar unas
+	# ya hechas en la bolsa compartida elimina el tirón del primer rifle visual.
+	var _sling_ps := load("res://assets/models/props/rifle_sling_unfolded.tscn") as PackedScene
+	if _sling_ps != null:
+		while _sling_root_pool.size() < 3:
+			var _sling := _sling_ps.instantiate() as Node3D
+			if _sling == null:
+				break
+			_sling.name = "RifleSlingRoot"
+			_sling.visible = false
+			_sling_root_pool.append(_sling)
 	# Small shared audio assets are decoded during loading, not the first bite.
 	for path in [M4_SHOOT_SOUND, "res://assets/audio/disparo.wav", "res://assets/audio/punch_swing.wav", "res://assets/audio/recibirdisparo.mp3", "res://assets/audio/punch_impact.wav",
 		"res://assets/external/audio/downloaded/pain1.wav", "res://assets/external/audio/downloaded/pain2.wav",
@@ -14573,6 +14658,7 @@ func _hit_marker(lethal: bool) -> void:
 		main.hud.show_hit_marker(lethal)
 
 func _spawn_bullet_impact(hit_pos: Vector3, hit_normal: Vector3, collider) -> void:
+	var _cpt := Time.get_ticks_usec()
 	if hit_normal.length_squared() < 0.01:
 		hit_normal = Vector3.UP
 	hit_normal = hit_normal.normalized()
@@ -14589,6 +14675,7 @@ func _spawn_bullet_impact(hit_pos: Vector3, hit_normal: Vector3, collider) -> vo
 	_spawn_impact_chips(hit_pos, hit_normal, dust_color, metal)
 	if not water:
 		_spawn_bullet_hole_decal(hit_pos, hit_normal, collider)
+	if CombatProf.enabled: CombatProf.mark("pc.bullet_impact", _cpt)
 
 func _guess_surface_dust_color(hit_normal: Vector3, collider) -> Color:
 	# Heuristica por nombre del collider y sus padres
@@ -14851,13 +14938,16 @@ func _update_puppet_locomotion_audio(delta: float) -> void:
 		_puppet_step_player.play()
 
 func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
+	var _cpt := Time.get_ticks_usec()
 	if is_puppet:
 		# El RPC fiable player_shot_rifle puede llegar antes de que el snapshot
 		# unreliable_ordered actualice _puppet_held en un bot que acaba de
 		# desenfundar: asegurar el arma para que el sonido 3D nunca se pierda.
 		if not _is_rifle_item_name(_puppet_held):
 			_puppet_held = M4_NAME
+			var _hpt := Time.get_ticks_usec()
 			_update_puppet_held_item(_puppet_held)
+			if CombatProf.enabled: CombatProf.mark("pc.puppet_held_rebuild", _hpt)
 	else:
 		if not _has_rifle_equipped():
 			return
@@ -14879,10 +14969,12 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vec
 	var excluded: Array[RID] = [get_rid()]
 	_collect_child_collision_rids(self, excluded)
 	_launch_rifle_projectile(_origin, _dir, wind, excluded, false, remote_m4)
+	if CombatProf.enabled: CombatProf.mark("pc.play_shot_remote", _cpt)
 	# Each RPC describes one actual round; never synthesize extra burst shots.
 
 func _launch_rifle_projectile(origin: Vector3, direction: Vector3, wind: Vector3, excluded: Array[RID], deal_damage: bool, is_m4 := false) -> void:
 	if direction.length_squared() < .001 or get_tree().current_scene == null: return
+	var _cpt := Time.get_ticks_usec()
 	var projectile := preload("res://scripts/RifleProjectile.gd").new()
 	projectile.velocity = direction.normalized()*(M4_MUZZLE_SPEED if is_m4 else RIFLE_MUZZLE_SPEED)
 	projectile.wind_velocity = wind
@@ -14900,6 +14992,7 @@ func _launch_rifle_projectile(origin: Vector3, direction: Vector3, wind: Vector3
 				if _is_rifle_damage_target(target): return
 				target = target.get_parent()
 			_spawn_bullet_impact(point, normal, collider))
+	if CombatProf.enabled: CombatProf.mark("pc.launch_projectile", _cpt)
 
 func _has_bow_equipped() -> bool:
 	var held = get_held_item()

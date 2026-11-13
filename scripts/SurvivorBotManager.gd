@@ -1142,6 +1142,53 @@ var perf_seg := {}
 func _pbm(seg_name: String, t0: int) -> void:
 	perf_seg[seg_name] = int(perf_seg.get(seg_name, 0)) + (Time.get_ticks_usec() - t0)
 
+# --- CombatProf driver (LD_COMBAT_PROF): arms rifle bots on the local player
+# and dumps per-segment timings every 10 s. Inert in normal runs.
+var _cprof_armed := false
+var _cprof_dump_t := 0.0
+
+func _combat_probe_driver(delta: float) -> void:
+	_cprof_dump_t += delta
+	if _cprof_dump_t >= 10.0:
+		_cprof_dump_t = 0.0
+		var out := CombatProf.dump_and_reset()
+		var wild_parts := ""
+		for k in WildlifeController.perf_parts.keys():
+			wild_parts += "%s=%dms " % [k, int(WildlifeController.perf_parts[k]) / 10 / 1000]
+		WildlifeController.perf_usec = 0
+		WildlifeController.perf_parts.clear()
+		print("[CPROF] %s%s" % [out, ("  wild: " + wild_parts) if not wild_parts.is_empty() else ""])
+	if _cprof_armed:
+		return
+	_cprof_armed = true
+	var player = world.get("player") if world != null else null
+	if player == null or not (player is Node3D):
+		_cprof_armed = false
+		return
+	var armed := 0
+	for bid in bots.keys():
+		if armed >= 3:
+			break
+		var b: Dictionary = bots[bid]
+		var proxy: Node3D = b.get("proxy")
+		if proxy == null or not is_instance_valid(proxy):
+			continue
+		var inv: Array = proxy.get_meta("saved_inventory", [])
+		inv.append({"name": "Fusil de asalto", "type": "weapon", "quantity": 1, "durability": 100.0, "max_durability": 100.0})
+		inv.append({"name": "Munición de fusil", "type": "ammo", "quantity": 200})
+		proxy.set_meta("saved_inventory", inv)
+		proxy.set_meta("has_rifle", true)
+		b["aggro_target"] = player
+		b["aggro_timer"] = 120.0
+		b["sense_t"] = 0.0
+		b["faction"] = "hostile"
+		armed += 1
+		print("[CPROF] armed bot %d" % int(bid))
+	if armed > 0:
+		var first_proxy: Node3D = bots[bots.keys()[0]]["proxy"]
+		(player as Node3D).global_position = first_proxy.global_position + Vector3(0.0, 0.0, 18.0)
+		print("[CPROF] player teleported in front of bots")
+
 func tick(delta: float) -> void:
 	if world == null:
 		return
@@ -1151,6 +1198,8 @@ func tick(delta: float) -> void:
 		_refresh_client_bot_avatars()
 		return
 	var _pt := Time.get_ticks_usec()
+	if CombatProf.enabled:
+		_combat_probe_driver(delta)
 	_voice_tick(delta)
 	_pbm("voice", _pt)
 	_pt = Time.get_ticks_usec()
@@ -3087,7 +3136,7 @@ func _bot_wants_animal_loot(b: Dictionary, proxy: Node3D) -> bool:
 # Tras una baja se agenda el destripado: el bot camina hasta el cadáver y
 # dedica unos segundos agachado, igual que la acción del jugador.
 func _bot_start_gutting(b: Dictionary, animal: Node3D) -> void:
-	if animal == null or not is_instance_valid(animal) or bool(animal.get("_gutted")):
+	if animal == null or not is_instance_valid(animal) or animal.get("_gutted") == true:
 		return
 	var proxy: Node3D = b["proxy"]
 	if not _bot_wants_animal_loot(b, proxy):
@@ -3098,7 +3147,7 @@ func _bot_start_gutting(b: Dictionary, animal: Node3D) -> void:
 	b["gut_t"] = 0.0
 
 func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
-	if animal == null or not is_instance_valid(animal) or bool(animal.get("_gutted")):
+	if animal == null or not is_instance_valid(animal) or animal.get("_gutted") == true:
 		return
 	var proxy: Node3D = b["proxy"]
 	if not _bot_has_can_opener(proxy):
@@ -3401,7 +3450,7 @@ func _bot_tamed_wolf(b: Dictionary) -> Node3D:
 		return null
 	var key := str(b["bot_id"])
 	for w in world.get_tree().get_nodes_in_group("wildlife"):
-		if is_instance_valid(w) and not bool(w.get("_is_dead")) and str(w.get("animal_type")) == "wolf" and str(w.get("tamed_to")) == key:
+		if is_instance_valid(w) and w.get("_is_dead") != true and str(w.get("animal_type")) == "wolf" and str(w.get("tamed_to")) == key:
 			return w as Node3D
 	return null
 
@@ -3718,6 +3767,7 @@ func _can_bot_hear_actor(b: Dictionary, target: Node3D, dist: float) -> bool:
 func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius: float = 120.0) -> void:
 	if world == null:
 		return
+	var _cpt := Time.get_ticks_usec()
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
 	var actor_node := _find_actor_by_peer_id(actor_id) if actor_id > 0 else null
 	for bid in bots.keys():
@@ -3762,6 +3812,7 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 				elif d <= 95.0:
 					b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 10.0)
 					record_zone_hazard(int(bid), sound_pos, "gunshot", 0.30, true)
+	if CombatProf.enabled: CombatProf.mark("bot.notify_sound", _cpt)
 
 # Zonas con puestos elevados (ciudad con azoteas/Torre del Reloj y bases
 # militares con torre de vigilancia): alli un superviviente prudente vigila
@@ -4181,9 +4232,11 @@ func _bot_melee_dodge_chance(target_speed: float) -> float:
 	return clampf(0.10 + minf(target_speed, 8.0) * 0.05, 0.10, 0.5)
 
 func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
+	var _cpt := Time.get_ticks_usec()
 	var proxy: Node3D = b["proxy"]
 	# Recheck at release: navigation can move the shooter after perception.
 	if not is_instance_valid(target) or not _has_clear_shot(proxy.global_position, target.global_position):
+		if CombatProf.enabled: CombatProf.mark("bot_fire.recheck_fail", _cpt)
 		return
 	var bot_id := int(b["bot_id"])
 	var origin := proxy.global_position + Vector3(0.0, 1.4, 0.0)
@@ -4208,6 +4261,7 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.player_shot_rifle.rpc_id(pid, bot_id, origin, dir, Vector3.ZERO)
 	if not hits:
+		if CombatProf.enabled: CombatProf.mark("bot_fire.miss", _cpt)
 		return
 	if target is WildlifeController or target.is_in_group("wildlife"):
 		if target.has_method("take_damage"):
@@ -4217,6 +4271,7 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float) -> void:
 			_bot_start_gutting(b, target)
 	else:
 		_apply_bot_damage_to_target(b, target, dmg, "rifle")
+	if CombatProf.enabled: CombatProf.mark("bot_fire.hit", _cpt)
 
 # Daño base de cada flecha, igual que en el arco del jugador.
 func _bot_arrow_base_damage(arrow_name: String) -> float:
@@ -4371,6 +4426,7 @@ func _apply_bot_damage_to_target(b: Dictionary, target: Node3D, amount: float, w
 func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String = "melee") -> void:
 	if not bots.has(bot_id):
 		return
+	var _cpt := Time.get_ticks_usec()
 	var b: Dictionary = bots[bot_id]
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
@@ -4428,6 +4484,7 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 
 	if hp <= 0.0:
 		_kill_bot(b, "melee" if weapon == "melee" else (weapon if not weapon.is_empty() else "combat"))
+	if CombatProf.enabled: CombatProf.mark("bot.on_damaged", _cpt)
 
 # Muerte del superviviente por cualquier causa (impacto letal, mordisco,
 # inanicion o deshidratacion): marca el proxy, suelta el loot y sincroniza
@@ -5670,6 +5727,7 @@ func _bot_social_update(b: Dictionary) -> void:
 func rally_bot_team(victim_id: int, attacker: Node3D) -> void:
 	if attacker == null or not is_instance_valid(attacker) or not bots.has(victim_id):
 		return
+	var _cpt := Time.get_ticks_usec()
 	var victim_b: Dictionary = bots[victim_id]
 	var lid := int(victim_b.get("team_leader_id", 0))
 	var leader := lid if lid > 0 else victim_id
@@ -5686,6 +5744,7 @@ func rally_bot_team(victim_id: int, attacker: Node3D) -> void:
 			tb["sitting"] = false
 			tb["sleeping"] = false
 			tb["sense_t"] = 0.0
+	if CombatProf.enabled: CombatProf.mark("bot.rally", _cpt)
 
 func _peer_id_for_actor(node: Node3D) -> int:
 	for bid in bots.keys():
@@ -7759,6 +7818,7 @@ func interact_with_bot(bot_id: int, sender_id: int, mode: String = "toggle") -> 
 func notify_leader_combat(leader_id: int, target_node: Node3D) -> void:
 	if target_node == null or not is_instance_valid(target_node):
 		return
+	var _cpt := Time.get_ticks_usec()
 	for bot_id in bots.keys():
 		var b: Dictionary = bots[bot_id]
 		if int(b.get("team_leader_id", 0)) != leader_id:
@@ -7772,13 +7832,14 @@ func notify_leader_combat(leader_id: int, target_node: Node3D) -> void:
 			b["follow_mode"] = "follow"
 			b["sitting"] = false
 			b["sense_t"] = 0.0
+	if CombatProf.enabled: CombatProf.mark("bot.notify_leader", _cpt)
 
 func _command_bot_wolf_against(b: Dictionary, target: Node3D) -> void:
 	if world == null or world.get_tree() == null or target == null or not is_instance_valid(target):
 		return
 	var key := str(b["bot_id"])
 	for w in world.get_tree().get_nodes_in_group("wildlife"):
-		if is_instance_valid(w) and not bool(w.get("_is_dead")) and str(w.get("animal_type")) == "wolf" and str(w.get("tamed_to")) == key:
+		if is_instance_valid(w) and w.get("_is_dead") != true and str(w.get("animal_type")) == "wolf" and str(w.get("tamed_to")) == key:
 			if w.has_method("notify_threat"):
 				w.notify_threat(target, 20.0)
 
@@ -9402,7 +9463,9 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		var prev_pgoal: Vector3 = b.get("_path_goal", Vector3.INF) if b.get("_path_goal") is Vector3 else Vector3.INF
 		var goal_shifted: bool = prev_pgoal == Vector3.INF or Vector2(goal.x - prev_pgoal.x, goal.z - prev_pgoal.z).length() > 2.5
 		if float(b["path_timer"]) <= 0.0 or (goal_shifted and float(b["path_timer"]) <= 1.2):
+			var _npt := Time.get_ticks_usec()
 			b["path"] = bot_nav_ref.find_path(cur, goal)
+			if CombatProf.enabled: CombatProf.mark("bot.find_path", _npt)
 			b["_path_goal"] = goal
 			b["path_idx"] = 0
 			b["path_timer"] = 1.8
@@ -9600,6 +9663,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 			_abandon_unreachable_goal(b, raw_goal)
 
 func _has_clear_shot(from_pos: Vector3, to_pos: Vector3) -> bool:
+	var _cpt := Time.get_ticks_usec()
 	if world == null or not (world is Node3D) or (world as Node3D).get_world_3d() == null:
 		return true
 	var space: PhysicsDirectSpaceState3D = (world as Node3D).get_world_3d().direct_space_state
@@ -9612,12 +9676,15 @@ func _has_clear_shot(from_pos: Vector3, to_pos: Vector3) -> bool:
 	query.collide_with_areas = false
 	var hit: Dictionary = space.intersect_ray(query)
 	if not hit.is_empty():
+		if CombatProf.enabled: CombatProf.mark("bot.clear_shot", _cpt)
 		return false
 	# Distant trees/rocks may use analytical collisions rather than bodies.
 	if world.has_method("raycast_distant_props"):
 		var distant: Dictionary = world.raycast_distant_props(query.from, query.to)
 		if not distant.is_empty():
+			if CombatProf.enabled: CombatProf.mark("bot.clear_shot", _cpt)
 			return false
+	if CombatProf.enabled: CombatProf.mark("bot.clear_shot", _cpt)
 	return true
 
 func _is_world_night() -> bool:

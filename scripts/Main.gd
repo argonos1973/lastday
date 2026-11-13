@@ -3186,6 +3186,7 @@ func _spawn_server_proxy(id: int) -> void:
 # Called by RPC from server on client to apply wolf/PvP damage.
 # `weapon` tags the source: "melee" triggers the hit-reaction flinch.
 func _net_apply_damage(amount: float, weapon: String = "") -> void:
+	var _cpt := Time.get_ticks_usec()
 	if player != null and player.has_method("apply_damage"):
 		if weapon == "rifle":
 			# _play_shot_reaction plays recibirdisparo.mp3; suppress the generic
@@ -3206,6 +3207,7 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 		if weapon == "rifle":
 			player._recoil_pitch -= deg_to_rad(5.5)
 			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
+	if CombatProf.enabled: CombatProf.mark("dmg.net_apply", _cpt)
 
 func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
@@ -3951,6 +3953,7 @@ var _incoming_shot_player: AudioStreamPlayer3D = null
 var _incoming_shot_last := -10.0
 
 func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
+	var _cpt := Time.get_ticks_usec()
 	var ndir := dir.normalized() if dir.length_squared() > 0.001 else Vector3.FORWARD
 	var shooter_node: Node3D = null
 	if remote_players.has(shooter_id):
@@ -3958,6 +3961,7 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
 			rp.play_rifle_shot_remote(origin, dir, wind)
 			shooter_node = rp
+	if CombatProf.enabled: CombatProf.mark("shot.puppet_visual", _cpt)
 	# Balas que pasan cerca del jugador local: el chasquido supersonico suena en
 	# el punto mas proximo de la trayectoria aunque el tirador este a 200 m. Este
 	# RPC reliable siempre llega antes que el de dano, asi el tiro se oye antes
@@ -3971,6 +3975,7 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 			var closest := origin + ndir * along
 			if closest.distance_to(ear) < 7.0:
 				_play_incoming_shot(closest, shooter_node)
+	if CombatProf.enabled: CombatProf.mark("shot.incoming_audio", _cpt)
 	# Server and remote clients alert all nearby wildlife so wolves, deer, foxes,
 	# bears and birds flee running when they hear a gunshot or bullet impact zone.
 	var mid_impact := origin + ndir * 65.0
@@ -3981,8 +3986,10 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 			w.flee_from_gunshot(origin, 120.0)
 			if w is Node3D and (w as Node3D).global_position.distance_to(origin) > 120.0 and (w as Node3D).global_position.distance_to(mid_impact) <= 75.0:
 				w.flee_from_gunshot(mid_impact, 75.0)
+	if CombatProf.enabled: CombatProf.mark("shot.wildlife_flee", _cpt)
 	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
 		survivor_bot_mgr.notify_sound_event(shooter_id, origin, "gunshot", 220.0)
+	if CombatProf.enabled: CombatProf.mark("shot.notify_bots", _cpt)
 
 # Chasquido local del tiro que pasa pegado al jugador: direccional (se posiciona
 # en el punto mas proximo del rayo al oido) y distinto del estampido 3D del
@@ -4640,6 +4647,7 @@ func _net_animal_gutted(animal_name: String, meat_drops: Array) -> void:
 func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon: String = "melee") -> void:
 	if not is_finite(amount) or amount <= 0.0:
 		return
+	var _cpt := Time.get_ticks_usec()
 	if net != null and net.is_connected and not net.is_host:
 		return
 	# Find target proxy: check active proxies first, then disconnected ones
@@ -4732,6 +4740,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 	# Lobos domesticados: el del agredido defiende a su dueño; el del agresor
 	# asiste el ataque (solo si el lobo está cerca del combate).
 	_notify_tamed_wolves_pvp(sender, target_peer_id, proxy, sender_proxy)
+	if CombatProf.enabled: CombatProf.mark("dmg.net_damage_player", _cpt)
 
 func _finish_pvp_death_after_impact(target_peer_id: int, proxy: Node3D, death_cause: String) -> void:
 	await get_tree().create_timer(0.48).timeout
