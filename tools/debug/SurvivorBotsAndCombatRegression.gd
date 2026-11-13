@@ -4464,15 +4464,16 @@ func run() -> void:
 	# 10I2: el menu de ordenes [Z] ya no existe — la interaccion con bots es
 	# solo chat/voz (cubierto por BotConvinceRegression).
 
-	# 10I3: Kael desarmado no inicia ataques suicidas; armado con fusil si
+	# 10I3: Kael desarmado detecta al humano como amenaza (para huir, no para
+	# un ataque suicida); armado con fusil lo elige como objetivo de combate
 	var kb903: Dictionary = mgr.bots[903]
 	kb903["proxy"].set_meta("proxy_dead", false)
 	kb903["aggro_target"] = null
 	kb903["proxy"].global_position = Vector3(50.0, 0.4, 50.0)
 	world.player.global_position = Vector3(56.0, 0.4, 50.0)
 	kb903["proxy"].set_meta("saved_inventory", [])
-	check(mgr._find_combat_foe(kb903) == null,
-		"10I3a: Kael desarmado no inicia ataque suicida (busca arma primero)")
+	check(mgr._find_combat_foe(kb903) != null,
+		"10I3a: Kael desarmado detecta al humano cercano como amenaza (huira, no ataca)")
 	kb903["proxy"].set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.1, "quantity": 1, "use_value": 10.0, "durability": 100.0, "max_durability": 100.0}])
 	check(mgr._find_combat_foe(kb903) != null,
 		"10I3b: Kael armado con fusil si detecta y ataca al enemigo")

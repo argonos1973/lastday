@@ -1539,13 +1539,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var human_foe := _sensed_node(b, "_s_foe")
 	if human_foe != null:
 		b["_act"] = "foe"
-		# Herido grave (< 30 HP), desarmado frente a enemigo armado o en huida:
-		# repliegue tactico real. Con refugio va a ocultarse; sin refugio escapa
-		# en zigzag hasta perder la amenaza o conseguir un arma.
+		# Herido grave (< 30 HP), SIN ARMA (un superviviente desarmado no se
+		# queda a descubrir si el desconocido es hostil: sale huyendo) o ya en
+		# huida: repliegue tactico real. Con refugio va a ocultarse; sin refugio
+		# escapa en zigzag hasta perder la amenaza o conseguir un arma.
 		var fleeing: bool = float(b["flee_until"]) > 0.0
 		if fleeing:
 			b["flee_until"] = maxf(0.0, float(b["flee_until"]) - delta)
-		var unarmed_vs_armed: bool = _best_weapon_name(proxy).is_empty() and not str(human_foe.get_meta("saved_held_item", "")).is_empty()
+		var unarmed: bool = _best_weapon_name(proxy).is_empty()
 		var combat_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("combat", 0))
 		var ranged_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("ranged", 0))
 		var retreat_hp := 30.0 + minf(15.0, float(combat_lessons) * 5.0) + minf(10.0, float(ranged_lessons) * 4.0)
@@ -1556,10 +1557,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if not nem.is_empty() and not _has_combat_edge(b, human_foe):
 			var fear_n := float(get_bot_relationship(int(b["bot_id"]), str(nem.get("key", ""))).get("fear", 0.0))
 			var pers_n := _get_bot_personality(b)
-			if int(nem.get("count", 1)) >= 2 or fear_n > 0.6 or unarmed_vs_armed or float(pers_n.get("bravery", 0.5)) < 0.42:
+			if int(nem.get("count", 1)) >= 2 or fear_n > 0.6 or unarmed or float(pers_n.get("bravery", 0.5)) < 0.42:
 				_bot_avoid_nemesis(b, human_foe, str(nem.get("name", "")), delta)
 				return
-		if (float(b["health"]) < retreat_hp or fleeing or unarmed_vs_armed) and not _has_combat_edge(b, human_foe):
+		if (float(b["health"]) < retreat_hp or fleeing or unarmed) and not _has_combat_edge(b, human_foe):
 			if sh_pos != Vector3.INF:
 				b["hide_timer"] = 20.0
 				_move_bot_towards(b, sh_pos, 6.0, delta, "run")
@@ -4001,12 +4002,10 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 	var best: Node3D = null
 	var best_d := sight
 
-	# Si es hostil ("Kael"), busca jugadores humanos y bots aliados — pero NUNCA
-	# inicia un ataque suicida con las manos vacias ni se lanza a cuerpo a cuerpo
-	# contra alguien que ya le ha matado si no lleva arma a distancia.
+	# Si es hostil ("Kael"), busca jugadores humanos y bots aliados. Un bot sin
+	# arma TAMBIEN registra al humano que se acerca como amenaza — no para
+	# iniciar un ataque suicida a manos vacias, sino para salir huyendo.
 	if faction == "hostile":
-		if _best_weapon_name(proxy).is_empty():
-			return null
 		var has_ranged := _bot_has_ranged_weapon(proxy)
 		var pers_h := _get_bot_personality(b)
 		var cautious_h := not has_ranged and float(pers_h.get("survival_instinct", 0.7)) > float(pers_h.get("bravery", 0.5)) * 0.85

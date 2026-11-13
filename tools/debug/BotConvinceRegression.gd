@@ -141,6 +141,49 @@ func run() -> void:
 			all_hostile = false
 	check(all_hostile, "Elena, Carlos y Kael nacen TODOS hostiles")
 
+	# --- 1b) Un hostil SIN ARMA detecta al humano que se acerca y sale huyendo ---
+	# Antes, _find_combat_foe devolvia null con las manos vacias: el bot se
+	# quedaba quieto. Ahora el desarmado registra la amenaza y huye aunque el
+	# humano tampoco lleve nada en la mano.
+	var kael0: Dictionary = mgr.bots[903]
+	kael0["proxy"].set_meta("saved_inventory", []) # manos vacias
+	var kael0_pos0: Vector3 = (kael0["proxy"] as Node3D).global_position
+	var human0 := _make_human_proxy(world, 71, kael0_pos0 + Vector3(18.0, 0.0, 0.0))
+	kael0["sense_t"] = 0.0
+	kael0["flee_until"] = 0.0
+	kael0["sleeping"] = false
+	var foe0 := mgr._find_combat_foe(kael0)
+	check(foe0 == human0, "El bot desarmado detecta al humano cercano como amenaza")
+	mgr._tick_bot(kael0, 0.2)
+	check(float(kael0.get("flee_until", 0.0)) > 0.0 or float(kael0.get("hide_timer", 0.0)) > 0.0
+		or (kael0["proxy"] as Node3D).global_position.distance_to(human0.global_position) > 18.0,
+		"El bot desarmado sale huyendo del humano (flee/hide o alejamiento)")
+	# La tregua vigente le permite acercarse sin que el bot huya
+	kael0["_truce_peer"] = 71
+	kael0["_truce_t"] = 60.0
+	check(mgr._find_combat_foe(kael0) == null, "Con tregua el humano deja de ser amenaza para el desarmado")
+	kael0["_truce_peer"] = 0
+	kael0["_truce_t"] = 0.0
+	# Armado de nuevo: NO huye del humano (cambia a combatir)
+	kael0["proxy"].set_meta("saved_inventory", [{"name": "Cuchillo", "type": "weapon", "weight": 0.6, "quantity": 1, "use_value": 0.0}])
+	kael0["flee_until"] = 0.0
+	kael0["hide_timer"] = 0.0
+	kael0["sense_t"] = 0.0
+	var d_arm := (kael0["proxy"] as Node3D).global_position.distance_to(human0.global_position)
+	mgr._tick_bot(kael0, 0.2)
+	check(float(kael0.get("flee_until", 0.0)) <= 0.0 and float(kael0.get("hide_timer", 0.0)) <= 0.0
+		and (kael0["proxy"] as Node3D).global_position.distance_to(human0.global_position) <= d_arm + 0.01,
+		"El bot ARMADO no huye del humano: se queda a combatir")
+	# Limpieza: sin huir, sin enemigo, posicion restaurada
+	kael0["flee_until"] = 0.0
+	kael0["hide_timer"] = 0.0
+	kael0["aggro_target"] = null
+	kael0["aggro_timer"] = 0.0
+	kael0["_s_foe"] = null
+	(kael0["proxy"] as Node3D).global_position = kael0_pos0
+	world.server_proxies.erase(71)
+	human0.queue_free()
+
 	# --- 2) Un hostil armado elige al humano proximo como objetivo ---
 	var kael: Dictionary = mgr.bots[903]
 	var pan_stack := {"name": "Pan", "type": "food", "weight": 0.2, "quantity": 2, "use_value": 30.0}
