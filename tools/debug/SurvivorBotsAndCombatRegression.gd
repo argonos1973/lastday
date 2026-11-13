@@ -976,8 +976,17 @@ func run() -> void:
 	carlos["drink_at"] = Vector3.INF
 	carlos["drink_giveup"] = 0.0
 	carlos["drinking_timer"] = 0.0
-	carlos["sense_t"] = 0.0
+	# Isolate the preventive-drinking decision from wandering predators left
+	# by earlier scenarios; immediate threats correctly outrank drinking.
+	var drink_predator_before = carlos.get("_s_predator")
+	var drink_foe_before = carlos.get("_s_foe")
+	carlos["_s_predator"] = null
+	carlos["_s_foe"] = null
+	carlos["sense_t"] = 1.0
 	mgr._tick_bot(carlos, 0.2)
+	carlos["_s_predator"] = drink_predator_before
+	carlos["_s_foe"] = drink_foe_before
+	carlos["sense_t"] = 0.0
 	check(str(carlos["_act"]) == "drink" and carlos["drink_at"] != Vector3.INF,
 		"Con leccion 'dehydrated' se desvia a beber/rellenar junto a la fuente (act=%s)" % str(carlos["_act"]))
 	mem_c["death_lessons"] = dl_bak
@@ -5661,6 +5670,13 @@ func run() -> void:
 	var b_lt2: Dictionary = mgr.bots[902]
 	var p_lt1: Node3D = b_lt1["proxy"]
 	var p_lt2: Node3D = b_lt2["proxy"]
+	var saved_sleep_claim := bool(b_lt1.get("sleeping", false))
+	b_lt1["sleeping"] = true
+	check(not mgr._bot_watch_eligible(b_lt1), "10T0a: sleeping actor cannot take a sentry rank")
+	b_lt1["sleeping"] = saved_sleep_claim
+	p_lt1.set_meta("proxy_dead", true)
+	check(not mgr._bot_watch_eligible(b_lt1), "10T0b: dead actor cannot block the living sentry rank")
+	p_lt1.set_meta("proxy_dead", false)
 	var save_lt1: Vector3 = p_lt1.global_position
 	var save_lt2: Vector3 = p_lt2.global_position
 	var save_drops: Array = world._dropped_items.duplicate()
@@ -5682,6 +5698,15 @@ func run() -> void:
 	mgr._loot_commit_claim(b_lt1)
 	check(int(world._pickup_claims.get("t_rifle", 0)) == 901,
 		"10T2: fichar el drop lo reclama en la tabla del mundo")
+	world._pickup_claim_until["t_rifle"] = Time.get_ticks_msec() - 1
+	mgr._loot_commit_claim(b_lt1)
+	check(int(world._pickup_claim_until["t_rifle"]) > Time.get_ticks_msec(), "10T2a: same target renews an expired owned claim")
+	b_lt2["_s_loot"] = pick1
+	mgr._loot_commit_claim(b_lt2)
+	check(int(world._pickup_claims["t_rifle"]) == 901 and b_lt2["_s_loot"].is_empty(), "10T2b: stale selection cannot overwrite another actor claim")
+	var inv_before_claim: Array = p_lt2.get_meta("saved_inventory", []).duplicate(true)
+	mgr._collect_loot_entry(b_lt2, pick1)
+	check(p_lt2.get_meta("saved_inventory", []) == inv_before_claim and world._dropped_items.size() == 2, "10T2c: collection revalidates ownership without consuming drop")
 	var pick2: Dictionary = mgr._find_nearby_valuable_loot(b_lt2, 28.0)
 	check(str(pick2.get("id", "")) == "t_lata",
 		"10T3: con el fusil reclamado el compañero elige la otra pieza (id=%s)" % str(pick2.get("id", "")))
@@ -5735,11 +5760,19 @@ func run() -> void:
 	mem_lw["death_spots"] = [{"x": 41.0, "y": 0.4, "z": 705.0, "cause": "starved", "count": 1}]
 	check(mgr._bot_learned_risk_at(p_rw.global_position, 901) == Vector3.INF,
 		"10T12: morir de hambre tampoco marca riesgo de tirador")
+	var saved_known_risk: Dictionary = mem_lw["known_locations"].duplicate(true)
+	mem_lw["death_spots"] = [{"x":41.0,"y":0.4,"z":705.0,"cause":"succumbed","count":3}]
+	mem_lw["known_locations"] = {"hazard":{"pos":[41.0,0.4,705.0],"risk":3.0}}
+	check(mgr._bot_learned_risk_at(p_rw.global_position,901) == Vector3.INF, "10T12a: generic hazard and unknown death never imply survivor combat")
+	mem_lw["known_locations"]["hazard"]["combat_risk"] = 3.0
+	check(mgr._bot_learned_risk_at(p_rw.global_position,901) != Vector3.INF, "10T12b: explicitly shared combat hazard activates caution")
+	mem_lw["known_locations"] = saved_known_risk
 	# Riesgo aprendido fuera de ciudad/base: zona "ground" -> centinela a ras.
 	mem_lw["death_spots"] = [{"x": 300.0, "y": 0.4, "z": 300.0, "cause": "melee", "count": 1}]
 	p_lt1.global_position = Vector3(300.0, 0.4, 300.0)
 	check(mgr._bot_learned_risk_at(p_lt1.global_position, 901) != Vector3.INF,
 		"10T13: el riesgo aprendido tambien vale fuera de zonas con torre")
+	check(mgr._bot_learned_wary(b_lw), "10T13a: learned caution applies outside city and military zones")
 	var g_leader := Node3D.new()
 	world.add_child(g_leader)
 	g_leader.global_position = Vector3(300.0, 0.4, 300.0)
@@ -5782,6 +5815,10 @@ func run() -> void:
 		(ov_gs.get("post", Vector3.ZERO) as Vector3).z - g_leader.global_position.z).length()
 	check(gps_d > 7.0 and gps_d < 15.0,
 		"10T16: el centinela aprendido se aposta en el perimetro (d=%.1f)" % gps_d)
+	var city_ground_post := Vector3(41,0.4,700)
+	b_gs["_overwatch"] = {"zone":"city","ground":true,"post":city_ground_post,"anchor":Vector3.INF}
+	g_leader.global_position = city_ground_post + Vector3(40,0,0)
+	check(not mgr._bot_overwatch_tick(b_gs,g_leader,city_ground_post,g_leader.global_position,.1) and not b_gs.has("_overwatch"), "10T17: city ground sentry releases when leader moves away within same zone")
 	b_gs.erase("_overwatch")
 	mem_gs["death_spots"] = save_spots_gs
 	mem_gs["zone_yield"] = save_zy_gs

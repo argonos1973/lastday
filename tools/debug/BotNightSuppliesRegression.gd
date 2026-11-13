@@ -81,6 +81,14 @@ func run():
  world._lit_campfires = [{"id":"f2","pos":Vector3(25,0,0)}]
  check(manager._bot_night_home_walk(b4,.1) and str(b4.get("_act","")) == "rest", "lit campfire pulls the home walk")
  proxy.set_meta("saved_inventory", [])
+ # Old camp references must not prevent a new local fire or overwrite it.
+ for invalid_pos in [Vector3.INF, Vector3(200,0,200)]:
+  proxy.global_position = Vector3(100,0,100)
+  world._lit_campfires = [{"id":"old_camp","pos":Vector3(200,0,200)}]
+  proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+  var replacement := {"proxy":proxy,"bot_id":905,"hunger":30.0,"thirst":30.0,"campfire_id":"old_camp","campfire_pos":invalid_pos}
+  check(not manager._bot_prepare_night_supplies(replacement,.1), "invalid or distant camp permits a new local fire")
+  check(replacement.campfire_id != "old_camp" and world._lit_campfires.size() == 2 and world._lit_campfires[0].pos == Vector3(200,0,200), "new camp has distinct identity and preserves old fire")
  world.free()
  print("BotNightSuppliesRegression errors=",errors)
  quit(1 if errors else 0)

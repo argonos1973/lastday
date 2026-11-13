@@ -1148,7 +1148,9 @@ func tick(delta: float) -> void:
 	_pbm("voice", _pt)
 	_pt = Time.get_ticks_usec()
 	for bot_id in bots.keys():
+		var bot_started := Time.get_ticks_usec()
 		_tick_bot(bots[bot_id], delta)
+		_pbm("actor_%s" % bot_id, bot_started)
 	_pbm("tick_bot", _pt)
 	_pt = Time.get_ticks_usec()
 	_ai_tick(delta)
@@ -1326,7 +1328,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			if b["_s_foe"] == null or proxy.global_position.distance_to((roof_foe as Node3D).global_position) < proxy.global_position.distance_to((b["_s_foe"] as Node3D).global_position):
 				b["_s_foe"] = roof_foe
 			if int(b.get("_roof_threat_msec", -999999)) < 0:
-				record_zone_hazard(int(b["bot_id"]), (roof_foe as Node3D).global_position, "tower", 0.6)
+				record_zone_hazard(int(b["bot_id"]), (roof_foe as Node3D).global_position, "tower", 0.6, true)
 			b["_roof_threat_msec"] = Time.get_ticks_msec()
 		b["_s_leader"] = _resolve_team_leader(b)
 		var has_wolf := _bot_has_tamed_wolf(b)
@@ -1345,8 +1347,6 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if (b["_s_loot"] as Dictionary).is_empty() and not bool(b.get("equip_mission", false)) \
 				and (_is_pre_night() or _is_world_night()) and not _bot_night_fire_ready(b, proxy):
 			b["_s_loot"] = _find_fire_prep_loot(b, 60.0)
-		# La pieza elegida queda reclamada: los compañeros ven las demas.
-		_loot_commit_claim(b)
 		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
 		# Robo dirigido tras una negativa: el refugio de quien le nego ayuda
 		# tiene prioridad sobre cualquier otro alijo cercano (caduca en 5 min).
@@ -1706,6 +1706,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		return
 
 	# 5) Saqueo oportuno de objetos cercanos (comida, armas, ropa mejor, materiales)
+	# Reserve only when actually pursuing loot, not while asleep/in combat.
+	_loot_commit_claim(b)
 	var loot_action: Dictionary = b.get("_s_loot", {})
 	if not loot_action.is_empty():
 		b["_act"] = "loot"
@@ -3752,7 +3754,7 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 						b["explore_target"] = sound_pos
 				elif d <= 95.0:
 					b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 10.0)
-					record_zone_hazard(int(bid), sound_pos, "gunshot", 0.30)
+					record_zone_hazard(int(bid), sound_pos, "gunshot", 0.30, true)
 
 # Zonas con puestos elevados (ciudad con azoteas/Torre del Reloj y bases
 # militares con torre de vigilancia): alli un superviviente prudente vigila
@@ -3828,6 +3830,9 @@ func _find_rooftop_foe(b: Dictionary, radius: float = BOT_ROOF_WATCH_RANGE) -> N
 # de la zona en memoria — los compañeros lo comparten) marca el lugar como
 # peligroso. Devuelve el ancla de la amenaza recordada o INF si la zona esta
 # tranquila. El botin bueno repetido va apagando la alarma.
+func _bot_survivor_combat_cause(cause: String) -> bool:
+	return cause in ["rifle", "m4", "melee", "combat", "bola", "arco", "arco_madera", "arrow", "lanza", "spear"]
+
 func _bot_learned_risk_at(pos: Vector3, bot_id: int) -> Vector3:
 	var mem: Dictionary = _memory.get(bot_id, {})
 	var score := 0.0
@@ -3837,7 +3842,7 @@ func _bot_learned_risk_at(pos: Vector3, bot_id: int) -> Vector3:
 			continue
 		# Solo cuentan muertes a manos de otro superviviente: un lobo o el
 		# hambre no implican francotirador.
-		if str(s.get("cause", "")) in ["starved", "dehydrated", "hypothermia", "heatstroke", "exhausted", "wolf_bite", "bear_bite"]:
+		if not _bot_survivor_combat_cause(str(s.get("cause", ""))):
 			continue
 		var sp := Vector3(float(s.get("x", 0.0)), float(s.get("y", 0.0)), float(s.get("z", 0.0)))
 		if Vector2(pos.x - sp.x, pos.z - sp.z).length() <= 60.0:
@@ -3852,7 +3857,7 @@ func _bot_learned_risk_at(pos: Vector3, bot_id: int) -> Vector3:
 		var le = known[lid]
 		if not (le is Dictionary):
 			continue
-		var rk := float(le.get("risk", 0.0))
+		var rk := float(le.get("combat_risk", 0.0))
 		if rk <= rk_max or rk < 1.1:
 			continue
 		var lp = le.get("pos", null)
@@ -3873,7 +3878,7 @@ func _bot_learned_risk_at(pos: Vector3, bot_id: int) -> Vector3:
 
 func _bot_learned_wary(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
-	if not _bot_in_watch_zone(proxy.global_position):
+	if not is_instance_valid(proxy):
 		return false
 	return _bot_learned_risk_at(proxy.global_position, int(b["bot_id"])) != Vector3.INF
 
@@ -4370,7 +4375,7 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 
 	# Aprendizaje conductual por daño real: registrar riesgo en la zona y, si el
 	# atacante es un jugador/bot, actualizar relación social (desconfianza/hostilidad/miedo).
-	record_zone_hazard(bot_id, proxy.global_position, _poi_kind_near(proxy.global_position), clampf(amount / 45.0, 0.08, 0.65))
+	record_zone_hazard(bot_id, proxy.global_position, _poi_kind_near(proxy.global_position), clampf(amount / 45.0, 0.08, 0.65), attacker_id > 0 and _bot_survivor_combat_cause(weapon))
 	if attacker_id > 0:
 		b["_last_attacker_id"] = attacker_id
 		b["_last_attacker_msec"] = Time.get_ticks_msec()
@@ -4424,6 +4429,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return
+	_loot_clear(b)
 	var bot_id := int(b["bot_id"])
 	# Aprendizaje persistente: recordar donde y por que murio para que su
 	# proxima vida no repita el error (zona peligrosa, necesidades, equipo).
@@ -4454,7 +4460,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	while spots.size() > AI_MEMORY_MAX_SPOTS:
 		spots.pop_front()
 	mem["death_spots"] = spots
-	record_zone_hazard(bot_id, dp, _poi_kind_near(dp), 0.75)
+	record_zone_hazard(bot_id, dp, _poi_kind_near(dp), 0.75, _bot_survivor_combat_cause(death_kind))
 	var natural_death := death_kind in ["starved", "dehydrated", "hypothermia", "heatstroke", "exhausted"]
 	var recent_hit := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) <= 60000
 	var killer_id := int(b.get("_last_attacker_id", 0)) if (not natural_death and recent_hit) else 0
@@ -5054,6 +5060,8 @@ func _bot_watch_eligible(b: Dictionary) -> bool:
 	if str(b.get("follow_mode", "follow")) != "follow":
 		return false
 	var proxy: Node3D = b["proxy"]
+	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)) or bool(b.get("sleeping", false)):
+		return false
 	if not _bot_has_ranged_weapon(proxy):
 		return false
 	if float(b.get("hunger", 100.0)) < 30.0 or float(b.get("thirst", 100.0)) < 26.0 or float(b.get("health", 100.0)) < 42.0:
@@ -5133,7 +5141,7 @@ func _bot_overwatch_tick(b: Dictionary, leader: Node3D, cur: Vector3, lpos: Vect
 		var post: Vector3 = ov.get("post", Vector3.INF)
 		var release := post == Vector3.INF
 		if not release:
-			if zone == "ground":
+			if bool(ov.get("ground", false)) or zone == "ground":
 				var anc: Vector3 = ov.get("anchor", Vector3.INF)
 				release = Vector2(lpos.x - post.x, lpos.z - post.z).length() > 32.0 \
 					or (anc != Vector3.INF and Vector2(lpos.x - anc.x, lpos.z - anc.z).length() > 75.0)
@@ -5180,6 +5188,8 @@ func _bot_overwatch_tick(b: Dictionary, leader: Node3D, cur: Vector3, lpos: Vect
 	if zone2.is_empty():
 		return false
 	var roof := _bot_overwatch_post(zone2)
+	if roof != Vector3.INF and Vector2(cur.x - roof.x, cur.z - roof.z).length() > BOT_OVERWATCH_MAX_POST_DIST:
+		roof = Vector3.INF # A far roof must not suppress the nearby ground sentry.
 	var rank := _bot_watch_rank(b)
 	var post_pos := Vector3.INF
 	var ground := false
@@ -8083,20 +8093,31 @@ func _loot_entry_pos(entry: Dictionary) -> Vector3:
 # Reclamo de botin: quien ficha una pieza la reserva (~30 s, la misma tabla
 # autoritativa que los nodos de recoleccion) para que sus compañeros repartan
 # el saqueo en vez de ir todos a por el mismo rifle.
+func _loot_claimed_by_other(b: Dictionary, id: String) -> bool:
+	if world == null or not ("_pickup_claims" in world):
+		return false
+	var owner := int(world._pickup_claims.get(id, 0))
+	var until: Dictionary = world.get("_pickup_claim_until") if "_pickup_claim_until" in world else {}
+	return owner != 0 and owner != int(b["bot_id"]) and int(until.get(id, 0)) > Time.get_ticks_msec()
+
 func _loot_commit_claim(b: Dictionary) -> void:
 	var entry: Dictionary = b.get("_s_loot", {})
 	var id := str(entry.get("id", ""))
-	if id == str(b.get("_loot_claim", "")):
-		return
-	_loot_clear(b)
+	if id != str(b.get("_loot_claim", "")):
+		_loot_clear(b)
 	if id.is_empty():
+		return
+	# Selection and arrival are separate ticks: another actor may have
+	# reserved the drop meanwhile. Never overwrite an unexpired claim.
+	if _loot_claimed_by_other(b, id):
+		_loot_clear(b)
 		return
 	b["_s_loot"] = entry
 	b["_loot_claim"] = id
 	if world != null and "_pickup_claims" in world:
-		(world._pickup_claims as Dictionary)[id] = int(b["bot_id"])
+		world._pickup_claims[id] = int(b["bot_id"])
 		if "_pickup_claim_until" in world:
-			(world._pickup_claim_until as Dictionary)[id] = Time.get_ticks_msec() + 30000
+			world._pickup_claim_until[id] = Time.get_ticks_msec() + 30000
 
 func _loot_clear(b: Dictionary) -> void:
 	var prev := str(b.get("_loot_claim", ""))
@@ -8121,6 +8142,9 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 				still_there = true
 				break
 	if not still_there or ("_depleted_action_ids" in world and world._depleted_action_ids.has(id)):
+		_loot_clear(b)
+		return
+	if _loot_claimed_by_other(b, id):
 		_loot_clear(b)
 		return
 	var proxy: Node3D = b["proxy"]
@@ -11053,6 +11077,7 @@ func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 		else:
 			var tid: String = merged_id if not merged_id.is_empty() else loc_id
 			kb[tid]["risk"] = maxf(float(kb[tid].get("risk", 0.0)), float(entry.get("risk", 0.0)))
+			kb[tid]["combat_risk"] = maxf(float(kb[tid].get("combat_risk", 0.0)), float(entry.get("combat_risk", 0.0)))
 			kb[tid]["visits"] = maxf(float(kb[tid].get("visits", 0)), float(entry.get("visits", 0)))
 			shared_count += 1
 	for loc_id2 in kb.keys():
@@ -11070,6 +11095,7 @@ func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 		else:
 			var tid2: String = merged2 if not merged2.is_empty() else loc_id2
 			ka[tid2]["risk"] = maxf(float(ka[tid2].get("risk", 0.0)), float(entry2.get("risk", 0.0)))
+			ka[tid2]["combat_risk"] = maxf(float(ka[tid2].get("combat_risk", 0.0)), float(entry2.get("combat_risk", 0.0)))
 			ka[tid2]["visits"] = maxf(float(ka[tid2].get("visits", 0)), float(entry2.get("visits", 0)))
 			shared_count += 1
 	mem_a["known_locations"] = ka
@@ -11205,7 +11231,7 @@ func on_bot_helped_by_player(bot_id: int, giver_peer_id: int, detail: String = "
 
 # Aprendizaje de riesgo por zona: aumenta el peligro percibido de la ubicación
 # conocida más cercana y registra la experiencia.
-func record_zone_hazard(bot_id: int, pos: Vector3, kind: String, severity: float = 0.3) -> void:
+func record_zone_hazard(bot_id: int, pos: Vector3, kind: String, severity: float = 0.3, survivor_combat: bool = false) -> void:
 	var mem := _ensure_bot_memory(bot_id)
 	var known: Dictionary = mem["known_locations"]
 	var best_id := ""
@@ -11222,6 +11248,8 @@ func record_zone_hazard(bot_id: int, pos: Vector3, kind: String, severity: float
 	observe_location(bot_id, best_id, kind if not kind.is_empty() else "wild", pos, "observed")
 	var loc: Dictionary = known.get(best_id, {})
 	loc["risk"] = snappedf(clampf(float(loc.get("risk", 0.0)) + clampf(severity, 0.05, 1.0), 0.0, 3.0), 0.01)
+	if survivor_combat:
+		loc["combat_risk"] = snappedf(clampf(float(loc.get("combat_risk", 0.0)) + clampf(severity, 0.05, 1.0), 0.0, 3.0), 0.01)
 	known[best_id] = loc
 	mem["known_locations"] = known
 	record_strategy_outcome(bot_id, "explore_" + kind, false, severity * 0.4)
@@ -12057,6 +12085,8 @@ func _ai_save_memory() -> void:
 	if _mem_write_task >= 0:
 		if not WorkerThreadPool.is_task_completed(_mem_write_task):
 			return
+		# Already completed: reap its resources without waiting for live work.
+		WorkerThreadPool.wait_for_task_completion(_mem_write_task)
 		_mem_write_task = -1
 	_mem_write_task = WorkerThreadPool.add_task(_memory_write_worker.bind(out.duplicate(true)))
 
@@ -12332,7 +12362,6 @@ func get_full_web_status() -> Dictionary:
 			snap["bleeding"] = snappedf(vst.bleeding, 0.01)
 			snap["body_temperature"] = snappedf(vst.body_temperature, 0.1)
 			snap["wetness"] = snappedf(vst.wetness, 0.01)
-		_validate_shelter_claim(b)
 		snap["in_shelter"] = proxy != null and is_instance_valid(proxy) and _bot_at_own_built_shelter(b, proxy.global_position)
 		snap["in_house"] = (_is_bot_wolf_protected(b) and not bool(snap["in_shelter"])) if proxy != null and is_instance_valid(proxy) else false
 		snap["team_leader_id"] = int(b.get("team_leader_id", 0))
@@ -12622,8 +12651,16 @@ func _ai_save_live_status() -> void:
 	if _status_write_task >= 0:
 		if not WorkerThreadPool.is_task_completed(_status_write_task):
 			return
+		# Already completed: reap its resources without waiting for live work.
+		WorkerThreadPool.wait_for_task_completion(_status_write_task)
 		_status_write_task = -1
-	_status_write_task = WorkerThreadPool.add_task(_status_write_worker.bind(get_full_web_status().duplicate(true)))
+	var build_started := Time.get_ticks_usec()
+	var snapshot := get_full_web_status()
+	_pbm("web_status_build", build_started)
+	var copy_started := Time.get_ticks_usec()
+	var isolated := snapshot.duplicate(true)
+	_pbm("web_status_copy", copy_started)
+	_status_write_task = WorkerThreadPool.add_task(_status_write_worker.bind(isolated))
 
 func _status_write_worker(snapshot: Dictionary) -> void:
 	var tmp := AI_STATUS_PATH + ".tmp"
