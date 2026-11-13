@@ -12802,9 +12802,6 @@ func get_full_web_status() -> Dictionary:
 		var score := int(round(
 			alive_total / 60.0 * 2.0
 			+ float(snap.get("known_locations_count", 0)) * 10.0
-			+ float(st.get("kills_prey", 0)) * 15.0
-			+ float(st.get("kills_predator", 0)) * 40.0
-			+ float(st.get("animals_gutted", 0)) * 5.0
 			- float(mem.get("deaths", 0)) * 75.0
 		))
 		# Chat del bot: ultimo mensaje emitido + su hilo completo (como emisor
