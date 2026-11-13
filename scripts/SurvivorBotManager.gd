@@ -952,6 +952,10 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"stay_pos": spawn_pos,
 		"aggro_target": null,
 		"aggro_timer": 0.0,
+		"_last_foe_pos": Vector3.INF,
+		"_lost_foe_pos": Vector3.INF,
+		"_lost_foe_until_msec": 0,
+		"_lost_scan_t": 0.0,
 		"respawn_timer": 0.0,
 		"spawned_at_msec": Time.get_ticks_msec(),
 		"alive_flush_msec": Time.get_ticks_msec(),
@@ -1407,6 +1411,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var pred_bonus := minf(12.0, float(pred_lessons) * 4.0)
 		b["_s_predator"] = _find_threatening_predator(b, (30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0) + pred_bonus)
 		b["_s_foe"] = _find_combat_foe(b)
+		if b["_s_foe"] != null:
+			# Ancla honesta de busqueda: solo donde se le vio por ultima vez.
+			b["_last_foe_pos"] = (b["_s_foe"] as Node3D).global_position
+			b["_lost_foe_until_msec"] = 0
+			b["_lost_scan_t"] = 0.0
 		# Ojo en los techos en ciudad/bases militares: un francotirador apostado
 		# en una azotea se ve desde mucho mas lejos que un enemigo a ras — el
 		# bot que entra a saquear vigila los puestos elevados antes que nada.
@@ -1609,6 +1618,34 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			return
 		_engage_foe(b, human_foe, delta)
 		return
+
+	# 3a) Enemigo perdido: buscar donde se le vio/u oyo por ultima vez durante
+	#     la ventana por personalidad, escanear al llegar y abandonar sin
+	#     indicios. Solo lo hace un bot armado y en condiciones de buscar.
+	var lost_until := int(b.get("_lost_foe_until_msec", 0))
+	if lost_until > 0 and float(b.get("flee_until", 0.0)) <= 0.0 \
+			and float(b.get("health", 100.0)) > 35.0 and not _best_weapon_name(proxy).is_empty():
+		var lpos: Vector3 = b.get("_lost_foe_pos", Vector3.INF)
+		if lpos == Vector3.INF or Time.get_ticks_msec() > lost_until:
+			b["_lost_foe_until_msec"] = 0
+			b["_lost_foe_pos"] = Vector3.INF
+		else:
+			b["_act"] = "search_foe"
+			if proxy.global_position.distance_to(lpos) > 3.2:
+				_move_bot_towards(b, lpos, 5.6, delta, "run")
+			else:
+				# En el punto sin verlo: escaneo breve agachado y se rinde.
+				b["crouching"] = true
+				b["anim"] = "idle"
+				b["_lost_scan_t"] = float(b.get("_lost_scan_t", 0.0)) + delta
+				if float(b["_lost_scan_t"]) > 4.5:
+					b["_lost_foe_until_msec"] = 0
+					b["_lost_scan_t"] = 0.0
+					# Recuerda la zona como peligrosa: donde una amenaza se esfumo.
+					record_zone_hazard(int(b["bot_id"]), lpos, "lost_foe", 0.25, true)
+			return
+	elif lost_until <= 0:
+		b["_lost_foe_pos"] = Vector3.INF
 
 	b["is_aiming"] = false
 
@@ -4002,8 +4039,26 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 	var proxy: Node3D = b["proxy"]
 	var aggro: Node3D = b.get("aggro_target")
 	if aggro != null and is_instance_valid(aggro) and not bool(aggro.get_meta("proxy_dead", false)) and aggro.get("is_dead") != true:
-		if proxy.global_position.distance_to(aggro.global_position) < 130.0:
-			return aggro
+		var d_aggro := proxy.global_position.distance_to(aggro.global_position)
+		if d_aggro < 130.0:
+			# El aggro no es un radar: sigue al enemigo solo mientras lo ve u
+			# oye. Si lo pierde, recuerda DONDE desaparecio y cuanto buscarlo.
+			if _can_bot_hear_actor(b, aggro, d_aggro) or _has_clear_shot(proxy.global_position, aggro.global_position):
+				return aggro
+			if int(b.get("_lost_foe_until_msec", 0)) <= 0:
+				var pers_lf := _get_bot_personality(b)
+				var persist := clampf(6.0 + float(pers_lf.get("aggression", 0.3)) * 14.0 + float(pers_lf.get("bravery", 0.5)) * 6.0 - float(pers_lf.get("survival_instinct", 0.7)) * 5.0, 4.0, 24.0)
+				var anchor: Vector3 = b.get("_last_foe_pos", Vector3.INF)
+				if anchor == Vector3.INF:
+					anchor = b.get("last_heard_pos", Vector3.INF)
+				if anchor == Vector3.INF:
+					anchor = aggro.global_position
+				b["_lost_foe_pos"] = anchor
+				b["_lost_foe_until_msec"] = Time.get_ticks_msec() + int(persist * 1000.0)
+				record_bot_event(int(b["bot_id"]), "lost_foe", _actor_persist_key(_peer_id_for_actor(aggro)), _poi_kind_near(anchor), anchor, "%.0fs" % persist)
+			# El rastro termina: el nodo ya no revela su posicion viva.
+			b["aggro_target"] = null
+			b["aggro_timer"] = 0.0
 
 	var faction := str(b["faction"])
 	var leader := _resolve_team_leader(b)
@@ -4539,6 +4594,8 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 		if int(b["team_leader_id"]) == 0 or attacker_id != int(b["team_leader_id"]):
 			b["aggro_target"] = attacker_node
 			b["aggro_timer"] = 30.0
+			# Recibio el golpe: sabe donde esta el agresor en este instante.
+			b["_last_foe_pos"] = attacker_node.global_position
 			_command_bot_wolf_against(b, attacker_node)
 	# Reescanear sentidos ya: reaccionar al agresor en el proximo tick, no en 0.2 s
 	b["sense_t"] = 0.0
@@ -5853,6 +5910,8 @@ func rally_bot_team(victim_id: int, attacker: Node3D) -> void:
 		if tp.global_position.distance_to(attacker.global_position) <= 60.0:
 			tb["aggro_target"] = attacker
 			tb["aggro_timer"] = 25.0
+			# Posicion comunicada por el compañero: es su ultima conocida.
+			tb["_last_foe_pos"] = attacker.global_position
 			tb["sitting"] = false
 			tb["sleeping"] = false
 			tb["sense_t"] = 0.0
@@ -7947,6 +8006,8 @@ func notify_leader_combat(leader_id: int, target_node: Node3D) -> void:
 		if proxy.global_position.distance_to(target_node.global_position) <= 55.0:
 			b["aggro_target"] = target_node
 			b["aggro_timer"] = 25.0
+			# Posicion que el lider comunico: es su ultima conocida.
+			b["_last_foe_pos"] = target_node.global_position
 			b["follow_mode"] = "follow"
 			b["sitting"] = false
 			b["sense_t"] = 0.0

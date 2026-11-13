@@ -39,6 +39,40 @@ func run():
 	manager.cover = true
 	manager.blocked = true
 	check(manager._find_ballistic_cover(b,foe) == Vector3.INF, "rejects inaccessible cover")
+
+	# Enemigo perdido: el aggro ya no es un radar — exige LOS u oido; al
+	# perderlo arma una busqueda acotada sobre la ultima posicion conocida.
+	manager.blocked = false
+	var world_stub := Node3D.new()
+	root.add_child(world_stub)
+	manager.world = world_stub
+	var last_seen := Vector3(20, 0, 20)
+	var b2 := {"proxy": proxy, "bot_id": 901, "faction": "hostile",
+		"aggro_target": foe, "aggro_timer": 20.0, "_mem": {"personality": {}},
+		"_last_foe_pos": last_seen, "_lost_foe_pos": Vector3.INF,
+		"_lost_foe_until_msec": 0, "_lost_scan_t": 0.0,
+		"last_heard_pos": Vector3.INF, "last_heard_until": 0.0, "last_heard_actor": 0}
+	foe.position = Vector3(40, 0, 0)
+	manager.cover = false
+	check(manager._find_combat_foe(b2) == foe, "aggro with clear LOS keeps tracking the foe")
+	manager.cover = true # LOS cortada, el enemigo no corre ni se oye
+	check(manager._find_combat_foe(b2) == null, "aggro behind cover is NOT tracked (no wallhack)")
+	check(b2["aggro_target"] == null, "lost aggro drops the live target handle")
+	check(b2["_lost_foe_pos"] == last_seen, "remembers last SEEN position, not the live one")
+	check(int(b2["_lost_foe_until_msec"]) > Time.get_ticks_msec(), "search window armed")
+	var evs: Array = (manager._ensure_bot_memory(901) as Dictionary).get("events", [])
+	check(evs.any(func(e): return str(e.get("type", "")) == "lost_foe"), "lost foe recorded in memory")
+	# Mientras dura la busqueda el mismo aggro no rearma nada (ya fue anulado)
+	check(manager._find_combat_foe(b2) == null and int(b2["_lost_foe_until_msec"]) > 0,
+		"no rearm during the search window")
+	# Oido sin LOS: un enemigo corriendo cerca sigue siendo rastreable
+	var b3 := b2.duplicate(true)
+	b3["aggro_target"] = foe
+	foe.position = Vector3(30, 0, 0) # dentro del radio de sprint (34 m)
+	foe.set_meta("sprinting", true)
+	check(manager._find_combat_foe(b3) == foe, "heard (sprinting) foe behind cover still tracked")
+	foe.set_meta("sprinting", false)
+	world_stub.free()
 	proxy.free()
 	foe.free()
 	manager.free()
