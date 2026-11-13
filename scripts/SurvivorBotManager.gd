@@ -156,21 +156,26 @@ var _poi_cache: Array = [] # puntos de interes del mundo (casas, tiendas, ciudad
 var _poi_cache_built := false
 
 # --- Asesor estrategico externo (opcional) ---
-# Un LLM remoto (p.ej. Groq, endpoint compatible con OpenAI) decide CADA ~15-25
-# min que hacer a cada bot a nivel estrategico: a que zona ir, si volver a
-# casa, si descansar o que tipo de zona evitar. NUNCA toca supervivencia,
-# combate, crafteo ni ordenes: eso sigue siendo GDScript. Si no hay API key
-# (OS.get_environment("GROQ_API_KEY")), la API falla o la respuesta no valida,
-# los bots se comportan exactamente igual que sin asesor.
+# Un LLM remoto (p.ej. Groq, endpoint compatible con OpenAI) decide a nivel
+# estrategico que hacer: a que zona ir, si volver a casa, si descansar o que
+# tipo de zona evitar. NUNCA toca supervivencia, combate, crafteo ni ordenes:
+# eso sigue siendo GDScript. Si no hay API key (OS.get_environment("GROQ_API_KEY")),
+# la API falla o la respuesta no valida, los bots se comportan igual sin asesor.
+# Las peticiones de los bots comparten UNA cola (_ai_queue, una en vuelo) y solo
+# salen cuando la situacion cambia o el plan termina — no por temporizador. La
+# directiva devuelta se guarda y sigue mandando hasta que el plan se completa
+# (llegar, visitar el POI, comer, descansar) o algo relevante lo interrumpe.
 const AI_ADVISOR_URL := "https://api.groq.com/openai/v1/chat/completions"
 # Dos modelos distintos: las cuotas de Groq son POR MODELO, asi que el chat no
 # compite con las decisiones tactica por la misma ventana de tokens. Override
 # por env: GROQ_DECISION_MODEL / GROQ_CHAT_MODEL.
 const AI_ADVISOR_MODEL := "qwen/qwen3.8-27b"
 const AI_CHAT_MODEL := "openai/gpt-oss-120b"
-const AI_DECISION_MIN_SEC := 900.0
-const AI_DECISION_SPREAD_SEC := 600.0
-const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000
+const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000 # base temporal del plan (referencia para el watchdog de planes atascados)
+const AI_SIG_POLL_SEC := 4.0           # sondeo local de firma por turnos (un bot por ciclo)
+const AI_MIN_CALL_GAP_SEC := 150.0     # minimo entre llamadas remotas de un mismo bot
+const AI_REVIEW_MAX_SEC := 2400.0      # revision de cortesia aunque nada cambie
+const AI_PLAN_STALE_GRACE_SEC := 1500.0 # margen tras el TTL para revalidar un plan que no termina
 const AI_MAX_CALLS_PER_DAY := 380
 const AI_MAX_TOKENS_PER_DAY := 120000
 const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
@@ -198,11 +203,12 @@ var _ai_day_key := -1
 var _ai_rr := 0
 var _mem_accum := 0.0
 var _status_accum := 0.0
-var _ai_queue: Array = [] # [{bot_id, priority, reason, t}]
+var _ai_queue: Array = [] # cola compartida [{bot_id, priority, reason, t, force}]
 var _status_write_task := -1
 var _mem_write_task := -1
 var _ai_last_sig: Dictionary = {} # bot_id -> String firma de situacion
 var _ai_last_call_msec: Dictionary = {} # bot_id -> msec ultima llamada remota
+var _ai_sig_accum := 0.0
 var _ai_backoff_until_msec := 0
 var _ai_backoff_sec := 60.0
 var _ai_conn_status := "idle"
@@ -2131,6 +2137,13 @@ func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 				visited.append(id)
 			observe_location(bid, id, str(p.get("kind", "wild")), pp, "observed", true)
 			record_strategy_outcome(bid, "explore_" + str(p.get("kind", "wild")), true, 0.04)
+			# Plan del asesor por tipo de POI: visitarlo marca _visit_done y el
+			# sondeo lo cierra pidiendo el siguiente paso (plan_done).
+			var dd: Dictionary = b.get("ai_directive", {})
+			if str(dd.get("mode", "")) == "poi":
+				var oks: Array = dd.get("only_kinds", [])
+				if oks.is_empty() or oks.has(str(p.get("kind", "wild"))):
+					dd["_visit_done"] = true
 	mem["visited"] = visited
 	b["_visited"] = visited
 
@@ -2205,9 +2218,10 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	b["path"] = []
 	b["path_timer"] = 0.0
 	b["climb_route"] = []
-	var d0: Dictionary = b.get("_ai_directive", {})
+	var d0: Dictionary = b.get("ai_directive", {})
 	if not d0.is_empty() and str(d0.get("mode", "")) == "pos":
-		b["_ai_directive"] = {}
+		b["ai_directive"] = {}
+		_ai_enqueue_request(int(b.get("bot_id", 0)), 4, "plan_blocked", true)
 	if str(b.get("_act", "")) == "drink" and b.get("drink_at", Vector3.INF) != Vector3.INF and Vector2(goal.x - b["drink_at"].x, goal.z - b["drink_at"].z).length() < 6.0:
 		b["drink_at"] = Vector3.INF
 		b["drink_giveup"] = 12.0
@@ -4507,6 +4521,11 @@ func _respawn_bot(b: Dictionary) -> void:
 	if old_stats != null and is_instance_valid(old_stats):
 		old_stats.free()
 	bots.erase(bot_id)
+	# Estado del asesor: el bot reaparecido no hereda firma ni agenda — la
+	# primera pasada del sondeo detecta situacion nueva y pide plan fresco.
+	_ai_last_sig.erase(bot_id)
+	_ai_last_call_msec.erase(bot_id)
+	_ai_next_at.erase(bot_id)
 	_spawn_bot(cfg)
 
 func _resolve_team_leader(b: Dictionary) -> Node3D:
@@ -10695,7 +10714,7 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 			if not b.is_empty():
 				_evolve_personality(b, "player_attacked", step)
 				if Time.get_ticks_msec() - int(_ai_last_call_msec.get(bot_id, -999999)) > 120000:
-					_ai_enqueue_request(bot_id, 5, "attacked_by_" + actor_key)
+					_ai_enqueue_request(bot_id, 5, "attacked_by_" + actor_key, true)
 		"refused":
 			# Le nego ayuda que el bot pedia de verdad: confianza abajo, rencor
 			# arriba. El contador alimenta la reevaluacion (negociar/robar/
@@ -10875,27 +10894,42 @@ func _ai_can_query_remote() -> bool:
 		return false
 	return true
 
-func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "periodic") -> void:
+# force=true es para sucesos relevantes (ataque, plan terminado/bloqueado,
+# plan atascado): salta el hueco mínimo entre llamadas y la deduplicacion por
+# firma. Las revisiones periodicas y los cambios de firma van sin forzar.
+func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "periodic", force: bool = false) -> void:
 	var p := clampi(priority, 1, 5)
+	var merged := false
 	for item in _ai_queue:
 		if int((item as Dictionary).get("bot_id", 0)) == bot_id:
 			if p > int((item as Dictionary).get("priority", 1)):
 				item["priority"] = p
 				item["reason"] = reason
-			return
-	_ai_queue.append({"bot_id": bot_id, "priority": p, "reason": reason, "t": Time.get_ticks_msec()})
+			item["force"] = bool(item.get("force", false)) or force
+			merged = true
+			break
+	if not merged:
+		_ai_queue.append({"bot_id": bot_id, "priority": p, "reason": reason, "t": Time.get_ticks_msec(), "force": force})
 	_ai_queue.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		if int(a.get("priority", 1)) != int(b.get("priority", 1)):
 			return int(a.get("priority", 1)) > int(b.get("priority", 1))
 		return int(a.get("t", 0)) < int(b.get("t", 0))
 	)
 
-func _ai_pop_next_request() -> Dictionary:
-	while not _ai_queue.is_empty():
-		var item: Dictionary = _ai_queue.pop_front()
+func _ai_pop_next_request(now: int) -> Dictionary:
+	for i in range(_ai_queue.size()):
+		var item: Dictionary = _ai_queue[i]
 		var bid := int(item.get("bot_id", 0))
-		if bots.has(bid) and _ai_bot_eligible(bots[bid]):
-			return item
+		if not bots.has(bid) or not _ai_bot_eligible(bots[bid]):
+			_ai_queue.remove_at(i)
+			i -= 1
+			continue
+		if not bool(item.get("force", false)):
+			var last_call := int(_ai_last_call_msec.get(bid, 0))
+			if last_call > 0 and now - last_call < int(AI_MIN_CALL_GAP_SEC * 1000.0):
+				continue # cambio reciente: espera al hueco mínimo por bot
+		_ai_queue.remove_at(i)
+		return item
 	return {}
 
 # Firma discreta de situación para evitar consultas duplicadas a Groq cuando
@@ -10918,7 +10952,7 @@ func _ai_ensure_http() -> void:
 	_ai_http.request_completed.connect(_ai_on_response)
 	add_child(_ai_http)
 
-func _ai_tick(_delta: float) -> void:
+func _ai_tick(delta: float) -> void:
 	if bots.is_empty() or not _ai_can_query_remote():
 		return
 	var now := Time.get_ticks_msec()
@@ -10936,6 +10970,13 @@ func _ai_tick(_delta: float) -> void:
 		_ai_day_key = day
 		_ai_calls_day = 0
 		_ai_tokens_day = 0
+	# Sondeo local y barato por turnos (~AI_SIG_POLL_SEC por bot): cambios de
+	# firma, planes terminados/atascados y la revision maxima de cortesia solo
+	# ENCOLAN — la dedup por firma y el hueco minimo filtran al despachar.
+	_ai_sig_accum += delta
+	if _ai_sig_accum >= AI_SIG_POLL_SEC:
+		_ai_sig_accum = 0.0
+		_ai_sig_poll(now)
 	if now < _ai_backoff_until_msec:
 		return
 	# El backoff ya paso: el cartel de rate_limited/pacing se quedaba viejo
@@ -10948,33 +10989,77 @@ func _ai_tick(_delta: float) -> void:
 	if _ai_pending_bot != 0:
 		return
 	_ai_ensure_http()
-	var ids: Array = bots.keys()
-	ids.sort()
-	for i in range(ids.size()):
-		_ai_rr = (_ai_rr + 1) % ids.size()
-		var bot_id: int = ids[_ai_rr]
-		var b: Dictionary = bots[bot_id]
-		if not _ai_bot_eligible(b):
-			continue
-		var next_at := int(_ai_next_at.get(bot_id, 0))
-		if next_at == 0:
-			_ai_next_at[bot_id] = now + (90 + _ai_rr * 150 + randi() % 120) * 1000
-			continue
-		if now >= next_at:
-			var urgency := 4 if (float(b["hunger"]) < 45.0 or float(b["health"]) < 60.0) else 2
-			_ai_enqueue_request(bot_id, urgency, "scheduled")
-	var req := _ai_pop_next_request()
+	var req := _ai_pop_next_request(now)
 	if req.is_empty():
 		return
 	var target_bot := int(req["bot_id"])
 	var tb: Dictionary = bots[target_bot]
 	var sig := _ai_situation_signature(tb)
-	if _ai_last_sig.get(target_bot, "") == sig and not _ai_active_directive(tb).is_empty():
+	if not bool(req.get("force", false)) and _ai_last_sig.get(target_bot, "") == sig and not _ai_active_directive(tb).is_empty():
 		_ai_cache_hits += 1
-		_ai_next_at[target_bot] = now + int(AI_DECISION_MIN_SEC * 1000.0)
+		_ai_next_at[target_bot] = now + int(AI_REVIEW_MAX_SEC * 1000.0)
 		return
 	_ai_last_sig[target_bot] = sig
 	_ai_request_decision(key, target_bot, tb)
+
+# Sondeo por turnos de un bot por ciclo: encola una peticion a la cola
+# compartida solo cuando hay motivo — plan cumplido, plan atascado, firma de
+# situacion distinta o revision maxima vencida.
+func _ai_sig_poll(now: int) -> void:
+	var ids: Array = bots.keys()
+	ids.sort()
+	_ai_rr = (_ai_rr + 1) % ids.size()
+	var bot_id: int = ids[_ai_rr]
+	var b: Dictionary = bots[bot_id]
+	if not _ai_bot_eligible(b):
+		return
+	var d := _ai_active_directive(b)
+	if not d.is_empty():
+		if _ai_directive_completed(b, d):
+			b["ai_directive"] = {}
+			_ai_enqueue_request(bot_id, 4, "plan_done", true)
+			return
+		if now > int(d.get("until", 0)) + int(AI_PLAN_STALE_GRACE_SEC * 1000.0):
+			_ai_enqueue_request(bot_id, 3, "plan_stuck", true)
+			return
+	elif _ai_situation_signature(b) != str(_ai_last_sig.get(bot_id, "")):
+		var urgency := 4 if (float(b["hunger"]) < 45.0 or float(b["health"]) < 60.0) else 3
+		_ai_enqueue_request(bot_id, urgency, "sig_change")
+	var next_at := int(_ai_next_at.get(bot_id, 0))
+	if next_at == 0:
+		_ai_next_at[bot_id] = now + (90 + _ai_rr * 150 + randi() % 120) * 1000
+	elif now >= next_at:
+		_ai_next_at[bot_id] = now + int(AI_REVIEW_MAX_SEC * 1000.0)
+		_ai_enqueue_request(bot_id, 2, "scheduled")
+
+# Un plan del asesor termina cuando su objetivo se cumple: llegar al punto,
+# visitar el tipo de POI pedido (_visit_done lo marca _mark_poi_visited),
+# comer lo suficiente o recuperarse. Mientras no ocurra, la directiva sigue
+# viva aunque pase su "until" — el watchdog del sondeo la revalida si se
+# atasca, no la borra.
+func _ai_directive_completed(b: Dictionary, d: Dictionary) -> bool:
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return false
+	var pos: Vector3 = (proxy as Node3D).global_position
+	match str(d.get("action", "")):
+		"return_home", "fortify_camp", "seek_ally":
+			var dp = d.get("pos")
+			return dp is Vector3 and (dp as Vector3) != Vector3.INF and Vector2(pos.x - (dp as Vector3).x, pos.z - (dp as Vector3).z).length() < 9.0
+		"rest":
+			var st: SurvivalStats = b.get("vstats")
+			var rested := st != null and (st.sleep > 78.0 or float(b.get("health", 100.0)) > 85.0)
+			var dp2 = d.get("pos")
+			var at_spot := not (dp2 is Vector3) or (dp2 as Vector3) == Vector3.INF or Vector2(pos.x - (dp2 as Vector3).x, pos.z - (dp2 as Vector3).z).length() < 10.0
+			return rested and at_spot
+		"forage":
+			return float(b.get("hunger", 100.0)) >= 75.0
+		"explore", "scavenge", "hunt":
+			var dp3 = d.get("pos")
+			if dp3 is Vector3 and (dp3 as Vector3) != Vector3.INF:
+				return Vector2(pos.x - (dp3 as Vector3).x, pos.z - (dp3 as Vector3).z).length() < 10.0
+			return bool(d.get("_visit_done", false))
+	return false
 
 func _ai_bot_eligible(b: Dictionary) -> bool:
 	var proxy = b.get("proxy")
@@ -10998,7 +11083,7 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	_ai_calls_total += 1
 	_ai_last_call_msec[bot_id] = Time.get_ticks_msec()
 	_ai_conn_status = "requesting"
-	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_DECISION_MIN_SEC * 1000.0) + randi() % int(AI_DECISION_SPREAD_SEC * 1000.0)
+	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_REVIEW_MAX_SEC * 1000.0)
 	var payload := {
 		"model": _ai_decision_model(),
 		"temperature": 0.4,
@@ -11347,12 +11432,12 @@ func _nearest_friendly_bot_pos(bot_id: int) -> Vector3:
 			best = (op as Node3D).global_position
 	return best
 
+# El plan NO caduca por reloj: sigue mandando hasta que _ai_directive_completed
+# lo cierra, otro plan lo sustituye, o el watchdog del sondeo fuerza una
+# revalidacion si pasa demasiado tiempo sin cumplirse (until + grace).
 func _ai_active_directive(b: Dictionary) -> Dictionary:
 	var d = b.get("ai_directive", {})
 	if not (d is Dictionary) or (d as Dictionary).is_empty():
-		return {}
-	if int((d as Dictionary).get("until", 0)) < Time.get_ticks_msec():
-		b["ai_directive"] = {}
 		return {}
 	return d
 
@@ -12037,6 +12122,9 @@ func get_full_web_status() -> Dictionary:
 			"cache_hits": _ai_cache_hits,
 			"http_429_count": _ai_429_count,
 			"queue_size": _ai_queue.size(),
+			"queue": _ai_queue.map(func(it: Dictionary) -> Dictionary:
+				return {"bot": int(it.get("bot_id", 0)), "prio": int(it.get("priority", 1)), \
+					"reason": str(it.get("reason", "")), "force": bool(it.get("force", false))}),
 		},
 		"pois": pois_out,
 		"landmarks": landmarks_out,

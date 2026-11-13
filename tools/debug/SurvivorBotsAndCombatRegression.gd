@@ -1716,7 +1716,81 @@ func run() -> void:
 		"Asesor: directiva pos devuelve el destino exacto")
 	elena["ai_directive"] = {"mode": "pos", "pos": Vector3(50.0, 0.0, 50.0), "until": Time.get_ticks_msec() - 1000, "reason": "test"}
 	var t_exp: Vector3 = mgr._choose_explore_target(elena)
-	check(t_exp != Vector3(50.0, 0.0, 50.0), "Asesor: directiva caducada se ignora")
+	check(t_exp == Vector3(50.0, 0.0, 50.0), "Asesor: el plan caducado sigue mandando hasta completarse")
+	# Plan compartido: cola unica, dedup por bot, force no se degrada, hueco minimo
+	mgr._ai_queue.clear()
+	mgr._ai_last_call_msec.clear()
+	var now_ms := Time.get_ticks_msec()
+	mgr._ai_enqueue_request(901, 2, "scheduled")
+	mgr._ai_enqueue_request(902, 3, "sig_change")
+	mgr._ai_enqueue_request(903, 2, "scheduled")
+	check(mgr._ai_queue.size() == 3, "Asesor: la cola compartida junta a los tres bots")
+	mgr._ai_enqueue_request(901, 5, "attacked_by_x", true)
+	check(mgr._ai_queue.size() == 3 and int((mgr._ai_queue[0] as Dictionary).get("priority", 0)) == 5,
+		"Asesor: el suceso sube la prioridad del bot ya encolado")
+	mgr._ai_last_call_msec[902] = now_ms - 1000
+	mgr._ai_last_call_msec[903] = now_ms - 1000
+	var req1 := mgr._ai_pop_next_request(now_ms)
+	check(int(req1.get("bot_id", 0)) == 901, "Asesor: el ataque (force) se despacha aun dentro del hueco")
+	mgr._ai_queue.clear()
+	mgr._ai_enqueue_request(902, 3, "sig_change")
+	mgr._ai_enqueue_request(903, 5, "plan_done", true)
+	var req2 := mgr._ai_pop_next_request(now_ms)
+	check(int(req2.get("bot_id", 0)) == 903, "Asesor: plan_done (force) salta el hueco minimo")
+	check(mgr._ai_queue.size() == 1, "Asesor: el sig_change dentro del hueco espera en cola")
+	var req3 := mgr._ai_pop_next_request(now_ms + int(mgr.AI_MIN_CALL_GAP_SEC * 1000.0) + 500)
+	check(int(req3.get("bot_id", 0)) == 902, "Asesor: pasado el hueco sale el cambio de firma")
+	# Planes guardados: se completan al llegar/visitar/comer, no por reloj
+	elena["vstats"] = SurvivalStats.new()
+	var st_rest: SurvivalStats = elena["vstats"]
+	elena["health"] = 50.0
+	st_rest.sleep = 30.0
+	elena["ai_directive"] = {"action": "rest", "mode": "pos", "pos": Vector3(0.0, 0.4, 0.0)}
+	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
+	check(not mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: rest no completa sin recuperarse")
+	st_rest.sleep = 90.0
+	check(mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: rest completa descansado en el punto")
+	st_rest.sleep = 100.0
+	elena["health"] = 90.0
+	elena["ai_directive"] = {"action": "return_home", "mode": "pos", "pos": Vector3(50.0, 0.0, 50.0)}
+	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
+	check(not mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: return_home no completa lejos del punto")
+	elena_proxy.global_position = Vector3(48.0, 0.4, 52.0)
+	check(mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: return_home completa al llegar al punto")
+	elena["ai_directive"] = {"action": "forage", "mode": "food"}
+	elena["hunger"] = 40.0
+	check(not mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: forage no completa con hambre")
+	elena["hunger"] = 80.0
+	check(mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: forage completa al recuperar hambre")
+	elena["hunger"] = 90.0
+	elena["ai_directive"] = {"action": "scavenge", "mode": "poi", "only_kinds": ["military"]}
+	elena_proxy.global_position = Vector3(150.0, 0.4, 150.0)
+	mgr._mark_poi_visited(elena, elena_proxy.global_position)
+	check(bool((elena["ai_directive"] as Dictionary).get("_visit_done", false)),
+		"Asesor: visitar el POI militar marca el plan como cumplido")
+	check(mgr._ai_directive_completed(elena, elena["ai_directive"]),
+		"Asesor: scavenge al POI visitado completa el plan")
+	# El sondeo por turnos cierra el plan cumplido pidiendo el siguiente, y un
+	# plan que no termina pasado el TTL+gracia fuerza una revalidacion.
+	var ids_s: Array = mgr.bots.keys()
+	ids_s.sort()
+	mgr._ai_queue.clear()
+	mgr._ai_rr = ids_s.find(901) - 1
+	mgr._ai_sig_poll(now_ms)
+	check((elena["ai_directive"] as Dictionary).is_empty() and mgr._ai_queue.size() == 1 \
+			and str((mgr._ai_queue[0] as Dictionary).get("reason", "")) == "plan_done",
+		"Asesor: el sondeo cierra el plan cumplido y encola el siguiente")
+	mgr._ai_queue.clear()
+	elena["ai_directive"] = {"action": "avoid_zone", "mode": "avoid", "avoid_kinds": ["city"], \
+		"until": now_ms - int(mgr.AI_PLAN_STALE_GRACE_SEC * 1000.0) - 1000}
+	mgr._ai_rr = ids_s.find(901) - 1
+	mgr._ai_sig_poll(now_ms)
+	check(mgr._ai_queue.size() == 1 and str((mgr._ai_queue[0] as Dictionary).get("reason", "")) == "plan_stuck" \
+			and bool((mgr._ai_queue[0] as Dictionary).get("force", false)),
+		"Asesor: el plan atascado fuerza una revalidacion")
+	mgr._ai_queue.clear()
+	mgr._ai_last_call_msec.clear()
+	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
 	# Elegibilidad: con ordenes de equipo el asesor no interfiere; sin API key no llama
 	elena["ai_directive"] = {}
 	elena["team_leader_id"] = 1
@@ -2278,7 +2352,7 @@ func run() -> void:
 	mgr._ai_enqueue_request(901, 2, "low_prio")
 	mgr._ai_enqueue_request(902, 5, "high_prio_threat")
 	mgr._ai_enqueue_request(903, 3, "mid_prio")
-	var popped := mgr._ai_pop_next_request()
+	var popped := mgr._ai_pop_next_request(Time.get_ticks_msec())
 	check(int(popped.get("bot_id", 0)) == 902 and int(popped.get("priority", 0)) == 5,
 		"Aceptación 7a: La cola de prioridades despacha primero la consulta más urgente (bot=%d prio=%d)" % [int(popped.get("bot_id", 0)), int(popped.get("priority", 0))])
 	var t0_usec := Time.get_ticks_usec()
@@ -4989,8 +5063,8 @@ func run() -> void:
 		"10J5q2b: Encargo lejos de la orbita se ignora — el leader decide el destino macro")
 	b_nt["ai_directive"]["pos"] = near_dp
 	b_nt["ai_directive"]["until"] = Time.get_ticks_msec() - 1000
-	check(mgr._bot_ai_errand_target(b_nt, q_leader) == Vector3.INF,
-		"10J5q2c: Directiva caducada no se ejecuta")
+	check(mgr._bot_ai_errand_target(b_nt, q_leader) == near_dp,
+		"10J5q2c: El plan caducado sigue mandando hasta completarse o atascarse")
 	b_nt["ai_directive"] = {"mode": "poi", "only_kinds": ["house"], "until": Time.get_ticks_msec() + 60000}
 	check(mgr._bot_ai_errand_target(b_nt, q_leader) == Vector3.INF,
 		"10J5q2d: Modos sin pos concreta no son recado lateral")
