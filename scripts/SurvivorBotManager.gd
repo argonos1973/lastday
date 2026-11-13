@@ -208,7 +208,7 @@ const AI_SHARE_RADIUS := 14.0
 # o menor prioridad no desbanca una directiva mas joven que esta ventana.
 const AI_DIRECTIVE_MIN_COMMIT_SEC := 300.0
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container."
+const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
@@ -961,6 +961,8 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"_last_foe_pos": Vector3.INF,
 		"_lost_foe_pos": Vector3.INF,
 		"_lost_foe_until_msec": 0,
+		"_lost_sector": Vector3.INF,
+		"_lost_sectors": 0,
 		"_foe_mem": {},
 		"_loot_n": 0,
 		"_loot_food_n": 0,
@@ -1421,11 +1423,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_s_predator"] = _find_threatening_predator(b, (30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0) + pred_bonus)
 		b["_s_foe"] = _find_combat_foe(b)
 		if b["_s_foe"] != null:
-			# Ancla honesta de busqueda: la posicion exacta solo viene de la
-			# vista; si el rastro es auditivo la pista es aproximada.
-			var foe_n: Node3D = b["_s_foe"] as Node3D
-			var foe_src := "seen" if _has_clear_shot(proxy.global_position, foe_n.global_position) else "heard"
-			_ai_note_foe_intel(b, foe_n, foe_n.global_position, foe_src)
+			_ai_note_foe_scan(b, b["_s_foe"] as Node3D)
 			b["_lost_foe_until_msec"] = 0
 			b["_lost_scan_t"] = 0.0
 		# Ojo en los techos en ciudad/bases militares: un francotirador apostado
@@ -1641,23 +1639,41 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if lpos == Vector3.INF or Time.get_ticks_msec() > lost_until:
 			b["_lost_foe_until_msec"] = 0
 			b["_lost_foe_pos"] = Vector3.INF
+			b["_lost_sector"] = Vector3.INF
+			b["_lost_sectors"] = 0
 		else:
 			b["_act"] = "search_foe"
-			if proxy.global_position.distance_to(lpos) > 3.2:
-				_move_bot_towards(b, lpos, 5.6, delta, "run")
+			# Busqueda por sectores alrededor de la pista — no es un radar:
+			# recorre la pista y unos puntos del area cercana, con pausas de
+			# escucha en cada uno, y abandona si no halla nada.
+			var sect: Vector3 = b.get("_lost_sector", Vector3.INF)
+			if sect == Vector3.INF:
+				var n := int(b.get("_lost_sectors", 0))
+				sect = lpos if n == 0 else lpos + Vector3(randf_range(-9.0, 9.0), 0.0, randf_range(-9.0, 9.0))
+				b["_lost_sector"] = sect
+			if proxy.global_position.distance_to(sect) > 2.4:
+				b["crouching"] = proxy.global_position.distance_to(sect) <= 15.0
+				_move_bot_towards(b, sect, 4.0 if b["crouching"] else 5.6, delta, "walk" if b["crouching"] else "run")
 			else:
-				# En el punto sin verlo: escaneo breve agachado y se rinde.
+				# En el punto sin verlo: pausa de escucha agachado y siguiente sector.
 				b["crouching"] = true
 				b["anim"] = "idle"
 				b["_lost_scan_t"] = float(b.get("_lost_scan_t", 0.0)) + delta
-				if float(b["_lost_scan_t"]) > 4.5:
-					b["_lost_foe_until_msec"] = 0
+				if float(b["_lost_scan_t"]) > 1.6:
 					b["_lost_scan_t"] = 0.0
-					# Recuerda la zona como peligrosa: donde una amenaza se esfumo.
-					record_zone_hazard(int(b["bot_id"]), lpos, "lost_foe", 0.25, true)
+					b["_lost_sector"] = Vector3.INF
+					b["_lost_sectors"] = int(b.get("_lost_sectors", 0)) + 1
+					if int(b["_lost_sectors"]) >= 4:
+						b["_lost_foe_until_msec"] = 0
+						b["_lost_sector"] = Vector3.INF
+						b["_lost_sectors"] = 0
+						# Recuerda la zona como peligrosa: donde una amenaza se esfumo.
+						record_zone_hazard(int(b["bot_id"]), lpos, "lost_foe", 0.25, true)
 			return
 	elif lost_until <= 0:
 		b["_lost_foe_pos"] = Vector3.INF
+		b["_lost_sector"] = Vector3.INF
+		b["_lost_sectors"] = 0
 
 	b["is_aiming"] = false
 
@@ -2302,11 +2318,22 @@ func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 			observe_location(bid, id, str(p.get("kind", "wild")), pp, "observed", true)
 			record_strategy_outcome(bid, "explore_" + str(p.get("kind", "wild")), true, 0.04)
 			# Plan del asesor por tipo de POI: visitarlo marca _visit_done y el
-			# sondeo lo cierra pidiendo el siguiente paso (plan_done).
+			# sondeo lo cierra pidiendo el siguiente paso (plan_done). Con
+			# destino fijado solo cuenta llegar a ESE lugar — pasar por otro
+			# POI del mismo tipo no es cumplir el objetivo.
 			var dd: Dictionary = b.get("ai_directive", {})
 			if str(dd.get("mode", "")) == "poi":
-				var oks: Array = dd.get("only_kinds", [])
-				if oks.is_empty() or oks.has(str(p.get("kind", "wild"))):
+				var did := str(dd.get("_dest_id", ""))
+				var dpos: Vector3 = dd.get("_dest_pos", Vector3.INF)
+				var matches := false
+				if not did.is_empty():
+					matches = did == _poi_id(p)
+				elif dpos != Vector3.INF:
+					matches = Vector2(dpos.x - pp.x, dpos.z - pp.z).length() < 14.0
+				else:
+					var oks: Array = dd.get("only_kinds", [])
+					matches = oks.is_empty() or oks.has(str(p.get("kind", "wild")))
+				if matches:
 					dd["_visit_done"] = true
 	mem["visited"] = visited
 	b["_visited"] = visited
@@ -2431,8 +2458,7 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 		# reanuda lo que esta demostrado inalcanzable.
 		record_strategy_outcome(bid0, str(d0.get("action", "")), false, 0.16, "nav_blocked")
 		var root0 := str(d0.get("_plan_root", d0.get("action", "")))
-		if root0 != str(d0.get("action", "")):
-			record_strategy_outcome(bid0, root0, false, 0.08, "plan_broken")
+		record_plan_outcome(bid0, root0, false, 0.08, "plan_broken")
 		_ai_note_failed_goal(b, d0, "nav_blocked")
 		_ensure_bot_memory(bid0, b.get("cfg", {}))["pending_goals"] = []
 		_ai_stat_inc(b, "steps_failed")
@@ -2474,18 +2500,49 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 		var skip_visited_dp: bool = d_act in ["explore", "scavenge", "hunt"] and dp is Vector3 and _is_pos_already_visited(b, dp)
 		if dp is Vector3 and (dp as Vector3) != Vector3.INF and not _is_goal_blacklisted(b, dp) and not skip_visited_dp:
 			return dp
+	if not directive.is_empty() and str(directive.get("mode", "")) == "poi":
+		# El paso lleva UN destino fijado al adoptarlo: la navegacion va a ese,
+		# no al POI del tipo que ahora quede mas cerca. Si el fijado quedo
+		# vetado (lista negra/inalcanzable) se repieza otro y se refija.
+		var dpin = directive.get("_dest_pos")
+		if dpin is Vector3 and (dpin as Vector3) != Vector3.INF:
+			if not _is_goal_blacklisted(b, dpin):
+				return dpin
+			directive.erase("_dest_pos")
+			directive.erase("_dest_id")
 	var only_kinds: Array = directive.get("only_kinds", []) if not directive.is_empty() else []
 	var avoid_kinds: Array = directive.get("avoid_kinds", []) if not directive.is_empty() else []
+	var pick := _ai_pick_poi(b, only_kinds, avoid_kinds, true)
+	if pick.is_empty():
+		return Vector3.INF
+	var best: Vector3 = pick["pos"]
+	if not directive.is_empty() and str(directive.get("mode", "")) == "poi":
+		directive["_dest_pos"] = best
+		directive["_dest_id"] = str(pick.get("id", ""))
+	if str(pick.get("kind", "")) == "tower" and pick.get("route") is Array:
+		b["climb_route"] = pick["route"]
+		b["climb_i"] = -1
+		b["climb_down"] = false
+		b["climb_dwell"] = 0.0
+	return best
+
+# Puntuacion de POIs compartida por la navegacion y el fijado de destino del
+# paso: mismo criterio (personalidad, memoria, sector, anti-cluster) para que
+# el lugar que el plan registra sea EXACTAMENTE al que el bot camina.
+# jitter=false da la eleccion determinista que usa el veto de objetivos.
+func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: bool) -> Dictionary:
 	var pois := _explore_pois()
 	if pois.is_empty():
-		return Vector3.INF
-	var proxy: Node3D = b["proxy"]
+		return {}
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return {}
 	var mem: Dictionary = b.get("_mem", {})
 	var visited: Array = mem.get("visited", [])
 	var known: Dictionary = mem.get("known_locations", {})
 	var pers: Dictionary = _get_bot_personality(b)
 	var death_pos: Vector3 = mem.get("last_death_pos", Vector3.INF)
-	var hostile := str(b["faction"]) == "hostile"
+	var hostile := str(b.get("faction", "")) == "hostile"
 	var bravery := float(pers.get("bravery", 0.5))
 	var curiosity := float(pers.get("curiosity", 0.5))
 	var aggro_t := float(pers.get("aggression", 0.3))
@@ -2539,7 +2596,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			if known.has(pid):
 				w *= 1.12
 			var d := Vector2(proxy.global_position.x - pp.x, proxy.global_position.z - pp.z).length()
-			var score := w * 100.0 - minf(d, 220.0) * 0.25 + rng.randf_range(0.0, 30.0)
+			var score := w * 100.0 - minf(d, 220.0) * 0.25 + (rng.randf_range(0.0, 30.0) if jitter else 0.0)
 			# Bono de expedicion a regiones exteriores (Lago NE, Base Cima NW,
 			# Granero remoto SW, Ciudad S, campamentos militares) tras el primer
 			# saqueo local, para que recorran todo el mapa.
@@ -2576,12 +2633,9 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 				visited.clear()
 				mem["visited"] = visited
 			break
-	if str(best_p.get("kind", "")) == "tower" and best_p.get("route") is Array:
-		b["climb_route"] = best_p["route"]
-		b["climb_i"] = -1
-		b["climb_down"] = false
-		b["climb_dwell"] = 0.0
-	return best
+	if best == Vector3.INF:
+		return {}
+	return {"pos": best, "id": _poi_id(best_p), "kind": str(best_p.get("kind", "")), "route": best_p.get("route")}
 
 func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	b["consume_anim_t"] = maxf(0.0, float(b.get("consume_anim_t", 0.0)) - _delta)
@@ -3725,15 +3779,31 @@ func _ai_note_foe_intel(b: Dictionary, foe: Node3D, pos: Vector3, src: String) -
 		return
 	b["_foe_mem"] = {"pos": noted, "t": Time.get_ticks_msec(), "src": src, "conf": conf, "key": key}
 
+# Refresco del escaneo de sentidos: la posicion exacta solo la fija la VISTA
+# (linea de vision real). El oido mantiene el aggro pero NO reescribe la pista
+# — eso lo hace el evento sonoro real con su sound_pos. Escanear cada 0.2 s al
+# enemigo oido con su posicion viva seria un radar a traves de las paredes.
+func _ai_note_foe_scan(b: Dictionary, foe: Node3D) -> void:
+	if foe == null or not is_instance_valid(foe):
+		return
+	var proxy: Node3D = b.get("proxy")
+	if proxy != null and is_instance_valid(proxy) \
+			and _has_clear_shot(proxy.global_position, foe.global_position):
+		_ai_note_foe_intel(b, foe, foe.global_position, "seen")
+
 # Version JSON de la pista de enemigo para el panel de diagnostico.
 func _foe_intel_snapshot(b: Dictionary) -> Dictionary:
 	var fm: Dictionary = b.get("_foe_mem", {})
 	if fm.is_empty():
 		return {}
 	var fp: Vector3 = fm.get("pos", Vector3.INF)
+	var age_s := float(Time.get_ticks_msec() - int(fm.get("t", 0))) / 1000.0
+	var conf0 := float(fm.get("conf", 1.0))
 	return {"pos": [snappedf(fp.x, 0.1), snappedf(fp.y, 0.1), snappedf(fp.z, 0.1)] if fp != Vector3.INF else [],
-		"age_s": snappedf(float(Time.get_ticks_msec() - int(fm.get("t", 0))) / 1000.0, 0.1),
-		"src": str(fm.get("src", "")), "conf": float(fm.get("conf", 0.0)), "key": str(fm.get("key", ""))}
+		"age_s": snappedf(age_s, 0.1),
+		"src": str(fm.get("src", "")), "conf": conf0,
+		"conf_now": snappedf(conf0 * clampf(1.0 - age_s / 120.0, 0.0, 1.0), 0.01),
+		"key": str(fm.get("key", ""))}
 
 # Nemesis: devuelve la ficha del verdugo si el enemigo sensado ya le mato
 # antes (memoria persistente 'killers'). Aprender de las muertes es, ante
@@ -4193,6 +4263,9 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 					src = "seen"
 				if anchor != Vector3.INF and clue_age <= 120.0 and persist >= 2.5:
 					b["_lost_foe_pos"] = anchor
+					b["_lost_sector"] = Vector3.INF
+					b["_lost_sectors"] = 0
+					b["_lost_scan_t"] = 0.0
 					b["_lost_foe_until_msec"] = Time.get_ticks_msec() + int(persist * 1000.0)
 					record_bot_event(int(b["bot_id"]), "lost_foe", _actor_persist_key(_peer_id_for_actor(aggro)), _poi_kind_near(anchor), anchor, "%s %.0fs (%.0fs)" % [src, persist, clue_age])
 			# El rastro termina: el nodo ya no revela su posicion viva.
@@ -11875,6 +11948,14 @@ func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weigh
 	strats[strategy] = st
 	mem["strategies"] = strats
 
+# Resultado GLOBAL del plan, en namespace propio ("plan:<raiz>"): un plan de
+# tres pasos registra tres resultados de accion + UN resultado de plan — la
+# raiz no recibe un segundo exito de accion por completar el conjunto.
+func record_plan_outcome(bot_id: int, plan_root: String, success: bool, weight_delta: float = 0.08, cause: String = "") -> void:
+	if plan_root.is_empty():
+		return
+	record_strategy_outcome(bot_id, "plan:" + plan_root, success, weight_delta, cause)
+
 # Contadores de diagnostico por bot (monitor: que decide Qwen y que Godot, cuantos
 # planes se cumplen/fallan, latencias de la IA remota, razones de fallback).
 func _ai_stat_inc(b: Dictionary, key: String, n: int = 1) -> void:
@@ -12335,6 +12416,11 @@ func _ai_step_target_pos(b: Dictionary, d: Dictionary) -> Vector3:
 	var dp = d.get("pos")
 	if dp is Vector3 and (dp as Vector3) != Vector3.INF:
 		return dp
+	# Destino fijado al adoptar el paso: navegacion, progreso y vetos hablan
+	# del mismo lugar — no se recalcula al POI que ahora quede mas cerca.
+	var pin = d.get("_dest_pos")
+	if pin is Vector3 and (pin as Vector3) != Vector3.INF:
+		return pin
 	match str(d.get("mode", "")):
 		"ally":
 			return _nearest_friendly_bot_pos(int(b.get("bot_id", 0)))
@@ -12509,8 +12595,7 @@ func _ai_fail_stalled_step(bot_id: int, b: Dictionary, d: Dictionary, cause: Str
 		(b["ai_directive"] as Dictionary)["_plan_root"] = root
 		(b["ai_directive"] as Dictionary)["_plan_losses"] = int(d.get("_plan_losses", 0)) + 1
 		return
-	if root != str(d.get("action", "")):
-		record_strategy_outcome(bot_id, root, false, 0.08, "plan_broken")
+	record_plan_outcome(bot_id, root, false, 0.08, "plan_broken")
 	_ai_stat_inc(b, "plans_failed")
 	_ai_apply_local_fallback_decision(bot_id, "step_" + cause)
 	_ai_enqueue_request(bot_id, 3, "step_" + cause, true)
@@ -12590,6 +12675,33 @@ func _ai_build_prompt(b: Dictionary) -> String:
 	var evs: Array = mem.get("events", [])
 	for idx in range(maxi(0, evs.size() - 5), evs.size()):
 		recent_events.append(evs[idx])
+	# Contexto de fracasos para el asesor: que no proponga lo que Godot ya
+	# sabe imposible — objetivos vigentes que fallaron (con causa y zona) y
+	# destinos temporalmente inaccesibles. Acotado: los 5/4 mas recientes.
+	var now_u := Time.get_unix_time_from_system()
+	var fail_recs: Array = []
+	var fgd: Dictionary = mem.get("failed_goals", {})
+	for k in fgd.keys():
+		var e = fgd[k]
+		if e is Dictionary and now_u - float((e as Dictionary).get("t", 0.0)) < float((e as Dictionary).get("ttl", 10800.0)):
+			var parts := str(k).split("|")
+			fail_recs.append({"goal": str((e as Dictionary).get("act", parts[0] + ":" + (parts[1] if parts.size() > 1 else ""))),
+				"cause": str((e as Dictionary).get("cause", "")), "zone": (e as Dictionary).get("zone", []),
+				"age_min": int((now_u - float((e as Dictionary).get("t", 0.0))) / 60.0), "_t": float((e as Dictionary).get("t", 0.0))})
+	fail_recs.sort_custom(func(a, b2): return float(a.get("_t", 0.0)) > float(b2.get("_t", 0.0)))
+	var fails: Array = []
+	for e in fail_recs.slice(0, 5):
+		e.erase("_t")
+		fails.append(e)
+	var unreach: Array = []
+	var unm: Dictionary = mem.get("unreachable_pois", {})
+	for k in unm.keys():
+		var e = unm[k]
+		if e is Dictionary and now_u - float((e as Dictionary).get("t", 0.0)) < 21600.0:
+			unreach.append({"poi": str(k), "cause": str((e as Dictionary).get("cause", "nav")),
+				"left_min": int((21600.0 - (now_u - float((e as Dictionary).get("t", 0.0)))) / 60.0)})
+			if unreach.size() >= 4:
+				break
 	var vst_p: SurvivalStats = b.get("vstats")
 	var state := {
 		"name": str(b["name"]),
@@ -12617,6 +12729,8 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"last_plan": cur,
 		"pending_steps": mem.get("pending_goals", []),
 		"last_plan_result": str(b.get("_plan_last_result", "")),
+		"recent_failures": fails,
+		"unreachable": unreach,
 		"memory": _ai_memory_summary(mem),
 	}
 	return JSON.stringify(state)
@@ -12927,6 +13041,17 @@ func _ai_fail_ttl(cause: String) -> float:
 # resolucion que hace _ai_apply_decision (casa/campamento para el modo pos,
 # aliado para el modo ally, POI cercano para el modo poi).
 func _ai_goal_intended_pos(b: Dictionary, d: Dictionary) -> Vector3:
+	# El fijado ya decide por los pasos adoptados; para candidatos aun sin
+	# destino se reproduce la eleccion determinista que hara _ai_pin_* —
+	# el veto se anota sobre el lugar al que iria de verdad.
+	var pin = d.get("_dest_pos")
+	if pin is Vector3 and (pin as Vector3) != Vector3.INF:
+		return pin
+	if str(d.get("mode", "")) == "poi":
+		var pick := _ai_pick_poi(b, d.get("only_kinds", []), [], false)
+		if not pick.is_empty():
+			return pick["pos"]
+		return Vector3.INF
 	var tp := _ai_step_target_pos(b, d)
 	if tp != Vector3.INF:
 		return tp
@@ -12965,7 +13090,12 @@ func _ai_note_failed_goal(b: Dictionary, d: Dictionary, cause: String) -> void:
 	if mem.is_empty() or d.is_empty():
 		return
 	var fg: Dictionary = mem.get("failed_goals", {})
-	fg[_ai_failed_goal_sig(d, b)] = {"t": Time.get_unix_time_from_system(), "cause": cause, "ttl": _ai_fail_ttl(cause)}
+	var zp := _ai_goal_intended_pos(b, d)
+	var rec := {"t": Time.get_unix_time_from_system(), "cause": cause, "ttl": _ai_fail_ttl(cause),
+		"act": str(d.get("action", "")) + ":" + str(d.get("target", d.get("goal", "")))}
+	if zp != Vector3.INF:
+		rec["zone"] = [int(zp.x), int(zp.z)]
+	fg[_ai_failed_goal_sig(d, b)] = rec
 	while fg.size() > 16:
 		var oldest := ""
 		var old_t := INF
@@ -13025,12 +13155,11 @@ func _ai_advance_plan(bot_id: int, b: Dictionary, d: Dictionary) -> bool:
 	_ai_stat_inc(b, "steps_completed")
 	if remaining.is_empty():
 		b["_plan_last_result"] = "plan_completed"
-		# Un plan de un solo paso ya se evaluo arriba: premiar la raiz seria
-		# contar el mismo exito dos veces. En planes largos la raiz recibe el
-		# global — con bajas por el camino, a credito reducido.
-		if root != str(d.get("action", "")):
-			var w := 0.08 if int(d.get("_plan_losses", 0)) == 0 else 0.03
-			record_strategy_outcome(bot_id, root, true, w, "plan_completed")
+		# Resultado global del plan en su propio namespace (plan:<raiz>): la
+		# accion raiz no recibe un segundo exito por completar el conjunto, y
+		# con bajas por el camino el credito global es reducido.
+		var w := 0.08 if int(d.get("_plan_losses", 0)) == 0 else 0.03
+		record_plan_outcome(bot_id, root, true, w, "plan_completed")
 		_ai_stat_inc(b, "plans_completed")
 		return false
 	if not _ai_apply_decision(bot_id, JSON.stringify({"steps": remaining})):
@@ -13039,8 +13168,7 @@ func _ai_advance_plan(bot_id: int, b: Dictionary, d: Dictionary) -> bool:
 		# fallo de requisitos, no de navegacion.
 		var fail_act := str((remaining[0] as Dictionary).get("action", d.get("action", ""))) if remaining[0] is Dictionary else str(d.get("action", ""))
 		record_strategy_outcome(bot_id, fail_act, false, 0.14, "precondition")
-		if root != str(d.get("action", "")):
-			record_strategy_outcome(bot_id, root, false, 0.10, "plan_broken")
+		record_plan_outcome(bot_id, root, false, 0.10, "plan_broken")
 		if remaining[0] is Dictionary:
 			_ai_note_failed_goal(b, remaining[0] as Dictionary, "precondition")
 		_ai_stat_inc(b, "steps_failed")
@@ -13050,6 +13178,53 @@ func _ai_advance_plan(bot_id: int, b: Dictionary, d: Dictionary) -> bool:
 	(b["ai_directive"] as Dictionary)["_plan_root"] = root
 	(b["ai_directive"] as Dictionary)["_plan_losses"] = int(d.get("_plan_losses", 0))
 	b["_plan_last_result"] = "step_completed"
+	return true
+
+# Fija el destino UNICO del paso al adoptarlo (_dest_pos/_dest_id): navega-
+# cion, progreso, aprendizaje y vetos trabajan desde entonces sobre el mismo
+# lugar elegido, no sobre "el POI del tipo que ahora quede mas cerca".
+# false = el paso no tiene destino real posible (requisito imposible).
+func _ai_pin_step_destination(bot_id: int, b: Dictionary, d: Dictionary) -> bool:
+	match str(d.get("mode", "")):
+		"pos":
+			if not (d.get("pos") is Vector3):
+				var home: Vector3 = b.get("shelter_pos", Vector3.INF)
+				if str(d.get("action", "")) in ["rest", "fortify_camp"]:
+					var camp: Vector3 = b.get("camp_spot", Vector3.INF)
+					if camp != Vector3.INF:
+						home = camp
+				elif home == Vector3.INF:
+					home = b.get("camp_spot", Vector3.INF)
+				if home == Vector3.INF:
+					return false
+				d["pos"] = home
+			d["_dest_pos"] = d["pos"]
+			d["_dest_id"] = "pos"
+		"ally":
+			var ally_pos := _nearest_friendly_bot_pos(bot_id)
+			if ally_pos != Vector3.INF:
+				d["mode"] = "pos"
+				d["pos"] = ally_pos
+				d["_dest_pos"] = ally_pos
+				d["_dest_id"] = "pos"
+			else:
+				d["mode"] = "poi"
+				d["only_kinds"] = ["house"]
+				return _ai_pin_poi_destination(b, d)
+		"poi":
+			return _ai_pin_poi_destination(b, d)
+	return true
+
+# Destino poi = el POI que la navegacion habria elegido con el mismo criterio
+# (determinista: sin jitter, para que la firma del veto y el destino real sean
+# el mismo lugar). Solo se rechaza cuando HAY POIs pero ninguno sirve — un
+# mundo sin tabla de POIs no convierte el paso en imposible.
+func _ai_pin_poi_destination(b: Dictionary, d: Dictionary) -> bool:
+	var pick := _ai_pick_poi(b, d.get("only_kinds", []), [], false)
+	if pick.is_empty():
+		return _explore_pois().is_empty()
+	d["_dest_pos"] = pick["pos"]
+	d["_dest_id"] = str(pick.get("id", ""))
 	return true
 
 func _ai_apply_decision(bot_id: int, content: String) -> bool:
@@ -13062,25 +13237,8 @@ func _ai_apply_decision(bot_id: int, content: String) -> bool:
 	var d := _ai_parse_decision(JSON.stringify(steps[0]), b)
 	if d.is_empty():
 		return false
-	if str(d.get("mode", "")) == "pos" and not d.has("pos"):
-		var home: Vector3 = b.get("shelter_pos", Vector3.INF)
-		if str(d.get("action", "")) in ["rest", "fortify_camp"]:
-			var camp: Vector3 = b.get("camp_spot", Vector3.INF)
-			if camp != Vector3.INF:
-				home = camp
-		elif home == Vector3.INF:
-			home = b.get("camp_spot", Vector3.INF)
-		if home == Vector3.INF:
-			return false
-		d["pos"] = home
-	elif str(d.get("mode", "")) == "ally":
-		var ally_pos := _nearest_friendly_bot_pos(bot_id)
-		if ally_pos != Vector3.INF:
-			d["mode"] = "pos"
-			d["pos"] = ally_pos
-		else:
-			d["mode"] = "poi"
-			d["only_kinds"] = ["house"]
+	if not _ai_pin_step_destination(bot_id, b, d):
+		return false
 	d["_remaining_steps"] = steps.slice(1)
 	var now_ms := Time.get_ticks_msec()
 	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
