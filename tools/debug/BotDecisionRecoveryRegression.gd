@@ -114,15 +114,17 @@ func run():
 			said_gn2 = true
 	check(collapse_ok and not said_gn2, "el colapso letal no despide")
 
-	# Un objetivo que ya fracasó queda vetado ~6 h: ni la reanudación ni una
-	# reemisión lo repiten — pero el veto caduca y deja reintentarlo.
+	# Un objetivo que ya fracasó queda vetado segun su causa: ni la reanudación
+	# ni una reemisión lo repiten EN EL MISMO LUGAR — pero el veto caduca.
 	var vb := {"proxy": proxy, "bot_id": 901, "_mem": {"failed_goals": {}, "visited": []}}
-	var vd := {"action": "explore", "target": "wild", "goal": "g"}
+	# La directiva fallida se registra con su destino pretendido (el POI que
+	# el bot iba a explorar), igual que la resuelve el parse de la reemision.
+	var vd := {"action": "explore", "target": "wild", "goal": "g", "mode": "poi", "only_kinds": ["wild"]}
 	manager._ai_note_failed_goal(vb, vd, "nav_blocked")
 	check(manager._ai_goal_recently_failed(vb, vd),
 		"failed goal is vetoed while fresh")
 	check(manager._ai_parse_plan(JSON.stringify({"steps": [{"action": "explore", "target": "wild", "goal": "g"}]}), vb).is_empty(),
-		"re-emitting a just-failed goal is rejected atomically")
+		"re-emitting a just-failed goal to the same place is rejected atomically")
 	check(not manager._ai_parse_plan(JSON.stringify({"steps": [{"action": "forage", "goal": "other"}]}), vb).is_empty(),
 		"a DIFFERENT goal still parses (alternative allowed)")
 	(vb["_mem"]["failed_goals"] as Dictionary).values()[0]["t"] = Time.get_unix_time_from_system() - 22000.0

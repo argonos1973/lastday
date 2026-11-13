@@ -470,6 +470,119 @@ func run() -> void:
 	check(mgr._ai_bot_eligible(carlos),
 		"Pasada la emergencia el asesor vuelve a evaluar al bot")
 
+	# --- 20) El veto de objetivo fallido es de LUGAR, no de categoria ---
+	carlos["ai_directive"] = {}
+	cmem["failed_goals"] = {}
+	var zone_a := Vector3(500.0, 0.4, 500.0)
+	mgr._ai_note_failed_goal(carlos, {"action": "scavenge", "target": "city", "pos": zone_a}, "no_progress")
+	check(mgr._ai_goal_recently_failed(carlos, {"action": "scavenge", "target": "city", "pos": zone_a}),
+		"El fracaso veta el mismo objetivo en la misma zona")
+	check(not mgr._ai_goal_recently_failed(carlos, {"action": "scavenge", "target": "city", "pos": zone_a + Vector3(400.0, 0, 0)}),
+		"Saquear OTRA zona de ciudad no queda vetado")
+	check(not mgr._ai_goal_recently_failed(carlos, {"action": "forage", "target": "wild", "pos": zone_a}),
+		"Otra actividad en la misma zona no queda vetada")
+	# El veto respeta la vigencia de su causa (no_progress ~3 h aqui).
+	var fg_z: Dictionary = cmem.get("failed_goals", {})
+	var sig_z := mgr._ai_failed_goal_sig({"action": "scavenge", "target": "city", "pos": zone_a}, carlos)
+	(fg_z[sig_z] as Dictionary)["t"] = Time.get_unix_time_from_system() - 40000.0
+	check(not mgr._ai_goal_recently_failed(carlos, {"action": "scavenge", "target": "city", "pos": zone_a}),
+		"El veto caduca pasada la vigencia de su causa")
+
+	# --- 21) Un plan de un paso registra exactamente UN exito ---
+	cmem["strategies"] = {}
+	carlos["ai_directive"] = {}
+	mgr._ai_apply_decision(902, JSON.stringify({"steps": [{"action": "explore", "target": "wild"}]}))
+	mgr._ai_advance_plan(902, carlos, carlos["ai_directive"])
+	var suc_e: int = int((cmem.get("strategies", {}).get("explore", {}) as Dictionary).get("success", 0))
+	check(suc_e == 1,
+		"Plan de un paso: 1 exito de estrategia, no dos (=%d)" % suc_e)
+	# Plan de dos pasos: raiz y ultimo paso son estrategias distintas, 1 exito cada una.
+	cmem["strategies"] = {}
+	carlos["ai_directive"] = {}
+	carlos["shelter_pos"] = Vector3(600.0, 0.4, 600.0)
+	mgr._ai_apply_decision(902, JSON.stringify({"steps": [
+		{"action": "explore", "target": "wild"},
+		{"action": "return_home", "goal": "back"}]}))
+	var d_two: Dictionary = carlos["ai_directive"]
+	mgr._ai_advance_plan(902, carlos, d_two) # completa paso 1 -> aplica paso 2
+	mgr._ai_advance_plan(902, carlos, carlos["ai_directive"]) # completa paso 2 -> plan
+	var strats_two: Dictionary = cmem.get("strategies", {})
+	check(int((strats_two.get("explore", {}) as Dictionary).get("success", 0)) == 2
+			and int((strats_two.get("return_home", {}) as Dictionary).get("success", 0)) == 1,
+		"Plan de dos pasos: paso+raiz en 'explore' (2), cierre en 'return_home' (1)")
+
+	# --- 22) Los fracasos y vetos sobreviven al reinicio (memoria persistida) ---
+	mgr._ai_note_failed_goal(carlos, {"action": "return_home", "goal": "back", "pos": Vector3(900.0, 0.4, 900.0)}, "nav_blocked")
+	cmem["unreachable_pois"] = {"house:900:900": {"n": 2, "t": Time.get_unix_time_from_system(), "cause": "nav_blocked"}}
+	(cmem["failed_goals"] as Dictionary)["explore|stale|0:0"] = {"t": Time.get_unix_time_from_system() - 99999.0, "cause": "nav_blocked", "ttl": 21600.0}
+	mgr.force_memory_io = true
+	mgr._ai_save_memory()
+	mgr._ai_flush_writes()
+	var mgr3 := SurvivorBotManagerScript.new()
+	mgr3.name = "SurvivorBotManagerMem"
+	world.add_child(mgr3)
+	mgr3.memory_path = mem_path
+	mgr3.force_memory_io = true
+	mgr3.setup(world)
+	var cmem3: Dictionary = mgr3._ensure_bot_memory(902)
+	var fg3: Dictionary = cmem3.get("failed_goals", {})
+	check(not fg3.is_empty(), "failed_goals sobrevive al reinicio del servidor")
+	check(mgr3._ai_goal_recently_failed(mgr3.bots[902], {"action": "return_home", "goal": "back", "pos": Vector3(900.0, 0.4, 900.0)}),
+		"El bot recuerda el objetivo inalcanzable tras reiniciar")
+	check(not fg3.has("explore|stale|0:0"),
+		"Los registros caducados se podan al cargar la memoria")
+	check((cmem3.get("unreachable_pois", {}) as Dictionary).has("house:900:900"),
+		"unreachable_pois sobrevive al reinicio del servidor")
+
+	# --- 23) Progreso medido por la actividad, no solo por el viaje ---
+	carlos["ai_directive"] = {}
+	for bk2 in ["_gather", "_s_loot", "_craft_state", "_ambush", "_forage", "_salvage"]:
+		carlos[bk2] = {}
+	carlos["aggro_target"] = null
+	carlos["sitting"] = false
+	carlos["sleeping"] = false
+	carlos["gut_target"] = null
+	var fdir := {"action": "forage", "goal": "eat", "mode": "food",
+		"until": Time.get_ticks_msec() + 600000}
+	carlos["ai_directive"] = fdir
+	# Baseline en el pasado, reloj adelantado: sin evidencia seria no_progress.
+	fdir["_prog_ref_ms"] = 1
+	var t_probe := Time.get_ticks_msec() + 95000
+	check(mgr._ai_step_stalled(carlos, fdir, t_probe) == "no_progress",
+		"Forrajear sin recoger nada en 90 s es no_progress")
+	# La misma ventana con botin nuevo: la evidencia renueva el progreso.
+	fdir["_prog_ref_ms"] = 1
+	carlos["_loot_food_n"] = int(carlos.get("_loot_food_n", 0)) + 1
+	check(mgr._ai_step_stalled(carlos, fdir, t_probe) != "no_progress",
+		"Forrajear con comida recogida cuenta como progreso real")
+	# Y durmiendo en el paso de descanso el bot esta ocupado, no atascado.
+	var rdir := {"action": "rest", "goal": "sleep", "mode": "pos",
+		"pos": Vector3(50.0, 0.4, 50.0), "until": Time.get_ticks_msec() + 600000,
+		"_prog_ref_ms": 1, "_prog_ref_m": 0.0}
+	carlos["proxy"].global_position = Vector3(50.0, 0.4, 50.0)
+	carlos["sleeping"] = true
+	carlos["vstats"].sleep = 30.0
+	var t_probe2 := Time.get_ticks_msec() + 95000
+	check(mgr._ai_step_stalled(carlos, rdir, t_probe2) != "no_progress",
+		"Dormido descansando no se declara atascado")
+	carlos["sleeping"] = false
+	# avoid_zone: alejarse de la zona vetada es progreso aunque no haya destino.
+	# POI cache controlado (una sola "city") para que la medida sea determinista.
+	var poi_save: Array = mgr._poi_cache
+	var built_save: bool = mgr._poi_cache_built
+	mgr._poi_cache = [{"pos": Vector3(1000.0, 0.4, 1000.0), "kind": "city"}]
+	mgr._poi_cache_built = true
+	var adir := {"action": "avoid_zone", "goal": "flee", "mode": "avoid",
+		"avoid_kinds": ["city"], "until": Time.get_ticks_msec() + 600000,
+		"_prog_ref_ms": 1}
+	carlos["proxy"].global_position = Vector3(1030.0, 0.4, 1000.0) # ~30 m de la ciudad
+	var ev_a := mgr._ai_step_evidence(carlos, adir)
+	carlos["proxy"].global_position = Vector3(1150.0, 0.4, 1000.0) # ~150 m
+	var ev_b := mgr._ai_step_evidence(carlos, adir)
+	check(ev_b > ev_a, "Alejarse de la zona vetada sube la evidencia de progreso")
+	mgr._poi_cache = poi_save
+	mgr._poi_cache_built = built_save
+
 	world.free()
 	if failures == 0:
 		print("BotPlanReliabilityRegression: ALL PASS")

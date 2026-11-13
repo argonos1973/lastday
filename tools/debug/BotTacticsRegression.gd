@@ -81,8 +81,21 @@ func run():
 		"allied warning is stored as lower-confidence intel")
 	manager._ai_note_foe_intel(b4, foe, Vector3(8, 0, 8), "seen")
 	check(str((b4["_foe_mem"] as Dictionary).get("src", "")) == "seen"
-			and float((b4["_foe_mem"] as Dictionary).get("conf", 0.0)) == 1.0,
-		"direct sight is stored as full-confidence intel")
+			and float((b4["_foe_mem"] as Dictionary).get("conf", 0.0)) == 1.0
+			and (b4["_foe_mem"] as Dictionary).get("pos") == Vector3(8, 0, 8),
+		"direct sight is stored as full-confidence intel at the exact spot")
+	# Oir un disparo lejano NO da la posicion exacta: confianza baja y
+	# posicion con incertidumbre (a ~22 m max). A ~60 m la confianza baja mas.
+	var b7 := b2.duplicate(true)
+	(b7["proxy"] as Node3D).position = Vector3(0, 0, 0)
+	manager._ai_note_foe_intel(b7, foe, Vector3(100, 0, 0), "heard")
+	var fm_h: Dictionary = b7["_foe_mem"]
+	check(str(fm_h.get("src", "")) == "heard"
+			and float(fm_h.get("conf", 1.0)) < 0.7,
+		"a far heard clue stores reduced confidence")
+	var hp: Vector3 = fm_h.get("pos", Vector3.INF)
+	check(hp != Vector3.INF and (hp - Vector3(100, 0, 0)).length() <= 26.0,
+		"the heard position is approximate, within localization error")
 	# Una pista vieja (>120 s) no arma búsqueda: el rastro ya no vale nada
 	var b5 := b2.duplicate(true)
 	b5["aggro_target"] = foe
@@ -109,6 +122,23 @@ func run():
 	check(told_win > 0, "fresh allied warning still arms a bounded search")
 	check(told_win < seen_win or seen_win <= 0,
 		"the told clue searches less time than a directly seen one")
+	# Un tirador OIDO tras cobertura que se reubica en silencio: la busqueda
+	# va a donde sono el disparo, nunca a su posicion real nueva.
+	var b8 := b2.duplicate(true)
+	b8["aggro_target"] = foe
+	b8["aggro_timer"] = 20.0
+	b8["last_heard_until"] = 0.0
+	(b8["proxy"] as Node3D).position = Vector3.ZERO
+	manager._ai_note_foe_intel(b8, foe, Vector3(60, 0, 0), "heard")
+	b8["_lost_foe_until_msec"] = 0
+	b8["_lost_foe_pos"] = Vector3.INF
+	foe.position = Vector3(90, 0, 90) # se fue en silencio y sin LOS (x>=3)
+	manager.cover = true
+	check(manager._find_combat_foe(b8) == null,
+		"relocated hidden shooter drops the live target")
+	var anchor8: Vector3 = b8["_lost_foe_pos"]
+	check(anchor8 != Vector3.INF and (anchor8 - Vector3(90, 0, 90)).length() > 40.0,
+		"the search anchors near the heard spot, never the new real position")
 	world_stub.free()
 	proxy.free()
 	foe.free()
