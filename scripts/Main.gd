@@ -4718,6 +4718,8 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		proxy.set_meta("proxy_dead", true)
 		proxy.remove_from_group("net_player_proxy")
 		proxy.add_to_group("interactable")
+		if survivor_bot_mgr != null:
+			survivor_bot_mgr._credit_survivor_kill(sender, "kills_player")
 		_release_dead_owner_wolves(target_peer_id, str(proxy.get_meta("client_id", "")), proxy, false)
 		# Drop loot immediately on server using saved inventory
 		_drop_player_loot(target_peer_id, proxy)

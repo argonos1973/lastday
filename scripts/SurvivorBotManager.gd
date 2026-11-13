@@ -3270,6 +3270,17 @@ func _bot_credit_kill(b: Dictionary, animal: Node3D) -> void:
 		_evolve_personality(b, "hunt_success", 0.30)
 	ck_mem["stats"] = ck_st
 
+# Baja de superviviente: el killer es un bot y la victima otro bot
+# ("kills_bot") o un jugador humano ("kills_player") — lo que puntua el score.
+func _credit_survivor_kill(killer_id: int, kind: String) -> void:
+	if not is_bot_peer_id(killer_id) or not bots.has(killer_id):
+		return
+	var kb: Dictionary = bots[killer_id]
+	var k_mem: Dictionary = _ensure_bot_memory(killer_id, kb.get("cfg", {}))
+	var k_st: Dictionary = k_mem.get("stats", {})
+	k_st[kind] = int(k_st.get(kind, 0)) + 1
+	k_mem["stats"] = k_st
+
 # ==================== CAZA DE PRESAS (CIERVOS / ZORROS) ====================
 # Así es como un humano consigue carne, pieles, hueso y tendón sin suicidarse
 # contra lobos ni osos: acechando ciervos y zorros agachado (menor radio de
@@ -4589,6 +4600,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	var killer_id := int(b.get("_last_attacker_id", 0)) if (not natural_death and recent_hit) else 0
 	var killer_name := ""
 	if killer_id > 0:
+		_credit_survivor_kill(killer_id, "kills_bot")
 		var kkey := _actor_persist_key(killer_id)
 		var kname := _actor_display_name(killer_id)
 		killer_name = kname
@@ -11047,7 +11059,7 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 	if not mem.has("deaths"):
 		mem["deaths"] = 0
 	if not mem.has("stats") or not (mem["stats"] is Dictionary):
-		mem["stats"] = {"alive_total_sec": 0.0, "kills_prey": 0, "kills_predator": 0, "animals_gutted": 0}
+		mem["stats"] = {"alive_total_sec": 0.0, "kills_prey": 0, "kills_predator": 0, "animals_gutted": 0, "kills_bot": 0, "kills_player": 0}
 	if not mem.has("last_death_pos"):
 		mem["last_death_pos"] = Vector3.INF
 	if not mem.has("last_death_cause"):
@@ -12351,7 +12363,7 @@ func _bot_apply_score_reset(mem: Dictionary) -> void:
 	if int(mem.get("score_reset_v", 0)) >= 1:
 		return
 	mem["score_reset_v"] = 1
-	mem["stats"] = {"alive_total_sec": 0.0, "kills_prey": 0, "kills_predator": 0, "animals_gutted": 0}
+	mem["stats"] = {"alive_total_sec": 0.0, "kills_prey": 0, "kills_predator": 0, "animals_gutted": 0, "kills_bot": 0, "kills_player": 0}
 	mem["deaths"] = 0
 	mem["known_locations"] = {}
 
@@ -12802,6 +12814,8 @@ func get_full_web_status() -> Dictionary:
 		var score := int(round(
 			alive_total / 60.0 * 2.0
 			+ float(snap.get("known_locations_count", 0)) * 10.0
+			+ float(st.get("kills_bot", 0)) * 50.0
+			+ float(st.get("kills_player", 0)) * 75.0
 			- float(mem.get("deaths", 0)) * 75.0
 		))
 		# Chat del bot: ultimo mensaje emitido + su hilo completo (como emisor
