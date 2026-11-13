@@ -2427,6 +2427,10 @@ func run() -> void:
 	check(elena.ai_directive.action == "return_home" and mgr._ai_calls_total == remote_calls_before,
 		"Offline completion advances without another remote request")
 	elena.hunger = plan_hunger
+	# La directiva vigente (return_home, joven) no cede a un plan distinto de
+	# igual prioridad por inercia de objetivo — se simula la reemision remota
+	# sobre directiva vacia, como tras consumirse el plan.
+	elena["ai_directive"] = {}
 	mgr._ai_apply_decision(901, plan_json)
 	var plan_before: Dictionary = elena.ai_directive.duplicate(true)
 	check(not mgr._ai_apply_decision(901, '{"steps":[{"action":"forage"},{"action":"teleport"}]}')

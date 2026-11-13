@@ -159,7 +159,9 @@ func run() -> void:
 	check(int(st0.get("latency_ms_avg", 0)) > 0, "ai_stats.latency_ms_avg acumula media movil")
 	check(int(st0.get("steps_done", 0)) >= 1, "ai_stats.steps_done cuenta el paso aplicado")
 
-	# --- 3) Respuesta invalida -> fallback local inmediato + contadores ---
+	# --- 3a) Respuesta invalida con plan vivo NO lo derriba (inercia) ---
+	(carlos["ai_directive"] as Dictionary)["priority"] = 5
+	var cur_goal := str(carlos.get("ai_directive", {}).get("goal", ""))
 	mgr._ai_pending_bot = 902
 	mgr._ai_pending_model = "qwen/qwen3.8-27b"
 	mgr._ai_last_call_msec[902] = Time.get_ticks_msec() - 800
@@ -167,10 +169,21 @@ func run() -> void:
 	mgr._ai_on_response(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), JSON.stringify(body_bad).to_utf8_buffer())
 	var st1: Dictionary = cmem.get("ai_stats", {})
 	check(int(st1.get("qwen_invalid", 0)) >= 1, "ai_stats.qwen_invalid cuenta la respuesta imposible")
-	check(int(st1.get("local_decisions", 0)) >= 1, "ai_stats.local_decisions cuenta el fallback inmediato")
 	var fr1: Dictionary = st1.get("fallback_reasons", {})
 	check(int(fr1.get("invalid_or_impossible_decision", 0)) >= 1,
 		"fallback_reasons guarda el motivo (invalid_or_impossible_decision)")
+	check(str(carlos.get("ai_directive", {}).get("goal", "")) == cur_goal,
+		"La respuesta basura no derriba el plan vigente")
+
+	# --- 3b) Sin directiva, el mismo fallo aplica el fallback local inmediato ---
+	carlos["ai_directive"] = {}
+	var ld0 := int(cmem.get("ai_stats", {}).get("local_decisions", 0))
+	mgr._ai_pending_bot = 902
+	mgr._ai_pending_model = "qwen/qwen3.8-27b"
+	mgr._ai_last_call_msec[902] = Time.get_ticks_msec() - 400
+	mgr._ai_on_response(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), JSON.stringify(body_bad).to_utf8_buffer())
+	var st1b: Dictionary = cmem.get("ai_stats", {})
+	check(int(st1b.get("local_decisions", 0)) == ld0 + 1, "ai_stats.local_decisions cuenta el fallback inmediato")
 	check(str(carlos.get("ai_directive", {}).get("source", "")) == "local_fallback",
 		"El fallback local queda marcado como source=local_fallback")
 
@@ -247,6 +260,69 @@ func run() -> void:
 		"El fallback local siempre devuelve una accion ejecutable")
 	check(str(carlos.get("ai_directive", {}).get("source", "")) == "local_fallback",
 		"La decision local queda etiquetada")
+
+	# --- 10) Reanudar objetivo persistido (solo arranque de sesion) ---
+	carlos["ai_directive"] = {}
+	cmem["pending_goals"] = [{"action": "explore", "target": "wild", "goal": "resume_g", "priority": 3, "reason": "saved"}]
+	mgr._ai_resume_pending_plan(902)
+	check(str(carlos.get("ai_directive", {}).get("goal", "")) == "resume_g",
+		"El plan persistido se reanuda al arrancar")
+	check(str(carlos.get("ai_directive", {}).get("source", "")) == "memory",
+		"El plan reanudado queda marcado source=memory")
+	check(str(carlos.get("_plan_last_result", "")) == "plan_resumed",
+		"_plan_last_result marca plan_resumed")
+	check(int(cmem.get("ai_stats", {}).get("plans_resumed", 0)) >= 1,
+		"ai_stats.plans_resumed cuenta la reanudacion")
+	# Pendiente invalido (POI desconocido) no se reanuda
+	carlos["ai_directive"] = {}
+	cmem["pending_goals"] = [{"action": "explore", "target": "house:1234:5678"}]
+	mgr._ai_resume_pending_plan(902)
+	check((carlos.get("ai_directive", {}) as Dictionary).is_empty(),
+		"Un plan persistido imposible no se reanuda")
+	# Pendiente vacio no toca la directiva
+	carlos["ai_directive"] = {"goal": "keep", "action": "explore", "mode": "poi", "only_kinds": ["wild"]}
+	cmem["pending_goals"] = []
+	mgr._ai_resume_pending_plan(902)
+	check(str(carlos.get("ai_directive", {}).get("goal", "")) == "keep",
+		"Sin pendientes, la directiva vigente no se toca")
+
+	# --- 11) Inercia de objetivo: mismo plan conserva progreso ---
+	carlos["ai_directive"] = {}
+	var plan1 := {"steps": [{"action": "explore", "target": "wild", "goal": "route_a", "priority": 3}, {"action": "forage", "goal": "tail"}]}
+	check(mgr._ai_apply_decision(902, JSON.stringify(plan1)),
+		"Plan de 2 pasos se aplica")
+	(carlos["ai_directive"] as Dictionary)["_visit_done"] = true
+	var until0 := int((carlos["ai_directive"] as Dictionary).get("until", 0))
+	await create_timer(0.02).timeout
+	check(mgr._ai_apply_decision(902, JSON.stringify(plan1)),
+		"Reemitir el plan identico se acepta")
+	check(bool((carlos["ai_directive"] as Dictionary).get("_visit_done", false)),
+		"El plan reemitido conserva el progreso (_visit_done)")
+	check(int((carlos["ai_directive"] as Dictionary).get("until", 0)) >= until0,
+		"El plan reemitido extiende su vigencia")
+	check((carlos["ai_directive"] as Dictionary).has("_applied_at"),
+		"La directiva registra _applied_at")
+
+	# --- 12) Plan joven no se desbanca por prioridad igual o menor ---
+	var kept_n0 := int(cmem.get("ai_stats", {}).get("plan_kept", 0))
+	var plan_low := {"steps": [{"action": "forage", "goal": "different_goal", "priority": 2}]}
+	check(mgr._ai_apply_decision(902, JSON.stringify(plan_low)),
+		"Plan distinto devuelve exito aunque no desbanque")
+	check(str(carlos.get("ai_directive", {}).get("goal", "")) == "route_a",
+		"Un plan joven sobrevive a una revalidacion de menor prioridad")
+	check(int(cmem.get("ai_stats", {}).get("plan_kept", 0)) == kept_n0 + 1,
+		"ai_stats.plan_kept cuenta el objetivo conservado")
+	# Prioridad estricta mayor si desbanca
+	var plan_hi := {"steps": [{"action": "forage", "goal": "urgent_goal", "priority": 5}]}
+	mgr._ai_apply_decision(902, JSON.stringify(plan_hi))
+	check(str(carlos.get("ai_directive", {}).get("goal", "")) == "urgent_goal",
+		"Una prioridad estricta mayor si desbanca el plan joven")
+	# Y un plan viejo (>= AI_DIRECTIVE_MIN_COMMIT_SEC) siempre cede
+	(carlos["ai_directive"] as Dictionary)["_applied_at"] = Time.get_ticks_msec() - 400000
+	var plan_old := {"steps": [{"action": "explore", "target": "wild", "goal": "old_replaced", "priority": 1}]}
+	mgr._ai_apply_decision(902, JSON.stringify(plan_old))
+	check(str(carlos.get("ai_directive", {}).get("goal", "")) == "old_replaced",
+		"Un plan viejo cede aunque llegue prioridad menor")
 
 	world.free()
 	if failures == 0:

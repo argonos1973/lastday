@@ -200,6 +200,9 @@ const AI_MEMORY_MAX_SPOTS := 10
 const AI_MEMORY_MAX_EVENTS := 28
 const AI_OBSERVE_RADIUS := 72.0
 const AI_SHARE_RADIUS := 14.0
+# Minimo de compromiso con un objetivo vivo: una revalidacion remota de igual
+# o menor prioridad no desbanca una directiva mas joven que esta ventana.
+const AI_DIRECTIVE_MIN_COMMIT_SEC := 300.0
 const AI_MEMORY_SAVE_SEC := 90.0
 const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container."
 var _ai_http: HTTPRequest = null
@@ -710,6 +713,9 @@ func spawn_all_bots() -> void:
 		return
 	for cfg in BOT_CONFIGS:
 		_spawn_bot(cfg)
+		# Los objetivos sobreviven al reinicio: retoma el plan que el bot
+		# llevaba cuando se apago el mundo (solo arranque de sesion, no respawn).
+		_ai_resume_pending_plan(int(cfg["bot_id"]))
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null and net.has_method("_broadcast_player_list"):
 		net._broadcast_player_list()
@@ -12424,12 +12430,33 @@ func _ai_apply_decision(bot_id: int, content: String) -> bool:
 			d["mode"] = "poi"
 			d["only_kinds"] = ["house"]
 	d["_remaining_steps"] = steps.slice(1)
-	d["until"] = Time.get_ticks_msec() + AI_DIRECTIVE_TTL_MSEC
+	var now_ms := Time.get_ticks_msec()
+	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
+	# Inercia de objetivo: un plan vivo no se resetea por una revalidacion
+	# remota — el mismo plan reemitido conserva progreso (_visit_done, pasos
+	# dados) y un plan joven solo se desbanca por prioridad estricta mayor.
+	var cur: Dictionary = b.get("ai_directive", {})
+	if not cur.is_empty():
+		if str(cur.get("goal", "")) == str(d.get("goal", "")) \
+				and str(cur.get("action", "")) == str(d.get("action", "")) \
+				and str(cur.get("target", "")) == str(d.get("target", "")) \
+				and (cur.get("_remaining_steps", []) as Array) == d["_remaining_steps"]:
+			cur["until"] = now_ms + AI_DIRECTIVE_TTL_MSEC
+			b["_ai_last_apply"] = "reaffirmed"
+			return true
+		var age_sec := (now_ms - int(cur.get("_applied_at", 0))) / 1000.0
+		if age_sec < AI_DIRECTIVE_MIN_COMMIT_SEC and int(d.get("priority", 3)) <= int(cur.get("priority", 3)):
+			cur["until"] = now_ms + AI_DIRECTIVE_TTL_MSEC
+			_ai_stat_inc(b, "plan_kept")
+			b["_ai_last_apply"] = "kept"
+			return true
+	d["_applied_at"] = now_ms
+	d["until"] = now_ms + AI_DIRECTIVE_TTL_MSEC
 	b["ai_directive"] = d
 	b["current_goal"] = str(d.get("goal", d.get("action", "survive")))
-	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
 	mem["pending_goals"] = steps.duplicate(true)
 	_ai_stat_inc(b, "steps_done")
+	b["_ai_last_apply"] = "applied"
 	print("[AI-ADV] %s: %s -> %s (p=%d, %s)" % [str(b.get("name", bot_id)), str(d.get("goal", "?")), str(d.get("action", "?")), int(d.get("priority", 3)), str(d.get("reason", ""))])
 
 	return true
@@ -12449,11 +12476,35 @@ func _ai_apply_local_fallback_decision(bot_id: int, reason: String = "local_fall
 		# A local rest/home proposal may also lack a usable destination.
 		# Replace the rejected goal without recursive fallback or remote work.
 		_ai_apply_decision(bot_id, JSON.stringify({"action": "explore", "target": "wild", "reason": "local_unavailable: " + reason}))
-	if b.get("ai_directive") is Dictionary:
+	# Solo se etiqueta cuando la decision local realmente sustituyo la directiva:
+	# si la inercia conservo el plan vigente no se falsea su origen.
+	if str(b.get("_ai_last_apply", "")) == "applied" and b.get("ai_directive") is Dictionary:
 		b["ai_directive"]["source"] = "local_fallback"
-	_ai_stat_inc(b, "local_decisions")
+		_ai_stat_inc(b, "local_decisions")
 	_ai_stat_reason(b, reason)
 	return b.get("ai_directive", {})
+
+# Reanuda el plan guardado al arrancar la sesion (los objetivos sobreviven al
+# reinicio del servidor). Cada paso se revalida contra la memoria viva — un
+# destino que ya no conoce o un requisito perdido no se reanuda: queda en
+# pending_steps como contexto para la proxima decision. NO se llama en respawn:
+# volver automaticamente al plan que te mato no es supervivencia.
+func _ai_resume_pending_plan(bot_id: int) -> void:
+	if not bots.has(bot_id):
+		return
+	var b: Dictionary = bots[bot_id]
+	var mem: Dictionary = b.get("_mem", {})
+	var pending: Array = mem.get("pending_goals", [])
+	if pending.is_empty():
+		return
+	var steps := _ai_parse_plan(JSON.stringify({"steps": pending}), b)
+	if steps.is_empty():
+		return
+	if _ai_apply_decision(bot_id, JSON.stringify({"steps": steps})) \
+			and str(b.get("_ai_last_apply", "")) == "applied":
+		b["ai_directive"]["source"] = "memory"
+		b["_plan_last_result"] = "plan_resumed"
+		_ai_stat_inc(b, "plans_resumed")
 
 func _nearest_friendly_bot_pos(bot_id: int) -> Vector3:
 	if not bots.has(bot_id):
