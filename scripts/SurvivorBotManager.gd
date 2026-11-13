@@ -607,7 +607,7 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 			var side_sign := 1.0 if off.dot(across) >= 0.0 else -1.0
 			var hw := maxf(0.5, sz.y * 0.5 - 0.35)
 			target_pt = c + along * lf + across * (side_sign * hw)
-		if not b.is_empty() and _is_water_blacklisted(b, target_pt):
+		if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or not _bot_supply_goal_allowed(b, target_pt)):
 			continue
 		var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
 		if d < best_d:
@@ -633,7 +633,7 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 				target_pt = _unblock_bot_point(target_pt, from)
 				if target_pt == Vector3.INF:
 					continue
-			if not b.is_empty() and _is_water_blacklisted(b, target_pt):
+			if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or not _bot_supply_goal_allowed(b, target_pt)):
 				continue
 			var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
 			if d < best_d:
@@ -1517,6 +1517,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				_bot_harvest_dead_animal(b, gut)
 			return
 
+	if not is_night or not _bot_night_supply_emergency(b):
+		b.erase("_night_emergency_origin")
+	# Prepare light before any night-time supply trip, after immediate threats.
+	if is_night and _bot_needs_food_or_water(b):
+		if _bot_prepare_night_supplies(b, delta):
+			return
+		if _bot_try_cook_meat(b, delta):
+			b["_act"] = "cook"
+			return
+
 	# 4) Sed critica sin botellas: ir al rio/lago a beber (solo si no esta
 	# siguiendo ordenes de equipo o la sed es critica de verdad)
 	var leader := _sensed_node(b, "_s_leader")
@@ -1543,6 +1553,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["drink_walk_t"] = 0.0
 				b["_drink_best_d"] = INF
 				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
+		if b["drink_at"] != Vector3.INF and not _bot_supply_goal_allowed(b, b["drink_at"]):
+			b["drink_at"] = Vector3.INF
 		if b["drink_at"] != Vector3.INF:
 			var d_water := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
 			# Con agua vadeable o ya en la orilla (_is_near_river <=3.2 m) basta
@@ -1610,6 +1622,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# frutales (pick_fruit), lo mismo que buscaria un jugador hambriento.
 	if _bot_try_forage(b, delta):
 		b["_act"] = "forage"
+		return
+
+	if is_night and _bot_needs_food_or_water(b) and not _bot_has_item(proxy, "Antorcha"):
+		# No accessible supply within the firelight: never fall through to
+		# hunting, following or exploring into darkness. La unica caminata
+		# a oscuras permitida es volver al refugio propio o a una fogata
+		# encendida — ahi hay luz, alijo y quien le ayude.
+		if _bot_night_home_walk(b, delta):
+			return
+		b["_act"] = "night_supplies"
+		b["anim"] = "idle"
+		b["sitting"] = false
 		return
 
 	# La antorcha es el minimo para salir a explorar de noche: se fabrica en
@@ -1824,7 +1848,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# noche: llega con luz, enciende la fogata, ordena el alijo y queda a
 	# resguardo — en el llano de la banda estan todos a tiro de ayuda.
 	var pre_night_home := _is_pre_night() and has_built_sh and not desperate_needs and not starving_or_parched
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or (is_night and not has_night_light and not desperate_needs) or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or (is_night and not has_night_light) or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -8248,6 +8272,9 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> void:
 	_consume_bot_item(proxy, "Palo", 2)
 	_consume_bot_item(proxy, "Piedra", 2)
 	var cf_id := "bot_campfire_%d" % int(b["bot_id"])
+	# A remote/invalid old camp must not be moved or overwritten by a new one.
+	if not str(b.get("campfire_id", "")).is_empty():
+		cf_id += "_%d" % Time.get_ticks_usec()
 	b["campfire_id"] = cf_id
 	b["campfire_pos"] = pos
 	if world.has_method("_net_campfire_built"):
@@ -8313,9 +8340,9 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 	if not bool(b.get("_s_has_wolf", false)) and float(b.get("hunger", 100.0)) >= 52.0 and not _bot_has_skewered_meat(proxy) and _bot_raw_meat_count(proxy) <= 3:
 		return false
 	var cur := proxy.global_position
-	var fire_pos := _nearest_lit_campfire_pos(cur, 85.0)
+	var fire_pos := _nearest_lit_campfire_pos(cur, 12.0 if _is_world_night() and not _bot_has_item(proxy, "Antorcha") else 85.0)
 	var cf_pos: Vector3 = b.get("campfire_pos", Vector3.INF)
-	if fire_pos == Vector3.INF and cf_pos != Vector3.INF and Vector2(cur.x - cf_pos.x, cur.z - cf_pos.z).length() < 110.0:
+	if fire_pos == Vector3.INF and cf_pos != Vector3.INF and _bot_supply_goal_lit(b, cf_pos) and Vector2(cur.x - cf_pos.x, cur.z - cf_pos.z).length() < 110.0:
 		fire_pos = cf_pos
 	if fire_pos == Vector3.INF:
 		if not _can_bot_build_campfire(proxy):
@@ -9424,6 +9451,107 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 # Leave enough reserves for the trip to food/water, not just to stand up.
 # Shared by wake-up, bedtime and camp selection so a hungry bot cannot
 # wake and immediately return to sleep while resources are out of reach.
+const NIGHT_SUPPLY_FIRE_RADIUS := 12.0
+
+func _bot_supply_goal_lit(b: Dictionary, goal: Vector3) -> bool:
+	if not _is_world_night() or b.is_empty():
+		return true
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null:
+		return false
+	if _bot_has_item(proxy, "Antorcha"):
+		return true
+	# Both ends must share the same lit fire; no hopping between distant fires.
+	if world != null and "_lit_campfires" in world:
+		for fire in world._lit_campfires:
+			if fire is Dictionary and fire.get("pos") is Vector3:
+				var center: Vector3 = fire["pos"]
+				if proxy.global_position.distance_to(center) <= NIGHT_SUPPLY_FIRE_RADIUS and goal.distance_to(center) <= NIGHT_SUPPLY_FIRE_RADIUS:
+					return true
+	return false
+
+func _bot_night_supply_emergency(b: Dictionary) -> bool:
+	return float(b.get("hunger", 100.0)) < 14.0 or float(b.get("thirst", 100.0)) < 10.0
+
+func _bot_supply_goal_allowed(b: Dictionary, goal: Vector3) -> bool:
+	if _bot_supply_goal_lit(b, goal):
+		return true
+	# Last resort only after failing to prepare light. Anchor the six-metre
+	# search at its starting point so repeated decisions cannot wander away.
+	# La meta cercana al bot tambien vale para reingresar: empujado un palmo
+	# fuera de la burbuja por una colision, podria volver a un objetivo
+	# interno en vez de quedarse parado en el borde para siempre.
+	var origin: Vector3 = b.get("_night_emergency_origin", Vector3.INF)
+	var proxy: Node3D = b.get("proxy")
+	return _bot_night_supply_emergency(b) and origin != Vector3.INF and proxy != null \
+		and goal.distance_to(origin) <= 6.0 \
+		and (proxy.global_position.distance_to(origin) <= 6.0 or proxy.global_position.distance_to(goal) <= 6.0)
+
+# Returns true while preparing light or unable to leave safely.
+func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if _bot_has_item(proxy, "Antorcha"):
+		b.erase("_night_emergency_origin")
+		b["torch_lit"] = true
+		b["held_item"] = "Antorcha"
+		proxy.set_meta("torch_lit", true)
+		proxy.set_meta("saved_held_item", "Antorcha")
+		return false
+	if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
+			or (_bot_item_count(proxy, "Trapos") < 1 and _bot_try_craft_named(b, delta, ["Trapos"], false)) \
+			or (_bot_item_count(proxy, "Palo") < 1 and _bot_item_count(proxy, "Tronco") > 0 and _bot_try_craft_named(b, delta, ["Palo"], false)):
+		b["_act"] = "torch"
+		return true
+	if not _bot_supply_goal_lit(b, proxy.global_position):
+		var own_fire: Vector3 = b.get("campfire_pos", Vector3.INF)
+		if own_fire != Vector3.INF and proxy.global_position.distance_to(own_fire) <= NIGHT_SUPPLY_FIRE_RADIUS:
+			_ensure_bot_campfire_lit(b)
+		if not _bot_supply_goal_lit(b, proxy.global_position) and _can_bot_build_campfire(proxy):
+			var spot := _find_nearby_campfire_spot(b, proxy.global_position)
+			if spot != Vector3.INF:
+				_bot_build_and_light_campfire(b, spot)
+	if _bot_supply_goal_lit(b, proxy.global_position):
+		# El bot iluminado que pasa a hambre/sed letal tambien ancla su
+		# burbuja aqui: la seta a 5 m fuera de la luz es alcanzable igual
+		# que para quien esta a oscuras (fijada donde empezo la urgencia).
+		if _bot_night_supply_emergency(b) and not b.has("_night_emergency_origin"):
+			b["_night_emergency_origin"] = proxy.global_position
+		return false
+	if _bot_night_supply_emergency(b):
+		if not b.has("_night_emergency_origin"):
+			b["_night_emergency_origin"] = proxy.global_position
+		return false
+	b.erase("_night_emergency_origin")
+	# Sin luz ni material para hacerla: la unica caminata a oscuras
+	# permitida es volver a casa — el refugio propio o la fogata encendida
+	# mas cercana. Peor que estar sin luz es estar sin luz en mitad del
+	# campo; en casa hay fogata, alijo y quien le ayude.
+	if _bot_night_home_walk(b, delta):
+		return true
+	b["_act"] = "need_light"
+	b["anim"] = "idle"
+	b["sleeping"] = false
+	b["sitting"] = false
+	return true
+
+# La unica caminata a oscuras permitida: volver al refugio propio o a la
+# fogata encendida mas cercana (mismo criterio que el acampada nocturna de
+# wants_camp). Devuelve false si no hay refugio alcanzable.
+func _bot_night_home_walk(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var shp_n: Vector3 = b.get("shelter_pos", Vector3.INF)
+	var refuge_n: Vector3 = shp_n if not str(b.get("shelter_id", "")).is_empty() and shp_n != Vector3.INF else _nearest_safe_refuge(b, 85.0)
+	if refuge_n == Vector3.INF:
+		return false
+	b["_act"] = "rest"
+	var d_home := Vector2(proxy.global_position.x - refuge_n.x, proxy.global_position.z - refuge_n.z).length()
+	if d_home > 1.8:
+		_move_bot_towards(b, refuge_n, 3.8, delta, "walk")
+	else:
+		b["sitting"] = true
+		b["anim"] = "sit"
+	return true
+
 func _bot_needs_food_or_water(b: Dictionary) -> bool:
 	return float(b.get("hunger", 100.0)) < 40.0 or float(b.get("thirst", 100.0)) < 35.0
 
@@ -11989,7 +12117,7 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var st: Dictionary = b.get("_forage", {})
 	if not st.is_empty():
 		var apos = st.get("pos")
-		if not (apos is Vector3) or (apos as Vector3) == Vector3.INF:
+		if not (apos is Vector3) or (apos as Vector3) == Vector3.INF or not _bot_supply_goal_allowed(b, apos):
 			b["_forage"] = {}
 			return false
 		var flat := Vector2(proxy.global_position.x - (apos as Vector3).x, proxy.global_position.z - (apos as Vector3).z).length()
@@ -12038,7 +12166,7 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 			continue
 		if str(a.get("action_type")) != "eat_food" or claims.has(aid) or depleted.has(aid):
 			continue
-		if _is_goal_blacklisted(b, a.global_position):
+		if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
 			continue
 		var d := proxy.global_position.distance_to(a.global_position)
 		if d < best_d:
@@ -12055,7 +12183,7 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 				continue
 			if now < float(a.get_meta("fruit_ready_time", 0.0)):
 				continue
-			if _is_goal_blacklisted(b, a.global_position):
+			if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
 				continue
 			var d2 := proxy.global_position.distance_to(a.global_position)
 			if d2 < best_d:

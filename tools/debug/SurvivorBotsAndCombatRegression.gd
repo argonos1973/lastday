@@ -260,8 +260,8 @@ func run() -> void:
 	mgr._tick_bot(kael, 0.2)
 	check(not bool(kael["torch_lit"]) and bool(kael["sitting"]),
 		"Al ocultarse en su refugio apaga la antorcha y se sienta/agacha a resguardo")
-	# El hambre rompe el descanso nocturno incluso sin antorcha: debe
-	# buscar recursos antes de agotar las reservas.
+	# El hambre rompe el descanso nocturno incluso sin antorcha: pero a
+	# oscuras sin luz no divaga — vuelve a su fogata encendida (act=rest).
 	var k_no_torch: Array = (kael_proxy.get_meta("saved_inventory", []) as Array).filter(func(it): return str(it.get("name", "")) != "Antorcha")
 	kael_proxy.set_meta("saved_inventory", k_no_torch)
 	kael["hunger"] = 15.0
@@ -271,8 +271,8 @@ func run() -> void:
 	kael_proxy.global_position = kael["shelter_pos"] + Vector3(20.0, 0.0, 0.0)
 	kael["pos"] = kael_proxy.global_position
 	mgr._tick_bot(kael, 0.1)
-	check(str(kael["_act"]) != "rest" and not bool(kael["sleeping"]) and not bool(kael["torch_lit"]),
-		"De noche sin antorcha el hambre obliga a buscar recursos (act=%s)" % str(kael["_act"]))
+	check(str(kael["_act"]) == "rest" and not bool(kael["sleeping"]) and not bool(kael["torch_lit"]),
+		"De noche sin antorcha el hambriento vuelve a su fogata (act=%s)" % str(kael["_act"]))
 	k_no_torch.append({"name": "Antorcha", "type": "tool_torch", "weight": 0.5, "quantity": 1, "use_value": 0.0, "durability": 600.0, "max_durability": 600.0})
 	kael_proxy.set_meta("saved_inventory", k_no_torch)
 	kael["sleeping"] = false
@@ -286,8 +286,8 @@ func run() -> void:
 	kael["hunger"] = 8.0
 	kael["sleeping"] = false
 	mgr._tick_bot(kael, 0.1)
-	check(str(kael["_act"]) != "rest",
-		"De noche sin luz pero muriendose de hambre sale a buscar igual (act=%s)" % str(kael["_act"]))
+	check(not (str(kael["_act"]) in ["need_light", "night_supplies"]) and not bool(kael["sleeping"]),
+		"De noche sin luz el hambre letal le hace actuar: burbuja de emergencia o vuelta a casa (act=%s)" % str(kael["_act"]))
 	# Y parapetado (sitting/act=rest) gasta menos hambre/sed que en pie.
 	var kvs: SurvivalStats = kael["vstats"]
 	kael["sitting"] = true
@@ -1095,6 +1095,50 @@ func run() -> void:
 	carlos["explore_target"] = Vector3.INF
 	carlos["shelter_id"] = sid_bak
 	carlos["shelter_pos"] = spos_bak
+
+	# --- 10k-quat) De noche, hambriento y sin luz: la fogata encendida tira
+	# de el como unica caminata a oscuras — no se aparca en el campo.
+	var tod_bak2 := float(world.day_cycle.time_of_day)
+	world.day_cycle.time_of_day = 21.5
+	var b_nh: Dictionary = mgr.bots[903]
+	var p_nh: Node3D = b_nh["proxy"]
+	b_nh["shelter_id"] = ""
+	b_nh["shelter_pos"] = Vector3.INF
+	b_nh["campfire_id"] = ""
+	b_nh["campfire_pos"] = Vector3.INF
+	b_nh["hunger"] = 30.0
+	b_nh["thirst"] = 80.0
+	b_nh["health"] = 100.0
+	b_nh["sleeping"] = false
+	b_nh["sitting"] = false
+	b_nh["hide_timer"] = 0.0
+	b_nh["flee_until"] = 0.0
+	b_nh["aggro_target"] = null
+	b_nh["team_leader_id"] = 0
+	for k_night in ["_s_leader", "_s_prey", "_s_corpse", "_s_foe", "_s_predator", "_s_tame_wolf"]:
+		b_nh[k_night] = null
+	for k_night2 in ["_s_loot", "_s_raid_shelter", "_salvage", "_steal_target"]:
+		b_nh[k_night2] = {}
+	b_nh["explore_target"] = Vector3.INF
+	b_nh["sense_t"] = 999.0 # sin re-escanear: nada sensado nuevo durante el tick
+	p_nh.set_meta("saved_inventory", [])
+	p_nh.global_position = Vector3(30.0, 0.4, 30.0)
+	b_nh["pos"] = p_nh.global_position
+	var lit_bak: Array = world._lit_campfires.duplicate(true)
+	var blk_bak: Array = world.wildlife_blockers.duplicate(true)
+	world._lit_campfires = [{"id": "cf_nh", "fire_name": "Fogata", "pos": Vector3(55.0, 0.4, 30.0)}]
+	mgr._tick_bot(kael, 0.2)
+	check(str(b_nh["_act"]) == "rest",
+		"con fogata encendida a 25 m el hambriento sin luz vuelve a casa (act=%s)" % str(b_nh["_act"]))
+	world._lit_campfires = []
+	world.wildlife_blockers = []
+	mgr._tick_bot(kael, 0.2)
+	check(str(b_nh["_act"]) in ["need_light", "night_supplies"],
+		"sin refugio ni luz si se aparca en el sitio (act=%s)" % str(b_nh["_act"]))
+	world._lit_campfires = lit_bak
+	world.wildlife_blockers = blk_bak
+	b_nh["hunger"] = 90.0
+	world.day_cycle.time_of_day = tod_bak2
 
 	# --- 11) Reacciones a impacto sincronizadas (rifle, melee, mordiscos) y flinch ---
 	world.hit_events.clear()

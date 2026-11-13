@@ -17,7 +17,7 @@ func run():
  stage.add_child(manager)
  var proxy := Node3D.new()
  stage.add_child(proxy)
- proxy.set_meta("saved_inventory", [])
+ proxy.set_meta("saved_inventory", [{"name":"Antorcha", "quantity":1}])
  var stats := SurvivalStats.new()
  stats.sleep = 35.0
  stats.energy = 60.0
