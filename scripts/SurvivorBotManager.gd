@@ -1318,6 +1318,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var pred_bonus := minf(12.0, float(pred_lessons) * 4.0)
 		b["_s_predator"] = _find_threatening_predator(b, (30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0) + pred_bonus)
 		b["_s_foe"] = _find_combat_foe(b)
+		# Ojo en los techos en ciudad/bases militares: un francotirador apostado
+		# en una azotea se ve desde mucho mas lejos que un enemigo a ras — el
+		# bot que entra a saquear vigila los puestos elevados antes que nada.
+		var roof_foe: Node3D = _find_rooftop_foe(b) if _bot_in_watch_zone(proxy.global_position) else null
+		if roof_foe != null:
+			if b["_s_foe"] == null or proxy.global_position.distance_to((roof_foe as Node3D).global_position) < proxy.global_position.distance_to((b["_s_foe"] as Node3D).global_position):
+				b["_s_foe"] = roof_foe
+			if int(b.get("_roof_threat_msec", -999999)) < 0:
+				record_zone_hazard(int(b["bot_id"]), (roof_foe as Node3D).global_position, "tower", 0.6)
+			b["_roof_threat_msec"] = Time.get_ticks_msec()
 		b["_s_leader"] = _resolve_team_leader(b)
 		var has_wolf := _bot_has_tamed_wolf(b)
 		b["_s_has_wolf"] = has_wolf
@@ -1499,6 +1509,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_move_bot_towards(b, proxy.global_position + (to_fz.normalized() + sidez * float(b["strafe_dir"]) * 0.9).normalized() * 7.0, 6.2, delta, "run")
 			b["rot"] = atan2(-to_fz.x, -to_fz.z)
 			proxy.rotation.y = float(b["rot"])
+			return
+		# Francotirador apostado: dispara desde su puesto sin bajar a perseguir.
+		if _bot_overwatch_fight(b, human_foe, delta):
 			return
 		_engage_foe(b, human_foe, delta)
 		return
@@ -1695,13 +1708,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if not loot_action.is_empty():
 		b["_act"] = "loot"
 		b["sitting"] = false
-		b["crouching"] = false
+		# Bajo amenaza de tejado el saqueo es agachado y sin correr: menos
+		# silueta para el francotirador mientras cruza la calle hasta la casa.
+		var roof_wary := _bot_roof_wary(b)
+		b["crouching"] = roof_wary
 		var lpos := _loot_entry_pos(loot_action)
 		var d_loot := Vector2(proxy.global_position.x - lpos.x, proxy.global_position.z - lpos.z).length()
 		if d_loot <= 2.1 and absf(proxy.global_position.y - lpos.y) <= 1.8:
 			_collect_loot_entry(b, loot_action)
 		else:
-			_move_bot_towards(b, lpos, 6.2, delta, "run")
+			_move_bot_towards(b, lpos, 4.6 if roof_wary else 6.2, delta, "walk" if roof_wary else "run")
 		return
 
 	# 5a) Saqueo y desmontaje de refugios ajenos: roba lo util y si el refugio
@@ -3736,6 +3752,79 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 					b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 10.0)
 					record_zone_hazard(int(bid), sound_pos, "gunshot", 0.30)
 
+# Zonas con puestos elevados (ciudad con azoteas/Torre del Reloj y bases
+# militares con torre de vigilancia): alli un superviviente prudente vigila
+# los techos — los francotiradores se ven de lejos pero hay que mirar arriba.
+func _bot_in_watch_zone(pos: Vector3) -> bool:
+	for p in _explore_pois():
+		if str((p as Dictionary).get("kind", "")) in ["city", "military", "tower"]:
+			var pp: Vector3 = (p as Dictionary)["pos"]
+			if Vector2(pos.x - pp.x, pos.z - pp.z).length() <= 80.0:
+				return true
+	return false
+
+# Hostilidad compartida con _find_combat_foe (misma regla de faccion/tregua):
+# quien dispara desde un tejado es enemigo igual que quien lo hace a ras.
+func _bot_considers_foe(b: Dictionary, p3: Node3D) -> bool:
+	if p3 == b.get("proxy") or not is_instance_valid(p3):
+		return false
+	if bool(p3.get_meta("proxy_dead", false)) or not bool(p3.get_meta("has_real_pos", false)):
+		return false
+	var pid := _peer_id_for_actor(p3)
+	if pid > 0 and int(b.get("_truce_peer", 0)) == pid and float(b.get("_truce_t", 0.0)) > 0.0:
+		return false
+	var is_bot := bool(p3.get_meta("is_ai_bot", false)) or is_bot_peer_id(pid)
+	if str(b["faction"]) == "hostile":
+		# Un hostil no ataca a otro hostil salvo rencor personal maximo.
+		if is_bot and str(p3.get_meta("bot_faction", "")) == "hostile":
+			return pid > 0 and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid)).get("hostility", 0.0)) >= 0.9
+		return true
+	# Aliado/cooperativo: solo los bots de faccion hostil son enemigos.
+	return is_bot and str(p3.get_meta("bot_faction", "")) == "hostile"
+
+# Ojo en los techos: un tirador apostado en altura se ve desde mucho mas lejos
+# que uno a ras de suelo (esta expuesto), asi que el radio de vigilancia es
+# mayor que la vista normal — pero exige desnivel real y linea de tiro limpia.
+const BOT_ROOF_MIN_ELEV := 5.5
+const BOT_ROOF_WATCH_RANGE := 75.0
+const BOT_ROOF_WARY_MSEC := 20000
+
+func _find_rooftop_foe(b: Dictionary, radius: float = BOT_ROOF_WATCH_RANGE) -> Node3D:
+	if world == null or world.get_tree() == null:
+		return null
+	var proxy: Node3D = b["proxy"]
+	var cur := proxy.global_position
+	var best: Node3D = null
+	var best_d := radius
+	for p in world.get_tree().get_nodes_in_group("net_player_proxy"):
+		if not (p is Node3D):
+			continue
+		var p3 := p as Node3D
+		if not _bot_considers_foe(b, p3):
+			continue
+		var pp := p3.global_position
+		if pp.y - cur.y < BOT_ROOF_MIN_ELEV:
+			continue
+		var d := cur.distance_to(pp)
+		if d >= best_d:
+			continue
+		if not _has_clear_shot(cur, pp):
+			continue
+		best_d = d
+		best = p3
+	# En un host no dedicado el jugador local no esta en net_player_proxy.
+	var local_p = world.get("player")
+	if local_p is Node3D and is_instance_valid(local_p) and _bot_considers_foe(b, local_p as Node3D):
+		var lp: Vector3 = (local_p as Node3D).global_position
+		var dl := cur.distance_to(lp)
+		if lp.y - cur.y >= BOT_ROOF_MIN_ELEV and dl < best_d and _has_clear_shot(cur, lp):
+			best_d = dl
+			best = local_p as Node3D
+	return best
+
+func _bot_roof_wary(b: Dictionary) -> bool:
+	return Time.get_ticks_msec() - int(b.get("_roof_threat_msec", -999999)) < BOT_ROOF_WARY_MSEC
+
 func _find_combat_foe(b: Dictionary) -> Node3D:
 	if world == null or world.get_tree() == null:
 		return null
@@ -3866,7 +3955,10 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	b["held_item"] = weapon
 	b["has_rifle"] = wkind == "rifle"
 	proxy.set_meta("saved_held_item", weapon)
-	var clear_los := _has_clear_shot(proxy.global_position, fpos) and absf(fpos.y - proxy.global_position.y) < 3.2
+	# Sin filtro de desnivel: la raycast 3D ya descubre suelos/paredes reales.
+	# Limitar a |dy|<3.2 impedia responder a un francotirador en un tejado y a
+	# una vigia disparar desde su puesto elevado.
+	var clear_los := _has_clear_shot(proxy.global_position, fpos)
 
 	if wkind == "rifle" and dist > 3.5 and dist <= 48.0:
 		b["is_aiming"] = clear_los
@@ -4583,12 +4675,17 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 		return
 
 	b["sitting"] = false
-	b["crouching"] = bool(leader.get("is_crouching") == true or leader.get_meta("crouching", false) == true)
+	b["crouching"] = bool(leader.get("is_crouching") == true or leader.get_meta("crouching", false) == true) or _bot_roof_wary(b)
 	var lpos := leader.global_position
 	var cur := proxy.global_position
 	var dist := cur.distance_to(lpos)
 	var step_wp := _resolve_building_interior_waypoint(b, cur, lpos)
 	var separated_by_structure: bool = step_wp != lpos or absf(cur.y - lpos.y) > 1.3
+	# Vigia del equipo: saqueando la ciudad/base militar, el miembro con mejor
+	# arma a distancia se apuesta en el puesto elevado de la zona en vez de
+	# pegarse al lider ni perseguir botin.
+	if _bot_overwatch_tick(b, leader, cur, lpos, delta):
+		return
 	# Antes de reengancharse a la espalda del líder: con el líder QUIETO el
 	# seguidor no vive pegado a él — recoge el botín de la zona de escolta
 	# (<=16 m) y hace rondas de vigilancia. Líder en marcha (sprint, su
@@ -4866,6 +4963,169 @@ func _bot_member_index(b: Dictionary) -> int:
 		if int(bid) != my_id and int(bots[bid].get("team_leader_id", 0)) == lid and int(bid) < my_id:
 			idx += 1
 	return idx
+
+# Zona con puestos de vigia elevados donde el grupo puede estar saqueando:
+# "city" = bloque urbano (azoteas + Torre del Reloj) y "military" = la base
+# de la cima con su torre de vigilancia.
+func _bot_leader_watch_zone(lpos: Vector3) -> String:
+	if Vector2(lpos.x - CityExpansion.CENTER.x, lpos.z - CityExpansion.CENTER.z).length() <= 80.0:
+		return "city"
+	if world != null:
+		var wtc = world.get("_watchtower_climb")
+		if wtc is Array and not (wtc as Array).is_empty():
+			var foot: Vector3 = (wtc as Array)[0]
+			if Vector2(lpos.x - foot.x, lpos.z - foot.z).length() <= 60.0:
+				return "military"
+	return ""
+
+# El mejor puesto de vigia de la zona: la azotea de la Torre del Reloj domina
+# todo el pueblo; en la base militar, la cubierta de su torre de vigilancia.
+func _bot_overwatch_post(zone: String) -> Vector3:
+	match zone:
+		"city":
+			return Vector3(39.6, 29.46, 750.8) # azotea de la Torre del Reloj
+		"military":
+			if world != null:
+				var wtc = world.get("_watchtower_climb")
+				if wtc is Array and (wtc as Array).size() >= 2:
+					return (wtc as Array)[(wtc as Array).size() - 1]
+	return Vector3.INF
+
+# Candidato a francotirador del equipo: rol de soldado/explorador (o unico
+# miembro), arma a distancia en mano, necesidades cubiertas, sin amenaza
+# inmediata y de dia o con luz — y solo una vigia por zona y equipo.
+func _bot_is_overwatch_candidate(b: Dictionary) -> bool:
+	if str(b.get("follow_mode", "follow")) != "follow":
+		return false
+	var proxy: Node3D = b["proxy"]
+	if not _bot_has_ranged_weapon(proxy):
+		return false
+	if float(b.get("hunger", 100.0)) < 30.0 or float(b.get("thirst", 100.0)) < 26.0 or float(b.get("health", 100.0)) < 42.0:
+		return false
+	if b.get("aggro_target") != null or float(b.get("flee_until", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0:
+		return false
+	if _is_world_night() and not bool(b.get("torch_lit", false)):
+		return false
+	var role := _bot_member_role(b)
+	if _bot_member_index(b) > 0 and role not in ["soldier", "scout"]:
+		return false
+	var lid := int(b.get("team_leader_id", 0))
+	for bid in bots.keys():
+		if int(bid) == int(b.get("bot_id", 0)):
+			continue
+		var ob: Dictionary = bots[bid]
+		if int(ob.get("team_leader_id", 0)) != lid:
+			continue
+		var oov: Dictionary = ob.get("_overwatch", {})
+		if not oov.is_empty():
+			return false
+		# El francotirador real gana al arquero: si otro miembro lleva fusil y
+		# yo no, el puesto es suyo.
+		var ohp = ob.get("proxy")
+		if ohp != null and is_instance_valid(ohp) and bool(ob.get("has_rifle", false)) and not bool(b.get("has_rifle", false)) \
+				and _bot_has_ranged_weapon(ohp) and int(ob.get("bot_id", 0)) < int(b.get("bot_id", 0)):
+			return false
+	return true
+
+const BOT_OVERWATCH_MAX_POST_DIST := 95.0
+
+# Vigia del equipo: cuando el grupo entra a saquear la ciudad o la base
+# militar, el miembro con mejor arma a distancia sube al puesto elevado de
+# la zona (azotea de la Torre del Reloj o torre de vigilancia) y cubre a los
+# demas desde arriba. Se libera cuando el lider sale de la zona, le atacan o
+# aprietan las necesidades. Devuelve true si el tick quedo consumido.
+func _bot_overwatch_tick(b: Dictionary, leader: Node3D, cur: Vector3, lpos: Vector3, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var ov: Dictionary = b.get("_overwatch", {})
+	if not ov.is_empty():
+		var zone := str(ov.get("zone", ""))
+		var post: Vector3 = ov.get("post", Vector3.INF)
+		var release: bool = _bot_leader_watch_zone(lpos) != zone or post == Vector3.INF \
+				or b.get("aggro_target") != null or _bot_vital_break(b) \
+				or float(b.get("hunger", 100.0)) < 24.0 or float(b.get("thirst", 100.0)) < 20.0 \
+				or (_is_world_night() and not bool(b.get("torch_lit", false)))
+		if release:
+			b.erase("_overwatch")
+			return false
+		var d_post := Vector2(cur.x - post.x, cur.z - post.z).length()
+		b["_act"] = "overwatch"
+		if d_post > 1.5 or absf(cur.y - post.y) > 1.0:
+			_move_bot_towards(b, post, 5.0, delta, "walk")
+		else:
+			# En puesto: barrer la plaza con la mirada y el arma a punto.
+			b["sitting"] = false
+			b["anim"] = "idle"
+			var anchor := _bot_leader_watch_zone(lpos)
+			var look := (CityExpansion.CENTER if anchor == "city" else post) - cur
+			look.y = 0.0
+			if look.length_squared() > 0.01:
+				var want := atan2(-look.x, -look.z) + sin(float(Time.get_ticks_msec()) / 2600.0 + float(int(b["bot_id"]))) * 0.55
+				b["rot"] = lerp_angle(float(b["rot"]), want, minf(1.0, delta * 3.0))
+				proxy.rotation.y = float(b["rot"])
+		return true
+	if not _bot_is_overwatch_candidate(b):
+		return false
+	var zone2 := _bot_leader_watch_zone(lpos)
+	if zone2.is_empty():
+		return false
+	var post2 := _bot_overwatch_post(zone2)
+	if post2 == Vector3.INF or Vector2(cur.x - post2.x, cur.z - post2.z).length() > BOT_OVERWATCH_MAX_POST_DIST:
+		return false
+	b["_overwatch"] = {"zone": zone2, "post": post2, "t": Time.get_ticks_msec()}
+	b["_act"] = "overwatch"
+	record_bot_event(int(b["bot_id"]), "overwatch", str(leader.get_meta("bot_name", leader.name)), _poi_kind_near(post2), post2,
+		"sube al puesto de vigia a cubrir el saqueo")
+	_move_bot_towards(b, post2, 5.0, delta, "walk")
+	return true
+
+# El francotirador apostado no baja de su puesto para perseguir: gira, apunta
+# y dispara desde arriba. Si el enemigo le llega a cuerpo a cuerpo o solo
+# lleva melee, suelta el puesto y pelea normal. Se llama desde la rama de
+# combate DESPUES de los chequeos de retirada (herido grave si huye).
+func _bot_overwatch_fight(b: Dictionary, foe: Node3D, delta: float) -> bool:
+	var ov: Dictionary = b.get("_overwatch", {})
+	if ov.is_empty():
+		return false
+	var post: Vector3 = ov.get("post", Vector3.INF)
+	if post == Vector3.INF:
+		return false
+	var proxy: Node3D = b["proxy"]
+	var cur := proxy.global_position
+	if Vector2(cur.x - post.x, cur.z - post.z).length() > 2.2 or absf(cur.y - post.y) > 1.6:
+		return false # todavia de camino al puesto: combate normal
+	var dist := cur.distance_to(foe.global_position)
+	var pick := _pick_fight_weapon(b, dist)
+	var wkind := str(pick.get("kind", "melee"))
+	if wkind == "melee" or dist < 4.0:
+		b.erase("_overwatch")
+		return false
+	var weapon := str(pick.get("name", "Cuchillo"))
+	b["held_item"] = weapon
+	b["has_rifle"] = wkind == "rifle"
+	proxy.set_meta("saved_held_item", weapon)
+	b["sitting"] = false
+	b["crouching"] = false
+	b["_act"] = "overwatch"
+	b["anim"] = "idle"
+	var to_foe := foe.global_position - cur
+	to_foe.y = 0.0
+	if to_foe.length_squared() > 0.001:
+		b["rot"] = atan2(-to_foe.x, -to_foe.z)
+		proxy.rotation.y = float(b["rot"])
+	var clear := _has_clear_shot(cur, foe.global_position)
+	b["is_aiming"] = clear
+	if clear and float(b["shoot_cooldown"]) <= 0.0:
+		match wkind:
+			"rifle":
+				b["shoot_cooldown"] = (1.15 if weapon == "Fusil de asalto" else 1.85) + randf_range(0.0, 0.45)
+				_bot_fire_rifle_at(b, foe, 26.0 if weapon == "Fusil de asalto" else 48.0)
+			"bow":
+				b["shoot_cooldown"] = 1.55 if weapon == "Arco reforzado" else 1.9
+				_bot_fire_bow(b, foe, weapon)
+			"thrown", "bola":
+				b["shoot_cooldown"] = 2.6 if wkind == "bola" else 2.1
+				_bot_fire_thrown(b, foe, weapon, wkind == "bola")
+	return true
 
 # Formacion tactica de marcha: cada miembro ocupa un slot separado respecto al
 # vector de avance del lider — el explorador va adelantado al flanco, el
@@ -8550,7 +8810,7 @@ func _resolve_building_interior_waypoint(b: Dictionary, cur: Vector3, goal: Vect
 	var cur_ct := _is_in_clock_tower(cur, 0.25)
 	var goal_ct := _is_in_clock_tower(goal, 0.8)
 	if cur_ct or goal_ct:
-		return _resolve_clock_tower_waypoint(cur, goal, cur_ct, goal_ct)
+		return _resolve_clock_tower_waypoint(b, cur, goal, cur_ct, goal_ct)
 
 	# 2) Edificios de la ciudad (city_01..city_17, 2 y 4 plantas con escaleras)
 	var cur_cb := _find_city_building_for_pos(cur, 0.25)
@@ -8574,10 +8834,13 @@ func _resolve_building_interior_waypoint(b: Dictionary, cur: Vector3, goal: Vect
 	# 4) Casas del pueblo y resto de bloqueadores con puerta (house_bounds)
 	return _resolve_door_approach_goal(b, cur, goal)
 
-func _resolve_clock_tower_waypoint(cur: Vector3, goal: Vector3, cur_in: bool, goal_in: bool) -> Vector3:
+func _resolve_clock_tower_waypoint(b: Dictionary, cur: Vector3, goal: Vector3, cur_in: bool, goal_in: bool) -> Vector3:
 	var lc := cur - CT_ORIGIN
 	if not cur_in and goal_in:
 		# Entrada norte frente a la plaza (x=0, z=-8.0)
+		var qw := _bot_door_queue_wait(b, cur, CT_ORIGIN + Vector3(0.0, 0.06, -8.0), Vector2(0.0, -1.0))
+		if qw != Vector3.INF:
+			return qw
 		if lc.z > -7.8 or absf(lc.x) > 1.45:
 			return CT_ORIGIN + Vector3(0.0, 0.06, -10.2)
 		return CT_ORIGIN + Vector3(0.0, 0.06, -5.2)
@@ -8660,6 +8923,10 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 	if not is_open and _try_open_building_door(b, cur, door_world):
 		is_open = true
 	if not cur_in and goal_in:
+		var out3 := Vector3(0.0, 0.0, 1.0).rotated(Vector3.UP, yaw)
+		var qw := _bot_door_queue_wait(b, cur, door_world, Vector2(out3.x, out3.z))
+		if qw != Vector3.INF:
+			return qw
 		if not is_open or lc.z < 5.75 or absf(lc.x - 0.15) > 0.65 or lc.z > 8.8:
 			return b_origin + Vector3(0.15, 0.12, 8.3).rotated(Vector3.UP, yaw)
 		return b_origin + Vector3(0.15, 0.12, 4.6).rotated(Vector3.UP, yaw)
@@ -8771,6 +9038,37 @@ func _resolve_watchtower_waypoint(cur: Vector3, goal: Vector3, wps: Array, goal_
 		return goal
 	return wps[maxi(0, best_i - 1)]
 
+# El vano solo pasa uno cada vez: si otro bot lo ocupa (cruzando la puerta o
+# apostado en el punto de aproximacion), el que llega despues espera en un
+# puesto lateral en vez de apilar los dos sobre el mismo waypoint — asi no se
+# atascan empujandose en la entrada. Devuelve Vector3.INF si puede pasar.
+func _bot_door_queue_wait(b: Dictionary, cur: Vector3, dc: Vector3, out_dir: Vector2) -> Vector3:
+	var side_dir := Vector2(-out_dir.y, out_dir.x)
+	var rel := Vector2(cur.x - dc.x, cur.z - dc.z)
+	var along := rel.dot(out_dir)
+	var across := absf(rel.dot(side_dir))
+	# Quien ya esta dentro del vano sigue: no retrocede para ceder el paso.
+	if across <= 0.95 and along >= -1.8 and along <= 2.6:
+		return Vector3.INF
+	var approach := Vector2(dc.x, dc.z) + out_dir * 2.4
+	for bid in bots.keys():
+		if int(bid) == int(b.get("bot_id", 0)):
+			continue
+		var op: Node3D = (bots[bid] as Dictionary).get("proxy")
+		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			continue
+		var po := Vector2(op.global_position.x, op.global_position.z)
+		var rel_o := po - Vector2(dc.x, dc.z)
+		var in_vano: bool = absf(rel_o.dot(side_dir)) <= 0.95 and rel_o.dot(out_dir) >= -1.8 and rel_o.dot(out_dir) <= 2.6
+		if in_vano or po.distance_to(approach) <= 1.15:
+			# Puesto de espera lateral determinista: cada bot se aparta a un
+			# lado distinto segun su id, sin apelotonarse en el umbral.
+			var offs: Array = [1.7, -1.7, 3.0, -3.0]
+			var off: float = float(offs[int(b.get("bot_id", 0)) % 4])
+			var qp: Vector2 = Vector2(dc.x, dc.z) + out_dir * 2.7 + side_dir * off
+			return Vector3(qp.x, cur.y, qp.y)
+	return Vector3.INF
+
 # Si el objetivo esta dentro de una casa cuya puerta esta cerrada (y el bot
 # esta fuera, p. ej. al norte/detras del edificio), redirige primero al umbral
 # exterior alineado con el centro del vano para que la bordee, la abra al
@@ -8815,6 +9113,9 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 				b["path_timer"] = 0.0
 				is_open = true
 		if goal_in:
+			var qw := _bot_door_queue_wait(b, cur, dc, out_dir)
+			if qw != Vector3.INF:
+				return qw
 			if not is_open or along < -0.25 or across > 0.65 or along > 3.0:
 				return Vector3(dc.x + out_dir.x * 2.4, cur.y, dc.z + out_dir.y * 2.4)
 			if along > -0.8:

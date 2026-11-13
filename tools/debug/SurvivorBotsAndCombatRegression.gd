@@ -5468,6 +5468,176 @@ func run() -> void:
 	stub_shooter.queue_free()
 	world.player.global_position = save_ppos_r
 
+	# --- 10S) Vigilancia de techos, vigia de equipo y cola en el vano ---
+	var b_rw: Dictionary = mgr.bots[901]
+	var p_rw: Node3D = b_rw["proxy"]
+	var save_f_rw := str(b_rw.get("faction", ""))
+	var save_lid_rw := int(b_rw.get("team_leader_id", 0))
+	var save_pos_rw: Vector3 = p_rw.global_position
+	mgr.set_physics_process(false)
+	mgr._poi_cache = [{"pos": Vector3(9.0, 0.0, 680.0), "kind": "city"}]
+	mgr._poi_cache_built = true
+	mgr._set_bot_faction(b_rw, "hostile")
+	p_rw.global_position = Vector3(20.0, 0.4, 700.0)
+	# Francotirador en una azotea: se ve a 60 m aunque la vista normal es 44 m.
+	var sniper := Node3D.new()
+	world.add_child(sniper)
+	sniper.add_to_group("net_player_proxy")
+	sniper.set_meta("peer_id", 77)
+	sniper.set_meta("has_real_pos", true)
+	sniper.set_meta("proxy_dead", false)
+	sniper.global_position = Vector3(20.0, 8.5, 745.0)
+	check(mgr._find_rooftop_foe(b_rw) == sniper,
+		"10S1: el tirador en la azotea se detecta a 60 m de distancia")
+	check(mgr._bot_roof_wary(b_rw) == false and b_rw.get("_roof_threat_msec") == null,
+		"10S1b: _find_rooftop_foe no marca cautela por si solo (eso lo hace el sentido)")
+	# A ras de suelo y mas lejos que la vista normal: fuera del radar.
+	sniper.global_position = Vector3(20.0, 0.4, 760.0)
+	check(mgr._find_rooftop_foe(b_rw) == null,
+		"10S2: enemigo a ras mas alla de la vista no salta la vigilancia de techos")
+	# Mismo puesto elevado pero de faccion hostil como el bot: no es enemigo.
+	sniper.set_meta("is_ai_bot", true)
+	sniper.set_meta("bot_faction", "hostile")
+	sniper.global_position = Vector3(20.0, 8.5, 745.0)
+	check(mgr._find_rooftop_foe(b_rw) == null,
+		"10S3: un compañero de faccion en la azotea no se marca como francotirador")
+	sniper.set_meta("bot_faction", "friendly")
+	check(mgr._find_rooftop_foe(b_rw) == sniper,
+		"10S4: un bot de otra faccion en la azotea si es amenaza")
+	sniper.queue_free()
+	# Zona de vigilancia: dentro de la ciudad si, en pleno campo no.
+	check(mgr._bot_in_watch_zone(p_rw.global_position)
+			and not mgr._bot_in_watch_zone(Vector3(0.0, 0.4, 0.0)),
+		"10S5: _bot_in_watch_zone solo se activa en zonas con puestos elevados")
+
+	# Fuego vertical: sin el filtro |dy|<3.2 el bot responde a un francotirador.
+	mgr._set_bot_faction(b_rw, "hostile")
+	p_rw.global_position = Vector3(20.0, 0.4, 700.0)
+	p_rw.set_meta("saved_inventory", [
+		{"name": "Rifle francotirador", "type": "weapon_rifle", "weight": 4.0, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+	])
+	var foe_roof := Node3D.new()
+	world.add_child(foe_roof)
+	foe_roof.global_position = p_rw.global_position + Vector3(30.0, 8.0, 0.0)
+	b_rw["shoot_cooldown"] = 0.0
+	b_rw["is_aiming"] = false
+	mgr._engage_foe(b_rw, foe_roof, 0.1)
+	check(float(b_rw["shoot_cooldown"]) > 0.0,
+		"10S6: con tiro limpio dispara hacia ARRIBA contra un enemigo en tejado (cd=%.2f)" % float(b_rw["shoot_cooldown"]))
+	foe_roof.queue_free()
+
+	# Vigia de equipo: miembro con fusil y lider saqueando la ciudad -> sube a
+	# la azotea de la Torre del Reloj; cuando el lider se va, se libera.
+	var b_ow: Dictionary = mgr.bots[902]
+	var p_ow: Node3D = b_ow["proxy"]
+	var save_f_ow := str(b_ow.get("faction", ""))
+	var save_lid_ow := int(b_ow.get("team_leader_id", 0))
+	var save_pos_ow: Vector3 = p_ow.global_position
+	mgr._set_bot_faction(b_ow, "hostile")
+	b_ow["team_leader_id"] = 901
+	b_ow["follow_mode"] = "follow"
+	b_ow["hunger"] = 90.0
+	b_ow["thirst"] = 90.0
+	b_ow["health"] = 95.0
+	b_ow["flee_until"] = 0.0
+	b_ow["hide_timer"] = 0.0
+	b_ow["aggro_target"] = null
+	b_ow.erase("_overwatch")
+	p_ow.global_position = Vector3(30.0, 0.4, 745.0)
+	p_ow.set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.6, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+	])
+	b_ow["has_rifle"] = true
+	var ow_leader := Node3D.new()
+	world.add_child(ow_leader)
+	ow_leader.global_position = Vector3(15.0, 0.4, 690.0)
+	check(mgr._bot_overwatch_tick(b_ow, ow_leader, p_ow.global_position, ow_leader.global_position, 0.1),
+		"10S7: el miembro con fusil acepta el puesto de vigia con el lider en la ciudad")
+	var ov_d: Dictionary = b_ow.get("_overwatch", {})
+	check(str(ov_d.get("zone", "")) == "city" and (ov_d.get("post", Vector3.ZERO) as Vector3).y > 20.0,
+		"10S8: la vigia de la ciudad se apuesta en la azotea de la Torre del Reloj")
+	check(str(b_ow.get("_act", "")) == "overwatch", "10S9: el acto queda marcado como 'overwatch'")
+	# Una sola vigia por equipo: Kael no duplica el puesto mientras Carlos lo ocupa.
+	var b_ow2: Dictionary = mgr.bots[903]
+	var save_lid_ow2 := int(b_ow2.get("team_leader_id", 0))
+	var save_f_ow2 := str(b_ow2.get("faction", ""))
+	mgr._set_bot_faction(b_ow2, "hostile")
+	b_ow2["team_leader_id"] = 901
+	b_ow2["follow_mode"] = "follow"
+	b_ow2["has_rifle"] = true
+	b_ow2["hunger"] = 90.0
+	b_ow2["thirst"] = 90.0
+	b_ow2["health"] = 95.0
+	b_ow2["flee_until"] = 0.0
+	b_ow2["hide_timer"] = 0.0
+	b_ow2["aggro_target"] = null
+	var p_ow2: Node3D = b_ow2["proxy"]
+	p_ow2.set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.6, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+	])
+	check(not mgr._bot_is_overwatch_candidate(b_ow2),
+		"10S10: no hay dos francotiradores del mismo equipo en la misma zona")
+	b_ow2["team_leader_id"] = save_lid_ow2
+	mgr._set_bot_faction(b_ow2, save_f_ow2)
+	# Lider fuera de la zona -> la vigia se libera y vuelve a la escolta.
+	ow_leader.global_position = Vector3(0.0, 0.4, 0.0)
+	b_ow["hunger"] = 90.0
+	b_ow["thirst"] = 90.0
+	check(not mgr._bot_overwatch_tick(b_ow, ow_leader, p_ow.global_position, ow_leader.global_position, 0.1)
+			and not b_ow.has("_overwatch"),
+		"10S11: el lider sale de la zona y la vigia abandona el puesto")
+
+	# En el puesto dispara sin bajar; con enemigo a melee lo suelta.
+	var ow_post := Vector3(39.6, 29.46, 750.8)
+	b_ow["_overwatch"] = {"zone": "city", "post": ow_post, "t": Time.get_ticks_msec()}
+	p_ow.global_position = ow_post
+	var foe_ground := Node3D.new()
+	world.add_child(foe_ground)
+	foe_ground.global_position = Vector3(35.0, 0.4, 720.0)
+	b_ow["shoot_cooldown"] = 0.0
+	check(mgr._bot_overwatch_fight(b_ow, foe_ground, 0.1),
+		"10S12: la vigia en su puesto combate desde arriba sin moverse")
+	check(p_ow.global_position.distance_to(ow_post) < 0.1 and float(b_ow["shoot_cooldown"]) > 0.0,
+		"10S13: la vigia dispara manteniendo el puesto (cd=%.2f)" % float(b_ow["shoot_cooldown"]))
+	foe_ground.global_position = ow_post + Vector3(1.0, 0.0, 0.5)
+	check(not mgr._bot_overwatch_fight(b_ow, foe_ground, 0.1) and not b_ow.has("_overwatch"),
+		"10S14: enemigo encima en la azotea -> suelta el puesto y pelea normal")
+	foe_ground.queue_free()
+	ow_leader.queue_free()
+	mgr._set_bot_faction(b_ow, save_f_ow)
+	b_ow["team_leader_id"] = save_lid_ow
+	b_ow.erase("_overwatch")
+
+	# Cola en el vano: dos bots a la misma puerta — el segundo espera apartado.
+	var dc_q := Vector3(0.0, 0.12, 0.0)
+	var out_q := Vector2(0.0, 1.0)
+	var b_q1: Dictionary = mgr.bots[901]
+	var b_q2: Dictionary = mgr.bots[902]
+	var b_q3: Dictionary = mgr.bots[903]
+	var save_q1: Vector3 = (b_q1["proxy"] as Node3D).global_position
+	var save_q2: Vector3 = (b_q2["proxy"] as Node3D).global_position
+	var save_q3: Vector3 = (b_q3["proxy"] as Node3D).global_position
+	(b_q1["proxy"] as Node3D).global_position = dc_q + Vector3(0.0, 0.0, 0.8)
+	(b_q2["proxy"] as Node3D).global_position = Vector3(0.0, 0.12, 8.0)
+	(b_q3["proxy"] as Node3D).global_position = Vector3(60.0, 0.12, 60.0)
+	var wait_pos := mgr._bot_door_queue_wait(b_q2, (b_q2["proxy"] as Node3D).global_position, dc_q, out_q)
+	check(wait_pos != Vector3.INF and absf(Vector2(wait_pos.x - dc_q.x, wait_pos.z - dc_q.z).dot(Vector2(1.0, 0.0))) > 0.9,
+		"10S15: con el vano ocupado el segundo espera en un puesto lateral")
+	# Quien ya esta dentro del vano no retrocede para ceder.
+	check(mgr._bot_door_queue_wait(b_q1, (b_q1["proxy"] as Node3D).global_position, dc_q, out_q) == Vector3.INF,
+		"10S16: el que ya esta cruzando el vano no retrocede")
+	(b_q1["proxy"] as Node3D).global_position = dc_q + Vector3(0.0, 0.0, 6.0)
+	check(mgr._bot_door_queue_wait(b_q2, (b_q2["proxy"] as Node3D).global_position, dc_q, out_q) == Vector3.INF,
+		"10S17: vano libre -> entra directo")
+	(b_q1["proxy"] as Node3D).global_position = save_q1
+	(b_q2["proxy"] as Node3D).global_position = save_q2
+	(b_q3["proxy"] as Node3D).global_position = save_q3
+	p_rw.global_position = save_pos_rw
+	p_ow.global_position = save_pos_ow
+	mgr._set_bot_faction(b_rw, save_f_rw)
+	b_rw["team_leader_id"] = save_lid_rw
+	mgr.set_physics_process(true)
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
