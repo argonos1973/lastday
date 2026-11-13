@@ -1693,6 +1693,10 @@ func run() -> void:
 		"Asesor: return_home fija directiva pos al campamento")
 	check(float(dir.get("until", 0)) > Time.get_ticks_msec(),
 		"Asesor: la directiva lleva caducidad")
+	# Pausa del sondeo automatico: las comprobaciones de cola/completado
+	# manipulan ai_directive y _ai_queue a mano — el poll por frames las
+	# re-encolaba o cerraba planes a mitad de chequeo.
+	mgr.set_physics_process(false)
 	# POIs de prueba inyectados para verificar el filtrado
 	mgr._poi_cache = [
 		{"pos": Vector3(100.0, 0.0, 100.0), "kind": "house"},
@@ -1720,6 +1724,16 @@ func run() -> void:
 	# Plan compartido: cola unica, dedup por bot, force no se degrada, hueco minimo
 	mgr._ai_queue.clear()
 	mgr._ai_last_call_msec.clear()
+	mgr._ai_last_any_call_msec = 0
+	for qbid in [901, 902, 903]:
+		var qb: Dictionary = mgr.bots[qbid]
+		qb["flee_until"] = 0.0
+		qb["hide_timer"] = 0.0
+		qb["_craft_state"] = {}
+		qb["team_leader_id"] = 0
+		var qpx = qb.get("proxy")
+		if qpx != null and is_instance_valid(qpx):
+			qpx.set_meta("proxy_dead", false)
 	var now_ms := Time.get_ticks_msec()
 	mgr._ai_enqueue_request(901, 2, "scheduled")
 	mgr._ai_enqueue_request(902, 3, "sig_change")
@@ -1788,8 +1802,26 @@ func run() -> void:
 	check(mgr._ai_queue.size() == 1 and str((mgr._ai_queue[0] as Dictionary).get("reason", "")) == "plan_stuck" \
 			and bool((mgr._ai_queue[0] as Dictionary).get("force", false)),
 		"Asesor: el plan atascado fuerza una revalidacion")
+	# Ritmo global anti-TPM: ni los forzados encadenan llamadas (suelo 15 s) y
+	# las consultas normales esperan el hueco global completo (30 s).
 	mgr._ai_queue.clear()
 	mgr._ai_last_call_msec.clear()
+	mgr._ai_last_any_call_msec = now_ms
+	mgr._ai_enqueue_request(901, 5, "attacked", true)
+	check(mgr._ai_pop_next_request(now_ms).is_empty(),
+		"Asesor: el suelo global frena hasta los sucesos forzados")
+	var req4 := mgr._ai_pop_next_request(now_ms + int(mgr.AI_FORCE_GLOBAL_GAP_SEC * 1000.0) + 100)
+	check(int(req4.get("bot_id", 0)) == 901, "Asesor: pasado el suelo global sale el suceso")
+	mgr._ai_queue.clear()
+	mgr._ai_enqueue_request(902, 3, "sig_change")
+	check(mgr._ai_pop_next_request(now_ms + int(mgr.AI_FORCE_GLOBAL_GAP_SEC * 1000.0) + 100).is_empty(),
+		"Asesor: una consulta normal espera el hueco global completo")
+	var req5 := mgr._ai_pop_next_request(now_ms + int(mgr.AI_GLOBAL_MIN_CALL_GAP_SEC * 1000.0) + 100)
+	check(int(req5.get("bot_id", 0)) == 902, "Asesor: tras el hueco global sale la consulta normal")
+	mgr._ai_last_any_call_msec = 0
+	mgr._ai_queue.clear()
+	mgr._ai_last_call_msec.clear()
+	mgr.set_physics_process(true)
 	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
 	# Elegibilidad: con ordenes de equipo el asesor no interfiere; sin API key no llama
 	elena["ai_directive"] = {}
@@ -2348,6 +2380,7 @@ func run() -> void:
 		"Aceptación 6c: Qwen sí puede dirigir al bot a una ubicación específica que el bot ya conoce")
 
 	# Aceptación 7: Cola de prioridades, deduplicación, panel de depuración y rendimiento sin bloqueos (<2 ms)
+	mgr.set_physics_process(false)
 	mgr._ai_queue.clear()
 	mgr._ai_enqueue_request(901, 2, "low_prio")
 	mgr._ai_enqueue_request(902, 5, "high_prio_threat")
@@ -2361,6 +2394,7 @@ func run() -> void:
 	var dt_ms := float(Time.get_ticks_usec() - t0_usec) / 1000.0
 	check(dt_ms < 15.0 and report_str.contains("Elena") and report_str.contains("Carlos") and report_str.contains("Kael") and report_str.contains("Personalidad:") and report_str.contains("Relaciones:"),
 		"Aceptación 7b: El tick cognitivo y el panel de depuración se ejecutan sin bloquear el hilo principal (%.2f ms)" % dt_ms)
+	mgr.set_physics_process(true)
 
 	# Dispersión territorial: con el mismo campamento y POIs repartidos por el
 	# mapa, cada bot debe elegir un destino dentro de su propio sector dorado

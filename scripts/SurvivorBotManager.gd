@@ -174,6 +174,8 @@ const AI_CHAT_MODEL := "openai/gpt-oss-120b"
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000 # base temporal del plan (referencia para el watchdog de planes atascados)
 const AI_SIG_POLL_SEC := 4.0           # sondeo local de firma por turnos (un bot por ciclo)
 const AI_MIN_CALL_GAP_SEC := 150.0     # minimo entre llamadas remotas de un mismo bot
+const AI_GLOBAL_MIN_CALL_GAP_SEC := 30.0  # minimo entre CUALQUIER par de llamadas — el TPM gratis del modelo (~6k tok/min) solo admite ~2 consultas/min
+const AI_FORCE_GLOBAL_GAP_SEC := 15.0  # suelo global incluso para sucesos forzados
 const AI_REVIEW_MAX_SEC := 2400.0      # revision de cortesia aunque nada cambie
 const AI_PLAN_STALE_GRACE_SEC := 1500.0 # margen tras el TTL para revalidar un plan que no termina
 const AI_MAX_CALLS_PER_DAY := 380
@@ -208,6 +210,7 @@ var _status_write_task := -1
 var _mem_write_task := -1
 var _ai_last_sig: Dictionary = {} # bot_id -> String firma de situacion
 var _ai_last_call_msec: Dictionary = {} # bot_id -> msec ultima llamada remota
+var _ai_last_any_call_msec := 0        # msec de la ultima llamada de cualquier bot (ritmo global)
 var _ai_sig_accum := 0.0
 var _ai_backoff_until_msec := 0
 var _ai_backoff_sec := 60.0
@@ -10917,17 +10920,27 @@ func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "perio
 	)
 
 func _ai_pop_next_request(now: int) -> Dictionary:
-	for i in range(_ai_queue.size()):
+	# while, no for: remove_at acorta la cola y un range() fijado al inicio
+	# desbordaria el indice.
+	var i := 0
+	while i < _ai_queue.size():
 		var item: Dictionary = _ai_queue[i]
 		var bid := int(item.get("bot_id", 0))
 		if not bots.has(bid) or not _ai_bot_eligible(bots[bid]):
 			_ai_queue.remove_at(i)
-			i -= 1
 			continue
-		if not bool(item.get("force", false)):
+		var forced := bool(item.get("force", false))
+		# Ritmo global: ni los sucesos forzados pueden encadenar llamadas que
+		# revienten el TPM del modelo — el forzado solo acorta el suelo.
+		var glob_gap := int((AI_FORCE_GLOBAL_GAP_SEC if forced else AI_GLOBAL_MIN_CALL_GAP_SEC) * 1000.0)
+		if _ai_last_any_call_msec > 0 and now - _ai_last_any_call_msec < glob_gap:
+			i += 1
+			continue
+		if not forced:
 			var last_call := int(_ai_last_call_msec.get(bid, 0))
 			if last_call > 0 and now - last_call < int(AI_MIN_CALL_GAP_SEC * 1000.0):
-				continue # cambio reciente: espera al hueco mínimo por bot
+				i += 1 # cambio reciente: espera al hueco mínimo por bot
+				continue
 		_ai_queue.remove_at(i)
 		return item
 	return {}
@@ -11082,6 +11095,7 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	_ai_calls_day += 1
 	_ai_calls_total += 1
 	_ai_last_call_msec[bot_id] = Time.get_ticks_msec()
+	_ai_last_any_call_msec = Time.get_ticks_msec()
 	_ai_conn_status = "requesting"
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_REVIEW_MAX_SEC * 1000.0)
 	var payload := {
@@ -11185,7 +11199,7 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false) -> void:
 # gratis limita a ~8000 tokens/minuto POR MODELO y cada decision consume ~2-3k
 # (el chat ~300), asi que cuando queda poco margen paramos proactivamente
 # hasta el reset en vez de comernos el 429 — cada canal con su propio umbral.
-const AI_RATELIMIT_HEADROOM_TOKENS := 3200
+const AI_RATELIMIT_HEADROOM_TOKENS := 4200
 const AI_CHAT_RATELIMIT_HEADROOM_TOKENS := 900
 
 func _ai_parse_groq_reset_seconds(raw: String) -> float:
