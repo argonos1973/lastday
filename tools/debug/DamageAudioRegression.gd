@@ -115,7 +115,8 @@ func run() -> void:
 		"malo.mp3 loads through _play_unwell_sound")
 	local_pc.free()
 
-	# --- Wildlife bite sound routes to mordedura.mp3 ---
+	# --- El mordisco ya no reproduce audio (el "bong" se quito) pero el
+	# resto de sonidos del animal siguen ruteando ---
 	var scene := Node3D.new()
 	root.add_child(scene)
 	current_scene = scene
@@ -124,10 +125,13 @@ func run() -> void:
 	wolf.animal_type = "wolf"
 	scene.add_child(wolf)
 	wolf._play_wolf_sound("bite")
-	check(wolf._wolf_audio_player is AudioStreamPlayer3D,
-		"wolf bite sound player is positional")
-	check(wolf._wolf_audio_player != null and wolf._wolf_audio_player.stream != null,
-		"mordedura.mp3 loads through _play_wolf_sound('bite')")
+	check(wolf._wolf_audio_player == null or not (wolf._wolf_audio_player as AudioStreamPlayer3D).playing,
+		"la mordida no reproduce sonido (bong eliminado)")
+	wolf._play_wolf_sound("growl")
+	check(wolf._wolf_audio_player is AudioStreamPlayer3D
+			and (wolf._wolf_audio_player as AudioStreamPlayer3D).stream != null
+			and (wolf._wolf_audio_player as AudioStreamPlayer3D).playing,
+		"los gruñidos del lobo siguen sonando tras quitar el bong")
 
 	world.free()
 	scene.free()

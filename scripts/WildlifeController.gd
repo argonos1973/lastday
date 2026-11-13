@@ -1329,7 +1329,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 						if local_net != null and local_net.is_host:
 							local_net._broadcast_player_hit(local_net.get_my_id(), "%s_bite" % animal_type, _player.global_position)
 					if animal_type == "wolf" or animal_type == "bear":
-						_play_wolf_sound("attack" if animal_type == "bear" else "bite")
+						_play_wolf_sound("bite")
 				var away_dir := (global_position - _player.global_position).normalized()
 				away_dir.y = 0.0
 				if away_dir.length_squared() < 0.0001:
@@ -3783,7 +3783,7 @@ func _spawn_local_blood_burst(at_pos: Vector3) -> void:
 static func prepare_combat_audio() -> void:
 	# Decode shared attack/pain sounds while loading, not on the first bite.
 	for path in ["res://assets/audio/loboherido.wav", "res://assets/audio/animal_herido.wav",
-		"res://assets/audio/mordedura.mp3", "res://assets/external/audio/downloaded/wolf_growl.wav"]:
+		"res://assets/external/audio/downloaded/wolf_growl.wav"]:
 		_get_cached_audio_stream(path)
 
 static func _get_cached_audio_stream(path: String) -> AudioStream:
@@ -3969,6 +3969,10 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_play_animation_by_name("attack")
 		if _animation_player != null:
 			_animation_player.speed_scale = 1.0
+	# La mordida sobre el jugador no lleva sonido: el sample sonaba a
+	# campanada ("bong") fuera de lugar. La animacion de ataque sigue.
+	if sound_type == "bite":
+		return
 	var is_bear := animal_type == "bear"
 	# El lobo domesticado no aulla como el salvaje: usa un ladrido corto y mas
 	# agudo (growl agudo) para distinguirse de lejos en cualquier sonido.
@@ -4013,8 +4017,6 @@ func _play_wolf_sound(sound_type: String) -> void:
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
-		"bite":
-			path = "res://assets/audio/mordedura.mp3"
 		"hungry":
 			path = "res://assets/audio/quejidohambrelobo.mp3"
 		_:
