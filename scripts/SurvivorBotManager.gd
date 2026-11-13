@@ -4661,6 +4661,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	b["explore_target"] = Vector3.INF
 	b["_ambush"] = {}
 	b["_meet_id"] = 0
+	b["_meet_promise"] = {}
 	b["team_leader_id"] = 0
 	proxy.set_meta("team_leader_id", 0)
 	b["respawn_timer"] = 0.0
@@ -5058,6 +5059,7 @@ const BOT_TEAM_BREAK_TRUST := 0.08
 const BOT_TEAM_MAX_SIZE := 3
 const BOT_TEAM_FORM_DIST := 26.0
 const BOT_TEAM_GIVE_UP_DIST := 160.0
+const BOT_HELP_PROMISE_MS := 120000   # un auxilio prometido caduca si en 2 min no llego
 # Radio del "iman social": dentro de el un bot libre y sociable viaja a
 # reunirse con un aliado potencial en vez de dejar el encuentro al azar.
 const BOT_TEAM_MEET_DIST := 450.0
@@ -5437,6 +5439,32 @@ func _bot_formation_slot(b: Dictionary, leader: Node3D, lpos: Vector3) -> Vector
 			cand = lpos
 	return cand
 
+# Auxilio prometido por chat (_meet_promise): mientras el _meet_id siga vivo
+# y dentro del plazo la promesa esta en marcha. Si se pierde antes de llegar
+# (cambio de plan, orden, caducidad), el "ya voy" quedo en palabras — el que
+# pedia socorro lo apunta como negativa, igual que un "no" explicito.
+func _meet_promise_check(b: Dictionary) -> void:
+	var promise: Dictionary = b.get("_meet_promise", {})
+	if promise.is_empty():
+		return
+	var pid := int(promise.get("id", 0))
+	if int(b.get("_meet_id", 0)) == pid and Time.get_ticks_msec() - int(promise.get("t", 0)) < BOT_HELP_PROMISE_MS:
+		return # promesa viva: sigue en camino
+	b["_meet_promise"] = {}
+	if pid <= 0:
+		return
+	var proxy: Node3D = b["proxy"]
+	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
+		return
+	var pb: Dictionary = bots.get(pid, {})
+	var pp: Node3D = pb.get("proxy")
+	if pb.is_empty() or pp == null or not is_instance_valid(pp) or bool(pp.get_meta("proxy_dead", false)):
+		return # ya no habia a quien socorrer
+	var d := proxy.global_position.distance_to(pp.global_position)
+	if d <= BOT_TEAM_FORM_DIST or d > BOT_TEAM_MEET_DIST:
+		return # llego a tiempo, o el grito le llego de demasiado lejos
+	record_social_event(pid, "bot_%d" % int(b.get("bot_id", 0)), str(b.get("name", "")), "refused", 0.16, "ignored_help")
+
 # ¿Quiere este bot compañia? Los sociables/cooperativos viajan a reunirse con
 # un aliado potencial; un vinculo previo (confianza o ayudas) siempre tira.
 # Los bandidos se juntan por agresividad — una banda nace para dar el golpe.
@@ -5618,6 +5646,7 @@ func _bot_social_update(b: Dictionary) -> void:
 	b["_soc_t"] = 3.2 + fmod(float(b["bot_id"]) * 0.11, 0.9)
 	var my_id := int(b["bot_id"])
 	var my_key := "bot_%d" % my_id
+	_meet_promise_check(b)
 	_rel_time_decay(b)
 	_bot_try_peace_gesture(b)
 	var lid := int(b.get("team_leader_id", 0))
@@ -5657,9 +5686,10 @@ func _bot_social_update(b: Dictionary) -> void:
 		if lid > 0:
 			var rel := get_bot_relationship(my_id, "bot_%d" % lid)
 			var too_far := (not leader_gone) and proxy.global_position.distance_to(lp.global_position) > BOT_TEAM_GIVE_UP_DIST
-			if leader_gone or float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST or too_far:
+			var snubbed := int(rel.get("refused", 0)) >= 3
+			if leader_gone or float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST or too_far or snubbed:
 				record_bot_event(my_id, "team_leave", "bot_%d" % lid, _poi_kind_near(proxy.global_position), proxy.global_position,
-					"lider muerto" if leader_gone else ("desconfianza" if float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST else "se perdio"))
+					"lider muerto" if leader_gone else ("dejado tirado" if snubbed else ("desconfianza" if float(rel.get("trust", 0.0)) < BOT_TEAM_BREAK_TRUST else "se perdio")))
 				b["team_leader_id"] = 0
 				proxy.set_meta("team_leader_id", 0)
 				lid = 0
@@ -5677,6 +5707,9 @@ func _bot_social_update(b: Dictionary) -> void:
 		var best_trust := -1.0
 		var meet_id := 0
 		var meet_dist := INF
+		# Un lider no sale a "hacer compañia", pero SI acude a un auxilio
+		# prometido: sin esta excepcion responde "ya voy" y nunca llega.
+		var promised_id := int((b.get("_meet_promise", {}) as Dictionary).get("id", 0))
 		for oid in bots.keys():
 			if oid == my_id:
 				continue
@@ -5706,7 +5739,7 @@ func _bot_social_update(b: Dictionary) -> void:
 			if odist > BOT_TEAM_FORM_DIST:
 				# Iman social: lejos para convivir pero al alcance — un bot que
 				# quiere compañia viaja a reunirse con su aliado potencial.
-				if not already_leading and civil and _bot_wants_company(b, rel_out) and odist < meet_dist:
+				if (not already_leading or oid == promised_id) and civil and _bot_wants_company(b, rel_out) and odist < meet_dist:
 					meet_dist = odist
 					meet_id = oid
 				continue
@@ -6019,6 +6052,8 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 		and float(rel.get("trust", 0.0)) > 0.10:
 		tb["_meet_id"] = sender_id
 		tb["_soc_t"] = 0.0
+		if intent == "help":
+			tb["_meet_promise"] = {"id": sender_id, "kind": "help", "t": Time.get_ticks_msec()}
 		_record_milestone(target_id, "first_rescue" if intent == "help" else "first_alliance")
 	# Regalo/oferta de objeto ("te doy pan", "toma esto"): solo humanos; exige
 	# cercania y retira el item del inventario del que ofrece. Vale para chat
@@ -6621,6 +6656,7 @@ func _chat_handle_request(b: Dictionary, sender_id: int, sname: String, skey: St
 			if ok:
 				if sender_is_bot:
 					b["_meet_id"] = sender_id
+					b["_meet_promise"] = {"id": sender_id, "kind": "help", "t": Time.get_ticks_msec()}
 					b["sitting"] = false
 				else:
 					var sn := _find_actor_by_peer_id(sender_id)
@@ -11159,6 +11195,9 @@ func _evolve_personality(b: Dictionary, event_kind: String, intensity: float = 0
 			_adjust_trait(p, "cooperation", step * 1.1, float(base_p["cooperation"]))
 			_adjust_trait(p, "distrust", -step * 0.95, float(base_p["distrust"]))
 			_adjust_trait(p, "aggression", -step * 0.4, float(base_p["aggression"]))
+		"refused_help":
+			_adjust_trait(p, "sociability", -step * 0.75, float(base_p["sociability"]))
+			_adjust_trait(p, "cooperation", -step * 0.40, float(base_p["cooperation"]))
 		"hunt_success", "kill_threat":
 			_adjust_trait(p, "bravery", step * 0.7, float(base_p["bravery"]))
 			_adjust_trait(p, "aggression", step * 0.35, float(base_p["aggression"]))
@@ -11498,6 +11537,12 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 			var dist_mul2 := 0.8 + float(pers.get("distrust", 0.4)) * 0.6
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) - step * 0.55 * dist_mul2, -1.0, 1.0), 0.001)
 			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) + step * 0.40, 0.0, 1.0), 0.001)
+			# Y quien niega (o elude) la ayuda tambien cambia: cada negativa
+			# erosiona su sociabilidad — a la larga se queda solo.
+			if actor_key.begins_with("bot_"):
+				var rid := int(actor_key.get_slice("_", 1))
+				if bots.has(rid):
+					_evolve_personality(bots[rid], "refused_help", step)
 	var pos := Vector3.ZERO
 	if not b.is_empty() and b.get("proxy") != null and is_instance_valid(b["proxy"]):
 		pos = (b["proxy"] as Node3D).global_position
@@ -12722,6 +12767,7 @@ func get_full_web_status() -> Dictionary:
 				"target": str((bots[mtid] as Dictionary).get("name", str(mtid))),
 				"target_id": mtid,
 				"dist": int(proxy.global_position.distance_to(mp2.global_position)) if mp2 != null and is_instance_valid(mp2) else -1,
+				"promise": str((b.get("_meet_promise", {}) as Dictionary).get("kind", "")),
 			}
 		else:
 			snap["meet"] = {}
