@@ -9598,7 +9598,10 @@ func _has_clear_shot(from_pos: Vector3, to_pos: Vector3) -> bool:
 	var space: PhysicsDirectSpaceState3D = (world as Node3D).get_world_3d().direct_space_state
 	if space == null:
 		return true
-	var query := PhysicsRayQueryParameters3D.create(from_pos + Vector3(0, 1.3, 0), to_pos + Vector3(0, 1.1, 0), 1)
+	# Misma cobertura que RifleProjectile (mascara 5): muros y tambien los
+	# techos/muros en la capa de superficie (4) — si no, un tirador elevado
+	# atravesaba el tejado con el hitscan aunque la flecha real si parara ahi.
+	var query := PhysicsRayQueryParameters3D.create(from_pos + Vector3(0, 1.3, 0), to_pos + Vector3(0, 1.1, 0), 5)
 	query.collide_with_areas = false
 	var hit: Dictionary = space.intersect_ray(query)
 	if not hit.is_empty():

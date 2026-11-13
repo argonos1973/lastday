@@ -7875,6 +7875,9 @@ func _create_map() -> void:
 		_city_tent2_pos = _find_flat_area_for_city_tent2()
 		_build_city_military_base_perimeter(true)
 		_register_server_house_blockers()
+		# Cascara fisica de casas/graneros/tiendas/refugio: sin ella la linea de
+		# tiro de los bots y los proyectiles atravesaban paredes y techos.
+		_create_server_structure_colliders()
 		# Poblar el botin estatico (casas, graneros, tiendas militares, ciudad,
 		# cuchillos/hachas sueltos y setas) tambien en el servidor dedicado con
 		# la misma semilla fija (WORLD_SEED + 424242) pero sin instanciar mallas
@@ -8339,6 +8342,12 @@ func _get_world_y_extent(model_root: Node) -> float:
 		return INF
 	return maximum_y - minimum_y
 
+func _find_blocker_by_door_name(door_name: String) -> int:
+	for i in range(wildlife_blockers.size()):
+		if String(wildlife_blockers[i].get("door_name", "")) == door_name:
+			return i
+	return -1
+
 func _register_server_house_blockers() -> void:
 	for hd in HOUSE_DATA:
 		if hd.get("barn", false):
@@ -8363,6 +8372,115 @@ func _register_server_house_blockers() -> void:
 		wildlife_blockers[b_idx]["front_door_w"] = 2.8
 		wildlife_blockers[b_idx]["back_door_x"] = b_origin.x
 		wildlife_blockers[b_idx]["back_door_w"] = 2.8
+
+# Misma geometria que las llamadas a _create_house de _create_map (mantener
+# sincronizada si cambian las casas — igual que _HOUSE_DOOR_LAYOUT).
+const _HOUSE_SHELL_LAYOUT := [
+	["Casa abandonada 1", "house_1", -25.0, -18.0, 11.4, 9.4, 4.35],
+	["Casa abandonada 2", "house_2", -38.0, 18.0, 14.0, 11.0, 4.9],
+	["Casa abandonada 3", "house_3", 23.0, 18.0, 9.0, 7.5, 3.9],
+	["Casa abandonada 4", "house_4", 42.0, 26.0, 12.5, 10.0, 4.5],
+	["Casa abandonada 5", "house_5", -12.0, 42.0, 8.0, 7.0, 3.7],
+	["Casa abandonada 6", "house_6", -35.0, -40.0, 10.5, 8.5, 4.1],
+	["Casa abandonada 7", "house_7", 30.0, -35.0, 13.0, 10.0, 4.7],
+	["Casa abandonada 8", "house_8", -45.0, -5.0, 9.5, 8.0, 3.9],
+	["Casa abandonada 9", "house_9", 35.0, -8.0, 11.0, 9.0, 4.3],
+	["Casa abandonada 10", "house_10", -20.0, 30.0, 7.5, 6.5, 3.6],
+]
+
+# El servidor dedicado no instancia mallas: sin colliders propios, las casas,
+# graneros, tiendas militares y el refugio eran transparentes para
+# _has_clear_shot y para los proyectiles — los bots disparaban a los jugadores
+# a traves de las paredes. Levanta solo la cascara fisica identica al cliente
+# (muros con huecos reales de ventana, suelo, techo y el nodo Door que
+# _net_door_state_changed ya sabe abrir/cerrar), sin mallas ni rng draws.
+func _create_server_structure_colliders() -> void:
+	for h in _HOUSE_SHELL_LAYOUT:
+		_create_house(Vector3(float(h[2]), 0.0, float(h[3])), String(h[0]), String(h[1]), float(h[4]), float(h[5]), float(h[6]), true)
+	for b_origin in [Vector3(45.0, 0.0, 120.0), Vector3(-340.0, 0.0, 280.0)]:
+		_create_barn_shell_colliders(b_origin, "_Remote" if b_origin.x < 0.0 else "")
+	_create_tent_shell_colliders(_military_tent_pos, 35.0, "MilitaryTentCollision", "MilitaryTentRoofCollision")
+	_create_tent_shell_colliders(_remote_tent_pos, 120.0, "MilitaryTentRemoteCollision", "MilitaryTentRemoteRoofCollision")
+	_create_tent_shell_colliders(_city_tent_pos, CITY_TENT_YAW, "MilitaryTentCityCollision", "MilitaryTentCityRoofCollision")
+	_create_tent_shell_colliders(_city_tent2_pos, _city_tent2_yaw, "MilitaryTentCity2Collision", "MilitaryTentCity2RoofCollision")
+	# Refugio junto al lago: tres muros (entrada abierta al sur), igual que en el cliente.
+	var hut_pos := Vector3(250.0, -0.3, -258.0)
+	_create_invisible_collision_box("HikingHutWallNorth", hut_pos + Vector3(0, 0, 1.8), Vector3(4.0, 3.0, 0.4))
+	_create_invisible_collision_box("HikingHutWallEast", hut_pos + Vector3(1.8, 0, 0), Vector3(0.4, 3.0, 4.0))
+	_create_invisible_collision_box("HikingHutWallWest", hut_pos + Vector3(-1.8, 0, 0), Vector3(0.4, 3.0, 4.0))
+
+# Replica _finalize_barn_walls sin el GLB: perimetro 8x18 con los vanos de
+# puerta frontales/traseros siempre abiertos que registra
+# _register_server_house_blockers (front_door_w = 2.8).
+func _create_barn_shell_colliders(origin: Vector3, name_suffix := "") -> void:
+	var ground_y := _get_exact_ground_y(origin.x, origin.z)
+	var half_d := 9.0
+	var wall_height := 6.0
+	var wall_thickness := 0.3
+	var door_width := 3.0
+	var door_height := 3.5
+	var front_z := origin.z - half_d
+	var back_z := origin.z + half_d
+	var front_door_x := origin.x
+	var back_door_x := origin.x
+	var front_seg_w := (8.0 - door_width) * 0.5
+	_create_invisible_collision_box("BarnWallFrontL" + name_suffix, Vector3(front_door_x - door_width * 0.5 - front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallFrontR" + name_suffix, Vector3(front_door_x + door_width * 0.5 + front_seg_w * 0.5, ground_y, front_z), Vector3(front_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallDoorTop" + name_suffix, Vector3(front_door_x, ground_y + door_height, front_z), Vector3(door_width, wall_height - door_height, wall_thickness))
+	var back_seg_w := (8.0 - door_width) * 0.5
+	_create_invisible_collision_box("BarnWallBackL" + name_suffix, Vector3(back_door_x - door_width * 0.5 - back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallBackR" + name_suffix, Vector3(back_door_x + door_width * 0.5 + back_seg_w * 0.5, ground_y, back_z), Vector3(back_seg_w, wall_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallBackDoorTop" + name_suffix, Vector3(back_door_x, ground_y + door_height, back_z), Vector3(door_width, wall_height - door_height, wall_thickness))
+	_create_invisible_collision_box("BarnWallLeft" + name_suffix, Vector3(origin.x - 4.0, ground_y, origin.z), Vector3(wall_thickness, wall_height, half_d * 2.0))
+	_create_invisible_collision_box("BarnWallRight" + name_suffix, Vector3(origin.x + 4.0, ground_y, origin.z), Vector3(wall_thickness, wall_height, half_d * 2.0))
+	for wall_name in ["BarnWallFrontL" + name_suffix, "BarnWallFrontR" + name_suffix, "BarnWallDoorTop" + name_suffix, "BarnWallBackL" + name_suffix, "BarnWallBackR" + name_suffix, "BarnWallBackDoorTop" + name_suffix, "BarnWallLeft" + name_suffix, "BarnWallRight" + name_suffix]:
+		var wall_node := get_node_or_null(wall_name)
+		if wall_node != null:
+			wall_node.add_to_group("prop_collision")
+
+# Replica _build_military_tent_collision sin el GLB: misma envolvente (pared
+# trasera, laterales y dos muretes frontales con el vano de entrada) y techo
+# en la capa de superficie (4).
+func _create_tent_shell_colliders(pos: Vector3, yaw: float, body_name: String, roof_name: String) -> void:
+	if pos == Vector3.ZERO:
+		return
+	var tw := 4.5
+	var td := 6.0
+	var th := 1.5
+	var door_w := 2.0
+	var ground_y := _get_exact_ground_y(pos.x, pos.z)
+	var body := StaticBody3D.new()
+	body.name = body_name
+	add_child(body)
+	body.global_position = Vector3(pos.x, ground_y, pos.z)
+	body.global_rotation_degrees = Vector3(0.0, yaw, 0.0)
+	var back := CollisionShape3D.new()
+	back.shape = BoxShape3D.new()
+	back.shape.size = Vector3(tw * 2.0, th * 2.0, 0.3)
+	back.position = Vector3(0.0, th, -td)
+	body.add_child(back)
+	var left := CollisionShape3D.new()
+	left.shape = BoxShape3D.new()
+	left.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
+	left.position = Vector3(-tw, th, 0.0)
+	body.add_child(left)
+	var right := CollisionShape3D.new()
+	right.shape = BoxShape3D.new()
+	right.shape.size = Vector3(0.3, th * 2.0, td * 2.0)
+	right.position = Vector3(tw, th, 0.0)
+	body.add_child(right)
+	var front_left := CollisionShape3D.new()
+	front_left.shape = BoxShape3D.new()
+	front_left.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
+	front_left.position = Vector3(-(tw + door_w) * 0.5, th, td)
+	body.add_child(front_left)
+	var front_right := CollisionShape3D.new()
+	front_right.shape = BoxShape3D.new()
+	front_right.shape.size = Vector3(tw - door_w, th * 2.0, 0.3)
+	front_right.position = Vector3((tw + door_w) * 0.5, th, td)
+	body.add_child(front_right)
+	_add_collision_to_prop_group(body)
+	_create_invisible_collision_box_rotated(roof_name, body.global_position + Vector3(0, th * 2.0, 0), Vector3(tw * 2.0, 0.7, td * 2.0), yaw, 4)
 
 func _create_barn(origin: Vector3, name_suffix := "") -> void:
 	var barn_path := BARN_MODEL
@@ -8716,7 +8834,7 @@ func _find_largest_gap(x_points: Array, min_x: float, max_x: float) -> Vector2:
 		return Vector2(gap_center, max_gap)
 	return Vector2((min_x + max_x) * 0.5, 3.0)
 
-func _create_house(origin: Vector3, label: String, id_prefix: String, width: float, depth: float, height: float) -> void:
+func _create_house(origin: Vector3, label: String, id_prefix: String, width: float, depth: float, height: float, collision_only := false) -> void:
 	var style := preload("res://scripts/VillageArchitecture.gd").profile(id_prefix)
 	var half_w := width * 0.5
 	var half_d := depth * 0.5
@@ -8730,49 +8848,62 @@ func _create_house(origin: Vector3, label: String, id_prefix: String, width: flo
 	var win_y := height * 0.6
 	var win_w: float = min(1.5, front_seg_w * 0.72)
 	var win_h: float = win_w * style["window_ratio"]
-	var blocker_idx := _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
-	#_create_label(label, origin + Vector3(0, 4.05, -4.65))
-	_create_house_overgrowth(origin, label, half_w, half_d)
-	_create_house_foundation(origin, label, half_w, half_d, front_seg_c, front_seg_w)
-	_create_house_floor(origin, label, width, depth)
+	# collision_only (servidor dedicado): solo cascara fisica identica al
+	# cliente — muros con huecos, suelo, techo y el nodo Door — para que
+	# _has_clear_shot y los proyectiles no atraviesen la casa. Sin mallas,
+	# sin rng draws y reutilizando el blocker analitico ya registrado.
+	var blocker_idx := -1
+	if collision_only:
+		blocker_idx = _find_blocker_by_door_name(label + " Door")
+	else:
+		blocker_idx = _register_wildlife_blocker(origin, max(half_w, half_d) + 2.0)
+		#_create_label(label, origin + Vector3(0, 4.05, -4.65))
+		_create_house_overgrowth(origin, label, half_w, half_d)
+		_create_house_foundation(origin, label, half_w, half_d, front_seg_c, front_seg_w)
+		_create_house_floor(origin, label, width, depth)
+	if collision_only:
+		_create_invisible_collision_box(label + " Floor", origin, Vector3(width - 0.4, 0.08, depth - 0.4))
 	# Back wall with two window holes (closer to center for smaller houses)
 	var back_win_x := width * 0.22
 	_create_textured_wall_with_openings(label + " Back", origin + Vector3(0, 0, -half_d), Vector3(width, height, wall_t), Vector3.ZERO, [
 		[-back_win_x, win_y, win_w, win_h],
 		[back_win_x, win_y, win_w, win_h],
-	])
+	], collision_only)
 	# Left wall with one window hole (closer to front/door)
 	var side_win_z := depth * 0.28
 	_create_textured_wall_with_openings(label + " Left", origin + Vector3(-half_w, 0, 0), Vector3(wall_t, height, depth), Vector3.ZERO, [
 		[side_win_z, win_y, win_w, win_h],
-	])
+	], collision_only)
 	# Right wall with one window hole
 	_create_textured_wall_with_openings(label + " Right", origin + Vector3(half_w, 0, 0), Vector3(wall_t, height, depth), Vector3.ZERO, [
 		[side_win_z, win_y, win_w, win_h],
-	])
+	], collision_only)
 	# FrontA with window hole
 	_create_textured_wall_with_openings(label + " FrontA", origin + Vector3(-front_seg_c, 0, half_d), Vector3(front_seg_w, height, wall_t), Vector3.ZERO, [
 		[0.0, win_y, win_w, win_h],
-	])
+	], collision_only)
 	# FrontB with window hole
 	_create_textured_wall_with_openings(label + " FrontB", origin + Vector3(front_seg_c, 0, half_d), Vector3(front_seg_w, height, wall_t), Vector3.ZERO, [
 		[0.0, win_y, win_w, win_h],
-	])
-	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO)
-	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO)
+	], collision_only)
+	_create_textured_wall(label + " FrontLeftReturn", origin + Vector3(-return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO, collision_only)
+	_create_textured_wall(label + " FrontRightReturn", origin + Vector3(return_c, 0, half_d), Vector3(return_w, height, wall_t), Vector3.ZERO, collision_only)
 	# Door lintel
-	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, door_h, half_d), Vector3(door_w, height - door_h, wall_t), Vector3.ZERO)
-	_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c, style)
-	_create_house_ivy(origin, label, half_w, half_d, height, wall_t)
-	_create_house_interior(origin, label, id_prefix, width, depth, height)
-	preload("res://scripts/VillageArchitecture.gd").interior(self, origin, label, width, depth, height)
+	_create_textured_wall(label + " DoorLintel", origin + Vector3(0, door_h, half_d), Vector3(door_w, height - door_h, wall_t), Vector3.ZERO, collision_only)
+	if collision_only:
+		_create_interactive_door(label + " Door", origin + Vector3(-door_w * 0.5, 0.0, half_d), Vector3(door_w, door_h, 0.11), Color(0.13, 0.075, 0.04), -96.0)
+	else:
+		_create_house_details(origin, label, width, depth, height, half_w, half_d, front_seg_c, style)
+		_create_house_ivy(origin, label, half_w, half_d, height, wall_t)
+		_create_house_interior(origin, label, id_prefix, width, depth, height)
+		preload("res://scripts/VillageArchitecture.gd").interior(self, origin, label, width, depth, height)
 	# Roof collision on the dedicated surface layer (4): players still stand on
 	# it (mask=3 collides with layer 1), and _get_exact_ground_y can land drops
 	# and campfires on the roof when the caller passes the player's height.
 	_create_invisible_collision_box(label + " RoofCollision", origin + Vector3(0, height, 0), Vector3(width, 0.7, depth), 4)
 	# Link door to wildlife blocker so wolves can enter when door is open
 	var door_node := get_node_or_null(label + " Door")
-	if door_node != null:
+	if door_node != null and blocker_idx >= 0:
 		wildlife_blockers[blocker_idx]["door"] = door_node
 		wildlife_blockers[blocker_idx]["door_name"] = label + " Door"
 		wildlife_blockers[blocker_idx]["door_pos"] = Vector3(origin.x - 0.9, 0.0, origin.z + half_d)
@@ -20191,7 +20322,7 @@ func _create_static_box(node_name: String, pos: Vector3, size: Vector3, color: C
 	add_child(body)
 	return body
 
-func _create_textured_wall_with_openings(node_name: String, pos: Vector3, size: Vector3, rot: Vector3, openings: Array) -> void:
+func _create_textured_wall_with_openings(node_name: String, pos: Vector3, size: Vector3, rot: Vector3, openings: Array, collision_only := false) -> void:
 	var is_x_wall := size.x > size.z
 	var wall_w := size.x if is_x_wall else size.z
 	var wall_h := size.y
@@ -20245,10 +20376,15 @@ func _create_textured_wall_with_openings(node_name: String, pos: Vector3, size: 
 			else:
 				seg_pos = pos + Vector3(0, y0, xmid)
 				seg_size = Vector3(wall_t, yh, xw)
-			_create_textured_wall(node_name + " S" + str(seg), seg_pos, seg_size, rot)
+			_create_textured_wall(node_name + " S" + str(seg), seg_pos, seg_size, rot, collision_only)
 			seg += 1
 
-func _create_textured_wall(node_name: String, pos: Vector3, size: Vector3, rot: Vector3) -> StaticBody3D:
+func _create_textured_wall(node_name: String, pos: Vector3, size: Vector3, rot: Vector3, collision_only := false) -> StaticBody3D:
+	# Servidor dedicado: mismo cuerpo sin la malla (la colision es identica).
+	if collision_only:
+		if not rot.is_zero_approx():
+			return _create_invisible_collision_box_rotated(node_name, pos, size, rot.y, 1)
+		return _create_invisible_collision_box(node_name, pos, size, 1)
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.position = pos
