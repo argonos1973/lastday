@@ -130,6 +130,8 @@ var _mic_player: AudioStreamPlayer = null
 var _mic_capture: AudioEffectCapture = null
 var _mic_out_buffer: PackedByteArray = PackedByteArray()
 var _mic_Peak_accum := 0.0
+var _mic_resample_phase := 0.0
+var _mic_gate_tail := 0
 var _voice_players: Dictionary = {} # sender_id -> AudioStreamPlayer
 var _voice_playbacks: Dictionary = {} # sender_id -> AudioStreamGeneratorPlayback
 var _voice_speaking_timers: Dictionary = {} # sender_id -> {"name": String, "group": String, "time": float}
@@ -1074,6 +1076,8 @@ func set_voice_mic_active(active: bool) -> void:
 	_voice_target_group_id = chat_target_group_id if active else ""
 	_mic_out_buffer.clear()
 	_mic_Peak_accum = 0.0
+	_mic_resample_phase = 0.0
+	_mic_gate_tail = 0
 	if voice_mic_active:
 		if DisplayServer.get_name() != "headless":
 			_ensure_mic_capture()
@@ -1092,6 +1096,15 @@ func set_voice_mic_active(active: bool) -> void:
 		_style_comms_button(chat_mic_btn, voice_mic_active, Color(1.0, 0.58, 0.48) if voice_mic_active else Color(0.76, 0.86, 0.70))
 		chat_mic_btn.tooltip_text = "Micrófono abierto hacia %s. Pulsa V para silenciar." % _active_voice_target_label() if voice_mic_active else "Mantén el micrófono cerrado hasta pulsar V. Puedes escuchar sin micrófono."
 
+func _voice_gate_accepts_packet(peak: float) -> bool:
+	if peak >= 0.012:
+		_mic_gate_tail = 4 # 200 ms to preserve soft syllables and word endings.
+		return true
+	if _mic_gate_tail > 0:
+		_mic_gate_tail -= 1
+		return true
+	return false
+
 func _process_voice_chat(delta: float) -> void:
 	# A live capture belongs to the explicitly enabled conversation. Never
 	# carry it across automatic UI retargeting, disconnection or death.
@@ -1105,7 +1118,7 @@ func _process_voice_chat(delta: float) -> void:
 				var frames: PackedVector2Array = _mic_capture.get_buffer(avail)
 				var mix_rate := maxf(AudioServer.get_mix_rate(), VOICE_SAMPLE_RATE)
 				var step := mix_rate / VOICE_SAMPLE_RATE
-				var f_idx := 0.0
+				var f_idx := _mic_resample_phase
 				while int(f_idx) < frames.size():
 					var fr: Vector2 = frames[int(f_idx)]
 					var mono := clampf((fr.x + fr.y) * 0.5, -1.0, 1.0)
@@ -1113,11 +1126,12 @@ func _process_voice_chat(delta: float) -> void:
 					var u8 := clampi(int(round(mono * 127.0 + 128.0)), 0, 255)
 					_mic_out_buffer.append(u8)
 					if _mic_out_buffer.size() >= VOICE_PACKET_SAMPLES:
-						if _mic_Peak_accum >= 0.012:
+						if _voice_gate_accepts_packet(_mic_Peak_accum):
 							_dispatch_voice_packet(_mic_out_buffer.duplicate())
 						_mic_out_buffer.clear()
 						_mic_Peak_accum = 0.0
 					f_idx += step
+				_mic_resample_phase = f_idx - frames.size()
 	# Actualizar temporizadores de quién está hablando
 	var expired: Array = []
 	var speaking_parts: Array = []
@@ -1134,6 +1148,11 @@ func _process_voice_chat(delta: float) -> void:
 			speaking_parts.append(("%s [%s]" % [sname, gname]) if not gname.is_empty() else sname)
 	for sid in expired:
 		_voice_speaking_timers.erase(sid)
+		# An empty generator otherwise keeps mixing silence indefinitely.
+		var inactive: AudioStreamPlayer = _voice_players.get(sid)
+		if is_instance_valid(inactive):
+			inactive.stop()
+		_voice_playbacks.erase(sid)
 	if voice_status_label != null:
 		var lines: Array = []
 		var unavailable := _voice_capture_unavailable_reason()
@@ -1234,7 +1253,7 @@ func on_bot_voice_mp3_received(sender_id: int, sender_name: String, mp3_bytes: P
 	mplayer.play()
 
 func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: PackedByteArray, _target_id: int = 0, target_name: String = "", group_id: String = "") -> void:
-	if pcm_bytes.is_empty() or not can_use_chat():
+	if pcm_bytes.is_empty() or pcm_bytes.size() > 1200 or not can_use_chat():
 		return
 	var net = get_node_or_null("/root/NetworkManager")
 	var my_id := int(net.get_my_id()) if net != null and net.has_method("get_my_id") else -1
@@ -1272,17 +1291,31 @@ func on_voice_packet_received(sender_id: int, sender_name: String, pcm_bytes: Pa
 		vplayer.play()
 		_voice_players[sender_id] = vplayer
 		_voice_playbacks[sender_id] = vplayer.get_stream_playback()
+		vplayer.set_meta("voice_capacity", (_voice_playbacks[sender_id] as AudioStreamGeneratorPlayback).get_frames_available())
 	if not vplayer.playing:
 		vplayer.play()
 		_voice_playbacks[sender_id] = vplayer.get_stream_playback()
+		vplayer.set_meta("voice_capacity", (_voice_playbacks[sender_id] as AudioStreamGeneratorPlayback).get_frames_available())
 	var playback: AudioStreamGeneratorPlayback = _voice_playbacks.get(sender_id)
 	if playback == null:
 		return
-	var avail_frames := playback.get_frames_available()
-	var count := mini(pcm_bytes.size(), avail_frames)
+	var available := playback.get_frames_available()
+	var capacity := int(vplayer.get_meta("voice_capacity", available))
+	# A delayed burst after a frame/network stall should not make a live
+	# conversation replay old speech seconds behind the other player.
+	if capacity - available + pcm_bytes.size() > int(VOICE_SAMPLE_RATE * 0.30):
+		vplayer.stop()
+		vplayer.play()
+		playback = vplayer.get_stream_playback()
+		_voice_playbacks[sender_id] = playback
+		vplayer.set_meta("voice_capacity", playback.get_frames_available())
+	var count := mini(pcm_bytes.size(), playback.get_frames_available())
+	var samples := PackedVector2Array()
+	samples.resize(count)
 	for i in range(count):
 		var sample := clampf((float(pcm_bytes[i]) - 128.0) / 127.0, -1.0, 1.0)
-		playback.push_frame(Vector2(sample, sample))
+		samples[i] = Vector2(sample, sample)
+	playback.push_buffer(samples)
 
 func _ensure_hud_visibility() -> void:
 	# Restore the interface in case a scene transition or a fullscreen night

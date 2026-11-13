@@ -327,6 +327,24 @@ func _run() -> void:
 			hud.on_voice_packet_received(7, "Remy", pkt0, 1, "Líder", "")
 			var rx_player: AudioStreamPlayer = hud._voice_players.get(7)
 			check(rx_player != null and rx_player.playing, "Real AudioStreamGenerator player starts playing incoming voice packet")
+			hud.set_voice_mic_active(false)
+			for burst in range(40):
+				hud.on_voice_packet_received(7, "Remy", pkt0, 1, "Líder", "")
+			var playback: AudioStreamGeneratorPlayback = hud._voice_playbacks[7]
+			var queued := int(rx_player.get_meta("voice_capacity")) - playback.get_frames_available()
+			check(queued <= 3600, "Delayed voice bursts cannot accumulate over 300ms of latency (queued=%d capacity=%s available=%d)" % [queued,rx_player.get_meta("voice_capacity"),playback.get_frames_available()])
+			hud._process_voice_chat(0.6)
+			check(not rx_player.playing and not hud._voice_playbacks.has(7), "Inactive speaker stops mixing silence")
+			hud.on_voice_packet_received(7, "Remy", pkt0, 1, "Líder", "")
+			check(rx_player.playing and hud._voice_players[7] == rx_player, "Next phrase resumes the same player with fresh playback")
+			hud._mic_gate_tail = 0
+			check(not hud._voice_gate_accepts_packet(0.0), "Silence does not open voice gate")
+			check(hud._voice_gate_accepts_packet(0.1), "Speech opens voice gate")
+			var soft_tail := true
+			for packet in range(4):
+				soft_tail = hud._voice_gate_accepts_packet(0.005) and soft_tail
+			check(soft_tail and not hud._voice_gate_accepts_packet(0.0), "Gate preserves 200ms of soft endings then closes")
+
 		hud.set_voice_mic_active(false)
 		await create_timer(0.1).timeout
 
