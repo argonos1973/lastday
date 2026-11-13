@@ -257,6 +257,22 @@
     font-family: ui-monospace, monospace;
     font-weight: 600;
   }
+  .monitor { text-align: center; margin: -24px 0 44px; }
+  .monitor a.mlink {
+    display: inline-block;
+    color: var(--accent2);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    padding: 10px 22px;
+    text-decoration: none;
+    font-size: .95rem;
+    letter-spacing: .04em;
+    transition: border-color .2s, background .2s;
+  }
+  .monitor a.mlink:hover {
+    border-color: var(--accent2);
+    background: rgba(127, 163, 192, .08);
+  }
   .verlist {
     list-style: none;
   }
@@ -430,6 +446,7 @@
   </div>
 
   <p class="ver">Versión actual: <b>v@VERSION@</b></p>
+  <p class="monitor"><a class="mlink" href="bots/">Monitor del servidor — qué hacen los supervivientes en directo</a></p>
 
   <section class="bloque" id="historia">
     <h3>La historia</h3>
