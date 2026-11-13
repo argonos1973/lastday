@@ -170,6 +170,9 @@ const AI_ADVISOR_URL := "https://api.groq.com/openai/v1/chat/completions"
 # compite con las decisiones tactica por la misma ventana de tokens. Override
 # por env: GROQ_DECISION_MODEL / GROQ_CHAT_MODEL.
 const AI_ADVISOR_MODEL := "qwen/qwen3.8-27b"
+# Cuota propia por modelo: si la diaria (TPD/RPD) del principal se agota,
+# el asesor salta al fallback en vez de quedarse en rate_limited.
+const AI_ADVISOR_FALLBACK_MODEL := "openai/gpt-oss-20b"
 const AI_CHAT_MODEL := "openai/gpt-oss-120b"
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000 # base temporal del plan (referencia para el watchdog de planes atascados)
 const AI_SIG_POLL_SEC := 4.0           # sondeo local de firma por turnos (un bot por ciclo)
@@ -221,9 +224,13 @@ var _chat_backoff_until_msec := 0
 var _chat_backoff_sec := 30.0
 var _chat_conn_status := "idle"
 
+var _ai_model_override := ""
+
 func _ai_decision_model() -> String:
 	var m := OS.get_environment("GROQ_DECISION_MODEL").strip_edges()
-	return m if not m.is_empty() else AI_ADVISOR_MODEL
+	if not m.is_empty():
+		return m
+	return _ai_model_override if not _ai_model_override.is_empty() else AI_ADVISOR_MODEL
 
 func _ai_chat_model() -> String:
 	var m := OS.get_environment("GROQ_CHAT_MODEL").strip_edges()
@@ -11593,16 +11600,21 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	_ai_last_any_call_msec = Time.get_ticks_msec()
 	_ai_conn_status = "requesting"
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_REVIEW_MAX_SEC * 1000.0)
+	var model := _ai_decision_model()
 	var payload := {
-		"model": _ai_decision_model(),
+		"model": model,
 		"temperature": 0.4,
-		"max_tokens": 160,
+		# gpt-oss razona antes de responder: 160 solo alcanza para la cadena
+		# de pensamiento y el JSON salia vacio (json_validate_failed).
+		"max_tokens": 600 if "gpt-oss" in model else 160,
 		"response_format": {"type": "json_object"},
 		"messages": [
 			{"role": "system", "content": AI_SYSTEM_PROMPT},
 			{"role": "user", "content": _ai_build_prompt(b)},
 		],
 	}
+	if "gpt-oss" in model:
+		payload["reasoning_effort"] = "low"
 	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
 	if _ai_http.request(AI_ADVISOR_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
 		_ai_pending_bot = 0
@@ -11668,7 +11680,7 @@ func _ai_build_prompt(b: Dictionary) -> String:
 # Groq devuelve "retry-after" (segundos) en los 429: si llega lo respetamos tal
 # cual en vez de duplicar a ciegas — el tier gratis castiga rachas cortas y la
 # espera real suele ser mucho menor que el backoff exponencial de 60..600 s.
-func _ai_register_429(headers: PackedStringArray, for_chat := false) -> void:
+func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text := "") -> void:
 	_ai_429_count += 1
 	var wait := -1.0
 	for h in headers:
@@ -11676,6 +11688,16 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false) -> void:
 		if hl.begins_with("retry-after:"):
 			wait = float(hl.get_slice(":", 1).strip_edges())
 			break
+	# Cuota DIARIA agotada (TPD/RPD, "on tokens/requests per day"): el wait que
+	# devuelve Groq solo libera hueco para una llamada y el cartel de
+	# rate_limited se repite todo el dia. Como la cuota es por modelo, se cambia
+	# al fallback y se reintenta pronto — el monitor muestra el motivo real.
+	if not for_chat and body_text.contains("per day") and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL:
+		_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
+		var used := _ai_parse_groq_used_limit(body_text)
+		_ai_backoff_until_msec = Time.get_ticks_msec() + 3000
+		_ai_conn_status = "fallback_model (quota diaria %s -> %s)" % [used, AI_ADVISOR_FALLBACK_MODEL]
+		return
 	if for_chat:
 		if wait < 0.0:
 			wait = _chat_backoff_sec
@@ -11696,6 +11718,25 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false) -> void:
 # hasta el reset en vez de comernos el 429 — cada canal con su propio umbral.
 const AI_RATELIMIT_HEADROOM_TOKENS := 4200
 const AI_CHAT_RATELIMIT_HEADROOM_TOKENS := 900
+
+# Extrae "Used 199501, Limit 200000" del mensaje de un 429 (orden real en el
+# body: "TPD): Limit 200000, Used 199501, Requested 2537") -> "199501/200000".
+func _ai_parse_groq_used_limit(msg: String) -> String:
+	var lim := ""
+	var used := ""
+	var li := msg.find("Limit ")
+	var ui := msg.find("Used ")
+	if li >= 0:
+		var end := li + 6
+		while end < msg.length() and msg[end].is_valid_int():
+			end += 1
+		lim = msg.substr(li + 6, end - li - 6)
+	if ui >= 0:
+		var end := ui + 5
+		while end < msg.length() and msg[end].is_valid_int():
+			end += 1
+		used = msg.substr(ui + 5, end - ui - 5)
+	return ("%s/%s" % [used, lim]) if not used.is_empty() else ""
 
 func _ai_parse_groq_reset_seconds(raw: String) -> float:
 	var s := raw.strip_edges()
@@ -11750,7 +11791,7 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 	if bot_id == 0 or not bots.has(bot_id):
 		return
 	if response_code == 429:
-		_ai_register_429(_headers)
+		_ai_register_429(_headers, false, body.get_string_from_utf8())
 		_ai_apply_local_fallback_decision(bot_id, "http_429_backoff")
 		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
