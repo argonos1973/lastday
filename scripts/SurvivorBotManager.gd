@@ -209,6 +209,11 @@ var _ai_calls_day := 0
 var _ai_calls_total := 0
 var _ai_tokens_day := 0
 var _ai_tokens_total := 0
+# El limite diario de Groq es POR MODELO: los presupuestos locales van por
+# modelo para que agotar el de qwen no bloquee al fallback ni al chat.
+var _ai_calls_day_by_model := {}
+var _ai_tokens_day_by_model := {}
+var _ai_pending_model := "" # modelo de la peticion en vuelo (atribuye sus tokens)
 var _ai_cache_hits := 0
 var _ai_429_count := 0
 var _ai_day_key := -1
@@ -232,6 +237,17 @@ var _chat_backoff_sec := 30.0
 var _chat_conn_status := "idle"
 
 var _ai_model_override := ""
+
+# Presupuesto local por modelo (Groq limita por modelo y por dia):
+# agotar el de qwen no silencia al fallback ni al chat.
+func _ai_model_quota_open(model: String) -> bool:
+	return int(_ai_calls_day_by_model.get(model, 0)) < ai_max_calls_per_day and int(_ai_tokens_day_by_model.get(model, 0)) < ai_max_tokens_per_day
+
+func _ai_count_model_call(model: String) -> void:
+	_ai_calls_day_by_model[model] = int(_ai_calls_day_by_model.get(model, 0)) + 1
+
+func _ai_count_model_tokens(model: String, n: int) -> void:
+	_ai_tokens_day_by_model[model] = int(_ai_tokens_day_by_model.get(model, 0)) + n
 
 func _ai_decision_model() -> String:
 	var m := OS.get_environment("GROQ_DECISION_MODEL").strip_edges()
@@ -7599,12 +7615,13 @@ func _chat_attempt_llm(b: Dictionary, kind: String, to_id: int, to_name: String,
 	if _chat_conn_status.begins_with("rate_limited") or _chat_conn_status.begins_with("pacing"):
 		_chat_conn_status = "ready (post-backoff)"
 	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
-	if key.is_empty() or _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
+	if key.is_empty() or not _ai_model_quota_open(_ai_chat_model()):
 		return false
 	_chat_ensure_http()
 	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent, "t": Time.get_ticks_msec()}
 	_ai_calls_day += 1
 	_ai_calls_total += 1
+	_ai_count_model_call(_ai_chat_model())
 	var chat_model := _ai_chat_model()
 	var payload := {
 		"model": chat_model,
@@ -7704,6 +7721,7 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 			var tok := int((usage as Dictionary).get("total_tokens", 140)) if usage is Dictionary else 140
 			_ai_tokens_day += maxi(tok, 60)
 			_ai_tokens_total += maxi(tok, 60)
+			_ai_count_model_tokens(_ai_chat_model(), maxi(tok, 60))
 			var ch = parsed.get("choices", [])
 			if ch is Array and not (ch as Array).is_empty():
 				var msg = (ch[0] as Dictionary).get("message", {})
@@ -7713,6 +7731,7 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 		_chat_conn_status = "offline_fallback (%d)" % response_code
 		_ai_tokens_day += 60
 		_ai_tokens_total += 60
+		_ai_count_model_tokens(_ai_chat_model(), 60)
 	text = _chat_sanitize(text)
 	if text.is_empty():
 		text = _chat_fallback_line(b, kind, to_name, "", intent)
@@ -11709,6 +11728,10 @@ func _ai_tick(delta: float) -> void:
 		_ai_day_key = day
 		_ai_calls_day = 0
 		_ai_tokens_day = 0
+		_ai_calls_day_by_model.clear()
+		_ai_tokens_day_by_model.clear()
+		# La cuota de Groq tambien se resetea cada dia: reintenta el primario.
+		_ai_model_override = ""
 	# Sondeo local y barato por turnos (~AI_SIG_POLL_SEC por bot): cambios de
 	# firma, planes terminados/atascados y la revision maxima de cortesia solo
 	# ENCOLAN — la dedup por firma y el hueco minimo filtran al despachar.
@@ -11722,9 +11745,16 @@ func _ai_tick(delta: float) -> void:
 	# en el monitor mucho despues de recuperar el servicio — se limpia aqui.
 	if _ai_conn_status.begins_with("rate_limited") or _ai_conn_status.begins_with("pacing"):
 		_ai_conn_status = "ready (post-backoff)"
-	if _ai_calls_day >= ai_max_calls_per_day or _ai_tokens_day >= ai_max_tokens_per_day:
-		_ai_conn_status = "quota_reached (local_brain)"
-		return
+	if not _ai_model_quota_open(_ai_decision_model()):
+		# Presupuesto local del modelo actual agotado: como la cuota real es
+		# por modelo, se salta al fallback si a el aun le queda — la misma
+		# idea que el 429 "per day" pero sin quemar el ultimo token de Groq.
+		if _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL and _ai_model_quota_open(AI_ADVISOR_FALLBACK_MODEL):
+			_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
+			_ai_conn_status = "fallback_model (presupuesto %s -> %s)" % [AI_ADVISOR_MODEL, AI_ADVISOR_FALLBACK_MODEL]
+		else:
+			_ai_conn_status = "quota_reached (local_brain)"
+			return
 	if _ai_pending_bot != 0:
 		return
 	_ai_ensure_http()
@@ -11825,6 +11855,8 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	_ai_conn_status = "requesting"
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_REVIEW_MAX_SEC * 1000.0)
 	var model := _ai_decision_model()
+	_ai_count_model_call(model)
+	_ai_pending_model = model
 	var payload := {
 		"model": model,
 		"temperature": 0.4,
@@ -12039,9 +12071,11 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 			tok = 220
 		_ai_tokens_day += tok
 		_ai_tokens_total += tok
+		_ai_count_model_tokens(_ai_pending_model if not _ai_pending_model.is_empty() else _ai_decision_model(), tok)
 	else:
 		_ai_tokens_day += 220
 		_ai_tokens_total += 220
+		_ai_count_model_tokens(_ai_pending_model if not _ai_pending_model.is_empty() else _ai_decision_model(), 220)
 	var choices = parsed.get("choices", [])
 	if not (choices is Array) or choices.is_empty():
 		return
@@ -12889,9 +12923,11 @@ func get_full_web_status() -> Dictionary:
 			"status": _ai_conn_status,
 			"chat_status": _chat_conn_status,
 			"calls_day": _ai_calls_day,
+			"calls_day_by_model": _ai_calls_day_by_model.duplicate(),
 			"max_calls_day": ai_max_calls_per_day,
 			"calls_total": _ai_calls_total,
 			"tokens_day": _ai_tokens_day,
+			"tokens_day_by_model": _ai_tokens_day_by_model.duplicate(),
 			"max_tokens_day": ai_max_tokens_per_day,
 			"tokens_total": _ai_tokens_total,
 			"cache_hits": _ai_cache_hits,
