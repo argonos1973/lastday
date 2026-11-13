@@ -219,6 +219,8 @@ var _ai_tokens_day_by_model := {}
 var _ai_pending_model := "" # modelo de la peticion en vuelo (atribuye sus tokens)
 var _ai_cache_hits := 0
 var _ai_429_count := 0
+var _ai_latency_ms_last := 0
+var _ai_latency_ms_avg := 0
 var _ai_day_key := -1
 var _ai_rr := 0
 var _mem_accum := 0.0
@@ -12310,6 +12312,8 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 	_ai_stat_set(lb, "latency_ms_last", lat)
 	var prev_avg := int((lb.get("_mem", {}) as Dictionary).get("ai_stats", {}).get("latency_ms_avg", 0))
 	_ai_stat_set(lb, "latency_ms_avg", lat if prev_avg <= 0 else int(prev_avg * 0.8 + lat * 0.2))
+	_ai_latency_ms_last = lat
+	_ai_latency_ms_avg = lat if _ai_latency_ms_avg <= 0 else int(_ai_latency_ms_avg * 0.8 + lat * 0.2)
 	if response_code == 429:
 		_ai_register_429(_headers, false, body.get_string_from_utf8())
 		_ai_apply_local_fallback_decision(bot_id, "http_429_backoff")
@@ -13330,6 +13334,8 @@ func get_full_web_status() -> Dictionary:
 			"tokens_total": _ai_tokens_total,
 			"cache_hits": _ai_cache_hits,
 			"http_429_count": _ai_429_count,
+			"latency_ms_last": _ai_latency_ms_last,
+			"latency_ms_avg": _ai_latency_ms_avg,
 			"queue_size": _ai_queue.size(),
 			"queue": _ai_queue.map(func(it: Dictionary) -> Dictionary:
 				return {"bot": int(it.get("bot_id", 0)), "prio": int(it.get("priority", 1)), \
