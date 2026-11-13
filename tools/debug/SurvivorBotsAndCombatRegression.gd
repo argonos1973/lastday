@@ -5575,8 +5575,25 @@ func run() -> void:
 	p_ow2.set_meta("saved_inventory", [
 		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.6, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
 	])
-	check(not mgr._bot_is_overwatch_candidate(b_ow2),
-		"10S10: no hay dos francotiradores del mismo equipo en la misma zona")
+	# Segundo tirador del equipo: no duplica la azotea — hace de centinela
+	# de tierra en el perimetro mientras el rango 0 cubre desde arriba.
+	var save_mem_ow2: Dictionary = b_ow2.get("_mem", {})
+	b_ow2["_mem"] = {"personality": {"bravery": 0.95, "aggression": 0.95, "distrust": 0.1, "curiosity": 0.1, "survival_instinct": 0.1, "cooperation": 0.1}}
+	var save_mem_ow1: Dictionary = b_ow.get("_mem", {})
+	b_ow["_mem"] = {"personality": {"bravery": 0.2, "aggression": 0.2, "distrust": 0.1, "curiosity": 0.95, "survival_instinct": 0.9, "cooperation": 0.1}}
+	p_ow2.global_position = Vector3(19.0, 0.4, 685.0)
+	check(mgr._bot_overwatch_tick(b_ow2, ow_leader, p_ow2.global_position, ow_leader.global_position, 0.1),
+		"10S10a: el segundo tirador si vigila — como centinela de tierra")
+	var ov_g: Dictionary = b_ow2.get("_overwatch", {})
+	var gpost: Vector3 = ov_g.get("post", Vector3.INF)
+	check(bool(ov_g.get("ground", false)) and gpost != Vector3.INF and gpost.y < 10.0,
+		"10S10b: el segundo puesto es perimetral, no otra azotea (y=%.1f)" % gpost.y)
+	var dp_s := Vector2(gpost.x - ow_leader.global_position.x, gpost.z - ow_leader.global_position.z).length()
+	check(dp_s > 7.0 and dp_s < 15.0,
+		"10S10c: el centinela se aposta a ~11 m del lider (d=%.1f)" % dp_s)
+	b_ow2.erase("_overwatch")
+	b_ow2["_mem"] = save_mem_ow2
+	b_ow["_mem"] = save_mem_ow1
 	b_ow2["team_leader_id"] = save_lid_ow2
 	mgr._set_bot_faction(b_ow2, save_f_ow2)
 	# Lider fuera de la zona -> la vigia se libera y vuelve a la escolta.
@@ -5636,6 +5653,145 @@ func run() -> void:
 	p_ow.global_position = save_pos_ow
 	mgr._set_bot_faction(b_rw, save_f_rw)
 	b_rw["team_leader_id"] = save_lid_rw
+
+	# --- 10T) Saqueo repartido: claims de drops y cautela aprendida ---
+	# Dos piezas a tiro: el que reclama la mejor obliga al compañero a ir a
+	# por la otra — nada de amontonarse sobre el mismo drop.
+	var b_lt1: Dictionary = mgr.bots[901]
+	var b_lt2: Dictionary = mgr.bots[902]
+	var p_lt1: Node3D = b_lt1["proxy"]
+	var p_lt2: Node3D = b_lt2["proxy"]
+	var save_lt1: Vector3 = p_lt1.global_position
+	var save_lt2: Vector3 = p_lt2.global_position
+	var save_drops: Array = world._dropped_items.duplicate()
+	var save_claims: Dictionary = world._pickup_claims.duplicate()
+	var save_claims_until: Dictionary = world._pickup_claim_until.duplicate()
+	p_lt1.global_position = Vector3(200.0, 0.4, 200.0)
+	p_lt2.global_position = Vector3(200.0, 0.4, 200.0)
+	for bi in [b_lt1, b_lt2]:
+		(bi["proxy"] as Node3D).set_meta("saved_inventory", [{"name": "Mochila improvisada", "type": "backpack", "weight": 0.5, "quantity": 1}])
+		bi["hunger"] = 90.0
+		bi["thirst"] = 90.0
+	world._dropped_items = [
+		{"id": "t_rifle", "name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.6, "qty": 1, "pos": [203.0, 0.4, 200.0]},
+		{"id": "t_lata", "name": "Hacha", "type": "tool_axe", "weight": 1.8, "qty": 1, "pos": [197.0, 0.4, 200.0]},
+	]
+	var pick1: Dictionary = mgr._find_nearby_valuable_loot(b_lt1, 28.0)
+	check(str(pick1.get("id", "")) == "t_rifle", "10T1: sin claims el mejor botin es el fusil")
+	b_lt1["_s_loot"] = pick1
+	mgr._loot_commit_claim(b_lt1)
+	check(int(world._pickup_claims.get("t_rifle", 0)) == 901,
+		"10T2: fichar el drop lo reclama en la tabla del mundo")
+	var pick2: Dictionary = mgr._find_nearby_valuable_loot(b_lt2, 28.0)
+	check(str(pick2.get("id", "")) == "t_lata",
+		"10T3: con el fusil reclamado el compañero elige la otra pieza (id=%s)" % str(pick2.get("id", "")))
+	mgr._loot_clear(b_lt1)
+	check(not (world._pickup_claims as Dictionary).has("t_rifle"),
+		"10T4: soltar el drop libera el claim para los demas")
+	var pick3: Dictionary = mgr._find_nearby_valuable_loot(b_lt2, 28.0)
+	check(str(pick3.get("id", "")) == "t_rifle",
+		"10T5: liberado el claim el fusil vuelve a ser el mejor botin")
+	# Claim caducado: la pieza queda libre aunque siga en la tabla.
+	world._pickup_claims["t_lata"] = 903
+	world._pickup_claim_until["t_lata"] = Time.get_ticks_msec() - 1000
+	var pick4: Dictionary = mgr._find_nearby_valuable_loot(b_lt2, 28.0)
+	check(str(pick4.get("id", "")) == "t_rifle",
+		"10T6: un claim expirado no retiene la pieza")
+	world._pickup_claim_until["t_lata"] = Time.get_ticks_msec() + 30000
+	var pick5: Dictionary = mgr._find_nearby_valuable_loot(b_lt2, 28.0)
+	check(str(pick5.get("id", "")) == "t_rifle",
+		"10T7: claim vivo ajeno filtra su pieza (sigue saliendo el fusil)")
+	world._dropped_items = save_drops
+	world._pickup_claims = save_claims
+	world._pickup_claim_until = save_claims_until
+	p_lt1.global_position = save_lt1
+	p_lt2.global_position = save_lt2
+	mgr._loot_clear(b_lt1)
+	mgr._loot_clear(b_lt2)
+
+	# Cautela aprendida: una muerte violenta registrada cerca marca la zona —
+	# el equipo vuelve en alerta sin ver a nadie; el botin bueno la apaga.
+	var b_lw: Dictionary = mgr.bots[901]
+	var mem_lw: Dictionary = mgr._ensure_bot_memory(901)
+	var save_spots: Array = mem_lw.get("death_spots", []).duplicate()
+	var save_zy: Dictionary = mem_lw.get("zone_yield", {}).duplicate()
+	p_rw.global_position = Vector3(41.0, 0.4, 700.0) # dentro del casco urbano
+	mem_lw["death_spots"] = [{"x": 41.0, "y": 0.4, "z": 705.0, "cause": "rifle", "count": 1}]
+	mem_lw["zone_yield"] = {}
+	var lw_anchor := mgr._bot_learned_risk_at(p_rw.global_position, 901)
+	check(lw_anchor != Vector3.INF,
+		"10T8: muerte a tiros en el pueblo -> riesgo aprendido anclado")
+	b_lw["proxy"] = p_rw
+	check(mgr._bot_roof_wary(b_lw),
+		"10T9: la cautela aprendida mantiene al bot agachado en la zona")
+	var kind_lw := mgr._poi_kind_near(p_rw.global_position)
+	mem_lw["zone_yield"] = {kind_lw: {"good": 6}}
+	check(mgr._bot_learned_risk_at(p_rw.global_position, 901) == Vector3.INF,
+		"10T10: saqueos buenos repetidos apagan la alarma aprendida")
+	mem_lw["zone_yield"] = {}
+	mem_lw["death_spots"] = [{"x": 41.0, "y": 0.4, "z": 705.0, "cause": "wolf_bite", "count": 2}]
+	check(mgr._bot_learned_risk_at(p_rw.global_position, 901) == Vector3.INF,
+		"10T11: morir a lobos no ensena a temer francotiradores")
+	mem_lw["death_spots"] = [{"x": 41.0, "y": 0.4, "z": 705.0, "cause": "starved", "count": 1}]
+	check(mgr._bot_learned_risk_at(p_rw.global_position, 901) == Vector3.INF,
+		"10T12: morir de hambre tampoco marca riesgo de tirador")
+	# Riesgo aprendido fuera de ciudad/base: zona "ground" -> centinela a ras.
+	mem_lw["death_spots"] = [{"x": 300.0, "y": 0.4, "z": 300.0, "cause": "melee", "count": 1}]
+	p_lt1.global_position = Vector3(300.0, 0.4, 300.0)
+	check(mgr._bot_learned_risk_at(p_lt1.global_position, 901) != Vector3.INF,
+		"10T13: el riesgo aprendido tambien vale fuera de zonas con torre")
+	var g_leader := Node3D.new()
+	world.add_child(g_leader)
+	g_leader.global_position = Vector3(300.0, 0.4, 300.0)
+	var b_gs: Dictionary = mgr.bots[902]
+	var p_gs: Node3D = b_gs["proxy"]
+	var save_gs: Vector3 = p_gs.global_position
+	var save_lid_gs := int(b_gs.get("team_leader_id", 0))
+	var save_f_gs := str(b_gs.get("faction", ""))
+	var save_mem_gs: Dictionary = b_gs.get("_mem", {})
+	mgr._set_bot_faction(b_gs, "hostile")
+	b_gs["team_leader_id"] = 901
+	b_gs["follow_mode"] = "follow"
+	b_gs["has_rifle"] = true
+	b_gs["hunger"] = 90.0
+	b_gs["thirst"] = 90.0
+	b_gs["health"] = 95.0
+	b_gs["flee_until"] = 0.0
+	b_gs["hide_timer"] = 0.0
+	b_gs["aggro_target"] = null
+	b_gs.erase("_overwatch")
+	b_gs["_mem"] = {"personality": {"bravery": 0.95, "aggression": 0.9, "distrust": 0.1, "curiosity": 0.1, "survival_instinct": 0.1, "cooperation": 0.1}}
+	p_gs.set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.6, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+	])
+	# Solo el aprende del lider (901) tiene la muerte registrada: el centinela
+	# la conoce porque el riesgo se comparte entre aliados — aqui le damos la
+	# misma memoria al propio miembro para el check directo.
+	var mem_gs: Dictionary = mgr._ensure_bot_memory(902)
+	var save_spots_gs: Array = mem_gs.get("death_spots", []).duplicate()
+	var save_zy_gs: Dictionary = mem_gs.get("zone_yield", {}).duplicate()
+	mem_gs["death_spots"] = [{"x": 300.0, "y": 0.4, "z": 300.0, "cause": "melee", "count": 1}]
+	mem_gs["zone_yield"] = {}
+	p_gs.global_position = Vector3(295.0, 0.4, 296.0)
+	check(mgr._bot_overwatch_tick(b_gs, g_leader, p_gs.global_position, g_leader.global_position, 0.1),
+		"10T14: en zona con riesgo aprendido el tirador toma puesto de centinela")
+	var ov_gs: Dictionary = b_gs.get("_overwatch", {})
+	check(str(ov_gs.get("zone", "")) == "ground" and bool(ov_gs.get("ground", false)),
+		"10T15: el puesto aprendido es de tierra (zone=%s)" % str(ov_gs.get("zone", "")))
+	var gps_d := Vector2((ov_gs.get("post", Vector3.ZERO) as Vector3).x - g_leader.global_position.x,
+		(ov_gs.get("post", Vector3.ZERO) as Vector3).z - g_leader.global_position.z).length()
+	check(gps_d > 7.0 and gps_d < 15.0,
+		"10T16: el centinela aprendido se aposta en el perimetro (d=%.1f)" % gps_d)
+	b_gs.erase("_overwatch")
+	mem_gs["death_spots"] = save_spots_gs
+	mem_gs["zone_yield"] = save_zy_gs
+	mem_lw["death_spots"] = save_spots
+	mem_lw["zone_yield"] = save_zy
+	b_gs["_mem"] = save_mem_gs
+	b_gs["team_leader_id"] = save_lid_gs
+	mgr._set_bot_faction(b_gs, save_f_gs)
+	p_gs.global_position = save_gs
+	g_leader.queue_free()
 	mgr.set_physics_process(true)
 
 	for tk_end in mgr._tts_jobs.keys():

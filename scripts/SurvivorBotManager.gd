@@ -1345,6 +1345,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if (b["_s_loot"] as Dictionary).is_empty() and not bool(b.get("equip_mission", false)) \
 				and (_is_pre_night() or _is_world_night()) and not _bot_night_fire_ready(b, proxy):
 			b["_s_loot"] = _find_fire_prep_loot(b, 60.0)
+		# La pieza elegida queda reclamada: los compañeros ven las demas.
+		_loot_commit_claim(b)
 		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
 		# Robo dirigido tras una negativa: el refugio de quien le nego ayuda
 		# tiene prioridad sobre cualquier otro alijo cercano (caduca en 5 min).
@@ -2232,7 +2234,7 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	if not sl.is_empty():
 		var sl_pos := _loot_entry_pos(sl)
 		kept.append({"pos": sl_pos, "until": now_s + 240.0})
-		b["_s_loot"] = {}
+		_loot_clear(b)
 	b["_unreachable"] = kept
 	b["path"] = []
 	b["path_timer"] = 0.0
@@ -3822,8 +3824,62 @@ func _find_rooftop_foe(b: Dictionary, radius: float = BOT_ROOF_WATCH_RANGE) -> N
 			best = local_p as Node3D
 	return best
 
+# Cautela aprendida: una muerte violenta propia cerca (o el riesgo acumulado
+# de la zona en memoria — los compañeros lo comparten) marca el lugar como
+# peligroso. Devuelve el ancla de la amenaza recordada o INF si la zona esta
+# tranquila. El botin bueno repetido va apagando la alarma.
+func _bot_learned_risk_at(pos: Vector3, bot_id: int) -> Vector3:
+	var mem: Dictionary = _memory.get(bot_id, {})
+	var score := 0.0
+	var anchor := Vector3.INF
+	for s in mem.get("death_spots", []):
+		if not (s is Dictionary):
+			continue
+		# Solo cuentan muertes a manos de otro superviviente: un lobo o el
+		# hambre no implican francotirador.
+		if str(s.get("cause", "")) in ["starved", "dehydrated", "hypothermia", "heatstroke", "exhausted", "wolf_bite", "bear_bite"]:
+			continue
+		var sp := Vector3(float(s.get("x", 0.0)), float(s.get("y", 0.0)), float(s.get("z", 0.0)))
+		if Vector2(pos.x - sp.x, pos.z - sp.z).length() <= 60.0:
+			var w := 0.55 * clampi(int(s.get("count", 1)), 1, 3)
+			if w > score:
+				score = w
+				anchor = sp
+	var known: Dictionary = mem.get("known_locations", {})
+	var rk_max := 0.0
+	var rk_pos := Vector3.INF
+	for lid in known.keys():
+		var le = known[lid]
+		if not (le is Dictionary):
+			continue
+		var rk := float(le.get("risk", 0.0))
+		if rk <= rk_max or rk < 1.1:
+			continue
+		var lp = le.get("pos", null)
+		if not (lp is Array) or (lp as Array).size() < 3:
+			continue
+		var lpos := Vector3(float((lp as Array)[0]), float((lp as Array)[1]), float((lp as Array)[2]))
+		if Vector2(pos.x - lpos.x, pos.z - lpos.z).length() <= 55.0:
+			rk_max = rk
+			rk_pos = lpos
+	if rk_max > 0.0:
+		score += rk_max * 0.22
+		if anchor == Vector3.INF:
+			anchor = rk_pos
+	var zy: Dictionary = mem.get("zone_yield", {})
+	var zk: Dictionary = zy.get(_poi_kind_near(pos), {})
+	score -= float(zk.get("good", 0)) * 0.22
+	return anchor if score > 0.5 else Vector3.INF
+
+func _bot_learned_wary(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not _bot_in_watch_zone(proxy.global_position):
+		return false
+	return _bot_learned_risk_at(proxy.global_position, int(b["bot_id"])) != Vector3.INF
+
 func _bot_roof_wary(b: Dictionary) -> bool:
-	return Time.get_ticks_msec() - int(b.get("_roof_threat_msec", -999999)) < BOT_ROOF_WARY_MSEC
+	return Time.get_ticks_msec() - int(b.get("_roof_threat_msec", -999999)) < BOT_ROOF_WARY_MSEC \
+		or _bot_learned_wary(b)
 
 func _find_combat_foe(b: Dictionary) -> Node3D:
 	if world == null or world.get_tree() == null:
@@ -4991,10 +5047,10 @@ func _bot_overwatch_post(zone: String) -> Vector3:
 					return (wtc as Array)[(wtc as Array).size() - 1]
 	return Vector3.INF
 
-# Candidato a francotirador del equipo: rol de soldado/explorador (o unico
+# Elegible para cubrir al equipo: rol de soldado/explorador (o unico
 # miembro), arma a distancia en mano, necesidades cubiertas, sin amenaza
-# inmediata y de dia o con luz — y solo una vigia por zona y equipo.
-func _bot_is_overwatch_candidate(b: Dictionary) -> bool:
+# inmediata y de dia o con luz.
+func _bot_watch_eligible(b: Dictionary) -> bool:
 	if str(b.get("follow_mode", "follow")) != "follow":
 		return false
 	var proxy: Node3D = b["proxy"]
@@ -5009,39 +5065,81 @@ func _bot_is_overwatch_candidate(b: Dictionary) -> bool:
 	var role := _bot_member_role(b)
 	if _bot_member_index(b) > 0 and role not in ["soldier", "scout"]:
 		return false
+	return true
+
+# Orden entre los elegibles del equipo: el fusil vigila primero (rango 0 =
+# mejor tirador); a igualdad de arma decide el id menor. Reparte los puestos:
+# la azotea es del rango 0 y el centinela de tierra del siguiente.
+func _bot_watch_rank(b: Dictionary) -> int:
 	var lid := int(b.get("team_leader_id", 0))
+	var ids: Array = []
 	for bid in bots.keys():
-		if int(bid) == int(b.get("bot_id", 0)):
-			continue
 		var ob: Dictionary = bots[bid]
 		if int(ob.get("team_leader_id", 0)) != lid:
 			continue
-		var oov: Dictionary = ob.get("_overwatch", {})
-		if not oov.is_empty():
-			return false
-		# El francotirador real gana al arquero: si otro miembro lleva fusil y
-		# yo no, el puesto es suyo.
-		var ohp = ob.get("proxy")
-		if ohp != null and is_instance_valid(ohp) and bool(ob.get("has_rifle", false)) and not bool(b.get("has_rifle", false)) \
-				and _bot_has_ranged_weapon(ohp) and int(ob.get("bot_id", 0)) < int(b.get("bot_id", 0)):
-			return false
-	return true
+		if not _bot_watch_eligible(ob):
+			continue
+		ids.append(int(bid))
+	ids.sort_custom(func(x: int, y: int) -> bool:
+		var bx: Dictionary = bots.get(x, {})
+		var by2: Dictionary = bots.get(y, {})
+		if bool(bx.get("has_rifle", false)) != bool(by2.get("has_rifle", false)):
+			return bool(bx.get("has_rifle", false))
+		return x < y)
+	return ids.find(int(b["bot_id"]))
 
 const BOT_OVERWATCH_MAX_POST_DIST := 95.0
+const BOT_SENTRY_MAX_POST_DIST := 70.0
+
+# Puesto del centinela de tierra: perimetro a ~11 m del lider por el lado
+# opuesto al ancla de la amenaza (centro urbano, pie de torre o punto donde
+# se registro el peligro) — cubre la aproximacion mas expuesta mientras el
+# resto lootea. El segundo centinela barre otro sector.
+func _bot_ground_sentry_post(b: Dictionary, zone: String, rank: int, lpos: Vector3, anchor: Vector3) -> Vector3:
+	var base := anchor
+	if base == Vector3.INF:
+		if zone == "city":
+			base = Vector3(CityExpansion.CENTER.x, lpos.y, CityExpansion.CENTER.z)
+		elif zone == "military" and world != null:
+			var wtc = world.get("_watchtower_climb")
+			if wtc is Array and not (wtc as Array).is_empty():
+				base = (wtc as Array)[0]
+	if base == Vector3.INF:
+		base = lpos
+	var dir := Vector2(lpos.x - base.x, lpos.z - base.z)
+	if dir.length_squared() < 4.0:
+		var a0 := float(int(b["bot_id"])) * 2.399963
+		dir = Vector2(sin(a0), cos(a0))
+	dir = dir.normalized()
+	if rank > 0:
+		dir = dir.rotated(2.1 * float(rank))
+	var post := lpos + Vector3(dir.x, 0.0, dir.y) * 11.0
+	post.y = _ground_y(post.x, post.z, lpos.y)
+	return post
 
 # Vigia del equipo: cuando el grupo entra a saquear la ciudad o la base
-# militar, el miembro con mejor arma a distancia sube al puesto elevado de
-# la zona (azotea de la Torre del Reloj o torre de vigilancia) y cubre a los
-# demas desde arriba. Se libera cuando el lider sale de la zona, le atacan o
-# aprietan las necesidades. Devuelve true si el tick quedo consumido.
+# militar, el mejor tirador sube al puesto elevado de la zona (azotea de la
+# Torre del Reloj o torre de vigilancia) y un segundo miembro con arma hace
+# de centinela a ras de suelo en el perimetro. Sin azotea, el mejor va a
+# tierra. En una zona con riesgo aprendido (muertes violentas previas) el
+# centinela se postula aunque el lugar no tenga puestos elevados. Se libera
+# cuando el lider sale de la zona, le atacan o aprietan las necesidades.
+# Devuelve true si el tick quedo consumido.
 func _bot_overwatch_tick(b: Dictionary, leader: Node3D, cur: Vector3, lpos: Vector3, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var ov: Dictionary = b.get("_overwatch", {})
 	if not ov.is_empty():
 		var zone := str(ov.get("zone", ""))
 		var post: Vector3 = ov.get("post", Vector3.INF)
-		var release: bool = _bot_leader_watch_zone(lpos) != zone or post == Vector3.INF \
-				or b.get("aggro_target") != null or _bot_vital_break(b) \
+		var release := post == Vector3.INF
+		if not release:
+			if zone == "ground":
+				var anc: Vector3 = ov.get("anchor", Vector3.INF)
+				release = Vector2(lpos.x - post.x, lpos.z - post.z).length() > 32.0 \
+					or (anc != Vector3.INF and Vector2(lpos.x - anc.x, lpos.z - anc.z).length() > 75.0)
+			else:
+				release = _bot_leader_watch_zone(lpos) != zone
+		release = release or b.get("aggro_target") != null or _bot_vital_break(b) \
 				or float(b.get("hunger", 100.0)) < 24.0 or float(b.get("thirst", 100.0)) < 20.0 \
 				or (_is_world_night() and not bool(b.get("torch_lit", false)))
 		if release:
@@ -5052,30 +5150,59 @@ func _bot_overwatch_tick(b: Dictionary, leader: Node3D, cur: Vector3, lpos: Vect
 		if d_post > 1.5 or absf(cur.y - post.y) > 1.0:
 			_move_bot_towards(b, post, 5.0, delta, "walk")
 		else:
-			# En puesto: barrer la plaza con la mirada y el arma a punto.
+			# En puesto: barrer la plaza con la mirada y el arma a punto. El
+			# centinela de tierra mira hacia fuera, la azotea hacia el centro.
 			b["sitting"] = false
 			b["anim"] = "idle"
-			var anchor := _bot_leader_watch_zone(lpos)
-			var look := (CityExpansion.CENTER if anchor == "city" else post) - cur
+			var ground_post := bool(ov.get("ground", false))
+			var look: Vector3
+			if ground_post:
+				look = cur - lpos
+			else:
+				var anchor := _bot_leader_watch_zone(lpos)
+				look = (Vector3(CityExpansion.CENTER.x, cur.y, CityExpansion.CENTER.z) if anchor == "city" else post) - cur
 			look.y = 0.0
 			if look.length_squared() > 0.01:
 				var want := atan2(-look.x, -look.z) + sin(float(Time.get_ticks_msec()) / 2600.0 + float(int(b["bot_id"]))) * 0.55
 				b["rot"] = lerp_angle(float(b["rot"]), want, minf(1.0, delta * 3.0))
 				proxy.rotation.y = float(b["rot"])
 		return true
-	if not _bot_is_overwatch_candidate(b):
+	if not _bot_watch_eligible(b):
 		return false
 	var zone2 := _bot_leader_watch_zone(lpos)
+	var anchor2 := Vector3.INF
+	if zone2.is_empty():
+		# Sin puestos elevados ni zona tactica: el riesgo aprendido cerca del
+		# lider (alguien cayo aqui a tiros antes) basta para apostar centinela.
+		anchor2 = _bot_learned_risk_at(lpos, int(b["bot_id"]))
+		if anchor2 != Vector3.INF:
+			zone2 = "ground"
 	if zone2.is_empty():
 		return false
-	var post2 := _bot_overwatch_post(zone2)
-	if post2 == Vector3.INF or Vector2(cur.x - post2.x, cur.z - post2.z).length() > BOT_OVERWATCH_MAX_POST_DIST:
+	var roof := _bot_overwatch_post(zone2)
+	var rank := _bot_watch_rank(b)
+	var post_pos := Vector3.INF
+	var ground := false
+	if rank == 0:
+		if roof != Vector3.INF:
+			post_pos = roof
+		else:
+			post_pos = _bot_ground_sentry_post(b, zone2, rank, lpos, anchor2)
+			ground = true
+	elif rank == 1 and roof != Vector3.INF:
+		# Con la azotea ocupada, el segundo tirador hace de centinela de tierra.
+		post_pos = _bot_ground_sentry_post(b, zone2, rank, lpos, anchor2)
+		ground = true
+	if post_pos == Vector3.INF:
 		return false
-	b["_overwatch"] = {"zone": zone2, "post": post2, "t": Time.get_ticks_msec()}
+	var max_d: float = BOT_SENTRY_MAX_POST_DIST if ground else BOT_OVERWATCH_MAX_POST_DIST
+	if Vector2(cur.x - post_pos.x, cur.z - post_pos.z).length() > max_d:
+		return false
+	b["_overwatch"] = {"zone": zone2, "post": post_pos, "anchor": anchor2, "ground": ground, "t": Time.get_ticks_msec()}
 	b["_act"] = "overwatch"
-	record_bot_event(int(b["bot_id"]), "overwatch", str(leader.get_meta("bot_name", leader.name)), _poi_kind_near(post2), post2,
-		"sube al puesto de vigia a cubrir el saqueo")
-	_move_bot_towards(b, post2, 5.0, delta, "walk")
+	record_bot_event(int(b["bot_id"]), "overwatch", str(leader.get_meta("bot_name", leader.name)), _poi_kind_near(post_pos), post_pos,
+		("centinela de tierra cubriendo el saqueo" if ground else "sube al puesto de vigia a cubrir el saqueo"))
+	_move_bot_towards(b, post_pos, 5.0, delta, "walk")
 	return true
 
 # El francotirador apostado no baja de su puesto para perseguir: gira, apunta
@@ -7658,11 +7785,19 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 	var best := {}
 	var best_score := -1.0
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
+	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
+	var claims_until: Dictionary = world.get("_pickup_claim_until") if "_pickup_claim_until" in world else {}
+	var now_ms := Time.get_ticks_msec()
 	for entry in world._dropped_items:
 		if not (entry is Dictionary):
 			continue
 		var id := str(entry.get("id", ""))
 		if id.is_empty() or depleted.has(id):
+			continue
+		# Pieza fichada por un compañero: elegir otra en vez de amontonarse
+		# todos sobre el mismo drop.
+		var cowner := int(claims.get(id, 0))
+		if cowner != 0 and cowner != int(b["bot_id"]) and int(claims_until.get(id, 0)) > now_ms:
 			continue
 		# No robar la carne que alguien acaba de tirar como cebo para un lobo
 		if id.begins_with("bot_tame_meat_"):
@@ -7945,6 +8080,34 @@ func _loot_entry_pos(entry: Dictionary) -> Vector3:
 		return Vector3(float(p[0]), float(p[1]), float(p[2]))
 	return Vector3.ZERO
 
+# Reclamo de botin: quien ficha una pieza la reserva (~30 s, la misma tabla
+# autoritativa que los nodos de recoleccion) para que sus compañeros repartan
+# el saqueo en vez de ir todos a por el mismo rifle.
+func _loot_commit_claim(b: Dictionary) -> void:
+	var entry: Dictionary = b.get("_s_loot", {})
+	var id := str(entry.get("id", ""))
+	if id == str(b.get("_loot_claim", "")):
+		return
+	_loot_clear(b)
+	if id.is_empty():
+		return
+	b["_s_loot"] = entry
+	b["_loot_claim"] = id
+	if world != null and "_pickup_claims" in world:
+		(world._pickup_claims as Dictionary)[id] = int(b["bot_id"])
+		if "_pickup_claim_until" in world:
+			(world._pickup_claim_until as Dictionary)[id] = Time.get_ticks_msec() + 30000
+
+func _loot_clear(b: Dictionary) -> void:
+	var prev := str(b.get("_loot_claim", ""))
+	if not prev.is_empty() and world != null and "_pickup_claims" in world:
+		if int((world._pickup_claims as Dictionary).get(prev, -1)) == int(b["bot_id"]):
+			(world._pickup_claims as Dictionary).erase(prev)
+			if "_pickup_claim_until" in world:
+				(world._pickup_claim_until as Dictionary).erase(prev)
+	b["_loot_claim"] = ""
+	b["_s_loot"] = {}
+
 func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	var id := str(entry.get("id", ""))
 	if id.is_empty() or world == null:
@@ -7958,7 +8121,7 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 				still_there = true
 				break
 	if not still_there or ("_depleted_action_ids" in world and world._depleted_action_ids.has(id)):
-		b["_s_loot"] = {}
+		_loot_clear(b)
 		return
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
@@ -7967,21 +8130,21 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	var enm := str(entry.get("name", ""))
 	var etp := str(entry.get("type", "resource"))
 	if inv.size() >= 60 and not _is_gear_item(enm, etp):
-		b["_s_loot"] = {}
+		_loot_clear(b)
 		return
 	var item_dict := _loot_entry_item_dict(entry)
 	if not _bot_try_add_inventory_item(b, inv, item_dict):
 		# Mochila llena de noche sin luz: por material de fuego critico suelta
 		# lo menos esencial — mejor un hueso en el suelo que una noche a oscuras.
 		if not _bot_can_drop_for_fire(b, inv, item_dict):
-			b["_s_loot"] = {}
+			_loot_clear(b)
 			return
 		var junk_i := _bot_least_essential_index(b, inv)
 		var junk: Dictionary = inv[junk_i]
 		inv.remove_at(junk_i)
 		_bot_drop_to_ground(b, junk)
 		if not _bot_try_add_inventory_item(b, inv, item_dict):
-			b["_s_loot"] = {}
+			_loot_clear(b)
 			return
 	proxy.set_meta("saved_inventory", inv)
 	_ai_note_loot(b, enm, etp)
@@ -7999,7 +8162,7 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.world_action_completed.rpc_id(pid, id, [], "", _loot_entry_pos(entry))
-	b["_s_loot"] = {}
+	_loot_clear(b)
 	b["sense_t"] = 0.0
 
 # Mismo coste que el refugio del jugador (ShelterPlacement): 11 palos —
@@ -13203,7 +13366,7 @@ func _bot_fell_bush_complete(b: Dictionary, st: Dictionary) -> void:
 				net.world_action_completed.rpc_id(pid, aid, spawns, "", pos)
 	# Los palos caen al suelo: forzar refresco inmediato de sentidos para que
 	# los recoja en el proximo tick antes de marcharse a otro arbusto.
-	b["_s_loot"] = {}
+	_loot_clear(b)
 	b["sense_t"] = 0.0
 
 # Recogida a mano de nodos "wood"/"stone": igual que el jugador, el material
@@ -13279,11 +13442,17 @@ func _find_fire_prep_loot(b: Dictionary, radius: float) -> Dictionary:
 	var best := {}
 	var best_d := radius
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
+	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
+	var claims_until: Dictionary = world.get("_pickup_claim_until") if "_pickup_claim_until" in world else {}
+	var now_ms := Time.get_ticks_msec()
 	for entry in world._dropped_items:
 		if not (entry is Dictionary):
 			continue
 		var id := str(entry.get("id", ""))
 		if id.is_empty() or depleted.has(id) or id.begins_with("bot_tame_meat_"):
+			continue
+		var cowner := int(claims.get(id, 0))
+		if cowner != 0 and cowner != int(b["bot_id"]) and int(claims_until.get(id, 0)) > now_ms:
 			continue
 		if "world_actions_by_id" in world and world.world_actions_by_id.has(id):
 			var wa = world.world_actions_by_id[id]
