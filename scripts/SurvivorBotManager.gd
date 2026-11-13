@@ -1504,7 +1504,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if not bool(b.get("_s_has_wolf", false)) and float(b.get("health", 100.0)) >= 55.0:
 		var wild_wolf := _sensed_node(b, "_s_tame_wolf")
 		if wild_wolf != null and proxy.global_position.distance_to(wild_wolf.global_position) >= 4.2:
-			if (float(b["tame_cooldown"]) <= 0.0 and _bot_has_raw_meat(proxy)) or float(b.get("_tame_wait_t", 0.0)) > 0.0:
+			# El lobo exige TAME_FEEDINGS comidas del mismo alimentador: solo se
+			# intenta con el cebo completo preparado, para no quedarse a mitad
+			# y perder la confianza ganada. _tame_wait_t solo continua una
+			# secuencia ya empezada (el cebo ya esta en el suelo).
+			if (float(b["tame_cooldown"]) <= 0.0 and _bot_tame_bait_count(proxy) >= WildlifeController.TAME_FEEDINGS) or float(b.get("_tame_wait_t", 0.0)) > 0.0:
 				b["_act"] = "tame"
 				_perform_wolf_taming_step(b, wild_wolf, delta)
 				return
@@ -2512,8 +2516,10 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			if str(it.get("type", "")) != "food" or nm == "Carne humana" or nm == "Pez crudo" \
 					or (nm.begins_with("Lata de ") and not nm.ends_with(" abierta")):
 				continue
-			# La carne cruda solo se come desesperado: un superviviente real la cocina
-			if (nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado") and not desperate:
+			# La carne cruda solo se come desesperado y sin poder cocinarla:
+			# un superviviente real la cocina (_bot_try_cook_meat), y durante
+			# la doma las piezas son cebo que no se toca.
+			if (nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado") and (not desperate or _bot_can_cook_raw_meat(proxy) or str(b.get("_act", "")) == "tame"):
 				continue
 			var use_v := float(it.get("use_value", 18.0))
 			var gain_h := use_v
@@ -8932,7 +8938,7 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 		return false
 	# Si aun no tiene lobo domesticado y no pasa hambre, reserva hasta 3 piezas
 	# de carne cruda como cebo para cuando se cruce con un lobo salvaje.
-	if not bool(b.get("_s_has_wolf", false)) and float(b.get("hunger", 100.0)) >= 52.0 and not _bot_has_skewered_meat(proxy) and _bot_raw_meat_count(proxy) <= 3:
+	if not bool(b.get("_s_has_wolf", false)) and float(b.get("hunger", 100.0)) >= 52.0 and not _bot_has_skewered_meat(proxy) and _bot_tame_bait_count(proxy) <= WildlifeController.TAME_FEEDINGS:
 		return false
 	var cur := proxy.global_position
 	var fire_pos := _nearest_lit_campfire_pos(cur, 12.0 if _is_world_night() and not _bot_has_item(proxy, "Antorcha") else 85.0)
@@ -10467,6 +10473,17 @@ func _bot_raw_meat_count(proxy: Node3D) -> int:
 	for it in proxy.get_meta("saved_inventory", []):
 		if it is Dictionary and str(it.get("name", "")).begins_with("Carne cruda"):
 			total += int(it.get("quantity", 1))
+	return total
+
+# Piezas utilizables como cebo de doma: las mismas que _first_raw_meat_name
+# (carne cruda y Pez crudo). La doma exige TAME_FEEDINGS comidas.
+func _bot_tame_bait_count(proxy: Node3D) -> int:
+	var total := 0
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary:
+			var nm := str(it.get("name", ""))
+			if nm.begins_with("Carne cruda") or nm == "Pez crudo":
+				total += int(it.get("quantity", 1))
 	return total
 
 func _bot_has_skewered_meat(proxy: Node3D) -> bool:
