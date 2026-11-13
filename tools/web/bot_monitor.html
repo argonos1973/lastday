@@ -989,22 +989,36 @@ function renderBots(data) {
   container.innerHTML = html;
 }
 
+let pollInFlight = false;
+let lastStatusText = null;
 async function pollStatus() {
+  if (document.hidden || pollInFlight) return;
+  pollInFlight = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch("./status.json?t=" + Date.now(), { cache: "no-store" });
+    const res = await fetch("./status.json?t=" + Date.now(), { cache: "no-store", signal: controller.signal });
     if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
+    const statusText = await res.text();
+    if (document.hidden || statusText === lastStatusText) return;
+    const data = JSON.parse(statusText);
     renderHeader(data);
     renderSummary(data);
     renderMap(data);
     renderChat(data);
     renderBots(data);
     restoreChatOpen();
+    lastStatusText = statusText;
   } catch (err) {
+    lastStatusText = null; // Next successful poll also clears an error message.
     document.getElementById("subStatus").textContent = "Esperando generación del primer snapshot en el servidor (" + err.message + ")...";
+  } finally {
+    clearTimeout(timeout);
+    pollInFlight = false;
   }
 }
 
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollStatus(); });
 pollStatus();
 setInterval(pollStatus, 2000);
 </script>
