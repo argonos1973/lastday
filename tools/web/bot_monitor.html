@@ -910,6 +910,21 @@ function renderBots(data) {
              <div class="meta-line">Motivo: "${esc(d.reason || "")}"</div>`
           : `<div class="meta-line">Operando con IA táctica local (esperando ventana de consulta)</div>`
         }
+        ${(() => {
+          const a = b.ai_stats || {};
+          const bits = [];
+          if ((a.qwen_ok|0) + (a.qwen_invalid|0) + (a.local_decisions|0) > 0)
+            bits.push(`qwen ${a.qwen_ok|0}✓/${a.qwen_invalid|0}✗ · local ${a.local_decisions|0}`);
+          if ((a.plans_completed|0) + (a.plans_failed|0) > 0)
+            bits.push(`planes ${a.plans_completed|0}✓/${a.plans_failed|0}✗`);
+          if ((a.latency_ms_last|0) > 0)
+            bits.push(`${a.latency_ms_last|0} ms`);
+          if ((a.blocked_recoveries|0) > 0)
+            bits.push(`bloqueos resueltos ${a.blocked_recoveries|0}`);
+          const tail = b.blocked ? ` · <span style="color:var(--danger)">⛔ bloqueado</span>` : "";
+          if (!bits.length && !b.blocked) return "";
+          return `<div class="meta-line" style="opacity:.85">🧠 ${bits.join(" · ")}${tail}</div>`;
+        })()}
       </div>
 
       <details class="sec" data-sec id="sec_${b.bot_id}_pers"><summary class="section-label">Personalidad Evolutiva (7 Rasgos)</summary>

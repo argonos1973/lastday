@@ -201,7 +201,7 @@ const AI_MEMORY_MAX_EVENTS := 28
 const AI_OBSERVE_RADIUS := 72.0
 const AI_SHARE_RADIUS := 14.0
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words."
+const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
@@ -2330,6 +2330,9 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	var d0: Dictionary = b.get("ai_directive", {})
 	if not d0.is_empty() and str(d0.get("mode", "")) == "pos":
 		b["ai_directive"] = {}
+		# La ruta al objetivo no existe: fallo de NAVEGACION, no de recursos.
+		record_strategy_outcome(int(b.get("bot_id", 0)), str(d0.get("action", "")), false, 0.16, "nav_blocked")
+		_ai_stat_inc(b, "blocked_recoveries")
 		_ai_enqueue_request(int(b.get("bot_id", 0)), 4, "plan_blocked", true)
 	if str(b.get("_act", "")) == "drink" and b.get("drink_at", Vector3.INF) != Vector3.INF and Vector2(goal.x - b["drink_at"].x, goal.z - b["drink_at"].z).length() < 6.0:
 		b["drink_at"] = Vector3.INF
@@ -11095,6 +11098,8 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["deaths"] = 0
 	if not mem.has("stats") or not (mem["stats"] is Dictionary):
 		mem["stats"] = {"alive_total_sec": 0.0, "kills_prey": 0, "kills_predator": 0, "animals_gutted": 0, "kills_bot": 0, "kills_player": 0}
+	if not mem.has("ai_stats") or not (mem["ai_stats"] is Dictionary):
+		mem["ai_stats"] = {"qwen_ok": 0, "qwen_invalid": 0, "http_errors": 0, "local_decisions": 0, "plans_completed": 0, "plans_failed": 0, "steps_done": 0, "steps_failed": 0, "blocked_recoveries": 0, "latency_ms_last": 0, "latency_ms_avg": 0, "fallback_reasons": {}}
 	if not mem.has("last_death_pos"):
 		mem["last_death_pos"] = Vector3.INF
 	if not mem.has("last_death_cause"):
@@ -11593,7 +11598,7 @@ func _record_milestone(bot_id: int, key: String) -> void:
 		ms[key] = int(Time.get_unix_time_from_system())
 		mem["milestones"] = ms
 
-func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weight_delta: float = 0.12) -> void:
+func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weight_delta: float = 0.12, cause: String = "") -> void:
 	if strategy.is_empty():
 		return
 	var mem := _ensure_bot_memory(bot_id)
@@ -11603,12 +11608,46 @@ func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weigh
 	if success:
 		st["success"] = int(st.get("success", 0)) + 1
 		st["preference"] = snappedf(clampf(float(st.get("preference", 1.0)) + step, 0.15, 2.0), 0.01)
+		st.erase("last_fail")
 	else:
 		st["fail"] = int(st.get("fail", 0)) + 1
 		st["preference"] = snappedf(clampf(float(st.get("preference", 1.0)) - step * 1.25, 0.15, 2.0), 0.01)
+		# Por que fallo: nav_blocked / precondition / stuck_timeout — asi el bot
+		# distingue "me falto recurso" de "no hay ruta" de "el plan era imposible".
+		if not cause.is_empty():
+			st["last_fail"] = cause
 	st["last"] = int(Time.get_unix_time_from_system())
 	strats[strategy] = st
 	mem["strategies"] = strats
+
+# Contadores de diagnostico por bot (monitor: que decide Qwen y que Godot, cuantos
+# planes se cumplen/fallan, latencias de la IA remota, razones de fallback).
+func _ai_stat_inc(b: Dictionary, key: String, n: int = 1) -> void:
+	var mem: Dictionary = b.get("_mem", {})
+	if mem.is_empty():
+		return
+	var st: Dictionary = mem.get("ai_stats", {})
+	st[key] = int(st.get(key, 0)) + n
+	mem["ai_stats"] = st
+
+func _ai_stat_set(b: Dictionary, key: String, v: Variant) -> void:
+	var mem: Dictionary = b.get("_mem", {})
+	if mem.is_empty():
+		return
+	var st: Dictionary = mem.get("ai_stats", {})
+	st[key] = v
+	mem["ai_stats"] = st
+
+func _ai_stat_reason(b: Dictionary, reason: String) -> void:
+	var mem: Dictionary = b.get("_mem", {})
+	if mem.is_empty():
+		return
+	var st: Dictionary = mem.get("ai_stats", {})
+	var fr: Dictionary = st.get("fallback_reasons", {})
+	var key := reason.substr(0, 40)
+	fr[key] = int(fr.get(key, 0)) + 1
+	st["fallback_reasons"] = fr
+	mem["ai_stats"] = st
 
 # Motor conductual local diferenciado por personalidad, memoria y relaciones:
 # ante una situación idéntica, Elena (supervivencia/curiosidad), Carlos
@@ -11775,6 +11814,26 @@ func _ai_situation_signature(b: Dictionary) -> String:
 	var zone := _poi_kind_near(pos)
 	return "%d|%d|%d|%d|%d|%s|%s" % [hp_band, h_band, t_band, threat, 1 if _is_world_night() else 0, str(b.get("held_item", "")), zone]
 
+func _ai_review_local_goal(bot_id: int, now: int) -> void:
+	if not bots.has(bot_id) or now < int(_ai_next_at.get(bot_id, 0)):
+		return
+	_ai_next_at[bot_id] = now + 10000
+	var b: Dictionary = bots[bot_id]
+	if not _ai_bot_eligible(b):
+		return
+	var d := _ai_active_directive(b)
+	var reason := ""
+	if d.is_empty():
+		reason = "no_api_key"
+	elif _ai_directive_completed(b, d):
+		if _ai_advance_plan(bot_id, b, d):
+			return
+		reason = "local_plan_done"
+	elif now > int(d.get("until", 0)) + int(AI_PLAN_STALE_GRACE_SEC * 1000.0):
+		reason = "local_plan_stuck"
+	if not reason.is_empty():
+		_ai_apply_local_fallback_decision(bot_id, reason)
+
 func _ai_ensure_http() -> void:
 	if _ai_http != null and is_instance_valid(_ai_http):
 		return
@@ -11790,11 +11849,10 @@ func _ai_tick(delta: float) -> void:
 	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
 	if key.is_empty():
 		_ai_conn_status = "no_api_key (local_brain)"
-		# Sin clave de Groq, los bots actualizan periódicamente su directiva con su cerebro local
+		# Review local objectives at bounded intervals, including completed/stuck
+		# directives. Offline operation must not pin a goal forever.
 		for bid in bots.keys():
-			var b_loc: Dictionary = bots[bid]
-			if _ai_bot_eligible(b_loc) and _ai_active_directive(b_loc).is_empty():
-				_ai_apply_local_fallback_decision(int(bid), "no_api_key")
+			_ai_review_local_goal(int(bid), now)
 		return
 	var day := int(Time.get_unix_time_from_system() / 86400.0)
 	if day != _ai_day_key:
@@ -11858,10 +11916,29 @@ func _ai_sig_poll(now: int) -> void:
 	var d := _ai_active_directive(b)
 	if not d.is_empty():
 		if _ai_directive_completed(b, d):
-			b["ai_directive"] = {}
+			if _ai_advance_plan(bot_id, b, d):
+				return
+			_ai_apply_local_fallback_decision(bot_id, "plan_done")
 			_ai_enqueue_request(bot_id, 4, "plan_done", true)
 			return
 		if now > int(d.get("until", 0)) + int(AI_PLAN_STALE_GRACE_SEC * 1000.0):
+			# El MISMO objetivo que vuelve a atascarse tras revalidar (firma
+			# goal|action identica) suma strikes: al segundo se declara
+			# imposible — se aprende, se abandona y se decide en local.
+			var stuck_key := str(d.get("goal", "")) + "|" + str(d.get("action", ""))
+			if str(b.get("_stuck_sig", "")) != stuck_key:
+				b["_stuck_sig"] = stuck_key
+				b["_stuck_n"] = 0
+			b["_stuck_n"] = int(b.get("_stuck_n", 0)) + 1
+			if int(b["_stuck_n"]) >= 2:
+				b["_stuck_n"] = 0
+				b["_stuck_sig"] = ""
+				b["ai_directive"] = {}
+				record_strategy_outcome(bot_id, str(d.get("action", "")), false, 0.15, "stuck_timeout")
+				_ai_stat_inc(b, "plans_failed")
+				_ai_stat_inc(b, "blocked_recoveries")
+				_ai_apply_local_fallback_decision(bot_id, "plan_impossible")
+				return
 			_ai_enqueue_request(bot_id, 3, "plan_stuck", true)
 			return
 	elif _ai_situation_signature(b) != str(_ai_last_sig.get(bot_id, "")):
@@ -11935,7 +12012,7 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 		"temperature": 0.4,
 		# gpt-oss razona antes de responder: 160 solo alcanza para la cadena
 		# de pensamiento y el JSON salia vacio (json_validate_failed).
-		"max_tokens": 600 if "gpt-oss" in model else 160,
+		"max_tokens": 600 if "gpt-oss" in model else 360,
 		"response_format": {"type": "json_object"},
 		"messages": [
 			{"role": "system", "content": AI_SYSTEM_PROMPT},
@@ -11997,11 +12074,14 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"items": (proxy.get_meta("saved_inventory", []) as Array).size(),
 		"sticks": _bot_palo_supply(proxy),
 		"has_shelter": not str(b.get("shelter_id", "")).is_empty(),
+		"has_camp": b.get("camp_spot", Vector3.INF) != Vector3.INF,
 		"known_locations": known_list,
 		"relationships": rel_list,
 		"recent_events": recent_events,
 		"allowed_actions": AI_ALLOWED_ACTIONS,
 		"last_plan": cur,
+		"pending_steps": mem.get("pending_goals", []),
+		"last_plan_result": str(b.get("_plan_last_result", "")),
 		"memory": _ai_memory_summary(mem),
 	}
 	return JSON.stringify(state)
@@ -12119,6 +12199,12 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 	_ai_pending_bot = 0
 	if bot_id == 0 or not bots.has(bot_id):
 		return
+	var lb: Dictionary = bots[bot_id]
+	# Latencia real de la consulta (incluye errores): diagnostico del monitor.
+	var lat := Time.get_ticks_msec() - int(_ai_last_call_msec.get(bot_id, 0))
+	_ai_stat_set(lb, "latency_ms_last", lat)
+	var prev_avg := int((lb.get("_mem", {}) as Dictionary).get("ai_stats", {}).get("latency_ms_avg", 0))
+	_ai_stat_set(lb, "latency_ms_avg", lat if prev_avg <= 0 else int(prev_avg * 0.8 + lat * 0.2))
 	if response_code == 429:
 		_ai_register_429(_headers, false, body.get_string_from_utf8())
 		_ai_apply_local_fallback_decision(bot_id, "http_429_backoff")
@@ -12128,6 +12214,7 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		var snippet := body.get_string_from_utf8().strip_edges().substr(0, 160)
 		if not snippet.is_empty():
 			print("[AI-ADV] HTTP %d: %s" % [response_code, snippet])
+		_ai_stat_inc(lb, "http_errors")
 		_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
 		return
 	_ai_backoff_sec = 60.0
@@ -12135,6 +12222,7 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 	_ai_note_rate_headers(_headers)
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not (parsed is Dictionary):
+		_ai_stat_inc(lb, "qwen_invalid")
 		_ai_apply_local_fallback_decision(bot_id, "invalid_json")
 		return
 	var usage = parsed.get("usage", {})
@@ -12151,16 +12239,28 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		_ai_count_model_tokens(_ai_pending_model if not _ai_pending_model.is_empty() else _ai_decision_model(), 220)
 	var choices = parsed.get("choices", [])
 	if not (choices is Array) or choices.is_empty():
+		_ai_stat_inc(lb, "qwen_invalid")
+		_ai_apply_local_fallback_decision(bot_id, "missing_choices")
 		return
 	var ch = choices[0]
 	if not (ch is Dictionary):
+		_ai_stat_inc(lb, "qwen_invalid")
+		_ai_apply_local_fallback_decision(bot_id, "invalid_choice")
 		return
 	var msg = ch.get("message", {})
 	if not (msg is Dictionary):
+		_ai_stat_inc(lb, "qwen_invalid")
+		_ai_apply_local_fallback_decision(bot_id, "invalid_message")
 		return
 	var content = msg.get("content", "")
-	if content is String and not (content as String).is_empty():
-		_ai_apply_decision(bot_id, content)
+	if not (content is String) or (content as String).strip_edges().is_empty():
+		_ai_stat_inc(lb, "qwen_invalid")
+		_ai_apply_local_fallback_decision(bot_id, "empty_content")
+	elif not _ai_apply_decision(bot_id, content):
+		_ai_stat_inc(lb, "qwen_invalid")
+		_ai_apply_local_fallback_decision(bot_id, "invalid_or_impossible_decision")
+	else:
+		_ai_stat_inc(lb, "qwen_ok")
 
 # Valida la respuesta del modelo contra el catálogo cerrado y contra las
 # ubicaciones conocidas del bot (anti-omnisciencia). Devuelve {} si no es válida.
@@ -12175,6 +12275,15 @@ func _ai_parse_decision(text: String, b: Dictionary = {}) -> Dictionary:
 		return {}
 	var parsed = JSON.parse_string(t)
 	if not (parsed is Dictionary):
+		return {}
+	# Reject malformed field types before conversion (int(Dictionary) errors).
+	for field in ["action", "target", "poi_kind", "goal", "reason"]:
+		if parsed.has(field) and not (parsed[field] is String):
+			return {}
+	var priority_value = parsed.get("priority", 3)
+	if not (priority_value is int or priority_value is float):
+		return {}
+	if not is_finite(float(priority_value)):
 		return {}
 	var action := str(parsed.get("action", "")).to_lower().strip_edges()
 	if not AI_ALLOWED_ACTIONS.has(action):
@@ -12238,13 +12347,63 @@ func _ai_parse_decision(text: String, b: Dictionary = {}) -> Dictionary:
 			return {}
 	return out
 
-func _ai_apply_decision(bot_id: int, content: String) -> void:
+# Legacy single decisions remain valid. Validate the whole bounded plan before
+# replacing any active state; never partially accept an invented action/location.
+func _ai_parse_plan(content: String, b: Dictionary) -> Array:
+	var text := content.strip_edges()
+	if text.begins_with("```"):
+		var first_nl := text.find("\n")
+		var last_fence := text.rfind("```")
+		if first_nl > 0 and last_fence > first_nl:
+			text = text.substr(first_nl + 1, last_fence - first_nl - 1).strip_edges()
+	var raw = JSON.parse_string(text)
+	if not (raw is Dictionary):
+		return []
+	var steps = raw.get("steps", [raw])
+	if not (steps is Array) or steps.is_empty() or steps.size() > 4:
+		return []
+	for step in steps:
+		if not (step is Dictionary) or step.has("steps") or _ai_parse_decision(JSON.stringify(step), b).is_empty():
+			return []
+	return steps.duplicate(true)
+
+# Run the next subgoal locally, with fresh preconditions (home/ally can vanish).
+# False means the plan ended or became impossible: the caller chooses a new plan.
+func _ai_advance_plan(bot_id: int, b: Dictionary, d: Dictionary) -> bool:
+	var remaining: Array = d.get("_remaining_steps", [])
+	var source := str(d.get("source", "qwen"))
+	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
+	b["ai_directive"] = {}
+	mem["pending_goals"] = []
+	if remaining.is_empty():
+		b["_plan_last_result"] = "plan_completed"
+		# El plan se cumplio: la estrategia que lo motivo gana preferencia.
+		record_strategy_outcome(bot_id, str(d.get("action", "")), true, 0.08, "plan_completed")
+		_ai_stat_inc(b, "plans_completed")
+		return false
+	if not _ai_apply_decision(bot_id, JSON.stringify({"steps": remaining})):
+		b["_plan_last_result"] = "precondition_failed"
+		# El siguiente paso ya no es ejecutable (destino aliado/hogar perdido):
+		# fallo de requisitos, no de navegacion.
+		var fail_act := str((remaining[0] as Dictionary).get("action", d.get("action", ""))) if remaining[0] is Dictionary else str(d.get("action", ""))
+		record_strategy_outcome(bot_id, fail_act, false, 0.14, "precondition")
+		_ai_stat_inc(b, "steps_failed")
+		_ai_stat_inc(b, "plans_failed")
+		return false
+	b["ai_directive"]["source"] = source
+	b["_plan_last_result"] = "step_completed"
+	return true
+
+func _ai_apply_decision(bot_id: int, content: String) -> bool:
 	if not bots.has(bot_id):
-		return
+		return false
 	var b: Dictionary = bots[bot_id]
-	var d := _ai_parse_decision(content, b)
+	var steps := _ai_parse_plan(content, b)
+	if steps.is_empty():
+		return false
+	var d := _ai_parse_decision(JSON.stringify(steps[0]), b)
 	if d.is_empty():
-		return
+		return false
 	if str(d.get("mode", "")) == "pos" and not d.has("pos"):
 		var home: Vector3 = b.get("shelter_pos", Vector3.INF)
 		if str(d.get("action", "")) in ["rest", "fortify_camp"]:
@@ -12254,7 +12413,7 @@ func _ai_apply_decision(bot_id: int, content: String) -> void:
 		elif home == Vector3.INF:
 			home = b.get("camp_spot", Vector3.INF)
 		if home == Vector3.INF:
-			return
+			return false
 		d["pos"] = home
 	elif str(d.get("mode", "")) == "ally":
 		var ally_pos := _nearest_friendly_bot_pos(bot_id)
@@ -12264,12 +12423,16 @@ func _ai_apply_decision(bot_id: int, content: String) -> void:
 		else:
 			d["mode"] = "poi"
 			d["only_kinds"] = ["house"]
+	d["_remaining_steps"] = steps.slice(1)
 	d["until"] = Time.get_ticks_msec() + AI_DIRECTIVE_TTL_MSEC
 	b["ai_directive"] = d
 	b["current_goal"] = str(d.get("goal", d.get("action", "survive")))
 	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
-	mem["pending_goals"] = [{"goal": b["current_goal"], "action": str(d.get("action", "")), "target": str(d.get("target", "")), "priority": int(d.get("priority", 3))}]
+	mem["pending_goals"] = steps.duplicate(true)
+	_ai_stat_inc(b, "steps_done")
 	print("[AI-ADV] %s: %s -> %s (p=%d, %s)" % [str(b.get("name", bot_id)), str(d.get("goal", "?")), str(d.get("action", "?")), int(d.get("priority", 3)), str(d.get("reason", ""))])
+
+	return true
 
 func _ai_apply_local_fallback_decision(bot_id: int, reason: String = "local_fallback") -> Dictionary:
 	if not bots.has(bot_id):
@@ -12277,10 +12440,19 @@ func _ai_apply_local_fallback_decision(bot_id: int, reason: String = "local_fall
 	var b: Dictionary = bots[bot_id]
 	var local_d := decide_situational_action(b)
 	local_d["reason"] = "%s (%s)" % [str(local_d.get("reason", "local")), reason]
-	var json_str := JSON.stringify(local_d)
-	_ai_apply_decision(bot_id, json_str)
+	var local_steps: Array = [local_d]
+	# A supply expedition has a return leg even without a remote advisor.
+	if str(local_d.get("action", "")) in ["forage", "scavenge", "hunt"] and (b.get("shelter_pos", Vector3.INF) != Vector3.INF or b.get("camp_spot", Vector3.INF) != Vector3.INF):
+		local_steps.append({"action": "return_home", "goal": "return_after_supplies", "reason": "supplies_trip_complete"})
+	var json_str := JSON.stringify({"steps": local_steps})
+	if not _ai_apply_decision(bot_id, json_str):
+		# A local rest/home proposal may also lack a usable destination.
+		# Replace the rejected goal without recursive fallback or remote work.
+		_ai_apply_decision(bot_id, JSON.stringify({"action": "explore", "target": "wild", "reason": "local_unavailable: " + reason}))
 	if b.get("ai_directive") is Dictionary:
 		b["ai_directive"]["source"] = "local_fallback"
+	_ai_stat_inc(b, "local_decisions")
+	_ai_stat_reason(b, reason)
 	return b.get("ai_directive", {})
 
 func _nearest_friendly_bot_pos(bot_id: int) -> Vector3:
@@ -12369,7 +12541,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		_restore_relationship_clocks(mem.get("relationships", {}), parsed, Time.get_ticks_msec(), Time.get_unix_time_from_system())
@@ -12449,7 +12621,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
@@ -12619,6 +12791,9 @@ func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
 		"death_lessons": (mem.get("death_lessons", {}) as Dictionary).duplicate(true),
 		"adaptations": _bot_death_adaptations(mem),
 		"pending_goals": (mem.get("pending_goals", []) as Array).duplicate(true),
+		"last_plan_result": str(b.get("_plan_last_result", "")),
+		"ai_stats": (mem.get("ai_stats", {}) as Dictionary).duplicate(true),
+		"blocked": int(b.get("stuck_count", 0)) > 0 or not (b.get("_unreachable", []) as Array).is_empty(),
 		"groq_stats": {
 			"status": _ai_conn_status,
 			"calls_day": _ai_calls_day,

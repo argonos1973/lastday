@@ -1800,9 +1800,10 @@ func run() -> void:
 	mgr._ai_queue.clear()
 	mgr._ai_rr = ids_s.find(901) - 1
 	mgr._ai_sig_poll(now_ms)
-	check((elena["ai_directive"] as Dictionary).is_empty() and mgr._ai_queue.size() == 1 \
+	check(str((elena["ai_directive"] as Dictionary).get("source", "")) == "local_fallback" \
+			and mgr._ai_queue.size() == 1 \
 			and str((mgr._ai_queue[0] as Dictionary).get("reason", "")) == "plan_done",
-		"Asesor: el sondeo cierra el plan cumplido y encola el siguiente")
+		"Asesor: el sondeo cierra el plan cumplido, da un objetivo local inmediato y encola el siguiente")
 	mgr._ai_queue.clear()
 	elena["ai_directive"] = {"action": "avoid_zone", "mode": "avoid", "avoid_kinds": ["city"], \
 		"until": now_ms - int(mgr.AI_PLAN_STALE_GRACE_SEC * 1000.0) - 1000}
@@ -2366,6 +2367,88 @@ func run() -> void:
 	check(not (elena.get("ai_directive", {}) as Dictionary).is_empty() and str((elena["ai_directive"] as Dictionary).get("source", "")) == "local_fallback",
 		"Aceptación 4b: Cuando Groq falla o devuelve 429, el bot aplica automáticamente decisión local de respaldo (%s)" % str((elena.get("ai_directive", {}) as Dictionary).get("action", "")))
 	mgr._ai_backoff_until_msec = 0
+
+	# Every unusable successful HTTP envelope must install an immediate local decision.
+	var old_shelter = elena.get("shelter_pos", Vector3.INF)
+	var old_camp = elena.get("camp_spot", Vector3.INF)
+	elena["shelter_pos"] = Vector3.INF
+	elena["camp_spot"] = Vector3.INF
+	var bad_responses: Array = [
+		{}, {"choices": []}, {"choices": [null]},
+		{"choices": [{"message": null}]},
+		{"choices": [{"message": {"content": null}}]},
+		{"choices": [{"message": {"content": "   "}}]},
+		{"choices": [{"message": {"content": "not JSON"}}]},
+		{"choices": [{"message": {"content": '{"action":"teleport"}'}}]},
+		{"choices": [{"message": {"content": '{"action":"explore","priority":{}}'}}]},
+		{"choices": [{"message": {"content": '{"action":["explore"]}'}}]},
+		{"choices": [{"message": {"content": '{"action":"return_home"}'}}]},
+		{"choices": [{"message": {"content": '{"action":"explore","target":"house:9999:9999"}'}}]},
+	]
+	for bad_response in bad_responses:
+		elena["ai_directive"] = {"action": "return_home", "source": "qwen", "pos": Vector3.INF}
+		mgr._ai_pending_bot = 901
+		mgr._ai_on_response(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), JSON.stringify(bad_response).to_utf8_buffer())
+		var recovered: Dictionary = elena.get("ai_directive", {})
+		check(not recovered.is_empty() and recovered.get("source") == "local_fallback"
+			and recovered.get("pos", Vector3.ZERO) != Vector3.INF,
+			"Invalid AI response replaces impossible directive locally: %s" % JSON.stringify(bad_response))
+	elena["shelter_pos"] = old_shelter
+	elena["camp_spot"] = old_camp
+
+	# Offline review must recover expired directives without querying the provider.
+	var review_time := Time.get_ticks_msec()
+	mgr._ai_next_at[901] = 0
+	elena["ai_directive"] = {"action": "explore", "source": "qwen", "until": -99999999}
+	mgr._ai_review_local_goal(901, review_time)
+	check(str(elena.ai_directive.get("reason", "")).contains("local_plan_stuck"),
+		"Offline watchdog replaces a stuck strategic directive")
+	var first_review: Dictionary = elena.ai_directive.duplicate(true)
+	mgr._ai_review_local_goal(901, review_time + 1)
+	check(elena.ai_directive == first_review, "Offline review does not replan every frame")
+
+	# Compound strategic plans: atomic validation and local progression.
+	var plan_shelter = elena.get("shelter_pos", Vector3.INF)
+	var plan_camp = elena.get("camp_spot", Vector3.INF)
+	elena["shelter_pos"] = Vector3(80, 0, 80)
+	elena["camp_spot"] = Vector3.INF
+	var plan_json := JSON.stringify({"steps": [
+		{"action": "forage", "goal": "collect_supplies"},
+		{"action": "return_home", "goal": "return_with_supplies"}]})
+	check(mgr._ai_apply_decision(901, plan_json), "Compound plan accepts supported steps")
+	check(elena.ai_directive.action == "forage" and elena.ai_directive._remaining_steps.size() == 1,
+		"Only the first step executes initially")
+	check(elena._mem.pending_goals.size() == 2, "Memory exposes the full pending sequence")
+	var plan_hunger := float(elena.hunger)
+	elena.hunger = 100.0
+	mgr._ai_next_at[901] = 0
+	var remote_calls_before := mgr._ai_calls_total
+	mgr._ai_review_local_goal(901, Time.get_ticks_msec())
+	check(elena.ai_directive.action == "return_home" and mgr._ai_calls_total == remote_calls_before,
+		"Offline completion advances without another remote request")
+	elena.hunger = plan_hunger
+	mgr._ai_apply_decision(901, plan_json)
+	var plan_before: Dictionary = elena.ai_directive.duplicate(true)
+	check(not mgr._ai_apply_decision(901, '{"steps":[{"action":"forage"},{"action":"teleport"}]}')
+		and elena.ai_directive == plan_before, "Invalid later step cannot partially overwrite a plan")
+	check(not mgr._ai_apply_decision(901, '{"steps":[]}'), "Empty compound plan rejected")
+	var too_many: Array = []
+	for step_idx in range(5):
+		too_many.append({"action": "forage"})
+	check(not mgr._ai_apply_decision(901, JSON.stringify({"steps": too_many})), "Plan work bounded to four steps")
+	check(mgr._ai_advance_plan(901, elena, elena.ai_directive)
+		and elena.ai_directive.action == "return_home" and elena.ai_directive.pos == Vector3(80, 0, 80),
+		"Next step resolves current home locally")
+	check(elena._mem.pending_goals.size() == 1, "Completed step removed from pending memory")
+	check(not mgr._ai_advance_plan(901, elena, elena.ai_directive)
+		and elena._mem.pending_goals.is_empty(), "Finishing plan clears pending memory")
+	mgr._ai_apply_decision(901, plan_json)
+	elena["shelter_pos"] = Vector3.INF
+	check(not mgr._ai_advance_plan(901, elena, elena.ai_directive)
+		and elena.ai_directive.is_empty() and elena._plan_last_result == "precondition_failed",
+		"Disappeared home cancels impossible continuation")
+	elena["shelter_pos"] = plan_shelter
+	elena["camp_spot"] = plan_camp
 
 	# Aceptación 5: Ningún bot conoce experiencias privadas de otro sin comunicación
 	mgr.observe_location(901, "secret_bunker:410:-390", "military", Vector3(410.0, 0.0, -390.0), "observed", true)
