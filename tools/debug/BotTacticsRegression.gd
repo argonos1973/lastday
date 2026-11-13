@@ -139,6 +139,25 @@ func run():
 	var anchor8: Vector3 = b8["_lost_foe_pos"]
 	check(anchor8 != Vector3.INF and (anchor8 - Vector3(90, 0, 90)).length() > 40.0,
 		"the search anchors near the heard spot, never the new real position")
+
+	# El escaneo de sentidos NO refresca la pista auditiva con la posicion
+	# viva: sin LOS, _ai_note_foe_scan no toca _foe_mem aunque el enemigo se
+	# haya movido; con LOS si actualiza a la posicion exacta vista.
+	var b9 := b2.duplicate(true)
+	(b9["proxy"] as Node3D).position = Vector3.ZERO
+	manager._ai_note_foe_intel(b9, foe, Vector3(50, 0, 50), "heard")
+	var heard_pos9: Vector3 = (b9["_foe_mem"] as Dictionary).get("pos")
+	foe.position = Vector3(70, 0, 0) # se mueve en silencio, sin LOS (x>=3)
+	manager.cover = true
+	manager._ai_note_foe_scan(b9, foe)
+	check((b9["_foe_mem"] as Dictionary).get("pos") == heard_pos9
+			and str((b9["_foe_mem"] as Dictionary).get("src")) == "heard",
+		"hidden foe's live position never overwrites the heard clue")
+	manager.cover = false # LOS libre: la vista si fija la posicion exacta
+	manager._ai_note_foe_scan(b9, foe)
+	check(str((b9["_foe_mem"] as Dictionary).get("src")) == "seen"
+			and (b9["_foe_mem"] as Dictionary).get("pos") == Vector3(70, 0, 0),
+		"direct sight updates the clue to the exact live position")
 	world_stub.free()
 	proxy.free()
 	foe.free()

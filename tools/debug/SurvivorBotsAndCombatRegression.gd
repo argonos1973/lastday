@@ -4857,6 +4857,16 @@ func run() -> void:
 	for s_key in ["_s_loot", "_s_prey", "_s_predator", "_s_foe", "_s_corpse",
 			"_s_tame_wolf", "_salvage", "_s_raid_shelter", "_steal_target"]:
 		b_log[s_key] = {}
+	# Tampoco una busqueda de enemigo ni un aggro heredado: la busqueda por
+	# sectores dura lo que dura y se comeria el presupuesto del escenario.
+	b_log["aggro_target"] = null
+	b_log["aggro_timer"] = 0.0
+	b_log["_lost_foe_until_msec"] = 0
+	b_log["_lost_foe_pos"] = Vector3.INF
+	b_log["_lost_sector"] = Vector3.INF
+	b_log["_lost_sectors"] = 0
+	b_log["ai_directive"] = {}
+	b_log["current_goal"] = "survival_patrol"
 	p_log.set_meta("saved_inventory", [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
 		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 6},

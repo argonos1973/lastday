@@ -764,12 +764,16 @@ function renderBots(data) {
         </tr>`).join("") + `</tbody></table>`
       : `<div class="empty-note">Sin interacciones registradas con jugadores aún</div>`;
 
+    const actStrats = strats.filter(([sk]) => !sk.startsWith("plan:"));
+    const planStrats = strats.filter(([sk]) => sk.startsWith("plan:"));
+    const stratPill = ([sk, sv], si) => {
+      const age = sv.last ? timeAgo(Number(sv.last)) : "";
+      const hot = si === 0 && sv.last ? `<span class="badge ok" style="font-size:9px">activa ${esc(age)}</span>` : (sv.last ? ` <span style="color:var(--muted);font-size:10px">${esc(age)}</span>` : "");
+      return `<span class="item-tag"><b>${esc(sk.replace(/^plan:/, "plan·"))}</b>: ×${Number(sv.preference || 1).toFixed(2)} (${sv.success || 0}✓/${sv.fail || 0}✗)${hot}</span>`;
+    };
     let stratHtml = strats.length
-      ? `<div class="pill-list">` + strats.map(([sk, sv], si) => {
-          const age = sv.last ? timeAgo(Number(sv.last)) : "";
-          const hot = si === 0 && sv.last ? `<span class="badge ok" style="font-size:9px">activa ${esc(age)}</span>` : (sv.last ? ` <span style="color:var(--muted);font-size:10px">${esc(age)}</span>` : "");
-          return `<span class="item-tag"><b>${esc(sk)}</b>: ×${Number(sv.preference || 1).toFixed(2)} (${sv.success || 0}✓/${sv.fail || 0}✗)${hot}</span>`;
-        }).join("") + `</div>`
+      ? (actStrats.length ? `<div class="empty-note" style="margin:2px 0">Acciones</div><div class="pill-list">` + actStrats.map(stratPill).join("") + `</div>` : "")
+        + (planStrats.length ? `<div class="empty-note" style="margin:4px 0 2px">Planes completos</div><div class="pill-list">` + planStrats.map(stratPill).join("") + `</div>` : "")
       : `<div class="empty-note">Aprendiendo estrategias en curso...</div>`;
 
     const MILESTONE_LABELS = {

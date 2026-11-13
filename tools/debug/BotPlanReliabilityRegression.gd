@@ -494,9 +494,10 @@ func run() -> void:
 	mgr._ai_apply_decision(902, JSON.stringify({"steps": [{"action": "explore", "target": "wild"}]}))
 	mgr._ai_advance_plan(902, carlos, carlos["ai_directive"])
 	var suc_e: int = int((cmem.get("strategies", {}).get("explore", {}) as Dictionary).get("success", 0))
-	check(suc_e == 1,
-		"Plan de un paso: 1 exito de estrategia, no dos (=%d)" % suc_e)
-	# Plan de dos pasos: raiz y ultimo paso son estrategias distintas, 1 exito cada una.
+	var suc_pe: int = int((cmem.get("strategies", {}).get("plan:explore", {}) as Dictionary).get("success", 0))
+	check(suc_e == 1 and suc_pe == 1,
+		"Plan de un paso: 1 exito de accion + 1 de plan en namespaces distintos (=%d/%d)" % [suc_e, suc_pe])
+	# Plan de dos pasos: cada accion registra su paso y el global va a plan:<raiz>.
 	cmem["strategies"] = {}
 	carlos["ai_directive"] = {}
 	carlos["shelter_pos"] = Vector3(600.0, 0.4, 600.0)
@@ -507,9 +508,13 @@ func run() -> void:
 	mgr._ai_advance_plan(902, carlos, d_two) # completa paso 1 -> aplica paso 2
 	mgr._ai_advance_plan(902, carlos, carlos["ai_directive"]) # completa paso 2 -> plan
 	var strats_two: Dictionary = cmem.get("strategies", {})
-	check(int((strats_two.get("explore", {}) as Dictionary).get("success", 0)) == 2
-			and int((strats_two.get("return_home", {}) as Dictionary).get("success", 0)) == 1,
-		"Plan de dos pasos: paso+raiz en 'explore' (2), cierre en 'return_home' (1)")
+	check(int((strats_two.get("explore", {}) as Dictionary).get("success", 0)) == 1
+			and int((strats_two.get("return_home", {}) as Dictionary).get("success", 0)) == 1
+			and int((strats_two.get("plan:explore", {}) as Dictionary).get("success", 0)) == 1,
+		"Plan de dos pasos: 2 resultados de accion + 1 global de plan (explore=%d, return_home=%d, plan:explore=%d)"
+		% [int((strats_two.get("explore", {}) as Dictionary).get("success", 0)),
+			int((strats_two.get("return_home", {}) as Dictionary).get("success", 0)),
+			int((strats_two.get("plan:explore", {}) as Dictionary).get("success", 0))])
 
 	# --- 22) Los fracasos y vetos sobreviven al reinicio (memoria persistida) ---
 	mgr._ai_note_failed_goal(carlos, {"action": "return_home", "goal": "back", "pos": Vector3(900.0, 0.4, 900.0)}, "nav_blocked")
@@ -582,6 +587,92 @@ func run() -> void:
 	check(ev_b > ev_a, "Alejarse de la zona vetada sube la evidencia de progreso")
 	mgr._poi_cache = poi_save
 	mgr._poi_cache_built = built_save
+
+	# === CICLO 3: destino unico, pista honesta, namespaces, contexto a Qwen ===
+
+	# --- 24) El paso fija UN destino: plan, navegacion, visita y veto coinciden ---
+	var built_save2: bool = mgr._poi_cache_built
+	var poi_save2: Array = mgr._poi_cache
+	mgr._poi_cache = [
+		{"pos": Vector3(120.0, 0.4, 0.0), "kind": "city"},
+		{"pos": Vector3(240.0, 0.4, 0.0), "kind": "city"},
+		{"pos": Vector3(60.0, 0.4, 900.0), "kind": "wild"}]
+	mgr._poi_cache_built = true
+	cmem["visited"] = []
+	carlos["_visited"] = []
+	cmem["failed_goals"] = {}
+	cmem["unreachable_pois"] = {}
+	carlos["_unreachable"] = []
+	cmem.erase("last_death_pos")
+	carlos["ai_directive"] = {}
+	carlos["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
+	check(mgr._ai_apply_decision(902, JSON.stringify({"steps": [{"action": "explore", "target": "city"}]})),
+		"El paso poi se aplica habiendo POIs validos")
+	var d_pin: Dictionary = carlos["ai_directive"]
+	var dp_pos: Vector3 = d_pin.get("_dest_pos", Vector3.INF)
+	var dp_id := str(d_pin.get("_dest_id", ""))
+	check(dp_pos != Vector3.INF and not dp_id.is_empty(),
+		"La directiva fija un destino unico (_dest_pos/_dest_id)")
+	var expected_pick := (mgr._ai_pick_poi(carlos, ["city"], [], false) as Dictionary).get("pos", Vector3.INF)
+	check(dp_pos == expected_pick,
+		"El destino fijado es el que elige el criterio de navegacion")
+	check(mgr._ai_step_target_pos(carlos, d_pin) == dp_pos,
+		"El progreso mide contra el destino fijado")
+	check(mgr._choose_explore_target(carlos) == dp_pos,
+		"La navegacion va al destino fijado, no al poi mas cercano")
+	# Pasar por el otro POI del mismo tipo NO cumple la visita del plan.
+	var other_p: Dictionary = {}
+	for p in mgr._poi_cache:
+		if str(p.get("kind", "")) == "city" and mgr._poi_id(p) != dp_id:
+			other_p = p
+	check(not other_p.is_empty(), "Hay un segundo POI city para el caso")
+	carlos["proxy"].global_position = other_p["pos"]
+	mgr._mark_poi_visited(carlos, other_p["pos"])
+	check(not bool(d_pin.get("_visit_done", false)),
+		"Otro POI del mismo tipo no marca la visita del plan")
+	carlos["proxy"].global_position = dp_pos
+	mgr._mark_poi_visited(carlos, dp_pos)
+	check(bool(d_pin.get("_visit_done", false)),
+		"El POI fijado si marca la visita")
+	# Si el destino queda vetado, se repieza OTRO lugar valido y se refija.
+	var pin_a: Vector3 = (mgr._poi_cache[0] as Dictionary)["pos"]
+	var pin_b: Vector3 = (mgr._poi_cache[1] as Dictionary)["pos"]
+	cmem["visited"] = []
+	carlos["_visited"] = []
+	carlos["ai_directive"] = {"action": "explore", "mode": "poi", "only_kinds": ["city"],
+		"_dest_pos": pin_a, "_dest_id": mgr._poi_id(mgr._poi_cache[0])}
+	carlos["_unreachable"] = [{"pos": pin_a, "until": float(Time.get_ticks_msec()) / 1000.0 + 60.0}]
+	var new_tgt := mgr._choose_explore_target(carlos)
+	check(new_tgt == pin_b,
+		"Destino vetado: la navegacion repieza el otro POI valido")
+	check(str((carlos["ai_directive"] as Dictionary).get("_dest_id", "")) == mgr._poi_id(mgr._poi_cache[1]),
+		"El refijado actualiza _dest_id coherentemente")
+	carlos["_unreachable"] = []
+	carlos["ai_directive"] = {}
+	mgr._poi_cache = poi_save2
+	mgr._poi_cache_built = built_save2
+
+	# --- 25) El asesor recibe fracasos vigentes e inalcanzables, no caducados ---
+	var fg2: Dictionary = cmem.get("failed_goals", {})
+	fg2["scavenge|city|3:3"] = {"t": Time.get_unix_time_from_system(), "cause": "nav_blocked",
+		"ttl": 21600.0, "act": "scavenge:city", "zone": [200, 200]}
+	fg2["hunt|wild|0:0"] = {"t": Time.get_unix_time_from_system() - 99999.0, "cause": "no_progress", "ttl": 10800.0}
+	cmem["failed_goals"] = fg2
+	var unm2: Dictionary = cmem.get("unreachable_pois", {})
+	unm2["city:120:0"] = {"n": 1, "t": Time.get_unix_time_from_system(), "cause": "nav_blocked"}
+	cmem["unreachable_pois"] = unm2
+	var prompt_parsed = JSON.parse_string(mgr._ai_build_prompt(carlos))
+	check(prompt_parsed is Dictionary, "El prompt del asesor es JSON valido")
+	var rf: Array = prompt_parsed.get("recent_failures", [])
+	check(rf.any(func(e): return str(e.get("goal", "")) == "scavenge:city" and str(e.get("cause", "")) == "nav_blocked"),
+		"El prompt informa del fracaso vigente con su causa")
+	check(not rf.any(func(e): return str(e.get("goal", "")).begins_with("hunt")),
+		"El prompt omite fracasos caducados")
+	var unr: Array = prompt_parsed.get("unreachable", [])
+	check(unr.any(func(e): return str(e.get("poi", "")) == "city:120:0" and int(e.get("left_min", 0)) > 0),
+		"El prompt informa del destino inaccesible con tiempo restante")
+	cmem["failed_goals"] = {}
+	cmem["unreachable_pois"] = {}
 
 	world.free()
 	if failures == 0:
