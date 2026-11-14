@@ -1641,6 +1641,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			proxy.set_meta("crouching", false)
 			return
 
+	# 0a) Termostato de lumbre: pegado a las brasas te cocinas (la misma curva
+	# de calor que al jugador) y en el borde frio te hielas — cualquier tarea
+	# junto a una fogata viva regula distancia antes de seguir. El dormido no
+	# llega aqui: su puerta propia lo despierta con calor letal.
+	if _bot_camp_fire_standoff(b, delta):
+		return
+
 	# 0b) Agua demasiado profunda: un superviviente no nada — si por lo que sea
 	# quedo dentro (empujon, reaparicion, hueco entre nodos del nav), sale a lo
 	# somero antes de cualquier otra decision.
@@ -2140,18 +2147,22 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# refugio para gestionar el alijo como un jugador humano.
 	if sh_pos != Vector3.INF and not str(b["shelter_id"]).is_empty():
 		var d_own_sh := Vector2(proxy.global_position.x - sh_pos.x, proxy.global_position.z - sh_pos.z).length()
-		if d_own_sh <= 2.6:
+		# Alijo junto al refugio — desde el borde seguro si una fogata viva
+		# cubre el refugio (abrir la caja en las brasas cocinaba al bot).
+		var stash_goal := _bot_fire_safe_spot(sh_pos, proxy.global_position.y)
+		var d_stash := Vector2(proxy.global_position.x - stash_goal.x, proxy.global_position.z - stash_goal.z).length()
+		if d_stash <= 0.8 or d_own_sh <= 2.6:
 			_bot_sync_own_shelter_stash(b)
 			_bot_try_camo_shelter(b)
 		var needs_from_stash := _own_shelter_has_needed_item(b) \
 				and (d_own_sh < 110.0 or (_bot_night_supply_emergency(b) and d_own_sh <= NIGHT_LETHAL_SUPPLY_RADIUS))
 		var storable_n := _bot_count_storable_items(b)
 		var wants_stash_run := needs_from_stash or (not starving_or_parched and (storable_n >= 3 or (storable_n >= 1 and d_own_sh < 24.0)))
-		if wants_stash_run and d_own_sh > 2.4:
+		if wants_stash_run and d_stash > 0.9:
 			b["_act"] = "stash"
 			b["sitting"] = false
 			b["crouching"] = false
-			_move_bot_towards(b, sh_pos, 6.2 if d_own_sh > 12.0 else 4.0, delta, "run" if d_own_sh > 12.0 else "walk")
+			_move_bot_towards(b, stash_goal, 6.2 if d_stash > 12.0 else 4.0, delta, "run" if d_stash > 12.0 else "walk")
 			return
 	# Helándose o en mitad de la noche sin refugio: si lleva 2 palos y 2 piedras
 	# y no hay fuego encendido al alcance, arma una hoguera aquí mismo.
@@ -2189,6 +2200,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# "Estar en la base" exige refugio levantado: el solar reclamado sin
 	# edificio no sirve para acampar — ahi se va a construir, no a dormir.
 	var rest_pos: Vector3 = sh_pos if has_built_sh else _nearest_safe_refuge(b, refuge_radius)
+	# Acampar al lado del fuego, no encima: si el punto de descanso cae
+	# dentro del anillo de calor que cocina (<3.9 m de una fogata viva),
+	# se desplaza al borde seguro del calor — dormir pegado a las brasas
+	# termina en muerte por calor ("succumbed" sin frio ni hambre).
+	if rest_pos != Vector3.INF:
+		rest_pos = _bot_fire_safe_spot(rest_pos, rest_pos.y)
 	# Si el sueño esta ya en zona letal (<=8, perdiendo vida por segundo) y el
 	# refugio queda lejos (>6 m), caminar 200 m a paso lento lo mataria por el
 	# camino: se desploma a dormir donde esta.
@@ -2226,6 +2243,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# (De noche la Antorcha puntua alto aqui: la fabrica antes de dormir.)
 		if float(b["health"]) >= 70.0 and float(b["hide_timer"]) <= 0.0 and not _bot_is_exhausted(b) and _bot_try_craft(b, delta):
 			return
+		# Отойти от жара: лумба гонит температуру к 38 °C — спать/сидеть
+		# врастяжку у brasas нельзя, отодвигаемся на безопасный ободок.
+		if _bot_camp_fire_standoff(b, delta):
+			return
 		# Dormir de noche igual que un jugador humano: se tumba, recupera
 		# sueño/energia/salud y despierta al amanecer, con frio o calor letal,
 		# hambre/sed urgente, o al oir/sufrir una amenaza.
@@ -2259,7 +2280,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_bot_cook_meat_at_fire(b)
 		if float(b["health"]) >= 70.0 and float(b["hide_timer"]) <= 0.0 and not _bot_is_exhausted(b) and _bot_try_craft(b, delta):
 			return
-		if not _bot_try_start_sleep(b, is_night):
+		if not _bot_camp_fire_standoff(b, delta) and not _bot_try_start_sleep(b, is_night):
 			# En vez de quedar petrificado en el campo abierto hasta el
 			# amanecer, ronda su zona en paseos cortos; con amenaza, de dia o
 			# junto a su fuego se queda quieto como antes.
@@ -2281,12 +2302,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# y descansa — no vaga todo el dia arriba y abajo. Sale solo cuando
 	# necesita provisiones/loot o la IA tactica le marca un destino.
 	if not starving_or_parched and _bot_has_own_base(b) and not _bot_needs_outing(b):
-		var d_home := Vector2(proxy.global_position.x - sh_pos.x, proxy.global_position.z - sh_pos.z).length()
+		var home_spot := _bot_fire_safe_spot(sh_pos, proxy.global_position.y)
+		var d_home := Vector2(proxy.global_position.x - home_spot.x, proxy.global_position.z - home_spot.z).length()
 		if d_home > 3.2:
 			b["_act"] = "return_home"
 			b["sitting"] = false
 			b["crouching"] = false
-			_move_bot_towards(b, sh_pos, 5.5 if d_home > 30.0 else 3.6, delta, "run" if d_home > 30.0 else "walk")
+			_move_bot_towards(b, home_spot, 5.5 if d_home > 30.0 else 3.6, delta, "run" if d_home > 30.0 else "walk")
 			return
 		# En casa: sentado junto a su refugio, recuperando algo de vida como
 		# en el descanso de wants_camp. El lobo domestico recibe 'stay' por
@@ -3453,7 +3475,12 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 	if world != null and "_lit_campfires" in world:
 		for lc in world._lit_campfires:
 			if _campfire_entry_alive(lc) and lc.get("pos") is Vector3:
-				candidates.append(lc["pos"] as Vector3)
+				var fpos: Vector3 = lc["pos"]
+				# Стоять нужно рядом с жаром, а не в нём: цель — ободок ~3.9 м
+				# от brasas ближайший к боту (в центре жара погибает от перегрева).
+				var fdir := Vector2(cur.x - fpos.x, cur.z - fpos.z)
+				var foff := fdir.normalized() * 3.9 if fdir.length() > 0.05 else Vector2(3.9, 0.0)
+				candidates.append(Vector3(fpos.x + foff.x, fpos.y, fpos.z + foff.y))
 	if world != null and "wildlife_blockers" in world:
 		for blk in world.wildlife_blockers:
 			if blk is Dictionary and (blk as Dictionary).has("house_bounds"):
@@ -10713,6 +10740,58 @@ func _on_bot_stats_died(b: Dictionary) -> void:
 		elif st.sleep <= 10.0:
 			kind = "exhausted"
 	_kill_bot(b, kind)
+
+# Punto junto a una fogata viva pero fuera del anillo que cocina: el calor
+# real llega hasta 4 m (Main._apply_campfire_effect) — gestionar el alijo o
+# sentarse en el refugio pegado a las brasas era la muerte "succumbed" del
+# campamento resuelto. Devuelve pos proyectada al borde seguro del calor.
+func _bot_fire_safe_spot(pos: Vector3, y: float) -> Vector3:
+	var fp := _nearest_lit_campfire_pos(pos, 4.2)
+	if fp == Vector3.INF:
+		return pos
+	var df := Vector2(pos.x - fp.x, pos.z - fp.z)
+	var dn := df.normalized() if df.length() > 0.05 else Vector2(1.0, 0.0)
+	return Vector3(fp.x + dn.x * 4.1, y, fp.z + dn.y * 4.1)
+
+# Termostato de campamento: la lumbre empuja la temperatura hacia 38 °C
+# con la misma curva que al jugador — pegado a las brasas te cocinas
+# ("succumbed" invisible), en el borde frio te hielas. El superviviente
+# real regula la distancia: sale al anillo seguro cuando quema y se
+# acerca a la banda que calienta cuando el frio aprieta.
+func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var st: SurvivalStats = b.get("vstats")
+	if st == null or st.dead:
+		return false
+	# Su propia fogata es conocida: la posicion queda en campfire_pos y la
+	# validacion fisica confirma que sigue encendida — no hace falta "verla"
+	# a 5 m; un bot desplazado unos metros mas alla (cambio de meta, empujon
+	# de colision) se helaba en su sitio con el fuego vivo a 7 m.
+	var fp := Vector3.INF
+	var own_fp: Vector3 = b.get("campfire_pos", Vector3.INF)
+	if not str(b.get("campfire_id", "")).is_empty() and own_fp != Vector3.INF \
+		and _nearest_lit_campfire_pos(own_fp, 4.5) != Vector3.INF:
+		fp = own_fp
+	if fp == Vector3.INF:
+		fp = _nearest_lit_campfire_pos(proxy.global_position, 5.0)
+	if fp == Vector3.INF:
+		return false
+	var d := Vector2(proxy.global_position.x - fp.x, proxy.global_position.z - fp.z).length()
+	var dir2 := Vector2(proxy.global_position.x - fp.x, proxy.global_position.z - fp.z)
+	var dir := dir2.normalized() if dir2.length() > 0.05 else Vector2(1.0, 0.0)
+	# La banda templada (3.6-4.0 m) calienta suave (+0.1-0.3 °C/s): acercarse
+	# a 3.2 m calentaba +2.2 °C/s y la retirada llegaba tarde al pico letal.
+	if st.body_temperature > 37.0 and d < 3.95:
+		var spot := Vector3(fp.x + dir.x * 4.15, proxy.global_position.y, fp.z + dir.y * 4.15)
+		b["_act"] = "cool_off"
+		_move_bot_towards(b, spot, 3.8, delta, "walk")
+		return true
+	if st.body_temperature < 35.9 and d > 3.8 and not _bot_is_sheltered(b, proxy.global_position):
+		var spot_in := Vector3(fp.x + dir.x * 3.7, proxy.global_position.y, fp.z + dir.y * 3.7)
+		b["_act"] = "warm_up"
+		_move_bot_towards(b, spot_in, 3.8, delta, "walk")
+		return true
+	return false
 
 # Condiciones para tumbarse a dormir en el punto de descanso (llamado desde el
 # bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
