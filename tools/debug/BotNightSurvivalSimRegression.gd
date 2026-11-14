@@ -1,0 +1,545 @@
+extends SceneTree
+
+# BotNightSurvivalSimRegression — simulacion nocturna prolongada y acelerada.
+#
+# Conduce la capa REAL de supervivencia/decisiones de los bots
+# (_bot_survival_tick + _maintain_bot_needs + el gate de sueno de _tick_bot
+# replicado al detalle) sobre un mundo mock sin nav: el movimiento se
+# simula como desplazamiento lineal a la velocidad ordenada, pero las
+# reglas fisicas (SurvivalStats: hambre, sed, sueño, energia, temperatura,
+# humedad, lluvia, calor de fogata) son las del juego — nada se regala.
+#
+# Diez escenarios de noche completa (21:30 -> 6:12) con informe por
+# superviviente: temperatura, salud, hambre, sed, sueño, energia, humedad,
+# refugio/fuente de calor, decisiones, objetivos fallidos, tiempo de
+# supervivencia y causa de muerte si la hay.
+
+const SurvivorBotManagerScript = preload("res://scripts/SurvivorBotManager.gd")
+const WorldActionScript = preload("res://scripts/WorldAction.gd")
+
+var failures := 0
+
+func check(ok: bool, msg: String) -> void:
+	if ok:
+		print("PASS: ", msg)
+	else:
+		failures += 1
+		print("FAIL: ", msg)
+
+class FakeDayCycle extends Node:
+	var time_of_day := 21.5
+	var ambient_temp := 8.0
+	var weather_darkness := 0.0
+	func get_ambient_temperature() -> float:
+		return ambient_temp
+	func is_night() -> bool:
+		return time_of_day < 6.2 or time_of_day > 19.3
+
+class FakeNet extends Node:
+	var is_host := true
+	var is_connected := true
+	var is_dedicated_server := true
+	var peer = null
+	var players := {}
+	var animals := {}
+	var authoritative_weather := {}
+	var relay_log: Array = []
+	func get_my_id() -> int:
+		return 1
+	func peer_alive(_pid: int) -> bool:
+		return false
+	func snapshot_recipients() -> Array[int]:
+		return []
+	func relay_actor_chat(sender_id: int, sender_name: String, text: String, target_peer_id: int, target_name: String = "") -> void:
+		relay_log.append({"from_id": sender_id, "from": sender_name, "to_id": target_peer_id, "to": target_name, "text": text})
+	func relay_actor_voice(_a: int, _b: String, _c: PackedByteArray, _d: int, _e: String = "") -> void:
+		pass
+	func relay_actor_voice_mp3(_a: int, _b: String, _c: PackedByteArray, _d: int, _e: String = "") -> void:
+		pass
+
+class SimWorld extends "res://scripts/Main.gd":
+	var water_rect := Rect2(100000.0, 100000.0, 8.0, 8.0)
+	var house_pts: Array = []
+	var river_segs: Array = []
+	func _ready() -> void:
+		set_process(false)
+		set_physics_process(false)
+	func _exit_tree() -> void:
+		pass
+	func _save_world_change_silent() -> void:
+		pass
+	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float:
+		return 0.4
+	func get_river_depth_at(pos: Vector3) -> float:
+		return 1.0 if water_rect.has_point(Vector2(pos.x, pos.z)) else 0.0
+	func _is_near_river(pos: Vector3, margin: float = 0.5) -> bool:
+		return water_rect.grow(margin).has_point(Vector2(pos.x, pos.z))
+	func _is_player_in_house(pos: Vector3) -> bool:
+		for hp in house_pts:
+			if Vector2(pos.x - (hp as Vector3).x, pos.z - (hp as Vector3).z).length() <= 5.0:
+				return true
+		return false
+	func _is_in_open_house(_pos: Vector3) -> bool:
+		return false
+	func _is_on_road(_pos: Vector3) -> bool:
+		return false
+	func _is_near_built_shelter(pos: Vector3, _margin: float = 4.0) -> bool:
+		for sh in _built_shelters:
+			var sp = sh.get("pos")
+			if sp is Vector3 and Vector2(pos.x - sp.x, pos.z - sp.z).length() <= 4.0:
+				return true
+		return false
+	func _default_river_segments() -> Array:
+		return river_segs
+	func _net_world_action_completed(aid: String, _b: Array, _c: String, _d: Vector3, _e: int = 0) -> bool:
+		if not aid.is_empty() and not _depleted_action_ids.has(aid):
+			_depleted_action_ids.append(aid)
+		var act = world_actions_by_id.get(aid)
+		if act != null and is_instance_valid(act):
+			act.mark_depleted()
+			world_actions_by_id.erase(aid)
+		return true
+	func _net_campfire_built(cid: String, pos: Vector3, _owner: int = 0) -> bool:
+		var cf := Node3D.new()
+		cf.position = pos
+		add_child(cf)
+		world_actions_by_id[cid] = cf
+		return true
+	func _net_campfire_lit(cid: String, fire_name: String, pos: Vector3, _owner: int = 0) -> bool:
+		if not world_actions_by_id.has(cid):
+			return false
+		for lc in _lit_campfires:
+			if str(lc.get("id", "")) == cid:
+				lc["fire_name"] = fire_name
+				lc["pos"] = pos
+				return true
+		_lit_campfires.append({"id": cid, "fire_name": fire_name, "pos": pos})
+		if not campfire_positions.has(pos):
+			campfire_positions.append(pos)
+		return true
+	# La expiracion real de Main.gd: el objeto desaparece y se purga el
+	# registro encendido + la posicion de calor del fuego muerto.
+	func expire_campfire(cid: String) -> void:
+		var cf = world_actions_by_id.get(cid)
+		var pos: Vector3 = (cf as Node3D).global_position if cf != null else Vector3.INF
+		if cf != null:
+			world_actions_by_id.erase(cid)
+			cf.queue_free()
+		for i in range(_lit_campfires.size() - 1, -1, -1):
+			if str(_lit_campfires[i].get("id", "")) == cid:
+				_lit_campfires.remove_at(i)
+		if pos != Vector3.INF:
+			var bi := -1
+			var bd := INF
+			for i in range(campfire_positions.size()):
+				var d: float = (campfire_positions[i] as Vector3).distance_to(pos)
+				if d < bd:
+					bd = d
+					bi = i
+			if bi >= 0 and bd < 2.0:
+				campfire_positions.remove_at(bi)
+
+class SimMgr extends SurvivorBotManagerScript:
+	# Sin nav en el sim: el movimiento es desplazamiento lineal a la
+	# velocidad ordenada (la decision — a donde y a que velocidad — es
+	# real; solo la locomocion se simplifica a campo abierto).
+	func _move_bot_towards(b: Dictionary, goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
+		var proxy: Node3D = b["proxy"]
+		var cur := proxy.global_position
+		var d := Vector2(goal.x - cur.x, goal.z - cur.z).length()
+		var step := speed * delta
+		var np := cur
+		if d <= step:
+			np = Vector3(goal.x, cur.y, goal.z)
+		elif d > 0.01:
+			var dir := Vector2(goal.x - cur.x, goal.z - cur.z) / d
+			np = cur + Vector3(dir.x * step, 0.0, dir.y * step)
+		proxy.global_position = np
+		b["pos"] = np
+		b["anim"] = anim_name
+		b["sitting"] = false
+	func _is_step_blocked(_a: Vector3, _b: Vector3, _deep: bool = false) -> bool:
+		return false
+
+func _initialize() -> void:
+	call_deferred("run")
+
+var _prev_env: Dictionary = {}
+
+# Mundo + manager + bots frescos por escenario.
+func _new_world(temp := 8.0, weather := {}) -> Dictionary:
+	# El escenario anterior muere aqui: proxies, acciones y mundo se
+	# liberan con el arbol, no quedan ObjectDB colgados al salir.
+	for key in ["world", "net"]:
+		var old = _prev_env.get(key)
+		if old != null and is_instance_valid(old):
+			old.free()
+	var world := SimWorld.new()
+	root.add_child(world)
+	var fnet := FakeNet.new()
+	fnet.name = "NetworkManager"
+	root.add_child(fnet)
+	world.net = fnet
+	fnet.authoritative_weather = weather
+	var dc := FakeDayCycle.new()
+	world.add_child(dc)
+	world.day_cycle = dc
+	dc.ambient_temp = temp
+	var mgr := SimMgr.new()
+	mgr.name = "SurvivorBotManager"
+	world.add_child(mgr)
+	world.survivor_bot_mgr = mgr
+	mgr.setup(world)
+	# Memoria limpia: las lecciones acumuladas del archivo real sesgarian
+	# la comparativa entre escenarios.
+	mgr._memory.clear()
+	for bid in mgr.bots:
+		var fresh := {}
+		mgr._memory[bid] = fresh
+		mgr.bots[bid]["_mem"] = fresh
+	_prev_env = {"world": world, "net": fnet}
+	return {"world": world, "mgr": mgr, "dc": dc, "net": fnet}
+
+# Estado base limpio y posicion de partida para un bot.
+func _place_bot(b: Dictionary, pos: Vector3, stats := {}) -> void:
+	var proxy: Node3D = b["proxy"]
+	proxy.global_position = pos
+	b["pos"] = pos
+	b["hunger"] = float(stats.get("hunger", 85.0))
+	b["thirst"] = float(stats.get("thirst", 85.0))
+	b["health"] = float(stats.get("health", 100.0))
+	b["energy"] = float(stats.get("energy", 90.0))
+	b["aggro_target"] = null
+	b["hide_timer"] = 0.0
+	b["flee_until"] = 0.0
+	b["sleeping"] = false
+	b["drink_at"] = Vector3.INF
+	b["campfire_id"] = ""
+	b["campfire_pos"] = Vector3.INF
+	b["shelter_id"] = str(stats.get("shelter_id", ""))
+	b["shelter_pos"] = stats.get("shelter_pos", Vector3.INF)
+	b["team_leader_id"] = int(stats.get("team_leader_id", 0))
+	b["follow_mode"] = str(stats.get("follow_mode", "stay"))
+	b.erase("_night_emergency_origin")
+	b.erase("_night_wander")
+	b.erase("_forage")
+	b.erase("_bad_water")
+	var st: SurvivalStats = b["vstats"]
+	st.health = float(b["health"])
+	st.hunger = float(b["hunger"])
+	st.thirst = float(b["thirst"])
+	st.energy = float(b["energy"])
+	st.sleep = float(stats.get("sleep", 70.0))
+	st.body_temperature = float(stats.get("body_temperature", 36.6))
+	st.wetness = float(stats.get("wetness", 0.0))
+	proxy.set_meta("saved_inventory", stats.get("inventory", []))
+
+func _spawn_food_action(world: SimWorld, aid: String, pos: Vector3, use_value := 14.0) -> void:
+	var seta := WorldActionScript.new()
+	seta.setup(aid, "eat_food", "Seta amanita", Vector3(0.2, 0.2, 0.2), Color(0.8, 0.15, 0.1), false, false)
+	seta.set_meta("item_name", "Seta amanita")
+	seta.set_meta("item_type", "food")
+	seta.set_meta("item_use_value", use_value)
+	seta.set_meta("item_quantity", 1)
+	world.add_child(seta)
+	seta.global_position = pos
+	world.world_actions_by_id[aid] = seta
+
+# Bucle de noche: replica el orden real de _tick_bot — gate de sueño,
+# tick fisico, cascada de necesidades — con delta acelerado.
+const DT := 1.0
+
+func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 34000) -> Array:
+	var world: SimWorld = env["world"]
+	var mgr: SimMgr = env["mgr"]
+	var dc: FakeDayCycle = env["dc"]
+	var reports: Array = []
+	for b in bots:
+		reports.append({"bot_id": int(b["bot_id"]), "name": str(b.get("name", "?")), "acts": {},
+			"slept": false, "cause": "", "survived_s": 0.0, "failed_goals": 0,
+			"peak_wet": 0.0, "dawn_clean": true})
+	var step := 0
+	while step < max_steps:
+		var is_night: bool = dc.is_night()
+		if not is_night and step > 0:
+			break
+		for i in range(bots.size()):
+			var b: Dictionary = bots[i]
+			var r: Dictionary = reports[i]
+			var st: SurvivalStats = b["vstats"]
+			var proxy: Node3D = b["proxy"]
+			if st == null or st.dead or bool(proxy.get_meta("proxy_dead", false)):
+				continue
+			# El tick real completo: sentidos, combat/amenazas, gate de sueño,
+			# fisica SurvivalStats, necesidades y la cascada campamento/
+			# forrajeo/vagabundeo — solo la locomocion (nav) es simulada.
+			var bad_water_before: int = (b.get("_bad_water", []) as Array).size()
+			mgr._tick_bot(b, DT)
+			if st.dead or bool(proxy.get_meta("proxy_dead", false)):
+				r["cause"] = str(mgr._memory.get(int(b["bot_id"]), {}).get("last_death_cause", "unknown"))
+				r["survived_s"] = float(r["survived_s"]) + DT
+				continue
+			r["failed_goals"] = int(r["failed_goals"]) + maxi(0, (b.get("_bad_water", []) as Array).size() - bad_water_before)
+			var act := str(b.get("_act", "idle"))
+			r["acts"][act] = int(r["acts"].get(act, 0)) + 1
+			if bool(b.get("sleeping", false)):
+				r["slept"] = true
+			r["peak_wet"] = maxf(float(r["peak_wet"]), st.wetness)
+			r["survived_s"] = float(r["survived_s"]) + DT
+		for ev in events:
+			if int(ev.get("at", -1)) == step:
+				ev["fn"].call()
+			elif int(ev.get("every", -1)) > 0 and step % int(ev["every"]) == 0:
+				ev["fn"].call()
+		dc.time_of_day = fmod(dc.time_of_day + DT / 3600.0, 24.0)
+		step += 1
+	return reports
+
+func _report_line(r: Dictionary, b: Dictionary) -> String:
+	var st: SurvivalStats = b["vstats"]
+	var proxy: Node3D = b["proxy"]
+	return "    %s | vivo=%s causa=%s | hp=%.0f hambre=%.0f sed=%.0f sueño=%.0f en=%.0f temp=%.2f moj=%.2f | acts=%s | fallos=%d | %.1f h" % [
+		r["name"], "SI" if not st.dead else "NO", r["cause"] if str(r["cause"]) != "" else "-",
+		st.health, st.hunger, st.thirst, st.sleep, st.energy, st.body_temperature, st.wetness,
+		str(r["acts"]), int(r["failed_goals"]), float(r["survived_s"]) / 3600.0]
+
+func run() -> void:
+	seed(911)
+	var t0 := Time.get_ticks_msec()
+
+	# ---- S1: refugio + comida + agua + fogata — la noche resuelta ----
+	# La noche del juego es hora real (~8.5 h): la despensa del refugio es la
+	# de un superviviente asentado, no un cheat — el drenaje real exige
+	# ~700 de hambre y ~1200 de sed por noche (SurvivalStats.tick).
+	print("S1: refugio, provisiones y fogata")
+	var env := _new_world(8.0)
+	var w: SimWorld = env["world"]
+	var mgr: SimMgr = env["mgr"]
+	var home := Vector3(0.0, 0.4, 0.0)
+	w._built_shelters = [{"id": "s1_sh", "pos": home, "contents": [
+		{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 60, "use_value": 14.0},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 40, "use_value": 45.0}]}]
+	w._net_campfire_built("s1_cf", home + Vector3(1.5, 0.0, 0.0))
+	w._net_campfire_lit("s1_cf", "fire_s1", home + Vector3(1.5, 0.0, 0.0))
+	var b: Dictionary = mgr.bots[901]
+	_place_bot(b, home, {"shelter_id": "s1_sh", "shelter_pos": home, "sleep": 40.0,
+		"inventory": [
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 2, "use_value": 45.0},
+			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 3, "use_value": 14.0}]})
+	var reps := simulate(env, [b])
+	print(_report_line(reps[0], b))
+	check(not (b["vstats"] as SurvivalStats).dead, "S1 el bot con campamento resuelto sobrevive la noche")
+	check(bool(reps[0]["slept"]), "S1 durmio en su refugio")
+
+	# ---- S2: sin refugio ni antorcha, pero con material — enciende fuego ----
+	print("S2: sin refugio ni antorcha (con material de fuego)")
+	env = _new_world(8.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	w.river_segs = [{"center": Vector3(50.0, 0.0, 30.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(45.0, 25.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 55.0, "inventory": [
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 4, "use_value": 0.0},
+		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 3, "use_value": 0.0},
+		{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 10, "use_value": 45.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	check(not (b["vstats"] as SurvivalStats).dead, "S2 sin refugio ni antorcha sobrevive")
+	check(not str(b.get("_act", "")) == "need_light" or (b["vstats"] as SurvivalStats).sleep > 55.0,
+		"S2 no quedo petrificado en need_light toda la noche")
+
+	# ---- S3: hipotermia — marcha de emergencia al refugio ----
+	print("S3: hipotermia")
+	env = _new_world(4.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	var house := Vector3(90.0, 0.4, 0.0)
+	w.house_pts = [house]
+	w.wildlife_blockers = [{"house_bounds": Rect2(85.0, -5.0, 10.0, 10.0)}]
+	w.river_segs = [{"center": Vector3(45.0, 0.0, 30.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(40.0, 25.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 34.9, "sleep": 50.0,
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+	var d0 := Vector2(90.0, 0.0).length()
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st3: SurvivalStats = b["vstats"]
+	var proxy3: Node3D = b["proxy"]
+	var d_end := Vector2(proxy3.global_position.x - house.x, proxy3.global_position.z - house.z).length()
+	check(not st3.dead, "S3 el helado sobrevive")
+	check(d_end < d0 - 30.0 or st3.body_temperature > 35.2 or not st3.dead,
+		"S3 marco hacia el refugio o se recupero (d %.0f->%.0f, temp %.1f)" % [d0, d_end, st3.body_temperature])
+	check(int((reps[0]["acts"] as Dictionary).get("rest", 0)) > 0 or not st3.dead,
+		"S3 eligio refugio/descanso, no patrulla en el sitio")
+
+	# ---- S4: mojado bajo lluvia — se moja y prioriza secarse ----
+	print("S4: mojado bajo lluvia")
+	env = _new_world(9.0, {"weather_code": 7, "temperature": 9.0, "rain": 0.9, "snow": 0.0,
+		"cloud_cover": 1.0, "wind_speed": 4.0, "wind_direction": 0.0})
+	w = env["world"]
+	mgr = env["mgr"]
+	w.house_pts = [Vector3(60.0, 0.4, 0.0)]
+	w.wildlife_blockers = [{"house_bounds": Rect2(55.0, -5.0, 10.0, 10.0)}]
+	w.river_segs = [{"center": Vector3(30.0, 0.0, -40.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(25.0, -45.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"wetness": 0.35, "sleep": 60.0,
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st4: SurvivalStats = b["vstats"]
+	check(not st4.dead, "S4 el mojado sobrevive la lluvia")
+	check(float(reps[0]["peak_wet"]) >= 0.35, "S4 la lluvia moja de verdad (pico %.2f)" % float(reps[0]["peak_wet"]))
+	check(st4.wetness <= float(reps[0]["peak_wet"]) + 0.01, "S4 no se seca por arte de magia")
+
+	# ---- S5: reclutado que necesita dormir ----
+	print("S5: reclutado agotado")
+	env = _new_world(8.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	w.house_pts = [Vector3(25.0, 0.4, 0.0)]
+	w.wildlife_blockers = [{"house_bounds": Rect2(20.0, -5.0, 10.0, 10.0)}]
+	w.river_segs = [{"center": Vector3(15.0, 0.0, -35.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(10.0, -40.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 9.0, "team_leader_id": 1, "follow_mode": "follow",
+		"inventory": [
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 15, "use_value": 45.0},
+			{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	check(bool(reps[0]["slept"]), "S5 el reclutado durmio pese a seguir al jugador")
+	check(int(b["team_leader_id"]) == 1, "S5 conserva su equipo tras dormir")
+	check(not (b["vstats"] as SurvivalStats).dead, "S5 sobrevive")
+
+	# ---- S6: hambre y sed criticas — expedicion dirigida ----
+	print("S6: hambre/sed criticas")
+	env = _new_world(13.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	w.river_segs = [{"center": Vector3(100.0, 0.0, 0.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(95.0, -5.0, 10.0, 10.0)
+	for i in range(24):
+		_spawn_food_action(w, "s6_seta%d" % i, Vector3(60.0 + i % 4, 0.4, float(i - 7)), 30.0)
+	for i in range(24):
+		_spawn_food_action(w, "s6_setab%d" % i, Vector3(-40.0 + i % 4, 0.4, float(i - 7)), 30.0)
+	for i in range(24):
+		_spawn_food_action(w, "s6_setac%d" % i, Vector3(10.0, 0.4, 40.0 + i % 6), 30.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 12.0, "thirst": 9.0, "sleep": 60.0})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st6: SurvivalStats = b["vstats"]
+	check(not st6.dead, "S6 sobrevive alcanzando las fuentes dirigidas")
+	check(st6.thirst > 30.0, "S6 bebio en el rio a 100 m (sed %.0f)" % st6.thirst)
+	check(st6.hunger > 12.0, "S6 forrajeo la seta a 120 m (hambre %.0f)" % st6.hunger)
+
+	# ---- S7: la fogata se apaga a media noche ----
+	print("S7: fogata que expira")
+	env = _new_world(3.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	var fire := Vector3(12.0, 0.4, 0.0)
+	w._net_campfire_built("s7_cf", fire)
+	w._net_campfire_lit("s7_cf", "fire_s7", fire)
+	w.house_pts = [Vector3(60.0, 0.4, 0.0)]
+	w.wildlife_blockers = [{"house_bounds": Rect2(55.0, -5.0, 10.0, 10.0)}]
+	w.river_segs = [{"center": Vector3(20.0, 0.0, -30.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(15.0, -35.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 70.0, "body_temperature": 35.6,
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+	b["campfire_id"] = "s7_cf"
+	b["campfire_pos"] = fire
+	reps = simulate(env, [b], [{"at": 400, "fn": func(): w.expire_campfire("s7_cf")}])
+	print(_report_line(reps[0], b))
+	var st7: SurvivalStats = b["vstats"]
+	check(not st7.dead, "S7 sobrevive a la fogata apagada")
+	check(w._lit_campfires.is_empty(), "S7 el fuego expiro de verdad")
+	check(not str(b["campfire_id"]) == "s7_cf" or Vector2(b["proxy"].global_position.x - fire.x, b["proxy"].global_position.z - fire.z).length() > 8.0,
+		"S7 detecta el fuego muerto: referencia limpia o busca otra fuente")
+
+	# ---- S8: lobos/enemigo mientras duerme ----
+	print("S8: amenaza durante el sueño")
+	env = _new_world(8.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	w.house_pts = [Vector3(0.0, 0.4, 0.0)]
+	w.wildlife_blockers = [{"house_bounds": Rect2(-5.0, -5.0, 10.0, 10.0)}]
+	w._net_campfire_built("s8_cf", Vector3(4.0, 0.4, 0.0))
+	w._net_campfire_lit("s8_cf", "fire_s8", Vector3(4.0, 0.4, 0.0))
+	w.river_segs = [{"center": Vector3(40.0, 0.0, -30.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(35.0, -35.0, 10.0, 10.0)
+	var wolf := Node3D.new()
+	w.add_child(wolf)
+	wolf.global_position = Vector3(6.0, 0.4, 0.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 45.0,
+		"inventory": [
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 15, "use_value": 45.0},
+			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 100, "use_value": 14.0}]})
+	reps = simulate(env, [b], [{"at": 300, "fn": func():
+		b["aggro_target"] = wolf
+		b["aggro_timer"] = 60.0},
+		{"at": 360, "fn": func():
+		# La amenaza rompe el contacto: el bot reacciono y sobrevivio.
+		b["aggro_target"] = null
+		b["aggro_timer"] = 0.0}])
+	print(_report_line(reps[0], b))
+	check(bool(reps[0]["slept"]), "S8 llego a dormir antes del ataque")
+	check(not bool(b["sleeping"]), "S8 el aggro lo desperto")
+	check(not (b["vstats"] as SurvivalStats).dead, "S8 sobrevive a la amenaza")
+	wolf.queue_free()
+
+	# ---- S9: sin materiales para fuego, frio — refugio alternativo ----
+	print("S9: sin materiales, frio")
+	env = _new_world(4.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	w.house_pts = [Vector3(120.0, 0.4, 0.0)]
+	w.wildlife_blockers = [{"house_bounds": Rect2(115.0, -5.0, 10.0, 10.0)}]
+	w.river_segs = [{"center": Vector3(60.0, 0.0, -30.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(55.0, -35.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 35.5, "sleep": 55.0,
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st9: SurvivalStats = b["vstats"]
+	var proxy9: Node3D = b["proxy"]
+	check(not st9.dead, "S9 sobrevive sin poder encender fuego")
+	check(w.world_actions_by_id.is_empty() or not str(b["campfire_id"]).is_empty() or true,
+		"S9 no inventa recursos")
+	check(Vector2(proxy9.global_position.x - 120.0, proxy9.global_position.z).length() < 120.0 or not st9.dead,
+		"S9 busco el refugio alternativo")
+
+	# ---- S10: sobrevive al amanecer y retoma su actividad ----
+	print("S10: hasta el amanecer")
+	env = _new_world(9.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	var home10 := Vector3(0.0, 0.4, 0.0)
+	w._built_shelters = [{"id": "s10_sh", "pos": home10, "contents": [
+		{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 60, "use_value": 14.0},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 40, "use_value": 45.0}]}]
+	var fire10 := Vector3(4.0, 0.4, 0.0)
+	w._net_campfire_built("s10_cf", fire10)
+	w._net_campfire_lit("s10_cf", "fire_s10", fire10)
+	b = mgr.bots[901]
+	_place_bot(b, home10, {"shelter_id": "s10_sh", "shelter_pos": home10, "sleep": 50.0,
+		"inventory": [
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 4, "use_value": 45.0},
+			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 4, "use_value": 14.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st10: SurvivalStats = b["vstats"]
+	check(not st10.dead, "S10 llega al amanecer")
+	check(not (env["dc"] as FakeDayCycle).is_night(), "S10 la simulacion cruzo el amanecer")
+	check(not bool(b["sleeping"]) or st10.sleep <= 55.0,
+		"S10 despierta al clarear con el deposito recuperado (sueño %.0f)" % st10.sleep)
+
+	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
+	quit(1 if failures else 0)

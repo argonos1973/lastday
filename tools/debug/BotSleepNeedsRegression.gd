@@ -43,9 +43,11 @@ func run():
  check(manager._bot_should_wake(b,true), "recovered bot resumes food search promptly")
  stats.sleep = 3.0
  b.sleeping = false
+ b.hunger = 15.0
+ check(manager._bot_try_start_sleep(b,true), "lethal sleep naps without supplies — buys time before the edge")
+ check(not manager._bot_should_wake(b,true), "lethal nap holds while above the expedition edge")
  b.hunger = 8.0
- check(manager._bot_try_start_sleep(b,true), "lethal sleep naps at hunger 8 without supplies — buys time before the edge")
- check(not manager._bot_should_wake(b,true), "lethal nap holds at hunger 8 (wakes only near 0)")
+ check(manager._bot_should_wake(b,true), "expedition edge (hunger<14) wakes for the directed try")
  b.hunger = 3.0
  check(manager._bot_should_wake(b,true), "edge of starvation wakes for the last forage try")
  b.sleeping = false

@@ -1782,6 +1782,7 @@ func run() -> void:
 	check(int(req3.get("bot_id", 0)) == 902, "Asesor: pasado el hueco sale el cambio de firma")
 	# Planes guardados: se completan al llegar/visitar/comer, no por reloj
 	elena["vstats"] = SurvivalStats.new()
+	mgr.add_child(elena["vstats"])
 	var st_rest: SurvivalStats = elena["vstats"]
 	elena["health"] = 50.0
 	st_rest.sleep = 30.0
@@ -3130,13 +3131,18 @@ func run() -> void:
 	check(mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
 		"SpawnReal 10x1: sueño letal sin despensa -> siesta de emergencia donde esta")
 	# La siesta letal no se rompe al primer gruñido de tripa: el hambre solo
-	# lo saca de la cama al borde real de la inanicion (<4).
+	# lo saca de la cama cuando la expedicion letal se desbloquea (<14).
 	vs.body_temperature = 36.6
+	fresh_b["hunger"] = 15.0
+	fresh_b["thirst"] = 12.0
 	check(not mgr._bot_should_wake(fresh_b, false),
-		"SpawnReal 10x1b: la siesta letal aguanta con hambre 10")
+		"SpawnReal 10x1b: la siesta letal aguanta por encima del borde de expedicion")
+	fresh_b["hunger"] = 10.0
+	check(mgr._bot_should_wake(fresh_b, false),
+		"SpawnReal 10x1c: el borde de expedicion (<14) lo despierta para intentarlo")
 	fresh_b["hunger"] = 3.0
 	check(mgr._bot_should_wake(fresh_b, false),
-		"SpawnReal 10x1c: al borde de inanicion despierta para el ultimo intento")
+		"SpawnReal 10x1d: al borde de inanicion despierta para el ultimo intento")
 	fresh_b["sleeping"] = false
 	# Y al borde tampoco entra: dormir con hambre/sed ~3 es solo morir dormido.
 	fresh_b["thirst"] = 3.0
