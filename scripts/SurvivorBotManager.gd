@@ -1509,6 +1509,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["aggro_timer"] = maxf(0.0, float(b["aggro_timer"]) - delta)
 	if float(b["aggro_timer"]) <= 0.0:
 		b["aggro_target"] = null
+	# flee_until/hide_timer decaen aqui, no solo dentro de la rama de
+	# combate/descanso: si el enemigo desaparecia con la huida a medio,
+	# el flag quedaba clavado >0 para siempre — el bot no volvia a poder
+	# dormir (_bot_should_wake lo sacaba cada tick) ni a regular la
+	# lumbre, y moria de frio/exhausto huyendo de un fantasma.
+	b["flee_until"] = maxf(0.0, float(b.get("flee_until", 0.0)) - delta)
+	b["hide_timer"] = maxf(0.0, float(b.get("hide_timer", 0.0)) - delta)
 	b["_truce_t"] = maxf(0.0, float(b.get("_truce_t", 0.0)) - delta)
 	if float(b.get("_truce_t", 0.0)) <= 0.0:
 		b["_truce_peer"] = 0
@@ -1716,8 +1723,6 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# huida: repliegue tactico real. Con refugio va a ocultarse; sin refugio
 		# escapa en zigzag hasta perder la amenaza o conseguir un arma.
 		var fleeing: bool = float(b["flee_until"]) > 0.0
-		if fleeing:
-			b["flee_until"] = maxf(0.0, float(b["flee_until"]) - delta)
 		var unarmed: bool = _best_weapon_name(proxy).is_empty()
 		var combat_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("combat", 0))
 		var ranged_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("ranged", 0))
@@ -2225,7 +2230,6 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		rest_pos = _nearest_safe_refuge(b, 1400.0)
 	if rest_pos != Vector3.INF and wants_camp:
 		b["_act"] = "rest"
-		b["hide_timer"] = maxf(0.0, float(b["hide_timer"]) - delta)
 		var d_sh := Vector2(proxy.global_position.x - rest_pos.x, proxy.global_position.z - rest_pos.z).length()
 		if d_sh > 1.8:
 			var rush_refuge: bool = _bot_is_freezing(b) and d_sh > 4.0 and (vst == null or vst.sleep > 12.0)
