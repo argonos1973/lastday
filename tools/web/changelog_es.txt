@@ -1,3 +1,4 @@
+- `6bc2209` — Quien muere enfermo o desangrado aprende de verdad a no jugarse la vida comiendo carne cruda: tras morir así, la cruda deja de contar como comida en la mochila (forrajean antes de desesperar) y solo vuelven a comerla si van a aguantar el veneno (vida alta con cura/comida encima) o si la inanición es ya peor que el veneno.
 - `e5299c9` — Muerte: desangrado/enfermedad ya no salen como genérico; los bots se improvisan vendas en campo; al morir ves quién te mató y con qué (chat + pantalla de muerte).
 # Traducciones al castellano del bloque "Cambios por versión" de la web .23.
 # Formato: <hash_corto>|<descripción en castellano>
