@@ -734,10 +734,11 @@ func run() -> void:
 	check(mgr._ai_provider == 0 and mgr._ai_429_streak == 0,
 		"Racha de 429 en el secundario devuelve el servicio al primario")
 	# "per day" en el secundario = veto diario propio: si el primario tambien
-	# esta vetado no hay relevo — backoff propio y cerebro local.
+	# esta vetado (sonda aun pendiente) no hay relevo — backoff y cerebro local.
 	mgr._ai_provider = 1
 	mgr._ai_pending_provider = 1
 	mgr._ai_provider_day_done = [true, false]
+	mgr._ai_provider_day_probe_at = [Time.get_ticks_msec() + 999999, 0]
 	mgr._ai_provider_blocked_until = [0, 0]
 	mgr._ai_register_429(PackedStringArray(), false, "generate_requests_per_model_per_day quota exceeded")
 	check(mgr._ai_provider == 1 and bool(mgr._ai_provider_day_done[1]) and mgr._ai_conn_status.contains("rate_limited"),
@@ -746,10 +747,23 @@ func run() -> void:
 	mgr._ai_provider = 1
 	mgr._ai_pending_provider = 1
 	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_day_probe_at = [0, 0]
 	mgr._ai_provider_blocked_until = [0, 0]
 	mgr._ai_register_429(PackedStringArray(), false, "generate_requests_per_model_per_day quota exceeded")
 	check(mgr._ai_provider == 0 and bool(mgr._ai_provider_day_done[1]),
 		"429 diario del secundario con primario libre vuelve a Groq")
+	# Veto diario semipermeable: sonda vencida lo hace usable (se reprobea),
+	# sonda pendiente no. El free tier libera cuota antes del reset UTC.
+	var now_probe: int = Time.get_ticks_msec()
+	mgr._ai_provider_day_done = [true, false]
+	mgr._ai_provider_day_probe_at = [0, 0]
+	mgr._ai_provider_blocked_until = [0, 0]
+	check(mgr._ai_provider_usable(0, now_probe), "Veto diario con sonda vencida vuelve a ser usable")
+	mgr._ai_provider_day_probe_at = [now_probe + 600000, 0]
+	check(not mgr._ai_provider_usable(0, now_probe), "Veto diario con sonda pendiente no es usable")
+	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_blocked_until = [now_probe + 30000, 0]
+	check(not mgr._ai_provider_usable(0, now_probe), "Backoff por minuto bloquea aunque no haya veto diario")
 	OS.set_environment("GEMINI_API_KEY", prev_gem)
 	OS.set_environment("GROQ_API_KEY", prev_groq)
 

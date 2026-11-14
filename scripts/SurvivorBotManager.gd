@@ -270,6 +270,11 @@ var _ai_429_streak := 0
 var _ai_provider_blocked_until: Array = [0, 0]
 var _ai_provider_backoff_sec: Array = [4.0, 4.0]
 var _ai_provider_day_done: Array = [false, false]
+# Los vetos diarios son semipermeables: los free tiers liberan cuota antes
+# del reset (ventanas deslizantes, pozos por proyecto), asi que cada veto se
+# sondea cada AI_PROVIDER_DAY_PROBE_SEC y un 200 lo levanta.
+const AI_PROVIDER_DAY_PROBE_SEC := 900.0
+var _ai_provider_day_probe_at: Array = [0, 0]
 
 func _ai_provider_name(p: int = -1) -> String:
 	var pv := _ai_provider if p < 0 else p
@@ -287,10 +292,13 @@ func _ai_provider_url() -> String:
 		return u if not u.is_empty() else AI_PROVIDER2_URL
 	return AI_ADVISOR_URL
 
-# Proveedor utilizable ahora mismo: con key, sin veto diario y fuera de su
-# backoff propio. Es la puerta para que los pozos se turnen en ambos sentidos.
+# Proveedor utilizable ahora mismo: con key, fuera de su backoff propio y sin
+# veto diario vigente — o con veto cuyo plazo de sonda ya llego (un pozo
+# liberado se redescubre solo; si sigue seco, el 429 renueva el veto).
 func _ai_provider_usable(p: int, now: int) -> bool:
-	return _ai_provider_has_key(p) and not bool(_ai_provider_day_done[p]) and now >= int(_ai_provider_blocked_until[p])
+	if not _ai_provider_has_key(p) or now < int(_ai_provider_blocked_until[p]):
+		return false
+	return not bool(_ai_provider_day_done[p]) or now >= int(_ai_provider_day_probe_at[p])
 
 # Salto de proveedor con un backoff breve de asentamiento: el pozo de cuota
 # es independiente y el cerebro local cubre esos segundos si tampoco sirve.
@@ -12394,6 +12402,7 @@ func _ai_tick(delta: float) -> void:
 		_ai_provider = 0
 		_ai_429_streak = 0
 		_ai_provider_day_done = [false, false]
+		_ai_provider_day_probe_at = [0, 0]
 		_ai_provider_blocked_until = [0, 0]
 		_ai_provider_backoff_sec = [4.0, 4.0]
 	# Sondeo local y barato por turnos (~AI_SIG_POLL_SEC por bot): cambios de
@@ -12429,6 +12438,7 @@ func _ai_tick(delta: float) -> void:
 			# Todos los modelos del proveedor activo sin presupuesto local: veto
 			# diario propio hasta el reset y el otro pozo sirve si esta libre.
 			_ai_provider_day_done[_ai_provider] = true
+			_ai_provider_day_probe_at[_ai_provider] = now + int(AI_PROVIDER_DAY_PROBE_SEC * 1000.0)
 			if _ai_provider_usable(1 - _ai_provider, now):
 				_ai_switch_provider("presupuesto %s" % _ai_active_model(), 1 - _ai_provider)
 			else:
@@ -12945,6 +12955,7 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 	var daily := body_text.contains("per day") or body_text.contains("per_day")
 	if daily:
 		_ai_provider_day_done[pending] = true
+		_ai_provider_day_probe_at[pending] = now + int(AI_PROVIDER_DAY_PROBE_SEC * 1000.0)
 	# El pozo del otro proveedor es independiente: si esta libre (sin veto y
 	# fuera de su backoff) el relevo va alli — funciona en ambos sentidos.
 	var other := 1 - pending
@@ -13056,6 +13067,7 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
 		return
 	_ai_provider_backoff_sec[_ai_pending_provider] = 4.0
+	_ai_provider_day_done[_ai_pending_provider] = false
 	_ai_429_streak = 0
 	_ai_conn_status = "online (%s 200)" % _ai_provider_name(_ai_pending_provider)
 	_ai_note_rate_headers(_headers)
