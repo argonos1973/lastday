@@ -1145,6 +1145,9 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	vstats.body_temperature = 36.7
 	vstats.died.connect(_on_bot_stats_died.bind(bot_state))
 	bot_state["vstats"] = vstats
+	# Sin padre en el arbol el Node quedaba huerfano al liberar el bot —
+	# ObjectDB lo reportaba como leak en cada respawn.
+	add_child(vstats)
 	# Enlazar la memoria persistente del personaje: identidad, personalidad
 	# evolutiva, recuerdos de eventos, ubicaciones conocidas (sin omnisciencia),
 	# relaciones sociales, estrategias y objetivos pendientes.
