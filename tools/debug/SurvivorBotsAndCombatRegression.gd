@@ -102,9 +102,20 @@ class TestWorld extends "res://scripts/Main.gd":
 	var built_campfires: Array = []
 	func _net_campfire_built(cid: String, pos: Vector3, _owner: int = 0) -> bool:
 		built_campfires.append(cid)
-		campfire_positions.append(pos)
+		var cf_node := Node3D.new()
+		cf_node.position = pos
+		add_child(cf_node)
+		world_actions_by_id[cid] = cf_node
 		return true
 	func _net_campfire_lit(cid: String, fire_name: String, pos: Vector3, _owner: int = 0) -> bool:
+		# Misma regla que el servidor: solo fogatas cuyo objeto existe.
+		if not world_actions_by_id.has(cid):
+			return false
+		for lc in _lit_campfires:
+			if str(lc.get("id","")) == cid:
+				lc["fire_name"] = fire_name
+				lc["pos"] = pos
+				return true
 		_lit_campfires.append({"id": cid, "fire_name": fire_name, "pos": pos})
 		if not campfire_positions.has(pos):
 			campfire_positions.append(pos)
@@ -1136,6 +1147,10 @@ func run() -> void:
 	var lit_bak: Array = world._lit_campfires.duplicate(true)
 	var blk_bak: Array = world.wildlife_blockers.duplicate(true)
 	world._lit_campfires = [{"id": "cf_nh", "fire_name": "Fogata", "pos": Vector3(55.0, 0.4, 30.0)}]
+	var cf_nh_node := Node3D.new()
+	cf_nh_node.position = Vector3(55.0, 0.4, 30.0)
+	world.add_child(cf_nh_node)
+	world.world_actions_by_id["cf_nh"] = cf_nh_node
 	mgr._tick_bot(kael, 0.2)
 	check(str(b_nh["_act"]) == "rest",
 		"con fogata encendida a 25 m el hambriento sin luz vuelve a casa (act=%s)" % str(b_nh["_act"]))
@@ -1146,6 +1161,8 @@ func run() -> void:
 		"sin refugio ni luz si se aparca en el sitio (act=%s)" % str(b_nh["_act"]))
 	world._lit_campfires = lit_bak
 	world.wildlife_blockers = blk_bak
+	world.world_actions_by_id.erase("cf_nh")
+	cf_nh_node.free()
 	b_nh["hunger"] = 90.0
 	world.day_cycle.time_of_day = tod_bak2
 

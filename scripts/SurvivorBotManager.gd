@@ -3192,7 +3192,7 @@ func _is_near_any_lit_campfire(pos: Vector3, max_dist: float) -> bool:
 		return false
 	var r_sq := max_dist * max_dist
 	for lc in world._lit_campfires:
-		if lc is Dictionary and lc.get("pos") is Vector3:
+		if _campfire_entry_alive(lc) and lc.get("pos") is Vector3:
 			if pos.distance_squared_to(lc["pos"] as Vector3) <= r_sq:
 				return true
 	return false
@@ -3442,7 +3442,7 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 			candidates.append(sh_pos)
 	if world != null and "_lit_campfires" in world:
 		for lc in world._lit_campfires:
-			if lc is Dictionary and lc.get("pos") is Vector3:
+			if _campfire_entry_alive(lc) and lc.get("pos") is Vector3:
 				candidates.append(lc["pos"] as Vector3)
 	if world != null and "wildlife_blockers" in world:
 		for blk in world.wildlife_blockers:
@@ -9465,17 +9465,36 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> void:
 				net.campfire_built.rpc_id(pid, cf_id, pos)
 	_ensure_bot_campfire_lit(b)
 
+# Una fogata encendida tiene objeto real (world_actions_by_id) — figurar en
+# _lit_campfires no basta: la entrada puede quedar obsoleta tras expirar el
+# fuego (5 min) y entonces atrae bots hacia calor/luz inexistentes.
+func _campfire_entry_alive(lc) -> bool:
+	if not (lc is Dictionary):
+		return false
+	if "world_actions_by_id" in world and not (world.world_actions_by_id as Dictionary).has(str(lc.get("id", ""))):
+		return false
+	return true
+
 func _ensure_bot_campfire_lit(b: Dictionary) -> void:
 	var cf_id := str(b.get("campfire_id", ""))
 	if cf_id.is_empty() or world == null:
+		return
+	# La fogata expiro o la quitaron: el id ya no es un objeto real —
+	# limpiar la referencia en vez de reencender una fogata fantasma.
+	if "world_actions_by_id" in world and not (world.world_actions_by_id as Dictionary).has(cf_id):
+		b["campfire_id"] = ""
+		b["campfire_pos"] = Vector3.INF
 		return
 	for lc in world.get("_lit_campfires") if "_lit_campfires" in world else []:
 		if lc is Dictionary and str(lc.get("id", "")) == cf_id:
 			return
 	var fire_name := "CampfireFire_Bot_%d_%d" % [int(b["bot_id"]), Time.get_ticks_msec()]
 	var pos: Vector3 = b["campfire_pos"]
-	if world.has_method("_net_campfire_lit"):
-		world._net_campfire_lit(cf_id, fire_name, pos, 0)
+	if world.has_method("_net_campfire_lit") and world._net_campfire_lit(cf_id, fire_name, pos, 0) == false:
+		# Rechazo explicito: la fogata ya no existe — referencia muerta.
+		b["campfire_id"] = ""
+		b["campfire_pos"] = Vector3.INF
+		return
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
@@ -9495,13 +9514,20 @@ func _nearest_lit_campfire_pos(from_pos: Vector3, max_dist: float) -> Vector3:
 		return Vector3.INF
 	var best := Vector3.INF
 	var best_d := max_dist
+	var dead := []
 	for lc in world._lit_campfires:
-		if lc is Dictionary and lc.get("pos") is Vector3:
-			var cp: Vector3 = lc["pos"]
-			var d := Vector2(from_pos.x - cp.x, from_pos.z - cp.z).length()
-			if d < best_d:
-				best_d = d
-				best = cp
+		if not (lc is Dictionary) or not (lc.get("pos") is Vector3):
+			continue
+		if not _campfire_entry_alive(lc):
+			dead.append(lc)
+			continue
+		var cp: Vector3 = lc["pos"]
+		var d := Vector2(from_pos.x - cp.x, from_pos.z - cp.z).length()
+		if d < best_d:
+			best_d = d
+			best = cp
+	for lc in dead:
+		world._lit_campfires.erase(lc)
 	return best
 
 # Cocinar carne cruda igual que el jugador humano: exige ensartar primero la
@@ -10768,7 +10794,7 @@ func _bot_supply_goal_lit(b: Dictionary, goal: Vector3) -> bool:
 	# Both ends must share the same lit fire; no hopping between distant fires.
 	if world != null and "_lit_campfires" in world:
 		for fire in world._lit_campfires:
-			if fire is Dictionary and fire.get("pos") is Vector3:
+			if fire is Dictionary and fire.get("pos") is Vector3 and _campfire_entry_alive(fire):
 				var center: Vector3 = fire["pos"]
 				if proxy.global_position.distance_to(center) <= NIGHT_SUPPLY_FIRE_RADIUS and goal.distance_to(center) <= NIGHT_SUPPLY_FIRE_RADIUS:
 					return true

@@ -1,9 +1,16 @@
 extends SceneTree
 class Arena extends Node3D:
  var _lit_campfires: Array = []
+ var world_actions_by_id: Dictionary = {}
  var net = null
- func _net_campfire_built(_id, _pos, _pid): pass
- func _net_campfire_lit(id, _name, pos, _pid): _lit_campfires.append({"id":id,"pos":pos})
+ func _net_campfire_built(id, pos, _pid): world_actions_by_id[id] = {"position": pos}
+ func _net_campfire_lit(id, name, pos, _pid):
+  if not world_actions_by_id.has(id): return false
+  for lc in _lit_campfires:
+   if str(lc.get("id","")) == id:
+    lc["fire_name"] = name; lc["pos"] = pos; return true
+  _lit_campfires.append({"id":id,"fire_name":name,"pos":pos})
+  return true
 class Manager extends "res://scripts/SurvivorBotManager.gd":
  func _is_world_night() -> bool: return true
  func _bot_try_craft_named(_b: Dictionary, _delta: float, _wanted: Array, _protect: bool) -> bool: return false
@@ -85,6 +92,7 @@ func run():
    "path_idx":0,"stuck_count":0,"stuck_timer":0.0}
  check(not manager._bot_night_home_walk(b4,.1), "no refuge means no home walk")
  world._lit_campfires = [{"id":"f2","pos":Vector3(25,0,0)}]
+ world.world_actions_by_id["f2"] = {"position":Vector3(25,0,0)}
  check(manager._bot_night_home_walk(b4,.1) and str(b4.get("_act","")) == "rest", "lit campfire pulls the home walk")
  proxy.set_meta("saved_inventory", [])
  # Old camp references must not prevent a new local fire or overwrite it.
@@ -95,6 +103,30 @@ func run():
   var replacement := {"proxy":proxy,"bot_id":905,"hunger":30.0,"thirst":30.0,"campfire_id":"old_camp","campfire_pos":invalid_pos}
   check(not manager._bot_prepare_night_supplies(replacement,.1), "invalid or distant camp permits a new local fire")
   check(replacement.campfire_id != "old_camp" and world._lit_campfires.size() == 2 and world._lit_campfires[0].pos == Vector3(200,0,200), "new camp has distinct identity and preserves old fire")
+ # Fogata fantasma: el fuego expira (5 min) y su objeto desaparece, pero la
+ # entrada de _lit_campfires sobrevive — el bot debe invalidarla, limpiar
+ # su referencia y, con materiales, levantar otra de verdad.
+ proxy.global_position = Vector3(0,0,0)
+ world._lit_campfires = []
+ world.world_actions_by_id = {}
+ proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":4},{"name":"Piedra","quantity":4}])
+ var b5 := {"proxy":proxy,"bot_id":906,"hunger":30.0,"thirst":30.0,"campfire_id":"","campfire_pos":Vector3.INF}
+ check(not manager._bot_prepare_night_supplies(b5,.1), "builds and lights a real campfire")
+ check(world._lit_campfires.size() == 1, "campfire registered as lit")
+ var dead_id: String = b5["campfire_id"]
+ world.world_actions_by_id.erase(dead_id)  # el fuego expira: el objeto ya no existe
+ check(not manager._bot_supply_goal_lit(b5, Vector3(3,0,0)), "ghost campfire gives no light")
+ check(not manager._bot_prepare_night_supplies(b5,.1), "ghost reference cleared and a new fire is built")
+ check(b5["campfire_id"] != "" and world.world_actions_by_id.has(b5["campfire_id"]) and world._lit_campfires.size() == 1,
+  "new real campfire lit; the ghost is gone")
+ # Sin materiales: la referencia muerta se limpia igual y no levanta otra.
+ world._lit_campfires = []
+ proxy.set_meta("saved_inventory", [])
+ var b6 := {"proxy":proxy,"bot_id":907,"hunger":30.0,"thirst":30.0,"campfire_id":"cf_dead","campfire_pos":Vector3(2,0,0),
+  "shelter_id":"","shelter_pos":Vector3.INF,"sitting":false,"anim":"idle","path_timer":0.0,"rot":0.0,"path":[],"_path_goal":Vector3.INF,
+  "path_idx":0,"stuck_count":0,"stuck_timer":0.0}
+ check(manager._bot_prepare_night_supplies(b6,.1), "no materials -> holds position (need_light)")
+ check(b6["campfire_id"] == "" and b6["campfire_pos"] == Vector3.INF, "dead campfire reference is cleaned")
  world.free()
  print("BotNightSuppliesRegression errors=",errors)
  quit(1 if errors else 0)

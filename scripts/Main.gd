@@ -1470,11 +1470,13 @@ func _tick_campfire_fires() -> void:
 			smoke_node.queue_free()
 		# Find the WorldAction for this fire
 		var expired_action_id := ""
+		var expired_pos := Vector3.INF
 		var is_torch := false
 		for action_id in world_actions_by_id.keys():
 			var action = world_actions_by_id[action_id]
 			if action != null and is_instance_valid(action) and action.get_meta("fire_name", "") == fire_name:
 				expired_action_id = action_id
+				expired_pos = action.position
 				is_torch = action.get_meta("item_type", "") == "tool_torch"
 				if is_torch:
 					action.set_meta("torch_lit", false)
@@ -1500,17 +1502,19 @@ func _tick_campfire_fires() -> void:
 					action.queue_free()
 					world_actions_by_id.erase(action_id)
 				break
-		# Remove from positions array
-		if is_torch:
-			for i in range(torch_fire_positions.size() - 1, -1, -1):
-				if torch_fire_positions[i] is Vector3:
-					torch_fire_positions.remove_at(i)
-					break
-		else:
-			for i in range(campfire_positions.size() - 1, -1, -1):
-				if campfire_positions[i] is Vector3:
-					campfire_positions.remove_at(i)
-					break
+		# Remove the dead fire's own position — not "the last Vector3":
+		# with two fires lit the old code removed the live one's warmth.
+		var pos_arr: Array = torch_fire_positions if is_torch else campfire_positions
+		var best_pi := -1
+		var best_pd := INF
+		for i in range(pos_arr.size()):
+			if pos_arr[i] is Vector3:
+				var d_i: float = (pos_arr[i] as Vector3).distance_to(expired_pos)
+				if expired_pos == Vector3.INF or d_i < best_pd:
+					best_pd = d_i
+					best_pi = i
+		if best_pi >= 0:
+			pos_arr.remove_at(best_pi)
 		# Remove from _lit_campfires and _built_campfires
 		for i in range(_lit_campfires.size() - 1, -1, -1):
 			if _lit_campfires[i] is Dictionary and _lit_campfires[i].get("fire_name", "") == fire_name:
@@ -2034,9 +2038,11 @@ func _extinguish_fires_in_rain(elapsed: float) -> void:
 
 func _extinguish_fire_by_name(fire_name: String) -> void:
 	# Find and remove the fire visual + its WorldAction
+	var dead_pos := Vector3.INF
 	for action_id in world_actions_by_id.keys():
 		var action = world_actions_by_id[action_id]
 		if action != null and is_instance_valid(action) and action.get_meta("fire_name", "") == fire_name:
+			dead_pos = action.position
 			var visual_name := str(action.get_meta("visual_name", ""))
 			if not visual_name.is_empty():
 				var vis_node := get_node_or_null(visual_name)
@@ -2048,11 +2054,18 @@ func _extinguish_fire_by_name(fire_name: String) -> void:
 			action.repeatable = false
 			action.remove_meta("fire_name")
 			break
-	# Remove from campfire positions
-	for i in range(campfire_positions.size() - 1, -1, -1):
+	# Remove the dead fire's own position — not "the last Vector3": with
+	# two fires lit the old code killed the live one's warmth.
+	var best_pi := -1
+	var best_pd := INF
+	for i in range(campfire_positions.size()):
 		if campfire_positions[i] is Vector3:
-			campfire_positions.remove_at(i)
-			break
+			var d_i: float = (campfire_positions[i] as Vector3).distance_to(dead_pos)
+			if dead_pos == Vector3.INF or d_i < best_pd:
+				best_pd = d_i
+				best_pi = i
+	if best_pi >= 0:
+		campfire_positions.remove_at(best_pi)
 	# Remove from _lit_campfires
 	for i in range(_lit_campfires.size() - 1, -1, -1):
 		if _lit_campfires[i] is Dictionary and _lit_campfires[i].get("fire_name", "") == fire_name:
@@ -14527,12 +14540,11 @@ func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3, sende
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
 		if not _sender_within(sender_id, pos, 15.0):
 			return false
-	# Dedup del append: un RPC repetido no debe hinchar _lit_campfires
-	# (persiste en el save); el resto del flujo queda igual.
-	if net != null and net.is_dedicated_server and not _tracked_has_id(_lit_campfires, action_id):
-		_lit_campfires.append({"id": action_id, "fire_name": fire_name, "pos": pos})
+	# La fogata ya no existe (expiro a los 5 min o la quitaron): NO
+	# registrarla como encendida — una entrada sin objeto es una fogata
+	# fantasma que atrae a los bots hacia calor y luz inexistentes.
 	if not world_actions_by_id.has(action_id):
-		return true
+		return false
 	var action = world_actions_by_id[action_id]
 	if action.get_meta("lit", false):
 		return true
@@ -14543,6 +14555,19 @@ func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3, sende
 	action.action_type = "cook"
 	action.display_name = "Fogata encendida"
 	action.repeatable = true
+	# Dedup del append: un RPC repetido no debe hinchar _lit_campfires
+	# (persiste en el save); solo entran fogatas que arden de verdad. Si el
+	# id ya figura (reconstruida sobre una entrada vieja), se refrescan la
+	# posicion y el nombre de fuego reales en vez de duplicar.
+	if net != null and net.is_dedicated_server:
+		var tracked := false
+		for lc in _lit_campfires:
+			if lc is Dictionary and str(lc.get("id", "")) == action_id:
+				lc["fire_name"] = fire_name
+				lc["pos"] = pos
+				tracked = true
+		if not tracked:
+			_lit_campfires.append({"id": action_id, "fire_name": fire_name, "pos": pos})
 	return true
 
 func _create_quaternius_environment_props() -> void:
