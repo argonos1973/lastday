@@ -1149,6 +1149,7 @@ func run() -> void:
 	world._lit_campfires = [{"id": "cf_nh", "fire_name": "Fogata", "pos": Vector3(55.0, 0.4, 30.0)}]
 	var cf_nh_node := Node3D.new()
 	cf_nh_node.position = Vector3(55.0, 0.4, 30.0)
+	cf_nh_node.set_meta("lit", true)
 	world.add_child(cf_nh_node)
 	world.world_actions_by_id["cf_nh"] = cf_nh_node
 	mgr._tick_bot(kael, 0.2)

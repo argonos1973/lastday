@@ -108,6 +108,9 @@ class SimWorld extends "res://scripts/Main.gd":
 	func _net_campfire_lit(cid: String, fire_name: String, pos: Vector3, _owner: int = 0) -> bool:
 		if not world_actions_by_id.has(cid):
 			return false
+		var cfo = world_actions_by_id[cid]
+		if cfo is Object:
+			cfo.set_meta("lit", true)
 		for lc in _lit_campfires:
 			if str(lc.get("id", "")) == cid:
 				lc["fire_name"] = fire_name
@@ -117,6 +120,28 @@ class SimWorld extends "res://scripts/Main.gd":
 		if not campfire_positions.has(pos):
 			campfire_positions.append(pos)
 		return true
+	# La lluvia de Main.gd (_extinguish_fire_by_name): el objeto SOBREVIVE
+	# apagado (lit=false, accion "light_campfire") — no da calor ni luz y
+	# no puede atraer al bot como refugio termico.
+	func rain_out_campfire(cid: String) -> void:
+		var cf = world_actions_by_id.get(cid)
+		var pos: Vector3 = (cf as Node3D).global_position if cf is Node3D else Vector3.INF
+		if cf is Object:
+			cf.set_meta("lit", false)
+			cf.remove_meta("fire_name")
+		for i in range(_lit_campfires.size() - 1, -1, -1):
+			if str(_lit_campfires[i].get("id", "")) == cid:
+				_lit_campfires.remove_at(i)
+		if pos != Vector3.INF:
+			var bi := -1
+			var bd := INF
+			for i in range(campfire_positions.size()):
+				var d := (campfire_positions[i] as Vector3).distance_to(pos)
+				if d < bd:
+					bd = d
+					bi = i
+			if bi >= 0 and bd < 2.0:
+				campfire_positions.remove_at(bi)
 	# La expiracion real de Main.gd: el objeto desaparece y se purga el
 	# registro encendido + la posicion de calor del fuego muerto.
 	func expire_campfire(cid: String) -> void:
@@ -161,13 +186,21 @@ class SimMgr extends SurvivorBotManagerScript:
 	func _is_step_blocked(_a: Vector3, _b: Vector3, _deep: bool = false) -> bool:
 		return false
 
+# Manager sin overrides de locomocion: usa _move_bot_towards real — A* de
+# NavPathfinding, pasos bloqueados por blockers/rios y la inercia de un
+# jugador. Para los escenarios que exigen rodear obstaculos de verdad.
+class NavSimMgr extends SurvivorBotManagerScript:
+	pass
+
 func _initialize() -> void:
 	call_deferred("run")
 
 var _prev_env: Dictionary = {}
 
-# Mundo + manager + bots frescos por escenario.
-func _new_world(temp := 8.0, weather := {}) -> Dictionary:
+# Mundo + manager + bots frescos por escenario. use_nav=true instancia el
+# manager con locomocion real (A* + blockers) en vez del desplazamiento
+# lineal del sim.
+func _new_world(temp := 8.0, weather := {}, use_nav := false) -> Dictionary:
 	# El escenario anterior muere aqui: proxies, acciones y mundo se
 	# liberan con el arbol, no quedan ObjectDB colgados al salir.
 	for key in ["world", "net"]:
@@ -185,7 +218,7 @@ func _new_world(temp := 8.0, weather := {}) -> Dictionary:
 	world.add_child(dc)
 	world.day_cycle = dc
 	dc.ambient_temp = temp
-	var mgr := SimMgr.new()
+	var mgr: SurvivorBotManagerScript = NavSimMgr.new() if use_nav else SimMgr.new()
 	mgr.name = "SurvivorBotManager"
 	world.add_child(mgr)
 	world.survivor_bot_mgr = mgr
@@ -234,6 +267,16 @@ func _place_bot(b: Dictionary, pos: Vector3, stats := {}) -> void:
 	st.wetness = float(stats.get("wetness", 0.0))
 	proxy.set_meta("saved_inventory", stats.get("inventory", []))
 
+# Inventario real del bot como {nombre: cantidad} — para comparar contra el
+# inventario inicial y detectar recursos inventados.
+func _inv_totals(b: Dictionary) -> Dictionary:
+	var out := {}
+	for it in (b["proxy"] as Node3D).get_meta("saved_inventory", []):
+		if it is Dictionary:
+			var nm := str(it.get("name", ""))
+			out[nm] = float(out.get(nm, 0.0)) + float(it.get("quantity", 1))
+	return out
+
 func _spawn_food_action(world: SimWorld, aid: String, pos: Vector3, use_value := 14.0) -> void:
 	var seta := WorldActionScript.new()
 	seta.setup(aid, "eat_food", "Seta amanita", Vector3(0.2, 0.2, 0.2), Color(0.8, 0.15, 0.1), false, false)
@@ -251,7 +294,7 @@ const DT := 1.0
 
 func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 34000) -> Array:
 	var world: SimWorld = env["world"]
-	var mgr: SimMgr = env["mgr"]
+	var mgr: SurvivorBotManagerScript = env["mgr"]
 	var dc: FakeDayCycle = env["dc"]
 	var reports: Array = []
 	for b in bots:
@@ -282,6 +325,13 @@ func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 340
 			r["failed_goals"] = int(r["failed_goals"]) + maxi(0, (b.get("_bad_water", []) as Array).size() - bad_water_before)
 			var act := str(b.get("_act", "idle"))
 			r["acts"][act] = int(r["acts"].get(act, 0)) + 1
+			# Ventana de amenaza: todo acto con un enemigo encima va aparte —
+			# regular la fogata mientras te atacan es un bug de prioridades.
+			if b.get("aggro_target") != null or b.get("_s_predator") is Node3D or b.get("_s_foe") is Node3D:
+				r["threat_ticks"] = int(r.get("threat_ticks", 0)) + 1
+				var ta: Dictionary = r.get("threat_acts", {})
+				ta[act] = int(ta.get(act, 0)) + 1
+				r["threat_acts"] = ta
 			if bool(b.get("sleeping", false)):
 				r["slept"] = true
 			r["peak_wet"] = maxf(float(r["peak_wet"]), st.wetness)
@@ -314,7 +364,7 @@ func run() -> void:
 	print("S1: refugio, provisiones y fogata")
 	var env := _new_world(8.0)
 	var w: SimWorld = env["world"]
-	var mgr: SimMgr = env["mgr"]
+	var mgr: SurvivorBotManagerScript = env["mgr"]
 	var home := Vector3(0.0, 0.4, 0.0)
 	w._built_shelters = [{"id": "s1_sh", "pos": home, "contents": [
 		{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 60, "use_value": 14.0},
@@ -342,7 +392,7 @@ func run() -> void:
 	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 55.0, "inventory": [
 		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 4, "use_value": 0.0},
 		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 3, "use_value": 0.0},
-		{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0},
+		{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0},
 		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 10, "use_value": 45.0}]})
 	reps = simulate(env, [b])
 	print(_report_line(reps[0], b))
@@ -362,7 +412,7 @@ func run() -> void:
 	w.water_rect = Rect2(40.0, 25.0, 10.0, 10.0)
 	b = mgr.bots[901]
 	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 34.9, "sleep": 50.0,
-		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0}]})
 	var d0 := Vector2(90.0, 0.0).length()
 	reps = simulate(env, [b])
 	print(_report_line(reps[0], b))
@@ -370,10 +420,10 @@ func run() -> void:
 	var proxy3: Node3D = b["proxy"]
 	var d_end := Vector2(proxy3.global_position.x - house.x, proxy3.global_position.z - house.z).length()
 	check(not st3.dead, "S3 el helado sobrevive")
-	check(d_end < d0 - 30.0 or st3.body_temperature > 35.2 or not st3.dead,
+	check(d_end < d0 - 30.0 or st3.body_temperature > 35.2,
 		"S3 marco hacia el refugio o se recupero (d %.0f->%.0f, temp %.1f)" % [d0, d_end, st3.body_temperature])
-	check(int((reps[0]["acts"] as Dictionary).get("rest", 0)) > 0 or not st3.dead,
-		"S3 eligio refugio/descanso, no patrulla en el sitio")
+	check(int((reps[0]["acts"] as Dictionary).get("rest", 0)) > 0,
+		"S3 eligio refugio/descanso, no patrulla en el sitio (acts=%s)" % str(reps[0]["acts"]))
 
 	# ---- S4: mojado bajo lluvia — se moja y prioriza secarse ----
 	print("S4: mojado bajo lluvia")
@@ -387,7 +437,7 @@ func run() -> void:
 	w.water_rect = Rect2(25.0, -45.0, 10.0, 10.0)
 	b = mgr.bots[901]
 	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"wetness": 0.35, "sleep": 60.0,
-		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0}]})
 	reps = simulate(env, [b])
 	print(_report_line(reps[0], b))
 	var st4: SurvivalStats = b["vstats"]
@@ -451,7 +501,7 @@ func run() -> void:
 	w.water_rect = Rect2(15.0, -35.0, 10.0, 10.0)
 	b = mgr.bots[901]
 	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 70.0, "body_temperature": 35.6,
-		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0}]})
 	b["campfire_id"] = "s7_cf"
 	b["campfire_pos"] = fire
 	reps = simulate(env, [b], [{"at": 400, "fn": func(): w.expire_campfire("s7_cf")}])
@@ -461,6 +511,38 @@ func run() -> void:
 	check(w._lit_campfires.is_empty(), "S7 el fuego expiro de verdad")
 	check(not str(b["campfire_id"]) == "s7_cf" or Vector2(b["proxy"].global_position.x - fire.x, b["proxy"].global_position.z - fire.z).length() > 8.0,
 		"S7 detecta el fuego muerto: referencia limpia o busca otra fuente")
+
+	# C4: lluvia — la estructura de la fogata sobrevive APAGADA (lit=false).
+	# No puede dar calor, ni luz, ni valer de refugio termico.
+	env = _new_world(3.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	var fire_ro := Vector3(10.0, 0.4, 0.0)
+	w._net_campfire_built("ro_cf", fire_ro)
+	w._net_campfire_lit("ro_cf", "fire_ro", fire_ro)
+	b = mgr.bots[901]
+	_place_bot(b, fire_ro + Vector3(2.0, 0.0, 0.0), {"body_temperature": 35.0, "sleep": 60.0,
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 8, "use_value": 30.0}]})
+	w.rain_out_campfire("ro_cf")
+	check(w.campfire_positions.is_empty(), "C4 fuego apagado por lluvia no calienta (positions=%d)" % w.campfire_positions.size())
+	check(mgr._nearest_lit_campfire_pos(fire_ro + Vector3(2.0, 0, 0), 8.0) == Vector3.INF,
+		"C4 el objeto apagado no cuenta como fogata encendida")
+	check(mgr._nearest_safe_refuge(b, 30.0) == Vector3.INF,
+		"C4 el fuego apagado no atrae como refugio termico")
+	var st_ro: SurvivalStats = b["vstats"]
+	var t_before := st_ro.body_temperature
+	for i in range(120):
+		mgr._bot_survival_tick(b, 1.0)
+	check(st_ro.body_temperature <= t_before + 0.05,
+		"C4 junto a las brasas frias no se recupera temp (%.2f->%.2f)" % [t_before, st_ro.body_temperature])
+	# Una entrada encendida que sobreviva (cache obsoleto) sobre un objeto
+	# apagado tampoco vale: _campfire_entry_alive exige objeto valido y
+	# realmente encendido.
+	w._lit_campfires.append({"id": "ro_cf", "fire_name": "fire_ro", "pos": fire_ro})
+	check(not mgr._campfire_entry_alive(w._lit_campfires[-1]), "C4 entrada encendida obsoleta se invalida")
+	check(mgr._nearest_lit_campfire_pos(fire_ro + Vector3(2.0, 0, 0), 8.0) == Vector3.INF,
+		"C4 la entrada obsoleta no engana al buscador de lumbre")
+	w._lit_campfires.clear()
 
 	# ---- S8: lobos/enemigo mientras duerme ----
 	print("S8: amenaza durante el sueño")
@@ -492,6 +574,12 @@ func run() -> void:
 	check(bool(reps[0]["slept"]), "S8 llego a dormir antes del ataque")
 	check(not bool(b["sleeping"]), "S8 el aggro lo desperto")
 	check(not (b["vstats"] as SurvivalStats).dead, "S8 sobrevive a la amenaza")
+	# Prioridad combate>termostato: con el lobo encima nunca ejecuta
+	# warm_up/cool_off — la regulacion termica cede a la amenaza.
+	var tacts: Dictionary = reps[0].get("threat_acts", {})
+	check(int(reps[0].get("threat_ticks", 0)) > 0, "S8 la ventana de amenaza se registro")
+	check(int(tacts.get("warm_up", 0)) + int(tacts.get("cool_off", 0)) == 0,
+		"S8 no regula la distancia al fuego bajo amenaza (threat_acts=%s)" % str(tacts))
 	wolf.queue_free()
 
 	# ---- S9: sin materiales para fuego, frio — refugio alternativo ----
@@ -506,15 +594,35 @@ func run() -> void:
 	b = mgr.bots[901]
 	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 35.5, "sleep": 55.0,
 		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 100, "use_value": 30.0}]})
+	var inv9_0 := _inv_totals(b)
 	reps = simulate(env, [b])
 	print(_report_line(reps[0], b))
 	var st9: SurvivalStats = b["vstats"]
 	var proxy9: Node3D = b["proxy"]
 	check(not st9.dead, "S9 sobrevive sin poder encender fuego")
-	check(w.world_actions_by_id.is_empty() or not str(b["campfire_id"]).is_empty() or true,
-		"S9 no inventa recursos")
-	check(Vector2(proxy9.global_position.x - 120.0, proxy9.global_position.z).length() < 120.0 or not st9.dead,
-		"S9 busco el refugio alternativo")
+	# No inventa recursos: sin materiales no construye nada, y el inventario
+	# final es un subconjunto del inicial (comio, no conjuro).
+	# No inventa recursos: sin materiales no construye nada — el loot de su
+	# propia muerte (death_loot_*) es una mecanica valida y no cuenta.
+	var s9_ids := []
+	for aid9 in w.world_actions_by_id.keys():
+		if str(aid9).begins_with("death_loot_"):
+			continue
+		var a9 = w.world_actions_by_id[aid9]
+		var label := "?"
+		if a9 is Object:
+			label = str(a9.get_meta("item_name", a9.get("action_type")))
+		s9_ids.append("%s:%s" % [str(aid9), label])
+	check(str(b["campfire_id"]).is_empty() and s9_ids.is_empty() and w._lit_campfires.is_empty(),
+		"S9 no inventa fogatas (cf=%s acciones=%s lit=%d)" % [b["campfire_id"], str(s9_ids), w._lit_campfires.size()])
+	var inv9_1 := _inv_totals(b)
+	var invented := false
+	for nm in inv9_1:
+		if float(inv9_1[nm]) > float(inv9_0.get(nm, 0.0)):
+			invented = true
+	check(not invented, "S9 el inventario no crece sin fuentes (%s -> %s)" % [str(inv9_0), str(inv9_1)])
+	check(Vector2(proxy9.global_position.x - 120.0, proxy9.global_position.z).length() < 15.0,
+		"S9 alcanzo el refugio alternativo (d=%.0f a la casa)" % Vector2(proxy9.global_position.x - 120.0, proxy9.global_position.z).length())
 
 	# ---- S10: sobrevive al amanecer y retoma su actividad ----
 	print("S10: hasta el amanecer")
@@ -538,8 +646,86 @@ func run() -> void:
 	var st10: SurvivalStats = b["vstats"]
 	check(not st10.dead, "S10 llega al amanecer")
 	check(not (env["dc"] as FakeDayCycle).is_night(), "S10 la simulacion cruzo el amanecer")
-	check(not bool(b["sleeping"]) or st10.sleep <= 55.0,
-		"S10 despierta al clarear con el deposito recuperado (sueño %.0f)" % st10.sleep)
+	# El sim corta en el borde del alba: la gate `not is_night and sleep>55`
+	# necesita unos ticks mas para disparar el despertar real.
+	var dc10: FakeDayCycle = env["dc"]
+	for i in range(120):
+		mgr._tick_bot(b, DT)
+		dc10.time_of_day = fmod(dc10.time_of_day + DT / 3600.0, 24.0)
+	check(not bool(b["sleeping"]) and st10.sleep > 55.0,
+		"S10 despierta al clarear con el deposito recuperado (sueño %.0f, sleeping=%s)" % [st10.sleep, str(b["sleeping"])])
+
+	# ---- S11: despensa escasa — el forrajeo es la unica forma de vivir ----
+	# Dos raciones no bastan para una noche real: si la cadena de forrajeo
+	# letal no recoge las setas del mundo, la inanicion es matematica. El
+	# refugio cercano le da donde dormir entre recolectas (el frio no es
+	# lo que se examina aqui).
+	print("S11: inventario escaso, forrajeo obligado")
+	env = _new_world(12.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	w.house_pts = [Vector3(8.0, 0.4, 0.0)]
+	w.wildlife_blockers = [{"house_bounds": Rect2(3.0, -5.0, 10.0, 10.0)}]
+	w.river_segs = [{"center": Vector3(45.0, 0.0, -35.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(40.0, -40.0, 10.0, 10.0)
+	var setas11 := 0
+	for i in range(40):
+		_spawn_food_action(w, "s11_seta%d" % i, Vector3(20.0 + i % 5, 0.4, 15.0 + i / 5), 30.0)
+		setas11 += 1
+	for i in range(30):
+		_spawn_food_action(w, "s11_setab%d" % i, Vector3(-15.0 - i % 5, 0.4, -20.0 + i / 5), 30.0)
+		setas11 += 1
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 55.0, "thirst": 60.0, "sleep": 65.0,
+		"inventory": [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 2, "use_value": 30.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st11: SurvivalStats = b["vstats"]
+	check(not st11.dead, "S11 sobrevive a despensa escasa forrajeando")
+	check(w.world_actions_by_id.size() < setas11,
+		"S11 recogio comida real del mundo (%d->%d acciones)" % [setas11, w.world_actions_by_id.size()])
+	check(st11.hunger > 30.0, "S11 el forrajeo repuso hambre (%.0f)" % st11.hunger)
+
+	# ---- S12: navegacion real — muro entre el bot y su refugio ----
+	# NavSimMgr no tiene overrides: usa _move_bot_towards real con el A* de
+	# NavPathfinding sobre una rejilla donde el muro bloquea el paso. Un
+	# sim de locomocion lineal atravesaria el muro; aqui hay que rodearlo.
+	print("S12: nav real, muro hacia el refugio")
+	env = _new_world(9.0, {}, true)
+	w = env["world"]
+	mgr = env["mgr"]
+	# Muro vertical en x=30 desde z=-40 hasta z=+10 (hueco al norte): la
+	# ruta directa a la casa del este esta cortada.
+	for zi in range(-40, 11, 2):
+		w._register_wildlife_blocker(Vector3(30.0, 0.0, float(zi)), 1.4)
+	w.bot_nav = NavPathfinding.new()
+	w.bot_nav.build(w.wildlife_blockers, [])
+	var home12 := Vector3(70.0, 0.4, 0.0)
+	w._built_shelters = [{"id": "s12_sh", "pos": home12, "contents": [
+		{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 40, "use_value": 30.0},
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 25, "use_value": 45.0}]}]
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"shelter_id": "s12_sh", "shelter_pos": home12,
+		"hunger": 50.0, "thirst": 50.0, "sleep": 60.0,
+		"inventory": [
+			{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 8, "use_value": 30.0},
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 4, "use_value": 45.0}]})
+	var wall_viol := [0]
+	var max_z := [0.0]
+	reps = simulate(env, [b], [{"every": 1, "fn": func():
+		var p: Vector3 = (b["proxy"] as Node3D).global_position
+		if p.x > 28.5 and p.x < 31.5 and p.z > -38.0 and p.z < 10.0:
+			wall_viol[0] += 1
+		if p.z > max_z[0]:
+			max_z[0] = p.z}])
+	print(_report_line(reps[0], b))
+	var st12: SurvivalStats = b["vstats"]
+	var proxy12: Node3D = b["proxy"]
+	var d12 := Vector2(proxy12.global_position.x - home12.x, proxy12.global_position.z - home12.z).length()
+	check(not st12.dead, "S12 sobrevive la noche con nav real")
+	check(wall_viol[0] == 0, "S12 jamas atraviesa el muro (viol=%d)" % wall_viol[0])
+	check(max_z[0] > 11.5, "S12 rodeo el muro por el hueco norte (z_max=%.1f)" % max_z[0])
+	check(d12 < 10.0, "S12 llego a su refugio al otro lado (d=%.0f)" % d12)
 
 	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures else 0)
