@@ -71,6 +71,24 @@ func run():
  proxy.global_position = Vector3(70,0,50)
  check(manager._bot_supply_goal_allowed(b2,Vector3(55.9,0,50)), "far-nudged lethal bot still reaches the directed goal")
  check(not manager._bot_supply_goal_allowed(b2,Vector3(240,0,50)), "far-nudged lethal bot still cannot reach beyond radius")
+ # La expedicion se abandona cuando el riesgo supera sus posibilidades:
+ # escondido de una amenaza no cruza el campo a la vista (la burbuja si).
+ proxy.global_position = Vector3(50,0,50)
+ b2["hide_timer"] = 5.0
+ check(not manager._bot_supply_goal_allowed(b2,Vector3(180,0,50)), "hiding aborts the far lethal expedition")
+ check(manager._bot_supply_goal_allowed(b2,Vector3(54,0,50)), "but the 6m bubble still works while hiding")
+ b2["hide_timer"] = 0.0
+ # Sueño letal: solo un trago a tiro — caminar 150 m muriendo de
+ # agotamiento no llega; el colapso frena el desgaste y despierta al borde.
+ var st_nap := SurvivalStats.new()
+ st_nap.sleep = 6.0
+ b2["vstats"] = st_nap
+ check(manager._bot_supply_goal_allowed(b2,Vector3(70,0,50)), "lethal-sleep bot still reaches a 20m drink")
+ check(not manager._bot_supply_goal_allowed(b2,Vector3(180,0,50)), "lethal-sleep bot abandons the 130m odyssey")
+ st_nap.sleep = 30.0
+ check(manager._bot_supply_goal_allowed(b2,Vector3(180,0,50)), "rested lethal bot reaches the far source again")
+ b2.erase("vstats")
+ st_nap.free()
  # Antorcha: libera el ancla.
  proxy.global_position = Vector3(50,0,50)
  proxy.set_meta("saved_inventory", [{"name":"Antorcha","quantity":1}])

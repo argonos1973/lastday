@@ -2140,7 +2140,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if d_own_sh <= 2.6:
 			_bot_sync_own_shelter_stash(b)
 			_bot_try_camo_shelter(b)
-		var needs_from_stash := _own_shelter_has_needed_item(b) and d_own_sh < 110.0
+		var needs_from_stash := _own_shelter_has_needed_item(b) \
+				and (d_own_sh < 110.0 or (_bot_night_supply_emergency(b) and d_own_sh <= NIGHT_LETHAL_SUPPLY_RADIUS))
 		var storable_n := _bot_count_storable_items(b)
 		var wants_stash_run := needs_from_stash or (not starving_or_parched and (storable_n >= 3 or (storable_n >= 1 and d_own_sh < 24.0)))
 		if wants_stash_run and d_own_sh > 2.4:
@@ -10817,9 +10818,16 @@ func _bot_supply_goal_allowed(b: Dictionary, goal: Vector3) -> bool:
 	# alcance gana a la oscuridad — el bot conoce el rio o el escaneo vio
 	# la seta; quedarse quieto es morir seguro. No reabre el vagar a
 	# ciegas: solo pasan destinos dirigidos dentro del alcance.
-	if _bot_night_supply_emergency(b) and proxy != null \
-		and proxy.global_position.distance_to(goal) <= NIGHT_LETHAL_SUPPLY_RADIUS:
-		return true
+	# La expedicion se abandona cuando el riesgo supera sus posibilidades:
+	# escondido de una amenaza no se cruza el campo a la vista, y con
+	# sueño letal solo vale un trago a tiro — una caminata larga muriendo
+	# de agotamiento no llega; el colapso frena el desgaste y despierta
+	# al borde de la inanicion.
+	if _bot_night_supply_emergency(b) and proxy != null and float(b.get("hide_timer", 0.0)) <= 0.0:
+		var vst_sup: SurvivalStats = b.get("vstats")
+		var lethal_radius := 25.0 if vst_sup != null and vst_sup.sleep <= 8.0 else NIGHT_LETHAL_SUPPLY_RADIUS
+		if proxy.global_position.distance_to(goal) <= lethal_radius:
+			return true
 	# Last resort only after failing to prepare light. Anchor the six-metre
 	# search at its starting point so repeated decisions cannot wander away.
 	# La meta cercana al bot tambien vale para reingresar: empujado un palmo
