@@ -1976,7 +1976,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# comida — seguir al lider no llena el estomago (_bot_try_forage ya hace
 	# esta excepcion con su propio 'desperate', pero no llega a setas ni
 	# frutales en mitad de la ciudad).
-	var desperate_food: bool = float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, true)
+	var desperate_food: bool = float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b))
 
 	# 4c) Caza de presas (ciervos/zorros) y aprovechamiento de cadáveres cuando
 	# falta comida o materiales animales (pieles, tendón para cuerda, hueso).
@@ -2130,7 +2130,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# Excepcion vital: si se esta muriendo de hambre o sed (<26) y no se esta
 	# escondiendo de un ataque, sentarse a "descansar" es suicidio — debe seguir
 	# buscando comida/agua fuera.
-	var starving_or_parched: bool = (float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, true)) or (float(b["thirst"]) < 22.0 and not _bot_has_drink(proxy))
+	var starving_or_parched: bool = (float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b))) or (float(b["thirst"]) < 22.0 and not _bot_has_drink(proxy))
 	# 6a) Alijo en su propio refugio: si ya está junto a su refugio sincroniza
 	# (retira lo que necesite y guarda el sobrante); si necesita comida/agua/arma
 	# que tiene guardada allí o acumula >=3 objetos sobrantes, vuelve a su
@@ -2808,6 +2808,14 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 		b["forced_eat"] = false
 	if (force_eat or float(b["hunger"]) < hunger_line or float(b["health"]) < 80.0) and float(b["eat_cooldown"]) <= 0.0:
 		var desperate := float(b["hunger"]) < 28.0
+		# Leccion 'medical' (se desangro o se enveneno): la carne cruda es
+		# ultimo recurso — solo se arriesga si aguanta el drenaje (vida tras
+		# el bocado + cura/comida encima) o si la inanicion es ya peor que el
+		# veneno (hambre casi a 0: su -2/s supera el -1/s de la enfermedad).
+		var med_lessons := int(d_lessons.get("medical", 0))
+		if med_lessons > 0 and desperate and float(b.get("sick_timer", 0.0)) <= 0.0 and not _bot_can_cook_raw_meat(proxy):
+			var margin := 70.0 + minf(10.0, float(med_lessons) * 4.0)
+			desperate = float(b["hunger"]) <= 5.0 or float(b["health"]) * 0.5 + _bot_poison_cover(proxy) > margin
 		for i in range(inv.size()):
 			var it = inv[i]
 			if not (it is Dictionary):
@@ -5196,6 +5204,9 @@ func _bot_death_adaptations(mem: Dictionary) -> Array:
 	var rng := int(lessons.get("ranged", 0))
 	if rng > 0:
 		out.append("🎯 Precaución anti-tirador (zigzag al cargar, repliegue antes, desconfía ×%d)" % mini(3, rng + 1))
+	var med := int(lessons.get("medical", 0))
+	if med > 0:
+		out.append("🩸 Autocuidado (venda al <%d%% HP, crudo solo con margen)" % int(72.0 + mini(12, cmb * 4) + mini(10, med * 5)))
 	var killers_m: Dictionary = mem.get("killers", {})
 	var nem_c := 0
 	for k2 in killers_m.values():
@@ -7017,7 +7028,7 @@ func _chat_parse_request(text: String) -> Dictionary:
 # Que echa en falta el bot ahora mismo ("" = nada urgente).
 func _chat_request_need(b: Dictionary) -> String:
 	var proxy: Node3D = b["proxy"]
-	if float(b.get("hunger", 100.0)) < 18.0 and not _bot_has_edible_food(proxy, true):
+	if float(b.get("hunger", 100.0)) < 18.0 and not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b)):
 		return "comida"
 	if float(b.get("thirst", 100.0)) < 12.0 and not _bot_has_drink(proxy):
 		return "agua"
@@ -10476,7 +10487,7 @@ func _bot_vital_break(b: Dictionary) -> bool:
 		return true
 	if float(b["thirst"]) < 35.0 and not _bot_has_drink(proxy):
 		return true
-	if float(b["hunger"]) < 40.0 and not _bot_has_edible_food(proxy, true):
+	if float(b["hunger"]) < 40.0 and not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b)):
 		return true
 	if float(b["health"]) < 45.0:
 		return true
@@ -14486,6 +14497,34 @@ func _bot_has_edible_food(proxy: Node3D, desperate: bool) -> bool:
 		return true
 	return false
 
+# Quien ya se desangro o se enveneno (leccion 'medical') aprende que la
+# carne cruda no es comida de verdad: no cuenta para calmar la urgencia
+# de buscar alimento — forrajea en vez de esperar a la desesperacion.
+func _bot_raw_meat_is_food(b: Dictionary) -> bool:
+	return int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("medical", 0)) == 0
+
+# Cura estimada para capear una intoxicacion (~60 s, ~6 bocados por el
+# cooldown de comida): cada pieza de comida segura cura use*0.35 (min 3)
+# y cada Venda/Vendaje 32. Carne cruda/ensartada no cuenta — envenena.
+func _bot_poison_cover(proxy: Node3D) -> float:
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var cover := 0.0
+	var bites := 0
+	for it in inv:
+		if not (it is Dictionary):
+			continue
+		var nm := str(it.get("name", ""))
+		var qty := int(it.get("quantity", 1))
+		if nm in ["Venda", "Vendaje"]:
+			cover += 32.0 * qty
+		elif bites < 6 and str(it.get("type", "")) == "food" and nm != "Carne humana" \
+				and not nm.begins_with("Carne cruda") and not nm.ends_with("ensartada") \
+				and nm != "Pez crudo" and (not nm.begins_with("Lata de ") or nm.ends_with(" abierta")):
+			var use_qty := mini(qty, 6 - bites)
+			cover += maxf(3.0, float(it.get("use_value", 18.0)) * 0.35) * float(use_qty)
+			bites += use_qty
+	return cover
+
 func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var hunger := float(b["hunger"])
@@ -14959,7 +14998,7 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 			b["_farm"] = {"phase": "clean", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 1.25, "tool": ""}
 			return true
 	# Muerto de hambre/sed: no se pone a sembrar — busca comida ya.
-	var starving := float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, true)
+	var starving := float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b))
 	if starving:
 		return false
 	# 2) Replantar un bancal vacio propio si lleva semillas y herramienta.

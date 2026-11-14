@@ -6097,6 +6097,76 @@ func run() -> void:
 	check(world._death_notice_text().begins_with("Has muerto"),
 		"10U9: sin datos queda el aviso generico")
 
+	# ------------------------------------------------------------------
+	# 10V) Leccion 'medical': la carne cruda deja de ser comida segura —
+	#      solo se come con margen de vida/cura o con el hambre casi a 0.
+	# ------------------------------------------------------------------
+	var dl_save_med = mem_med.get("death_lessons", {})
+	# 10V0: sin leccion la carne cruda se come apenas apretando el hambre
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["eat_cooldown"] = 0.0
+	b_med["hunger"] = 20.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 20.0},
+	])
+	mem_med["death_lessons"] = {}
+	mgr._maintain_bot_needs(b_med, 0.25)
+	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
+		"10V0: sin leccion la carne cruda se come con hambre 20 (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	# 10V1: con leccion 'medical' y sin margen de cura no la arriesga
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["eat_cooldown"] = 0.0
+	b_med["hunger"] = 20.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 20.0},
+	])
+	mem_med["death_lessons"] = {"medical": 2}
+	mgr._maintain_bot_needs(b_med, 0.25)
+	var inv_med_v: Array = p_med.get_meta("saved_inventory", [])
+	check(float(b_med.get("sick_timer", 0.0)) <= 0.0 and inv_med_v.size() == 1 and int(inv_med_v[0].get("quantity", 0)) == 2,
+		"10V1: con leccion 'medical' no arriesga la cruda sin margen (sick=%.0f, inv=%d)" % [float(b_med.get("sick_timer", 0.0)), inv_med_v.size()])
+	# 10V2: el hambre casi a 0 es peor que el veneno — si que la come
+	b_med["hunger"] = 4.0
+	b_med["eat_cooldown"] = 0.0
+	mgr._maintain_bot_needs(b_med, 0.25)
+	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
+		"10V2: con hambre 4 la cruda sigue ganando a la inanicion (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	# 10V3: con vida alta y cura/comida encima la arriesga con margen
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["eat_cooldown"] = 0.0
+	b_med["hunger"] = 20.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
+		{"name": "Venda", "type": "medical", "weight": 0.05, "quantity": 1, "use_value": 35.0},
+		{"name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	mem_med["death_lessons"] = {"medical": 2}
+	mgr._maintain_bot_needs(b_med, 0.25)
+	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
+		"10V3: con vida y cura de sobra si que arriesga la cruda (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	mem_med["death_lessons"] = dl_save_med
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
