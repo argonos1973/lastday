@@ -674,6 +674,52 @@ func run() -> void:
 	cmem["failed_goals"] = {}
 	cmem["unreachable_pois"] = {}
 
+	# --- 26) Cadena de proveedores: Groq -> secundario (Gemini) -> local ---
+	var prev_gem := OS.get_environment("GEMINI_API_KEY")
+	var prev_groq := OS.get_environment("GROQ_API_KEY")
+	OS.set_environment("GEMINI_API_KEY", "test-gem-key")
+	OS.set_environment("GROQ_API_KEY", "test-groq-key")
+	mgr._ai_provider = 0
+	check(mgr._ai_provider_url().contains("groq.com") and mgr._ai_provider_key() == "test-groq-key",
+		"Proveedor 0 resuelve URL y key de Groq")
+	mgr._ai_provider = 1
+	check(mgr._ai_provider_url().contains("googleapis.com") and mgr._ai_provider_key() == "test-gem-key",
+		"Proveedor 1 resuelve URL y key de Gemini")
+	check(mgr._ai_active_model() == "gemini-2.0-flash",
+		"Proveedor 1 usa gemini-2.0-flash por defecto")
+	# Cuota DIARIA agotada en ambos modelos de Groq (override ya activo)
+	# -> el 429 "per day" salta al secundario en vez de solo hacer backoff.
+	mgr._ai_provider = 0
+	mgr._ai_pending_provider = 0
+	mgr._ai_model_override = mgr.AI_ADVISOR_FALLBACK_MODEL
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "Rate limit reached: tokens per day (TPD): Limit 200000")
+	check(mgr._ai_provider == 1 and mgr._ai_conn_status.contains("provider_switch"),
+		"429 diario con fallback agotado salta al proveedor secundario")
+	# Racha de 429 por minuto: el tercero consecutivo tambien salta.
+	mgr._ai_provider = 0
+	mgr._ai_429_streak = 0
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
+	check(mgr._ai_provider == 0 and mgr._ai_429_streak == 2,
+		"Dos 429 seguidos solo hacen backoff")
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
+	check(mgr._ai_provider == 1 and mgr._ai_429_streak == 0,
+		"El tercer 429 seguido salta al proveedor secundario")
+	# Sin key del secundario no hay salto: backoff normal y cerebro local.
+	OS.set_environment("GEMINI_API_KEY", "")
+	mgr._ai_provider = 0
+	mgr._ai_pending_provider = 0
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "Rate limit reached: requests per day (RPD)")
+	check(mgr._ai_provider == 0 and mgr._ai_conn_status.contains("rate_limited"),
+		"Sin key del secundario el 429 diario solo hace backoff")
+	OS.set_environment("GEMINI_API_KEY", prev_gem)
+	OS.set_environment("GROQ_API_KEY", prev_groq)
+
 	world.free()
 	if failures == 0:
 		print("BotPlanReliabilityRegression: ALL PASS")

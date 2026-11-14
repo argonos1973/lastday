@@ -394,7 +394,8 @@ function renderHeader(data) {
   const plNames = pls.map(p => p.name).join(", ");
   document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} fauna · ${srv.players_online || 0} jug.${plNames ? ` (${plNames})` : ""}`;
   const chatM = g.chat_model && g.chat_model !== g.model ? ` · chat ${g.chat_model}` : "";
-  document.getElementById("modelBadge").textContent = (g.model || "qwen/qwen3.8-27b") + chatM;
+  const prov = g.provider && g.provider !== "groq" ? g.provider + ":" : "";
+  document.getElementById("modelBadge").textContent = prov + (g.model || "qwen/qwen3.8-27b") + chatM;
   const dt = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : "--:--:--";
   const teams = data.teams || [];
   const teamTxt = teams.length
