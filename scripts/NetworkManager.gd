@@ -1178,6 +1178,15 @@ func player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 	if scene != null and scene.has_method("_net_player_hit_event"):
 		scene._net_player_hit_event(peer_id, kind, pos)
 
+# Server tells the victim who killed them and with what weapon. Clients
+# without this method simply drop the call — the private chat fallback sent
+# alongside keeps older builds informed.
+@rpc("authority", "reliable")
+func death_attribution(killer_name: String, weapon: String) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_death_attribution"):
+		scene._net_death_attribution(killer_name, weapon)
+
 # Server tells specific client that they are dead (HP reached 0 on server).
 # `cause` lets the victim pick the right death visual ("melee" = beaten).
 @rpc("authority", "reliable")

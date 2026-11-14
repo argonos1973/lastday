@@ -5971,6 +5971,132 @@ func run() -> void:
 	g_leader.queue_free()
 	mgr.set_physics_process(true)
 
+	# ------------------------------------------------------------------
+	# 10U) Muerte por desangrado/enfermedad + cura de campo urgente y
+	#      atribucion de muerte del jugador
+	# ------------------------------------------------------------------
+	var b_med: Dictionary = mgr.bots[903]
+	var mem_med: Dictionary = mgr._ensure_bot_memory(903)
+	b_med["aggro_target"] = null
+	b_med["aggro_timer"] = 0.0
+	b_med["_s_predator"] = null
+	b_med["_s_foe"] = null
+	b_med["flee_until"] = 0.0
+	b_med["hide_timer"] = 0.0
+	var vst_med: SurvivalStats = b_med["vstats"]
+	vst_med.health = 60.0
+	vst_med.hunger = 90.0
+	vst_med.thirst = 90.0
+	vst_med.sleep = 90.0
+	vst_med.energy = 90.0
+	vst_med.body_temperature = 36.6
+	vst_med.sick = false
+	vst_med.blood = 80.0
+	vst_med.bleeding = 2.5
+	mgr._on_bot_stats_died(b_med)
+	check(str(mem_med.get("last_death_cause", "")) == "bled",
+		"10U1: salud a 0 con sangrado clasifica 'bled' y no 'succumbed' (cause=%s)" % str(mem_med.get("last_death_cause", "")))
+
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	vst_med = b_med["vstats"]
+	vst_med.bleeding = 0.0
+	vst_med.blood = 90.0
+	vst_med.health = 30.0
+	vst_med.sick = true
+	mgr._on_bot_stats_died(b_med)
+	check(str(mem_med.get("last_death_cause", "")) == "sick",
+		"10U2: salud a 0 enfermo clasifica 'sick' y no 'succumbed' (cause=%s)" % str(mem_med.get("last_death_cause", "")))
+
+	# 10U3: bot desangrandose sin venda fabrica una (3 Trapos) y se cura
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	var p_med: Node3D = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["aggro_timer"] = 0.0
+	b_med["flee_until"] = 0.0
+	b_med["hide_timer"] = 0.0
+	b_med["sleeping"] = false
+	b_med["health"] = 45.0
+	for k_med in ["_s_prey", "_s_predator", "_s_foe", "_s_corpse", "_s_tame_wolf"]:
+		b_med[k_med] = null
+	for k_med2 in ["_s_loot", "_salvage", "_s_raid_shelter", "_steal_target"]:
+		b_med[k_med2] = {}
+	vst_med = b_med["vstats"]
+	vst_med.health = 45.0
+	vst_med.hunger = 90.0
+	vst_med.thirst = 90.0
+	vst_med.sleep = 90.0
+	vst_med.energy = 90.0
+	vst_med.body_temperature = 36.6
+	vst_med.sick = false
+	vst_med.blood = 60.0
+	vst_med.bleeding = 2.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 3, "use_value": 0.0},
+	])
+	var healed_med := false
+	for i in range(60):
+		mgr._tick_bot(b_med, 0.25)
+		if vst_med.bleeding <= 0.0:
+			healed_med = true
+			break
+	check(healed_med, "10U3: desangrandose fabrica Venda con 3 Trapos y se vende (bleeding=%.1f)" % vst_med.bleeding)
+
+	# 10U4: en combate NO se para a vendar — primero se zafa del enemigo
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["_craft_state"] = {}
+	b_med["aggro_target"] = b_med["proxy"] # cualquier nodo != null basta para el gate
+	b_med["aggro_timer"] = 30.0 # sin esto el tick lo limpia antes del gate
+	vst_med = b_med["vstats"]
+	vst_med.bleeding = 2.0
+	vst_med.blood = 60.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 3, "use_value": 0.0},
+	])
+	var med_craft_recipe := ""
+	mgr._maintain_bot_needs(b_med, 0.25)
+	var med_gate_ok := true
+	# La rama firstaid vive en _tick_bot tras _maintain_bot_needs: con
+	# aggro_target != null no debe armar _craft_state de cura.
+	if b_med.get("aggro_target") != null:
+		med_gate_ok = (b_med.get("_craft_state", {}) as Dictionary).is_empty()
+		if med_gate_ok:
+			mgr._tick_bot(b_med, 0.25)
+			var cs: Dictionary = b_med.get("_craft_state", {})
+			med_craft_recipe = str((cs.get("recipe", {}) as Dictionary).get("output", {}).get("name", ""))
+			med_gate_ok = med_craft_recipe != "Venda"
+	check(med_gate_ok, "10U4: con enemigo fijado no inicia cura de campo (recipe=%s)" % med_craft_recipe)
+
+	# 10U5-7: atribucion de muerte del jugador (texto del aviso)
+	world._death_killer = ""
+	world._death_weapon = ""
+	world._net_death_attribution("Kael", "rifle")
+	check(world._death_killer == "Kael" and world._death_weapon == "rifle",
+		"10U5: _net_death_attribution almacena asesino y arma")
+	var notice_med := world._death_notice_text()
+	check(notice_med.contains("Kael") and notice_med.contains("fusil"),
+		"10U6: el aviso nombra al asesino y el arma (%s)" % notice_med)
+	world._last_hit_weapon = "wolf_bite"
+	world._last_hit_msec = Time.get_ticks_msec()
+	check(world._death_notice_text().contains("un lobo"),
+		"10U7: sin atribucion de red, la mordedura reciente delata al lobo")
+	world._last_hit_msec = -999999
+	var pst_med: SurvivalStats = world.player.stats
+	var save_pst := pst_med.to_dict()
+	pst_med.thirst = 0.0
+	check(world._death_notice_text().contains("de sed"),
+		"10U8: muerte ambiental deducida de las stats (sed)")
+	pst_med.from_dict(save_pst)
+	check(world._death_notice_text().begins_with("Has muerto"),
+		"10U9: sin datos queda el aviso generico")
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()

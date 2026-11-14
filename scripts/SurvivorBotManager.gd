@@ -1520,6 +1520,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	proxy.set_meta("saved_thirst", float(b["thirst"]))
 	_maintain_bot_needs(b, delta)
 
+	# Herida sangrante sin venda: se detiene a improvisar una (3 Trapos -> Venda;
+	# ropa + cuchillo -> Trapos). Se desangrar huyendo era la muerte "succumbed"
+	# mas habitual. En combate o huyendo no se para: primero zafarse.
+	var vst_med: SurvivalStats = b.get("vstats")
+	if vst_med != null and not vst_med.dead and vst_med.bleeding > 0.0 \
+			and _bot_item_count(proxy, "Venda") + _bot_item_count(proxy, "Vendaje") == 0 \
+			and b.get("aggro_target") == null and b.get("_s_predator") == null \
+			and float(b.get("flee_until", 0.0)) <= 0.0:
+		if _bot_try_craft_named(b, delta, ["Venda", "Trapos"], false):
+			b["_act"] = "firstaid"
+			return
+
 	# Si acaba de recibir un disparo o golpe, acusa el impacto (flinch) antes de
 	# reanudar movimiento o ataque, manteniendo la animacion shot/hit visible.
 	if float(b.get("flinch_timer", 0.0)) > 0.0:
@@ -2768,7 +2780,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	# Vendarse si tiene poca salud o sangrado (si aprendio de muertes en combate, se venda antes)
 	var d_lessons: Dictionary = b.get("_mem", {}).get("death_lessons", {})
-	var bandage_line := 72.0 + minf(12.0, float(int(d_lessons.get("combat", 0))) * 4.0)
+	var bandage_line := 72.0 + minf(12.0, float(int(d_lessons.get("combat", 0))) * 4.0) + minf(10.0, float(int(d_lessons.get("medical", 0))) * 5.0)
 	var vst_b: SurvivalStats = b.get("vstats")
 	var is_bleeding: bool = vst_b != null and vst_b.bleeding > 0.0
 	if (float(b["health"]) < bandage_line or is_bleeding) and float(b["eat_cooldown"]) <= 0.0:
@@ -5139,6 +5151,13 @@ func _record_death_lesson(b: Dictionary, mem: Dictionary, death_kind: String) ->
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
 			record_strategy_outcome(bid, "fortify_camp", true, 0.15)
 			_record_milestone(bid, "learned_shelter_warmth")
+		"bled", "sick":
+			# Desangrado/enfermo: aprende a tratar sus heridas a tiempo —
+			# el umbral de vendaje sube con lecciones "medical".
+			cat = "medical"
+			_adjust_trait(p, "survival_instinct", 0.05, float(base_p["survival_instinct"]))
+			record_strategy_outcome(bid, "fortify_camp", true, 0.10)
+			_record_milestone(bid, "learned_first_aid")
 		"rifle", "bola", "arco", "arco_madera", "arrow", "lanza":
 			# Muerte a distancia: aprende a desconfiar, a no cruzar campo
 			# abierto de dia y a cubrir/camuflar su campamento.
@@ -10601,6 +10620,10 @@ func _on_bot_stats_died(b: Dictionary) -> void:
 			kind = "starved" # hambre a 0 (con o sin sed): inanicion, la etiqueta historica
 		elif st.thirst <= 0.0:
 			kind = "dehydrated"
+		elif st.bleeding > 0.0 or st.blood <= 0.0:
+			kind = "bled"
+		elif st.sick:
+			kind = "sick"
 		elif st.sleep <= 10.0:
 			kind = "exhausted"
 	_kill_bot(b, kind)

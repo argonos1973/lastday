@@ -987,7 +987,7 @@ function renderBots(data) {
         const lastBy = b.last_death_killer || "";
         const lastWp = b.last_death_weapon || b.last_death_cause || "";
         if (!dlog.length && !lastBy && !nem.name) return "";
-        const KIND_ES = {wolf_bite:"mordedura de lobo",bear_bite:"mordedura de oso",melee:"cuerpo a cuerpo",rifle:"disparo de rifle",bola:"boleadoras",arco:"flecha",arco_madera:"flecha",arrow:"flecha",lanza:"lanza",starved:"inanición",dehydrated:"deshidratación",hypothermia:"hipotermia",exhausted:"agotamiento",heatstroke:"golpe de calor",combat:"combate",succumbed:"sucumbió"};
+        const KIND_ES = {wolf_bite:"mordedura de lobo",bear_bite:"mordedura de oso",melee:"cuerpo a cuerpo",rifle:"disparo de rifle",bola:"boleadoras",arco:"flecha",arco_madera:"flecha",arrow:"flecha",lanza:"lanza",starved:"inanición",dehydrated:"deshidratación",hypothermia:"hipotermia",exhausted:"agotamiento",heatstroke:"golpe de calor",combat:"combate",bled:"desangrado",sick:"enfermedad",succumbed:"sucumbió"};
         const kindEs = k => KIND_ES[k] || k;
         return `<details class="sec" data-sec id="sec_${b.bot_id}_death"><summary class="section-label">☠ Muertes (${b.deaths || 0})${nem.name ? ` · Némesis: ${esc(nem.name)} ×${nem.count}` : ""}</summary>
         <div class="decision-box" style="border-left-color:var(--danger)">
@@ -1020,7 +1020,7 @@ function renderBots(data) {
         // mas le mato es lo que mas aprendio a evitar.
         const dl = Object.entries(b.death_lessons || {}).sort((a, c) => Number(c[1]) - Number(a[1])).slice(0, 8);
         if (!dl.length) return "";
-        const CAUSE_ES = {cold: "❄ frío", combat: "⚔ combate", dehydrated: "💧 deshidratación", starved: "🍞 inanición", predator: "🐺 depredador", ranged: "🎯 francotirador", heat: "🔥 calor", melee: "🗡 cuerpo a cuerpo", fall: "🪂 caída", drowning: "🌊 ahogado", sickness: "🤒 enfermedad"};
+        const CAUSE_ES = {cold: "❄ frío", combat: "⚔ combate", dehydrated: "💧 deshidratación", starved: "🍞 inanición", predator: "🐺 depredador", ranged: "🎯 francotirador", heat: "🔥 calor", melee: "🗡 cuerpo a cuerpo", fall: "🪂 caída", drowning: "🌊 ahogado", sickness: "🤒 enfermedad", medical: "🩸 heridas"};
         return `<details class="sec" data-sec id="sec_${b.bot_id}_lessons"><summary class="section-label">Lecciones de Muerte (${Object.keys(b.death_lessons || {}).length} causas)</summary>
         <div class="pill-list">${dl.map(([k, n]) => `<span class="item-tag" style="border-color:rgba(226,85,85,.4)">${esc(CAUSE_ES[k] || k)} ×${n}</span>`).join("")}</div>
         <div class="empty-note">Cada causa suma peso a sus adaptaciones defensivas</div></details>`;

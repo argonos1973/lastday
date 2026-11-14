@@ -3185,8 +3185,15 @@ func _spawn_server_proxy(id: int) -> void:
 
 # Called by RPC from server on client to apply wolf/PvP damage.
 # `weapon` tags the source: "melee" triggers the hit-reaction flinch.
+var _death_killer := ""
+var _death_weapon := ""
+var _last_hit_weapon := ""
+var _last_hit_msec := -999999
+
 func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	var _cpt := Time.get_ticks_usec()
+	_last_hit_weapon = weapon
+	_last_hit_msec = Time.get_ticks_msec()
 	if player != null and player.has_method("apply_damage"):
 		if weapon == "rifle":
 			# _play_shot_reaction plays recibirdisparo.mp3; suppress the generic
@@ -3259,6 +3266,81 @@ func _net_player_condition_audio(peer_id: int, condition: String) -> void:
 		target._play_unwell_sound()
 	elif condition == "whistle" and target.has_method("_play_whistle_sound"):
 		target._play_whistle_sound()
+
+# Atribución de muerte recibida del servidor (RPC death_attribution): quién
+# te mató y con qué arma — se consume en _death_notice_text.
+func _net_death_attribution(killer_name: String, weapon: String) -> void:
+	_death_killer = killer_name
+	_death_weapon = weapon
+
+func _attacker_display_name(attacker_id: int) -> String:
+	if attacker_id <= 0 or net == null:
+		return ""
+	var pdata: Dictionary = net.players.get(attacker_id, {})
+	return str(pdata.get("char_name", pdata.get("name", "")))
+
+func _death_notice_text() -> String:
+	var killer := _death_killer
+	var weapon := _death_weapon
+	_death_killer = ""
+	_death_weapon = ""
+	var tail := "Volviendo a la pantalla de inicio..."
+	# Sin atribución del servidor (fauna/muerte local): el último golpe
+	# recibido revela el arma — una mordedura reciente delata al animal.
+	if killer.is_empty() and weapon.is_empty() and Time.get_ticks_msec() - _last_hit_msec < 15000:
+		weapon = _last_hit_weapon
+		killer = _weapon_death_attacker(weapon)
+	if not killer.is_empty():
+		return "Te ha matado %s (%s). %s" % [killer, _weapon_death_label(weapon), tail]
+	if not weapon.is_empty():
+		return "Te han matado (%s). %s" % [_weapon_death_label(weapon), tail]
+	var env := _environmental_death_label()
+	if not env.is_empty():
+		return "Has muerto %s. %s" % [env, tail]
+	return "Has muerto. %s" % tail
+
+func _weapon_death_attacker(weapon: String) -> String:
+	match weapon:
+		"wolf_bite": return "un lobo"
+		"bear_bite": return "un oso"
+		_:
+			if weapon.ends_with("_bite"):
+				return "un animal"
+	return ""
+
+func _weapon_death_label(weapon: String) -> String:
+	match weapon:
+		"rifle", "m4": return "fusil"
+		"melee": return "cuerpo a cuerpo"
+		"bola": return "boleadoras"
+		"arco", "arco_madera", "arrow", "flecha": return "flecha"
+		"lanza", "spear": return "lanza"
+		"wolf_bite": return "mordiscos"
+		"bear_bite": return "zarpazos"
+		_:
+			if weapon.ends_with("_bite"):
+				return "mordiscos"
+	return weapon
+
+func _environmental_death_label() -> String:
+	if player == null or not is_instance_valid(player) or player.stats == null:
+		return ""
+	var st: SurvivalStats = player.stats
+	if st.body_temperature < 35.4:
+		return "de frío (hipotermia)"
+	if st.body_temperature > 39.0:
+		return "por golpe de calor"
+	if st.thirst <= 0.0:
+		return "de sed"
+	if st.hunger <= 0.0:
+		return "de hambre"
+	if st.bleeding > 0.0 or st.blood <= 0.0:
+		return "desangrado"
+	if st.sick:
+		return "por enfermedad"
+	if st.sleep <= 10.0:
+		return "de agotamiento"
+	return ""
 
 func _net_force_death(cause: String = "") -> void:
 	if player == null or not is_instance_valid(player):
@@ -4731,6 +4813,15 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 			net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position, true)
 		_broadcast_player_death(target_peer_id, proxy, death_cause)
 		if net.peer != null and net.peer_alive(target_peer_id):
+			# Atribucion de la muerte: el RPC nuevo la muestra en la pantalla
+			# de muerte de clientes actuales; el chat privado cubre a builds
+			# antiguos que no tienen death_attribution.
+			var killer_name := _attacker_display_name(sender)
+			if not killer_name.is_empty():
+				if net.has_method("death_attribution"):
+					net.death_attribution.rpc_id(target_peer_id, killer_name, weapon)
+				if net.has_method("relay_actor_chat"):
+					net.relay_actor_chat(sender, killer_name, "te ha matado (%s)" % _weapon_death_label(weapon), target_peer_id)
 			net.force_death_to_client.rpc_id(target_peer_id, death_cause)
 	else:
 		# Send damage to the target client if still connected — melee hits also
@@ -5756,7 +5847,7 @@ func _on_player_died() -> void:
 		sgm.set("_auto_save_enabled", false)
 		sgm.set("_saved_on_quit", true)
 	if hud != null:
-		hud.show_notice("Has muerto. Volviendo a la pantalla de inicio...")
+		hud.show_notice(_death_notice_text())
 		await get_tree().create_timer(3.0).timeout
 		if _scene_quitting: return
 	# Delete saves AFTER the wait so no auto-save can re-create them.
