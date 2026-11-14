@@ -266,6 +266,28 @@ func run():
 	var sn_hip_l: Vector3 = skel.global_transform * skel.get_bone_global_pose(lidx) * lrig["middle_pivot"]
 	check(sn_hip_l.distance_to(actor._rifle_weapon_offset.global_transform * actor._rg_left_knuckle) < 0.02, "Sniper hip-fire keeps left hand on handguard")
 	actor._is_firing = false
+	# Regression: vestir ropa en un puppet no debe desmontar el rifle. Antes,
+	# equip_clothing->_sync_held_item->_clear_rifle_attachment dejaba a los
+	# bots con pose de rifle y las manos vacias hasta el siguiente cambio de
+	# arma, porque _puppet_held ya coincidia y nunca se reconstruia.
+	var bot := Actor.new()
+	root.add_child(bot)
+	bot.stats = preload("res://scripts/SurvivalStats.gd").new()
+	bot.inventory = preload("res://scripts/Inventory.gd").new()
+	bot.add_child(bot.inventory)
+	bot.setup_as_puppet()
+	bot.puppet_set_rifle(true)
+	bot.puppet_apply_visuals("Camiseta", "Fusil de asalto", "")
+	bot.process_remote(1.0 / 30.0)
+	check(is_instance_valid(bot._rifle_root), "Puppet M4 visual existe tras sync inicial")
+	bot.equip_clothing("Pantalones")
+	check(is_instance_valid(bot._rifle_root), "Puppet M4 sobrevive a equip_clothing")
+	check(bot.find_child("RifleMesh", true, false) != null, "Puppet conserva RifleMesh tras equip_clothing")
+	bot.puppet_apply_visuals("Camiseta,Pantalones,Zapatillas", "Fusil de asalto", "")
+	bot.process_remote(1.0 / 30.0)
+	check(is_instance_valid(bot._rifle_root), "Puppet M4 sobrevive al cambio de ropa via puppet_apply_visuals")
+	bot.stats.free()
+	bot.free()
 	actor.stats.free()
 	actor.free()
 	print("RIFLE_GRIP_ERRORS=", errors, " MAX_CONTACT_ERROR_METRES=", worst)

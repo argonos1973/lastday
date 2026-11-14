@@ -1415,7 +1415,11 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 	var vis_held := held_item
 	if _has_rifle and not (vis_held in ["Fusil de asalto", "Rifle francotirador"]):
 		vis_held = "Fusil de asalto"
-	if vis_held != _puppet_held:
+	# El rifle vive fuera de third_person_hand_item_root: si otra ruta lo libero
+	# sin cambiar _puppet_held (p.ej. el clear de equipo al vestir ropa), el
+	# check de nombre no lo reconstruiria nunca. Reconstruir si falta.
+	var rifle_visual_missing := _is_rifle_item_name(vis_held) and not is_instance_valid(_rifle_root)
+	if vis_held != _puppet_held or rifle_visual_missing:
 		_puppet_held = vis_held
 		_update_puppet_held_item(vis_held)
 	# Update backpack. Si el visual se perdio por cualquier rebuild (los
@@ -8348,6 +8352,13 @@ void fragment() {
 
 #region ITEMS EN MANO Y EQUIPAMIENTO (PlayerHeldItems)
 func _sync_held_item() -> void:
+	# En un puppet no hay inventario real: get_held_item() siempre es null y la
+	# rama vacia desmontaba el rifle construido por _update_puppet_held_item
+	# cada vez que equip_clothing re-sincronizaba (cambio de ropa de un bot =
+	# pose de rifle con las manos vacias para siempre). El visual en mano del
+	# puppet lo gobierna la red (_puppet_held), no el equipo.
+	if is_puppet:
+		return
 	var held_item = get_held_item()
 	if held_item == null:
 		_generic_hand_grip = false
