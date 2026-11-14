@@ -350,8 +350,12 @@ func run() -> void:
 		"El abandono distingue la causa nav_unreachable")
 	check(int(cmem.get("ai_stats", {}).get("steps_failed", 0)) >= 1,
 		"ai_stats.steps_failed cuenta el paso no ejecutado")
+	check(not mgr._is_poi_unreachable(carlos, poi0_id),
+		"Un solo nav_blocked no veta el POI (el atascado suele ser el bot)")
+	mgr._mark_poi_unreachable(carlos, poi0_pos, "nav_blocked")
+	mgr._mark_poi_unreachable(carlos, poi0_pos, "nav_blocked")
 	check(mgr._is_poi_unreachable(carlos, poi0_id),
-		"_is_poi_unreachable veta el punto en futuras elecciones")
+		"_is_poi_unreachable veta el punto tras varios fracasos")
 	# La estrategia explore_<kind> NO recibio un exito falso
 	var strats_u: Dictionary = cmem.get("strategies", {})
 	var ek := "explore_" + str(poi0.get("kind", "wild"))
@@ -659,7 +663,7 @@ func run() -> void:
 	fg2["hunt|wild|0:0"] = {"t": Time.get_unix_time_from_system() - 99999.0, "cause": "no_progress", "ttl": 10800.0}
 	cmem["failed_goals"] = fg2
 	var unm2: Dictionary = cmem.get("unreachable_pois", {})
-	unm2["city:120:0"] = {"n": 1, "t": Time.get_unix_time_from_system(), "cause": "nav_blocked"}
+	unm2["city:120:0"] = {"n": 3, "t": Time.get_unix_time_from_system(), "cause": "nav_blocked"}
 	cmem["unreachable_pois"] = unm2
 	var prompt_parsed = JSON.parse_string(mgr._ai_build_prompt(carlos))
 	check(prompt_parsed is Dictionary, "El prompt del asesor es JSON valido")

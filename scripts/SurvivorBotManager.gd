@@ -2509,6 +2509,14 @@ func _is_water_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 
 # Lista negra temporal de destinos inalcanzables para que un bot que se rinde
 # ante un rio/obstaculo no vuelva a elegir el mismo POI en el frame siguiente.
+# Veto persistente de un POI "inalcanzable": exige varias marcas
+# nav_blocked — un bot atascado vetaba con UN solo fallo cada destino
+# que intento (~20 edificios de ciudad en 2 min) y les cerraba el paso
+# durante 6 h, que sobrevivian al wipe del mundo en la memoria. TTL
+# corto ademas: inalcanzable desde aqui no es inalcanzable siempre.
+const UNREACHABLE_VETO_MIN_FAILS := 3
+const UNREACHABLE_VETO_TTL := 3600.0
+
 func _is_goal_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 	var bl: Array = b.get("_unreachable", [])
 	if bl.is_empty():
@@ -2558,7 +2566,11 @@ func _is_poi_unreachable(b: Dictionary, poi_id: String) -> bool:
 	var e = b.get("_mem", {}).get("unreachable_pois", {}).get(poi_id)
 	if not (e is Dictionary):
 		return false
-	return Time.get_unix_time_from_system() - float((e as Dictionary).get("t", 0.0)) < 21600.0
+	# Un solo nav_blocked no prueba que el destino sea inalcanzable — lo
+	# habitual es que el ATASCADO sea el bot (origen), no el lugar.
+	if int((e as Dictionary).get("n", 1)) < UNREACHABLE_VETO_MIN_FAILS:
+		return false
+	return Time.get_unix_time_from_system() - float((e as Dictionary).get("t", 0.0)) < UNREACHABLE_VETO_TTL
 
 func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
@@ -12985,9 +12997,11 @@ func _ai_build_prompt(b: Dictionary) -> String:
 	var unm: Dictionary = mem.get("unreachable_pois", {})
 	for k in unm.keys():
 		var e = unm[k]
-		if e is Dictionary and now_u - float((e as Dictionary).get("t", 0.0)) < 21600.0:
+		# Solo vetos vigentes de verdad (varios fracasos, no una marca suelta).
+		if e is Dictionary and int((e as Dictionary).get("n", 1)) >= UNREACHABLE_VETO_MIN_FAILS \
+				and now_u - float((e as Dictionary).get("t", 0.0)) < UNREACHABLE_VETO_TTL:
 			unreach.append({"poi": str(k), "cause": str((e as Dictionary).get("cause", "nav")),
-				"left_min": int((21600.0 - (now_u - float((e as Dictionary).get("t", 0.0)))) / 60.0)})
+				"left_min": int((UNREACHABLE_VETO_TTL - (now_u - float((e as Dictionary).get("t", 0.0)))) / 60.0)})
 			if unreach.size() >= 4:
 				break
 	var vst_p: SurvivalStats = b.get("vstats")
@@ -13366,7 +13380,8 @@ func _ai_parse_plan(content: String, b: Dictionary) -> Array:
 # Vigencia del veto segun la causa del fracaso: el terreno no cambia (la ruta
 # imposible sigue imposible) pero la falta de recursos o el azar si.
 const AI_FAIL_TTL := {
-	"nav_blocked": 21600.0, # ~6 h: el lugar sigue inalcanzable
+	"nav_blocked": 3600.0, # ~1 h: un nav_blocked suele delatar al origen
+	# atascado, no al destino — no es prueba de 6 h (ver unreachable_pois).
 	"stuck_timeout": 14400.0, # ~4 h: el objetivo se resistio entero
 	"timeout": 14400.0,
 	"no_progress": 10800.0, # ~3 h: se intento y no rindio aqui
@@ -13476,7 +13491,7 @@ func _ai_prune_expired_memory(mem: Dictionary) -> void:
 	var un: Dictionary = mem.get("unreachable_pois", {})
 	for k in un.keys():
 		var e = un[k]
-		if not (e is Dictionary) or now_u - float((e as Dictionary).get("t", 0.0)) >= 21600.0:
+		if not (e is Dictionary) or now_u - float((e as Dictionary).get("t", 0.0)) >= UNREACHABLE_VETO_TTL:
 			un.erase(k)
 
 # Run the next subgoal locally, with fresh preconditions (home/ally can vanish).
@@ -14029,7 +14044,7 @@ func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
 		# Detalle acotado de los vetos vigentes para el monitor — los mismos
 		# que viajan en el prompt del asesor (goal, causa, edad, caducidad).
 		"failed_goals_list": _ai_veto_snapshot(mem.get("failed_goals", {}), "act", 6),
-		"unreachable_list": _ai_veto_snapshot(mem.get("unreachable_pois", {}), "", 6, 21600.0),
+		"unreachable_list": _ai_veto_snapshot(mem.get("unreachable_pois", {}), "", 6, UNREACHABLE_VETO_TTL),
 		"foe_intel": _foe_intel_snapshot(b),
 		"groq_stats": {
 			"status": _ai_conn_status,
