@@ -9535,8 +9535,18 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> void:
 func _campfire_entry_alive(lc) -> bool:
 	if not (lc is Dictionary):
 		return false
-	if "world_actions_by_id" in world and not (world.world_actions_by_id as Dictionary).has(str(lc.get("id", ""))):
-		return false
+	if "world_actions_by_id" in world:
+		var action = (world.world_actions_by_id as Dictionary).get(str(lc.get("id", "")))
+		# El objeto debe existir, ser valido y ARDER de verdad: la lluvia
+		# apaga el fuego pero deja la estructura en pie (lit=false) — una
+		# fogata apagada no da luz, ni calor, ni vale de refugio.
+		if action == null:
+			return false
+		if action is Object:
+			if not is_instance_valid(action):
+				return false
+			if not bool(action.get_meta("lit", false)):
+				return false
 	return true
 
 func _ensure_bot_campfire_lit(b: Dictionary) -> void:
@@ -9550,7 +9560,7 @@ func _ensure_bot_campfire_lit(b: Dictionary) -> void:
 		b["campfire_pos"] = Vector3.INF
 		return
 	for lc in world.get("_lit_campfires") if "_lit_campfires" in world else []:
-		if lc is Dictionary and str(lc.get("id", "")) == cf_id:
+		if lc is Dictionary and str(lc.get("id", "")) == cf_id and _campfire_entry_alive(lc):
 			return
 	var fire_name := "CampfireFire_Bot_%d_%d" % [int(b["bot_id"]), Time.get_ticks_msec()]
 	var pos: Vector3 = b["campfire_pos"]
