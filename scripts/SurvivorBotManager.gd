@@ -3867,6 +3867,28 @@ func _foe_intel_snapshot(b: Dictionary) -> Dictionary:
 		"conf_now": snappedf(conf0 * clampf(1.0 - age_s / 120.0, 0.0, 1.0), 0.01),
 		"key": str(fm.get("key", ""))}
 
+# Vetos vigentes legibles para el monitor (max_n entradas, ordenadas por
+# antiguedad): objetivo, causa, edad y lo que le queda al veto. label_key
+# es el campo legible del registro ("act" en failed_goals; la clave en
+# unreachable_pois); fixed_ttl fija la caducidad cuando el registro no la lleva.
+func _ai_veto_snapshot(entries: Dictionary, label_key: String, max_n := 6, fixed_ttl := 0.0) -> Array:
+	var now_u := Time.get_unix_time_from_system()
+	var out: Array = []
+	for sig in entries.keys():
+		var e = entries[sig]
+		if not (e is Dictionary):
+			continue
+		var ed: Dictionary = e
+		var age := now_u - float(ed.get("t", 0.0))
+		var ttl := fixed_ttl if fixed_ttl > 0.0 else float(ed.get("ttl", 10800.0))
+		if age >= ttl or age < 0.0:
+			continue
+		out.append({"goal": str(ed.get(label_key, sig)) if not label_key.is_empty() else str(sig),
+			"cause": str(ed.get("cause", "?")), "age_min": int(age / 60.0),
+			"left_min": int((ttl - age) / 60.0), "zone": ed.get("zone", ed.get("poi", sig))})
+	out.sort_custom(func(a: Dictionary, z: Dictionary) -> bool: return int(a.get("age_min", 0)) < int(z.get("age_min", 0)))
+	return out.slice(0, max_n)
+
 # Nemesis: devuelve la ficha del verdugo si el enemigo sensado ya le mato
 # antes (memoria persistente 'killers'). Aprender de las muertes es, ante
 # todo, reconocer a quien te las causa.
@@ -13804,6 +13826,10 @@ func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
 		"blocked": int(b.get("stuck_count", 0)) > 0 or not (b.get("_unreachable", []) as Array).is_empty(),
 		"failed_goals": (mem.get("failed_goals", {}) as Dictionary).size(),
 		"unreachable_pois": (mem.get("unreachable_pois", {}) as Dictionary).size(),
+		# Detalle acotado de los vetos vigentes para el monitor — los mismos
+		# que viajan en el prompt del asesor (goal, causa, edad, caducidad).
+		"failed_goals_list": _ai_veto_snapshot(mem.get("failed_goals", {}), "act", 6),
+		"unreachable_list": _ai_veto_snapshot(mem.get("unreachable_pois", {}), "", 6, 21600.0),
 		"foe_intel": _foe_intel_snapshot(b),
 		"groq_stats": {
 			"status": _ai_conn_status,

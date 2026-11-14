@@ -942,6 +942,12 @@ function renderBots(data) {
           : `<div class="meta-line">Operando con IA táctica local (esperando ventana de consulta)</div>`
         }
         ${(() => {
+          const pg = b.pending_goals || [];
+          if (!pg.length) return "";
+          const q = pg.slice(0, 5).map(s => esc(String(s.action || s.goal || "?")) + (s.target ? "→" + esc(String(s.target)) : "")).join(" → ");
+          return `<div class="meta-line" style="opacity:.8">📋 En cola: ${q}${pg.length > 5 ? ` (+${pg.length - 5})` : ""}</div>`;
+        })()}
+        ${(() => {
           const a = b.ai_stats || {};
           const bits = [];
           if ((a.qwen_ok|0) + (a.qwen_invalid|0) + (a.local_decisions|0) > 0)
@@ -986,6 +992,57 @@ function renderBots(data) {
 
       <details class="sec" data-sec id="sec_${b.bot_id}_strat"><summary class="section-label">Estrategias Aprendidas (recientes primero)</summary>
       ${stratHtml}</details>
+
+      ${(() => {
+        // Percepcion tactica honesta: lo que el bot CREE saber del enemigo
+        // actual — fuente (visto/oido/aviso), confianza vigente y edad.
+        const foe = b.foe_intel || {};
+        if (!foe.src) return "";
+        const SRC = {seen: "👁 visto", heard: "👂 oído", told: "📢 aviso"};
+        const cNow = Math.round(Number(foe.conf_now ?? foe.conf ?? 0) * 100);
+        const cCol = cNow > 60 ? "var(--danger)" : (cNow > 30 ? "var(--warn)" : "var(--muted)");
+        const pos = (foe.pos || []).length >= 3 ? ` (${foe.pos[0]}, ${foe.pos[2]})` : "";
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_foe"><summary class="section-label">Enemigo Rastreado — ${esc(SRC[foe.src] || foe.src)}</summary>
+        <div class="decision-box" style="border-left-color:${cCol}">
+          <div class="meta-line">Fuente: <b>${esc(SRC[foe.src] || foe.src)}</b>${foe.src !== "seen" ? " · posición <b>estimada</b> (incertidumbre por sonido)" : " · posición exacta"}</div>
+          <div class="meta-line">Última pista${pos} · hace ${esc(fmtDur(foe.age_s || 0))} · confianza vigente <b style="color:${cCol}">${cNow}%</b></div>
+        </div></details>`;
+      })()}
+
+      ${(() => {
+        // Curriculum de supervivencia: causas de muerte aprendidas — lo que
+        // mas le mato es lo que mas aprendio a evitar.
+        const dl = Object.entries(b.death_lessons || {}).sort((a, c) => Number(c[1]) - Number(a[1])).slice(0, 8);
+        if (!dl.length) return "";
+        const CAUSE_ES = {cold: "❄ frío", combat: "⚔ combate", dehydrated: "💧 deshidratación", starved: "🍞 inanición", predator: "🐺 depredador", ranged: "🎯 francotirador", heat: "🔥 calor", melee: "🗡 cuerpo a cuerpo", fall: "🪂 caída", drowning: "🌊 ahogado", sickness: "🤒 enfermedad"};
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_lessons"><summary class="section-label">Lecciones de Muerte (${Object.keys(b.death_lessons || {}).length} causas)</summary>
+        <div class="pill-list">${dl.map(([k, n]) => `<span class="item-tag" style="border-color:rgba(226,85,85,.4)">${esc(CAUSE_ES[k] || k)} ×${n}</span>`).join("")}</div>
+        <div class="empty-note">Cada causa suma peso a sus adaptaciones defensivas</div></details>`;
+      })()}
+
+      ${(() => {
+        // Autonomia local: por que el cerebro propio decidio en lugar del
+        // asesor remoto — perfil de independencia real.
+        const fr = Object.entries((b.ai_stats || {}).fallback_reasons || {}).sort((a, c) => Number(c[1]) - Number(a[1])).slice(0, 8);
+        if (!fr.length) return "";
+        const R_ES = {plan_done: "plan terminado", plan_impossible: "plan inviable", http_429_backoff: "429 espera", step_no_progress: "sin progreso", step_timeout: "paso caducado", no_api_key: "sin key", local_plan_done: "plan cumplido", local_plan_stuck: "plan atascado", local_unavailable: "remoto caido", http_send_error: "fallo envío", empty_content: "respuesta vacía", missing_choices: "sin choices", invalid_or_impossible_decision: "decisión inválida", invalid_json: "JSON inválido", invalid_choice: "choice inválido", invalid_message: "mensaje inválido"};
+        const total = fr.reduce((s, [, n]) => s + Number(n), 0);
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_local"><summary class="section-label">Autonomía Local — ${total} decisiones propias</summary>
+        <div class="pill-list">${fr.map(([k, n]) => `<span class="item-tag">${esc(R_ES[k] || k.replace(/^http_error_/, "HTTP "))} ×${n}</span>`).join("")}</div>
+        <div class="empty-note">Decidió solo cuando el asesor no podía o no debía responder</div></details>`;
+      })()}
+
+      ${(() => {
+        // Vetos aprendidos: objetivos y destinos que fallaron y ahora evita
+        // conscientemente — memoria de fracaso con caducidad.
+        const fg = b.failed_goals_list || [];
+        const un = b.unreachable_list || [];
+        if (!fg.length && !un.length) return "";
+        const row = e => `<span class="item-tag" style="border-color:rgba(229,169,60,.45)"><b>${esc(e.goal)}</b> · ${esc(e.cause)} · hace ${e.age_min}m (queda ${e.left_min}m)</span>`;
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_veto"><summary class="section-label">Vetos Aprendidos (${fg.length + un.length} vigentes)</summary>
+        ${fg.length ? `<div class="empty-note" style="margin:2px 0">Objetivos fallados</div><div class="pill-list">${fg.map(row).join("")}</div>` : ""}
+        ${un.length ? `<div class="empty-note" style="margin:4px 0 2px">Destinos inalcanzables</div><div class="pill-list">${un.map(row).join("")}</div>` : ""}</details>`;
+      })()}
 
       <details class="sec" data-sec id="sec_${b.bot_id}_loc"><summary class="section-label">Ubicaciones Conocidas (${b.known_locations_count || 0} — Sin Omnisciencia)</summary>
       ${locHtml}</details>
