@@ -12919,6 +12919,28 @@ func _ai_build_prompt(b: Dictionary) -> String:
 # Groq devuelve "retry-after" (segundos) en los 429: si llega lo respetamos tal
 # cual en vez de duplicar a ciegas — el tier gratis castiga rachas cortas y la
 # espera real suele ser mucho menor que el backoff exponencial de 60..600 s.
+# Pista de reintento del CUERPO del 429: Groq ("try again in 16.416s") y
+# Google ("retryDelay": "30s" / "retry in 30 s") la llevan ahi cuando no hay
+# cabecera Retry-After — en los bordes de ventana deslizante es el momento
+# exacto en que el pozo vuelve a admitir la peticion.
+func _ai_parse_retry_seconds(body_text: String) -> float:
+	for pat in ["try again in ", "retry in "]:
+		var i: int = body_text.find(pat)
+		if i >= 0:
+			var j: int = i + pat.length()
+			var end := j
+			while end < body_text.length() and (body_text.substr(end, 1).is_valid_float() or body_text.substr(end, 1) == "."):
+				end += 1
+			if end > j:
+				return float(body_text.substr(j, end - j))
+	var rd := body_text.find("\"retryDelay\"")
+	if rd >= 0:
+		var q1 := body_text.find("\"", rd + 12)
+		var q2 := body_text.find("\"", q1 + 1)
+		if q1 > 0 and q2 > q1:
+			return float(body_text.substr(q1 + 1, q2 - q1 - 1).trim_suffix("s"))
+	return -1.0
+
 func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text := "") -> void:
 	_ai_429_count += 1
 	var wait := -1.0
@@ -12927,6 +12949,8 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 		if hl.begins_with("retry-after:"):
 			wait = float(hl.get_slice(":", 1).strip_edges())
 			break
+	if wait < 0.0:
+		wait = _ai_parse_retry_seconds(body_text)
 	var now := Time.get_ticks_msec()
 	var pending := _ai_pending_provider
 	# Cuota DIARIA agotada (TPD/RPD, "on tokens/requests per day") en el modelo
@@ -12955,7 +12979,10 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 	var daily := body_text.contains("per day") or body_text.contains("per_day")
 	if daily:
 		_ai_provider_day_done[pending] = true
-		_ai_provider_day_probe_at[pending] = now + int(AI_PROVIDER_DAY_PROBE_SEC * 1000.0)
+		# La sonda respeta la pista del proveedor (ventana deslizante): entre
+		# 45 s para no martillear el borde y el tope general de 15 min.
+		var probe_sec := clampf(maxf(wait, 45.0), 45.0, AI_PROVIDER_DAY_PROBE_SEC)
+		_ai_provider_day_probe_at[pending] = now + int(probe_sec * 1000.0)
 	# El pozo del otro proveedor es independiente: si esta libre (sin veto y
 	# fuera de su backoff) el relevo va alli — funciona en ambos sentidos.
 	var other := 1 - pending

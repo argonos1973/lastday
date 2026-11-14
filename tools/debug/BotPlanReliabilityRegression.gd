@@ -764,6 +764,24 @@ func run() -> void:
 	mgr._ai_provider_day_done = [false, false]
 	mgr._ai_provider_blocked_until = [now_probe + 30000, 0]
 	check(not mgr._ai_provider_usable(0, now_probe), "Backoff por minuto bloquea aunque no haya veto diario")
+	# Pista de reintento del cuerpo: "try again in N s" de Groq se usa cuando
+	# no hay cabecera Retry-After, y acota la sonda del veto diario al borde
+	# de la ventana deslizante (suelo 45 s, techo 15 min).
+	mgr._ai_provider = 0
+	mgr._ai_pending_provider = 0
+	mgr._ai_429_streak = 0
+	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_day_probe_at = [0, 0]
+	mgr._ai_provider_blocked_until = [0, 0]
+	mgr._ai_register_429(PackedStringArray(), false, "tokens per minute (TPM): Limit 8000, Used 8100. Please try again in 16.4s")
+	var blk: int = int(mgr._ai_provider_blocked_until[0]) - Time.get_ticks_msec()
+	check(blk > 12000 and blk < 20000, "Pista 'try again in 16.4s' fija backoff ~16 s (got %d)" % blk)
+	mgr._ai_429_streak = 0
+	mgr._ai_provider_blocked_until = [0, 0]
+	mgr._ai_register_429(PackedStringArray(), false, "tokens per day (TPD): Limit 200000, Used 199501. Please try again in 16.4s")
+	var prb: int = int(mgr._ai_provider_day_probe_at[0]) - Time.get_ticks_msec()
+	check(bool(mgr._ai_provider_day_done[0]) and prb >= 40000 and prb <= 50000,
+		"Veto diario con pista de 16 s sondea en el suelo de 45 s (got %d)" % prb)
 	OS.set_environment("GEMINI_API_KEY", prev_gem)
 	OS.set_environment("GROQ_API_KEY", prev_groq)
 
