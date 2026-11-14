@@ -5348,6 +5348,14 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 		b["anim"] = "sit"
 		return
 
+	# Reincorporacion tras la siesta de emergencia: aviso una sola vez, al
+	# volver a la marcha. team_leader_id nunca se borro — sigue siendo suyo.
+	if bool(b.get("_rest_rejoin", false)):
+		b["_rest_rejoin"] = false
+		var lid_r := int(b.get("team_leader_id", 0))
+		if lid_r > 0 and not is_bot_peer_id(lid_r):
+			_bot_chat_send(b, lid_r, _actor_display_name(lid_r), "Ya estoy, descanse lo justo. Sigo con vosotros.", "rest")
+
 	b["sitting"] = false
 	b["crouching"] = bool(leader.get("is_crouching") == true or leader.get_meta("crouching", false) == true) or _bot_roof_wary(b)
 	var lpos := leader.global_position
@@ -10675,8 +10683,13 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 		and (float(b.get("hunger", 100.0)) >= 14.0 and float(b.get("thirst", 100.0)) >= 10.0 \
 			or (proxy != null and not _bot_has_edible_food(proxy, true) and not _bot_has_drink(proxy) \
 				and float(b.get("hunger", 100.0)) > 5.0 and float(b.get("thirst", 100.0)) > 5.0))
-	# Un bot reclutado en tu equipo no se duerme: te sigue dia y noche.
-	if bool(b.get("sleeping", false)) or (int(b.get("team_leader_id", 0)) > 0 and not is_bot_peer_id(int(b.get("team_leader_id", 0)))) or (float(b.get("hide_timer", 0.0)) > 0.0 and not collapse) or b.get("aggro_target") != null:
+	# Reclutado por un jugador humano: le sigue dia y noche — pero agotado
+	# de verdad se aparta a dormir y se reincorpora al despertar (el
+	# vital_break ya lo saco de la formacion antes de llegar aqui). Morir
+	# de agotamiento siguiendo la marcha no ayuda a nadie.
+	var human_leader := int(b.get("team_leader_id", 0)) > 0 and not is_bot_peer_id(int(b.get("team_leader_id", 0)))
+	var recruited_rest := human_leader and (collapse or _bot_is_exhausted(b))
+	if bool(b.get("sleeping", false)) or (human_leader and not recruited_rest) or (float(b.get("hide_timer", 0.0)) > 0.0 and not collapse) or b.get("aggro_target") != null:
 		return false
 	if st == null or st.dead:
 		return false
@@ -10708,7 +10721,32 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# acostarse. El colapso letal no charla: el cuerpo se apaga, no se despide.
 	if is_night and not collapse:
 		_bot_say_farewell(b, "goodnight")
+	if recruited_rest:
+		_bot_notify_leader_rest(b)
 	return true
+
+# Enfriamiento del aviso "me aparto a dormir" al lider humano — una siesta
+# no spamea el chat aunque duerma y despierte varias veces seguidas.
+const BOT_REST_NOTICE_SEC := 240.0
+
+# El reclutado que se aparta a dormir avisa a su lider humano y arma la
+# reincorporacion (saludo al volver en _tick_teammate_behavior). Sin aviso
+# el jugador solo veria a su escolta quedarse quieto sin explicacion.
+func _bot_notify_leader_rest(b: Dictionary) -> void:
+	var lid := int(b.get("team_leader_id", 0))
+	if lid <= 0 or is_bot_peer_id(lid):
+		return
+	b["_rest_rejoin"] = true
+	var now := float(Time.get_ticks_msec()) / 1000.0
+	if now < float(b.get("_rest_notice_t", 0.0)):
+		return
+	b["_rest_notice_t"] = now + BOT_REST_NOTICE_SEC
+	var st: SurvivalStats = b.get("vstats")
+	var lname := _actor_display_name(lid)
+	var line := "Estoy agotado, %s... paro a dormir un rato. Os alcanzo luego." % lname
+	if st != null and st.sleep <= 4.0:
+		line = "No puedo mas, %s... me desplomo aqui. Nos vemos al despertar." % lname
+	_bot_chat_send(b, lid, lname, line, "rest")
 
 # Leave enough reserves for the trip to food/water, not just to stand up.
 # Shared by wake-up, bedtime and camp selection so a hungry bot cannot

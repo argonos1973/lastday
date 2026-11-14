@@ -44,7 +44,32 @@ func run():
  stats.sleep = 3.0
  b.sleeping = false
  b.hunger = 8.0
- check(not manager._bot_try_start_sleep(b,true), "starvation cannot enter endless collapse loop")
+ check(manager._bot_try_start_sleep(b,true), "lethal sleep naps at hunger 8 without supplies — buys time before the edge")
+ check(not manager._bot_should_wake(b,true), "lethal nap holds at hunger 8 (wakes only near 0)")
+ b.hunger = 3.0
+ check(manager._bot_should_wake(b,true), "edge of starvation wakes for the last forage try")
+ b.sleeping = false
+ check(not manager._bot_try_start_sleep(b,true), "starvation edge cannot enter the collapse loop")
+ # Bot reclutado por un jugador humano (peer 77; los bots son 901-909):
+ # seguirle no puede matarle de agotamiento — agotado de verdad duerme y
+ # se reincorpora despues; con energia sigue la marcha sin dormir.
+ b.hunger = 80.0
+ b.thirst = 80.0
+ stats.sleep = 80.0
+ b["team_leader_id"] = 77
+ check(not manager._bot_try_start_sleep(b,true), "recruited rested bot keeps following, no nap")
+ stats.sleep = 12.0
+ check(manager._bot_try_start_sleep(b,true) and bool(b.get("sleeping",false)),
+   "recruited exhausted bot takes the nap despite the human leader")
+ check(bool(b.get("_rest_rejoin",false)), "rejoin notice armed for after the nap")
+ b.sleeping = false
+ stats.sleep = 3.0
+ check(manager._bot_try_start_sleep(b,true), "recruited bot at lethal sleep collapses too")
+ b.sleeping = false
+ b["aggro_target"] = proxy
+ check(not manager._bot_try_start_sleep(b,true), "recruited bot never sleeps mid-fight")
+ b["aggro_target"] = null
+ b["team_leader_id"] = 0
  stats.free()
  stage.free()
  print("BotSleepNeedsRegression errors=", errors)
