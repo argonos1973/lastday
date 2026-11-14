@@ -127,6 +127,17 @@ func run():
   "path_idx":0,"stuck_count":0,"stuck_timer":0.0}
  check(manager._bot_prepare_night_supplies(b6,.1), "no materials -> holds position (need_light)")
  check(b6["campfire_id"] == "" and b6["campfire_pos"] == Vector3.INF, "dead campfire reference is cleaned")
+ # Hipotermia sin refugio ni luz: la ronda nocturna queda cancelada —
+ # patrullar a la intemperie muriendo de frio es pura exposicion.
+ proxy.set_meta("saved_inventory", [])
+ var st_cold := SurvivalStats.new()
+ st_cold.body_temperature = 34.9
+ var b7 := {"proxy":proxy,"bot_id":908,"vstats":st_cold,"hunger":80.0,"thirst":80.0,
+  "aggro_target":null,"hide_timer":0.0,"_night_wander":{"idle_t":25.0},"camp_spot":Vector3.INF}
+ check(not manager._bot_night_sentry_wander(b7,.2), "freezing bot does not patrol in the dark")
+ st_cold.body_temperature = 36.6
+ check(manager._bot_is_freezing(b7) == false, "sanity: 36.6 is not freezing")
+ st_cold.free()
  world.free()
  print("BotNightSuppliesRegression errors=",errors)
  quit(1 if errors else 0)

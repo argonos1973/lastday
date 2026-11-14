@@ -2190,6 +2190,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# camino: se desploma a dormir donde esta.
 	if vst != null and vst.sleep <= 8.0 and rest_pos != Vector3.INF and Vector2(proxy.global_position.x - rest_pos.x, proxy.global_position.z - rest_pos.z).length() > 6.0:
 		rest_pos = Vector3.INF
+	# Hipotermia sin refugio alcanzable: la ultima opcion es la marcha de
+	# emergencia hacia el calor/refugio mas cercano DEL MAPA — llegar a el o
+	# morir en el camino gana a patrullar en el sitio hasta congelarse. Con
+	# sueño letal el parapeto sigue mandando (dormir es el mal inminente).
+	if rest_pos == Vector3.INF and _bot_is_freezing(b) and (vst == null or vst.sleep > 8.0):
+		rest_pos = _nearest_safe_refuge(b, 1400.0)
 	if rest_pos != Vector3.INF and wants_camp:
 		b["_act"] = "rest"
 		b["hide_timer"] = maxf(0.0, float(b["hide_timer"]) - delta)
@@ -15510,7 +15516,7 @@ func _bot_night_sentry_wander(b: Dictionary, delta: float) -> bool:
 	if b.get("aggro_target") != null or float(b.get("hide_timer", 0.0)) > 0.0:
 		return false
 	if not _is_world_night() or _bot_item_count(proxy, "Antorcha") > 0 \
-			or _is_near_any_lit_campfire(proxy.global_position, 8.0):
+			or _is_near_any_lit_campfire(proxy.global_position, 8.0) or _bot_is_freezing(b):
 		return false
 	var wander: Dictionary = b.get("_night_wander", {})
 	# Si se movio haciendo otra cosa desde la ultima vez (loot, huida,
