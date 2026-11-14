@@ -714,9 +714,42 @@ func run() -> void:
 	mgr._ai_provider = 0
 	mgr._ai_pending_provider = 0
 	mgr._ai_backoff_until_msec = 0
+	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_blocked_until = [0, 0]
 	mgr._ai_register_429(PackedStringArray(), false, "Rate limit reached: requests per day (RPD)")
 	check(mgr._ai_provider == 0 and mgr._ai_conn_status.contains("rate_limited"),
 		"Sin key del secundario el 429 diario solo hace backoff")
+	OS.set_environment("GEMINI_API_KEY", "test-gem-key")
+	# El 429 del SECUNDARIO vuelve al primario cuando su ventana esta libre:
+	# los pozos se turnan por proveedor, no hay relevo de un solo sentido.
+	mgr._ai_provider = 1
+	mgr._ai_pending_provider = 1
+	mgr._ai_429_streak = 0
+	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_blocked_until = [0, 0]
+	mgr._ai_provider_backoff_sec = [4.0, 4.0]
+	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
+	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
+	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
+	check(mgr._ai_provider == 0 and mgr._ai_429_streak == 0,
+		"Racha de 429 en el secundario devuelve el servicio al primario")
+	# "per day" en el secundario = veto diario propio: si el primario tambien
+	# esta vetado no hay relevo — backoff propio y cerebro local.
+	mgr._ai_provider = 1
+	mgr._ai_pending_provider = 1
+	mgr._ai_provider_day_done = [true, false]
+	mgr._ai_provider_blocked_until = [0, 0]
+	mgr._ai_register_429(PackedStringArray(), false, "generate_requests_per_model_per_day quota exceeded")
+	check(mgr._ai_provider == 1 and bool(mgr._ai_provider_day_done[1]) and mgr._ai_conn_status.contains("rate_limited"),
+		"429 diario del secundario con primario vetado solo hace backoff")
+	# Con el primario libre, el "per day" del secundario vuelve a Groq.
+	mgr._ai_provider = 1
+	mgr._ai_pending_provider = 1
+	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_blocked_until = [0, 0]
+	mgr._ai_register_429(PackedStringArray(), false, "generate_requests_per_model_per_day quota exceeded")
+	check(mgr._ai_provider == 0 and bool(mgr._ai_provider_day_done[1]),
+		"429 diario del secundario con primario libre vuelve a Groq")
 	OS.set_environment("GEMINI_API_KEY", prev_gem)
 	OS.set_environment("GROQ_API_KEY", prev_groq)
 

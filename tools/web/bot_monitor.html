@@ -402,14 +402,20 @@ function renderHeader(data) {
   const budgets = g.providers || {groq: {max_calls: 380, max_tokens: 120000}, gemini: {max_calls: 600, max_tokens: 900000}};
   const provOf = m => m.startsWith("gemini") ? "gemini" : "groq";
   const tokByModel = g.tokens_day_by_model || {};
-  document.getElementById("mModelUse").innerHTML = Object.entries(g.calls_day_by_model || {}).map(([m, c]) => {
+  const provTag = bud => bud.day_done ? ' <span class="badge bwarn">veto diario</span>' : (bud.blocked_s > 0 ? ` <span class="badge bwarn">espera ${bud.blocked_s}s</span>` : "");
+  const modelRows = Object.entries(g.calls_day_by_model || {}).map(([m, c]) => {
     const p = provOf(m), bud = budgets[p] || {};
     const tk = tokByModel[m] || 0;
     const pctC = bud.max_calls ? Math.min(100, Math.round(100 * c / bud.max_calls)) : 0;
     const pctT = bud.max_tokens ? Math.min(100, Math.round(100 * tk / bud.max_tokens)) : 0;
     const col = pctC > 80 || pctT > 80 ? "var(--warn)" : "var(--muted)";
-    return `<div title="${esc(m)}" style="color:${col}"><b>${esc(p)}</b> · ${esc(m.split("/").pop())}: ${c}/${bud.max_calls || "?"} llam · ${Math.round(tk / 1000)}k/${Math.round((bud.max_tokens || 0) / 1000)}k tok</div>`;
-  }).join("") || "--";
+    return `<div title="${esc(m)}" style="color:${col}"><b>${esc(p)}</b> · ${esc(m.split("/").pop())}: ${c}/${bud.max_calls || "?"} llam · ${Math.round(tk / 1000)}k/${Math.round((bud.max_tokens || 0) / 1000)}k tok${provTag(bud)}</div>`;
+  });
+  // Estado de pozos sin uso hoy (vetados o en enfriamiento): sin fila de modelo.
+  const usedProv = new Set(Object.keys(g.calls_day_by_model || {}).map(provOf));
+  const idleRows = Object.entries(budgets).filter(([p]) => !usedProv.has(p)).map(([p, bud]) =>
+    (bud.day_done || bud.blocked_s > 0) ? `<div style="color:var(--muted)"><b>${esc(p)}</b> · 0 llam${provTag(bud)}</div>` : "");
+  document.getElementById("mModelUse").innerHTML = modelRows.concat(idleRows).join("") || "--";
 
   document.getElementById("mGroqStatus").innerHTML = `<span class="badge ${cls}">${esc(st)}</span>`;
   document.getElementById("mGroqCalls").textContent = `${g.calls_day || 0} / ${g.max_calls_day || 380} (tot ${g.calls_total || 0})`;

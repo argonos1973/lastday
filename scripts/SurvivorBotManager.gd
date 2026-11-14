@@ -249,7 +249,6 @@ var _ai_last_call_msec: Dictionary = {} # bot_id -> msec ultima llamada remota
 var _ai_last_any_call_msec := 0        # msec de la ultima llamada de cualquier bot (ritmo global)
 var _ai_sig_accum := 0.0
 var _ai_backoff_until_msec := 0
-var _ai_backoff_sec := 60.0
 var _ai_conn_status := "idle"
 # Backoff/estado del canal de chat: va aparte porque el limite de tokens es por
 # modelo — un 429 de qwen no debe silenciar el chat (otro modelo, otra cuota).
@@ -265,6 +264,12 @@ var _ai_model_override := ""
 var _ai_provider := 0
 var _ai_pending_provider := 0
 var _ai_429_streak := 0
+# Estado POR proveedor: cada pozo lleva su propio backoff (el 429 de uno no
+# silencia al otro), su exponencial y su veto de cuota diaria. El primario
+# vuelve a servir en cuanto se libera su ventana — los pozos se turnan solos.
+var _ai_provider_blocked_until: Array = [0, 0]
+var _ai_provider_backoff_sec: Array = [4.0, 4.0]
+var _ai_provider_day_done: Array = [false, false]
 
 func _ai_provider_name(p: int = -1) -> String:
 	var pv := _ai_provider if p < 0 else p
@@ -282,10 +287,15 @@ func _ai_provider_url() -> String:
 		return u if not u.is_empty() else AI_PROVIDER2_URL
 	return AI_ADVISOR_URL
 
-# Salto al proveedor secundario con un backoff breve: el pozo de cuota es
-# independiente y el cerebro local cubre esos segundos si tampoco hay key.
-func _ai_switch_provider(reason: String) -> void:
-	_ai_provider = 1
+# Proveedor utilizable ahora mismo: con key, sin veto diario y fuera de su
+# backoff propio. Es la puerta para que los pozos se turnen en ambos sentidos.
+func _ai_provider_usable(p: int, now: int) -> bool:
+	return _ai_provider_has_key(p) and not bool(_ai_provider_day_done[p]) and now >= int(_ai_provider_blocked_until[p])
+
+# Salto de proveedor con un backoff breve de asentamiento: el pozo de cuota
+# es independiente y el cerebro local cubre esos segundos si tampoco sirve.
+func _ai_switch_provider(reason: String, to := 1) -> void:
+	_ai_provider = to
 	_ai_backoff_until_msec = Time.get_ticks_msec() + 3000
 	_ai_conn_status = "provider_switch -> %s (%s)" % [_ai_provider_name(), reason]
 	print("[AI-ADV] cambio de proveedor -> %s (%s)" % [_ai_provider_name(), reason])
@@ -12353,13 +12363,17 @@ func _ai_tick(delta: float) -> void:
 	if bots.is_empty() or not _ai_can_query_remote():
 		return
 	var now := Time.get_ticks_msec()
-	# Cadena de proveedores: Groq primario; si su key falta pero hay key del
-	# secundario, el asesor va directo alli. Si el secundario pierde su key
-	# (env editada en caliente) se vuelve a probar el primario.
-	if _ai_provider == 0 and not _ai_provider_has_key(0) and _ai_provider_has_key(1):
-		_ai_provider = 1
-	elif _ai_provider == 1 and not _ai_provider_has_key(1):
+	# Cadena de proveedores: Groq primario gana siempre que este usable (con
+	# key, sin veto diario y fuera de SU backoff); el relevo cubre sus ventanas
+	# y el primario vuelve al liberarse — el 429 de un pozo no silencia al otro.
+	if _ai_provider_usable(0, now):
 		_ai_provider = 0
+	elif _ai_provider_usable(1, now):
+		_ai_provider = 1
+	elif _ai_provider_has_key(0):
+		_ai_provider = 0
+	elif _ai_provider_has_key(1):
+		_ai_provider = 1
 	var key := _ai_provider_key()
 	if key.is_empty():
 		_ai_conn_status = "no_api_key (local_brain)"
@@ -12379,6 +12393,9 @@ func _ai_tick(delta: float) -> void:
 		_ai_model_override = ""
 		_ai_provider = 0
 		_ai_429_streak = 0
+		_ai_provider_day_done = [false, false]
+		_ai_provider_blocked_until = [0, 0]
+		_ai_provider_backoff_sec = [4.0, 4.0]
 	# Sondeo local y barato por turnos (~AI_SIG_POLL_SEC por bot): cambios de
 	# firma, planes terminados/atascados y la revision maxima de cortesia solo
 	# ENCOLAN — la dedup por firma y el hueco minimo filtran al despachar.
@@ -12387,6 +12404,15 @@ func _ai_tick(delta: float) -> void:
 		_ai_sig_accum = 0.0
 		_ai_sig_poll(now)
 	if now < _ai_backoff_until_msec:
+		return
+	# El proveedor elegido debe poder servir ya: si los dos pozos estan en
+	# enfriamiento por minuto o vetados por cuota diaria queda el cerebro
+	# local con su revision de objetivos, igual que en modo sin key; el
+	# primario vuelve a ganar en cuanto se abre cualquier ventana.
+	if not _ai_provider_usable(_ai_provider, now):
+		_ai_conn_status = "providers_daily_exhausted (local_brain)" if (bool(_ai_provider_day_done[0]) and bool(_ai_provider_day_done[1])) else "providers_cooling (local_brain)"
+		for bid in bots.keys():
+			_ai_review_local_goal(int(bid), now)
 		return
 	# El backoff ya paso: el cartel de rate_limited/pacing se quedaba viejo
 	# en el monitor mucho despues de recuperar el servicio — se limpia aqui.
@@ -12399,12 +12425,15 @@ func _ai_tick(delta: float) -> void:
 		if _ai_provider == 0 and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL and _ai_model_quota_open(AI_ADVISOR_FALLBACK_MODEL):
 			_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
 			_ai_conn_status = "fallback_model (presupuesto %s -> %s)" % [AI_ADVISOR_MODEL, AI_ADVISOR_FALLBACK_MODEL]
-		elif _ai_provider == 0 and _ai_provider_has_key(1):
-			# Ambos modelos de Groq agotados: el pozo del secundario esta intacto.
-			_ai_switch_provider("presupuesto %s" % _ai_active_model())
 		else:
-			_ai_conn_status = "quota_reached (local_brain)"
-			return
+			# Todos los modelos del proveedor activo sin presupuesto local: veto
+			# diario propio hasta el reset y el otro pozo sirve si esta libre.
+			_ai_provider_day_done[_ai_provider] = true
+			if _ai_provider_usable(1 - _ai_provider, now):
+				_ai_switch_provider("presupuesto %s" % _ai_active_model(), 1 - _ai_provider)
+			else:
+				_ai_conn_status = "quota_reached (local_brain)"
+				return
 	if _ai_pending_bot != 0:
 		return
 	_ai_ensure_http()
@@ -12777,11 +12806,13 @@ func _ai_request_decision(bot_id: int, b: Dictionary) -> void:
 	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + _ai_provider_key()])
 	if _ai_http.request(_ai_provider_url(), headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
 		_ai_pending_bot = 0
-		# Fallo al enviar al primario: el secundario merece un intento antes
-		# de resignarse al cerebro local (recursion acotada: en proveedor 1
-		# ya no reintenta y cae al fallback de siempre).
-		if _ai_provider == 0 and _ai_provider_has_key(1):
-			_ai_switch_provider("send_error")
+		# Fallo al enviar: el proveedor queda en enfriamiento breve y el otro
+		# pozo merece un intento antes del cerebro local; la recursion queda
+		# acotada porque el que falla entra en su propio backoff.
+		_ai_provider_blocked_until[_ai_provider] = Time.get_ticks_msec() + 15000
+		var other := 1 - _ai_provider
+		if _ai_provider_usable(other, Time.get_ticks_msec()):
+			_ai_switch_provider("send_error", other)
 			_ai_request_decision(bot_id, b)
 			return
 		_ai_conn_status = "request_error (local_fallback)"
@@ -12886,40 +12917,44 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 		if hl.begins_with("retry-after:"):
 			wait = float(hl.get_slice(":", 1).strip_edges())
 			break
-	# Cuota DIARIA agotada (TPD/RPD, "on tokens/requests per day"): el wait que
-	# devuelve Groq solo libera hueco para una llamada y el cartel de
-	# rate_limited se repite todo el dia. Como la cuota es por modelo, se cambia
-	# al fallback y se reintenta pronto — el monitor muestra el motivo real.
-	if not for_chat and body_text.contains("per day") and _ai_provider == 0 and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL:
+	var now := Time.get_ticks_msec()
+	var pending := _ai_pending_provider
+	# Cuota DIARIA agotada (TPD/RPD, "on tokens/requests per day") en el modelo
+	# primario de Groq: el wait solo libera hueco para una llamada y el cartel
+	# de rate_limited se repite todo el dia. Como la cuota es por modelo, se
+	# cambia al fallback del mismo pozo y se reintenta pronto.
+	if not for_chat and pending == 0 and body_text.contains("per day") and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL:
 		_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
 		var used := _ai_parse_groq_used_limit(body_text)
-		_ai_backoff_until_msec = Time.get_ticks_msec() + 3000
+		_ai_backoff_until_msec = now + 3000
 		_ai_conn_status = "fallback_model (quota diaria %s -> %s)" % [used, AI_ADVISOR_FALLBACK_MODEL]
 		return
-	# El pozo de cuota del secundario es independiente (key propia): si el
-	# primario agoto tambien la diaria del fallback, o los 429 de TPM se
-	# encadenan sin dejar pasar la cola, el relevo salta alli. Si el salto ya
-	# se dio (peticion en vuelo marcada en _ai_pending_provider), el status
-	# lleva el nombre del proveedor que respondio 429.
-	if not for_chat and _ai_provider == 0 and _ai_provider_has_key(1):
-		if body_text.contains("per day") or _ai_429_streak >= 2:
-			_ai_switch_provider("quota diaria" if body_text.contains("per day") else "racha_429 x%d" % (_ai_429_streak + 1))
-			_ai_429_streak = 0
-			return
-	if not for_chat:
-		_ai_429_streak += 1
 	if for_chat:
 		if wait < 0.0:
 			wait = _chat_backoff_sec
 			_chat_backoff_sec = minf(_chat_backoff_sec * 2.0, 600.0)
-		_chat_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
+		_chat_backoff_until_msec = now + int(maxf(wait, 2.0) * 1000.0)
 		_chat_conn_status = "rate_limited (429, retry_in=%ds)" % int(maxf(wait, 2.0))
-	else:
-		if wait < 0.0:
-			wait = _ai_backoff_sec
-			_ai_backoff_sec = minf(_ai_backoff_sec * 2.0, 600.0)
-		_ai_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
-		_ai_conn_status = "rate_limited (%s 429, retry_in=%ds)" % [_ai_provider_name(_ai_pending_provider), int(maxf(wait, 2.0))]
+		return
+	# Backoff PROPIO del proveedor que respondio 429 (Retry-After o exponencial
+	# propio): un pozo limitado no silencia al otro — se turnan por ventanas.
+	if wait < 0.0:
+		wait = float(_ai_provider_backoff_sec[pending])
+		_ai_provider_backoff_sec[pending] = minf(wait * 2.0, 600.0)
+	_ai_provider_blocked_until[pending] = now + int(maxf(wait, 2.0) * 1000.0)
+	var daily := body_text.contains("per day") or body_text.contains("per_day")
+	if daily:
+		_ai_provider_day_done[pending] = true
+	# El pozo del otro proveedor es independiente: si esta libre (sin veto y
+	# fuera de su backoff) el relevo va alli — funciona en ambos sentidos.
+	var other := 1 - pending
+	if _ai_provider_usable(other, now) and (daily or _ai_429_streak >= 2):
+		var reason := "quota diaria" if daily else "racha_429 x%d" % (_ai_429_streak + 1)
+		_ai_429_streak = 0
+		_ai_switch_provider(reason, other)
+		return
+	_ai_429_streak += 1
+	_ai_conn_status = "rate_limited (%s 429, retry_in=%ds)" % [_ai_provider_name(pending), int(maxf(wait, 2.0))]
 
 # Groq publica la cuota en cada respuesta 200: x-ratelimit-remaining-tokens +
 # x-ratelimit-reset-tokens (formato Go "4m19.2s", "172ms", "1h30m"). El tier
@@ -13020,7 +13055,7 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		_ai_stat_inc(lb, "http_errors")
 		_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
 		return
-	_ai_backoff_sec = 60.0
+	_ai_provider_backoff_sec[_ai_pending_provider] = 4.0
 	_ai_429_streak = 0
 	_ai_conn_status = "online (%s 200)" % _ai_provider_name(_ai_pending_provider)
 	_ai_note_rate_headers(_headers)
@@ -14230,8 +14265,12 @@ func get_full_web_status() -> Dictionary:
 			"tokens_day_by_model": _ai_tokens_day_by_model.duplicate(),
 			"max_tokens_day": AI_MAX_TOKENS_PER_DAY_2 if _ai_provider == 1 else ai_max_tokens_per_day,
 			"providers": {
-				"groq": {"max_calls": ai_max_calls_per_day, "max_tokens": ai_max_tokens_per_day},
-				"gemini": {"max_calls": AI_MAX_CALLS_PER_DAY_2, "max_tokens": AI_MAX_TOKENS_PER_DAY_2},
+				"groq": {"max_calls": ai_max_calls_per_day, "max_tokens": ai_max_tokens_per_day,
+					"blocked_s": maxi(0, int((int(_ai_provider_blocked_until[0]) - Time.get_ticks_msec()) / 1000)),
+					"day_done": bool(_ai_provider_day_done[0])},
+				"gemini": {"max_calls": AI_MAX_CALLS_PER_DAY_2, "max_tokens": AI_MAX_TOKENS_PER_DAY_2,
+					"blocked_s": maxi(0, int((int(_ai_provider_blocked_until[1]) - Time.get_ticks_msec()) / 1000)),
+					"day_done": bool(_ai_provider_day_done[1])},
 			},
 			"tokens_total": _ai_tokens_total,
 			"cache_hits": _ai_cache_hits,
