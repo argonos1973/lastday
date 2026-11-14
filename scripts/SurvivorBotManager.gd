@@ -2171,7 +2171,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# noche: llega con luz, enciende la fogata, ordena el alijo y queda a
 	# resguardo — en el llano de la banda estan todos a tiro de ayuda.
 	var pre_night_home := _is_pre_night() and has_built_sh and not desperate_needs and not starving_or_parched
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or (is_night and not has_night_light) or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
+	# Sueño letal (<=4, ya drena vida): la siesta de emergencia entra aunque
+	# haya hambre/sed — sin despensa que saquear, seguir despierto es morir
+	# de pie; dormir recupera sueño y frena tambien el desgaste de hambre.
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or (is_night and not has_night_light) \
+		or (vst != null and not vst.dead and vst.sleep <= 4.0) \
+		or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
 	# Con frio o agotamiento extremo busca refugio/fuego bastante mas lejos que
 	# el radio normal: sobrevivir pesa mas que la comodidad.
 	var refuge_radius := 85.0
@@ -10655,11 +10660,21 @@ func _on_bot_stats_died(b: Dictionary) -> void:
 # bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
 func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	var st: SurvivalStats = b.get("vstats")
+	var proxy: Node3D = b.get("proxy")
 	# Colapso por agotamiento letal: el cuerpo se apaga aunque este escondido
 	# — dormir en el escondite gana a morir de pie por agotamiento (Kael
 	# murio asi: amenaza activa + sueño 0 y ni el colapso podia tumbarlo).
 	# El aggro en plena pelea sigue bloqueando: no se duerme peleando.
-	var collapse := st != null and not st.dead and st.sleep <= 4.0 and float(b.get("hunger", 100.0)) >= 14.0 and float(b.get("thirst", 100.0)) >= 10.0
+	# Reservas para sobrevivir la siesta — o nada que ganar quedandose
+	# despierto: sin comida ni agua a mano, dormir con hambre mata lento
+	# pero quedarse de pie con sueño~0 mata ya (la muerte de Carlos en el
+	# pueblo: agotado y hambriento no podia ni dormir ni rescatarse). El
+	# margen >5 evita la siesta que el hambre romperia al instante
+	# (el despertar letal es <4 — ver _bot_should_wake).
+	var collapse := st != null and not st.dead and st.sleep <= 4.0 \
+		and (float(b.get("hunger", 100.0)) >= 14.0 and float(b.get("thirst", 100.0)) >= 10.0 \
+			or (proxy != null and not _bot_has_edible_food(proxy, true) and not _bot_has_drink(proxy) \
+				and float(b.get("hunger", 100.0)) > 5.0 and float(b.get("thirst", 100.0)) > 5.0))
 	# Un bot reclutado en tu equipo no se duerme: te sigue dia y noche.
 	if bool(b.get("sleeping", false)) or (int(b.get("team_leader_id", 0)) > 0 and not is_bot_peer_id(int(b.get("team_leader_id", 0)))) or (float(b.get("hide_timer", 0.0)) > 0.0 and not collapse) or b.get("aggro_target") != null:
 		return false
@@ -10816,7 +10831,18 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	if _bot_needs_food_or_water(b):
 		var nap: SurvivalStats = b.get("vstats")
 		# A short exhaustion nap is allowed, but never until starvation.
-		if nap == null or nap.sleep > 8.0 or float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
+		# Siesta letal sin despensa (colapso con sueño~0 y mochila vacia):
+		# el hambre/sed solo despiertan al borde real de la inanicion —
+		# despertarle con hambre 13 y las manos vacias no le da nada que
+		# comer, solo lo deja de pie muriendo otra vez (bucle de colapso).
+		# Con algo comestible en la mochila vuelven los umbrales normales
+		# y despierta para comer.
+		var proxy_nap: Node3D = b.get("proxy")
+		var lethal_nap := nap != null and nap.sleep <= 8.0 and proxy_nap != null \
+			and not _bot_has_edible_food(proxy_nap, true) and not _bot_has_drink(proxy_nap)
+		if nap == null or nap.sleep > 8.0 \
+				or float(b["hunger"]) < (4.0 if lethal_nap else 14.0) \
+				or float(b["thirst"]) < (4.0 if lethal_nap else 10.0):
 			return true
 	var st: SurvivalStats = b.get("vstats")
 	if st == null:

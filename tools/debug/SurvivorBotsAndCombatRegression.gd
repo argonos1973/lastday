@@ -3101,10 +3101,32 @@ func run() -> void:
 	# agotamiento (Carlos, 165 muertes) pese a estar "descansando".
 	vs.sleep = 3.0
 	vs.body_temperature = 34.6 # demasiado frio para dormir en condiciones normales
-	fresh_b["hunger"] = 10.0   # y demasiado hambre
-	fresh_b["thirst"] = 8.0    # y demasiada sed
+	fresh_b["hunger"] = 10.0   # y hambre serio, pero nada que comer a mano
+	fresh_b["thirst"] = 8.0
+	fresh_b["aggro_target"] = null
+	fresh_b["_s_foe"] = null
+	fresh_b["_s_predator"] = null
+	fresh_b["_ambush"] = {}
+	fresh_b["hide_timer"] = 0.0
+	fresh_b["flee_until"] = 0.0
+	fresh_b["proxy"].set_meta("saved_inventory", [])
+	check(mgr._bot_try_start_sleep(fresh_b, false) and bool(fresh_b["sleeping"]),
+		"SpawnReal 10x1: sueño letal sin despensa -> siesta de emergencia donde esta")
+	# La siesta letal no se rompe al primer gruñido de tripa: el hambre solo
+	# lo saca de la cama al borde real de la inanicion (<4).
+	vs.body_temperature = 36.6
+	check(not mgr._bot_should_wake(fresh_b, false),
+		"SpawnReal 10x1b: la siesta letal aguanta con hambre 10")
+	fresh_b["hunger"] = 3.0
+	check(mgr._bot_should_wake(fresh_b, false),
+		"SpawnReal 10x1c: al borde de inanicion despierta para el ultimo intento")
+	fresh_b["sleeping"] = false
+	# Y al borde tampoco entra: dormir con hambre/sed ~3 es solo morir dormido.
+	fresh_b["thirst"] = 3.0
 	check(not mgr._bot_try_start_sleep(fresh_b, false),
-		"SpawnReal 10x1: inanicion y deshidratacion criticas impiden volver al bucle de colapso")
+		"SpawnReal 10x1d: hambre y sed letales impiden entrar en la siesta")
+	fresh_b["hunger"] = 80.0
+	fresh_b["thirst"] = 80.0
 	fresh_b["sleeping"] = false
 
 	# El colapso tambien tumba escondido o huyendo: el cuerpo se apaga donde
@@ -6166,6 +6188,109 @@ func run() -> void:
 	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
 		"10V3: con vida y cura de sobra si que arriesga la cruda (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
 	mem_med["death_lessons"] = dl_save_med
+
+	# ------------------------------------------------------------------
+	# 10W) Siesta de emergencia: sueño letal (<=4) sin despensa — dormir
+	#      con hambre mata lento, quedarse de pie con sueño~0 mata ya.
+	# ------------------------------------------------------------------
+	# 10W0: agotado letal + hambriento SIN comida -> colapsa a dormir donde esta
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["aggro_timer"] = 0.0
+	b_med["hide_timer"] = 0.0
+	b_med["sleeping"] = false
+	b_med["hunger"] = 8.0
+	b_med["thirst"] = 60.0
+	p_med.set_meta("saved_inventory", [])
+	vst_med = b_med["vstats"]
+	vst_med.sleep = 3.0
+	vst_med.hunger = 8.0
+	vst_med.thirst = 60.0
+	vst_med.body_temperature = 36.6
+	check(mgr._bot_try_start_sleep(b_med, false) and bool(b_med.get("sleeping", false)),
+		"10W0: sueño 3 + hambre sin comida -> siesta de emergencia donde esta")
+	# 10W1: igual pero CON comida en la mochila -> primero come, no se duerme
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	b_med["aggro_target"] = null
+	b_med["aggro_timer"] = 0.0
+	b_med["hide_timer"] = 0.0
+	b_med["sleeping"] = false
+	b_med["hunger"] = 8.0
+	b_med["thirst"] = 60.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	vst_med = b_med["vstats"]
+	vst_med.sleep = 3.0
+	vst_med.hunger = 8.0
+	vst_med.thirst = 60.0
+	vst_med.body_temperature = 36.6
+	check(not mgr._bot_try_start_sleep(b_med, false),
+		"10W1: sueño 3 con comida a mano -> no duerme, come primero")
+	# 10W2: colapso sin comida pero con enemigo fijado -> no duerme peleando
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	b_med["aggro_target"] = p_med
+	b_med["aggro_timer"] = 30.0
+	b_med["hide_timer"] = 0.0
+	b_med["sleeping"] = false
+	b_med["hunger"] = 8.0
+	b_med["thirst"] = 60.0
+	p_med.set_meta("saved_inventory", [])
+	vst_med = b_med["vstats"]
+	vst_med.sleep = 3.0
+	vst_med.hunger = 8.0
+	vst_med.thirst = 60.0
+	vst_med.body_temperature = 36.6
+	check(not mgr._bot_try_start_sleep(b_med, false),
+		"10W2: sueño 3 sin comida pero con aggro -> no duerme peleando")
+	b_med["aggro_target"] = null
+	b_med["aggro_timer"] = 0.0
+	# 10W3: el colapso clasico con reservas sigue igual
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	b_med["aggro_target"] = null
+	b_med["aggro_timer"] = 0.0
+	b_med["hide_timer"] = 0.0
+	b_med["sleeping"] = false
+	b_med["hunger"] = 60.0
+	b_med["thirst"] = 60.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+	])
+	vst_med = b_med["vstats"]
+	vst_med.sleep = 3.0
+	vst_med.hunger = 60.0
+	vst_med.thirst = 60.0
+	vst_med.body_temperature = 36.6
+	check(mgr._bot_try_start_sleep(b_med, false) and bool(b_med.get("sleeping", false)),
+		"10W3: sueño 3 con reservas -> colapso clasico intacto")
+	# 10W4: sueño 6 (agotado, no letal) + hambre sin comida -> sigue forrajeando
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	b_med["aggro_target"] = null
+	b_med["aggro_timer"] = 0.0
+	b_med["hide_timer"] = 0.0
+	b_med["sleeping"] = false
+	b_med["hunger"] = 8.0
+	b_med["thirst"] = 60.0
+	p_med.set_meta("saved_inventory", [])
+	vst_med = b_med["vstats"]
+	vst_med.sleep = 6.0
+	vst_med.hunger = 8.0
+	vst_med.thirst = 60.0
+	vst_med.body_temperature = 36.6
+	check(not mgr._bot_try_start_sleep(b_med, false),
+		"10W4: sueño 6 (no letal) + hambre sin comida -> no colapsa, busca comida")
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
