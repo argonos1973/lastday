@@ -9220,6 +9220,7 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 	var kept_matches := false
 	var food_kept := 0
 	var drink_kept := 0
+	var container_kept := 0
 	var med_kept := 0
 	var has_cf := not str(b.get("campfire_id", "")).is_empty() or bool(b.get("no_fire_spot", false))
 	var stick_cap := 2 if has_cf else 4
@@ -9308,12 +9309,25 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			else:
 				store.append(it)
 			continue
-		if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora") or nm == "Botella de plastico":
+		if tp == "water" or nm.contains("agua") or nm.contains("Cantimplora"):
 			if drink_kept < drink_cap:
 				drink_kept += 1
 				var kd := it.duplicate(true); kd["quantity"] = 1; keep.append(kd)
 				if qty > 1:
 					var sd := it.duplicate(true); sd["quantity"] = qty - 1; store.append(sd)
+			else:
+				store.append(it)
+			continue
+		# La botella vacia es recipiente para rellenar en el rio, no bebida:
+		# si contara como "drink" desplazaria la botella llena que el alijo
+		# acaba de soltar (retirada + reguardado en el mismo tick: ping-pong
+		# infinito y muerte por sed sobre la propia despensa).
+		if nm == "Botella de plastico":
+			if container_kept < drink_cap:
+				container_kept += 1
+				var kp := it.duplicate(true); kp["quantity"] = 1; keep.append(kp)
+				if qty > 1:
+					var sp := it.duplicate(true); sp["quantity"] = qty - 1; store.append(sp)
 			else:
 				store.append(it)
 			continue
