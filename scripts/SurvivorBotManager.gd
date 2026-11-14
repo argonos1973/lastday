@@ -10939,9 +10939,12 @@ func _bot_supply_goal_allowed(b: Dictionary, goal: Vector3) -> bool:
 	# sueño letal solo vale un trago a tiro — una caminata larga muriendo
 	# de agotamiento no llega; el colapso frena el desgaste y despierta
 	# al borde de la inanicion.
-	if _bot_night_supply_emergency(b) and proxy != null and float(b.get("hide_timer", 0.0)) <= 0.0:
+	if (_bot_night_supply_emergency(b) or bool(b.get("_night_eat_chain", false))) and proxy != null and float(b.get("hide_timer", 0.0)) <= 0.0:
 		var vst_sup: SurvivalStats = b.get("vstats")
-		var lethal_radius := 25.0 if vst_sup != null and vst_sup.sleep <= 8.0 else NIGHT_LETHAL_SUPPLY_RADIUS
+		# En cadena de recuperacion solo vale la despensa local — la
+		# caminata de 150 m es para la urgencia, no para rematar la comida.
+		var reach := NIGHT_LETHAL_SUPPLY_RADIUS if _bot_night_supply_emergency(b) else 45.0
+		var lethal_radius := 25.0 if vst_sup != null and vst_sup.sleep <= 8.0 else reach
 		if proxy.global_position.distance_to(goal) <= lethal_radius:
 			return true
 	# Last resort only after failing to prepare light. Anchor the six-metre
@@ -14813,9 +14816,14 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var line := minf(90.0, 58.0 + (14.0 if scarcity else 0.0) + minf(18.0, float(starved_lessons) * 6.0) + 4.0*foraging_experience)
 	var leader := _sensed_node(b, "_s_leader")
 	var allowed := hunger < line and (leader == null or desperate or _bot_vital_break(b))
+	# Cadena de recuperacion letal: quien forrajeo en urgencia (<14) sigue
+	# comiendo hasta llegar a la linea segura — cortar a 40 lo devolvia al
+	# ciclo inanicion->forrajeo->inanicion hasta morir con comida al lado.
+	if not _is_world_night() or hunger >= line:
+		b["_night_eat_chain"] = false
 	# A threat can still keep it hidden, but darkness alone must not stop
 	# a hungry survivor from finding food after waking up.
-	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or (_is_world_night() and hunger >= 40.0)):
+	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or (_is_world_night() and hunger >= 40.0 and not bool(b.get("_night_eat_chain", false)))):
 		allowed = false
 	var st0: Dictionary = b.get("_forage", {})
 	if not allowed or _bot_has_edible_food(proxy, desperate):
@@ -14861,6 +14869,8 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	if target.is_empty():
 		return false
 	b["_forage"] = target
+	if _is_world_night() and _bot_night_supply_emergency(b):
+		b["_night_eat_chain"] = true
 	return _bot_try_forage(b, 0.0)
 
 func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
