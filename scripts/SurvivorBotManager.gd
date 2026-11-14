@@ -5039,6 +5039,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 		var kr: Dictionary = killers.get(kkey, {"name": kname, "count": 0})
 		kr["count"] = int(kr.get("count", 0)) + 1
 		kr["name"] = kname
+		kr["helped_at_death"] = int(get_bot_relationship(bot_id, kkey).get("helped", 0))
 		killers[kkey] = kr
 		mem["killers"] = killers
 		var krel := get_bot_relationship(bot_id, kkey)
@@ -6461,8 +6462,9 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 	var sender_is_bot := bots.has(sender_id)
 	var skey := ("bot_%d" % sender_id) if sender_is_bot else _actor_persist_key(sender_id)
 	var intent := _chat_classify(clean)
+	var can_cooperate := not sender_is_bot or _bot_pair_can_cooperate(target_id, sender_id)
 	var rel := _chat_touch_rel(target_id, skey, sender_name)
-	match intent:
+	match intent if can_cooperate else ("threat" if intent == "threat" else "talk"):
 		"help":
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + 0.02, -1.0, 1.0), 0.001)
 		"alliance":
@@ -6479,7 +6481,7 @@ func on_chat_received(target_id: int, sender_id: int, sender_name: String, text:
 	var hostile_me := str(tb.get("faction", "")) == "hostile"
 	var sender_hostile := sender_is_bot and str((bots.get(sender_id, {}) as Dictionary).get("faction", "")) == "hostile"
 	if (intent == "help" or intent == "alliance") and sender_is_bot and (not hostile_me or sender_hostile) \
-		and int(tb.get("team_leader_id", 0)) == 0 and int(tb.get("_meet_id", 0)) == 0 \
+		and can_cooperate and int(tb.get("team_leader_id", 0)) == 0 and int(tb.get("_meet_id", 0)) == 0 \
 		and float(rel.get("trust", 0.0)) > 0.10:
 		tb["_meet_id"] = sender_id
 		tb["_soc_t"] = 0.0
@@ -6640,6 +6642,12 @@ func _chat_order_gate(b: Dictionary, sender_id: int, skey: String, cmd: String) 
 	if b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
 		if not cmd in ["stay", "dismiss", "attack"]:
 			return {"ok": false, "why": "busy"}
+	# La historia bilateral manda mas que el cargo: la victima no coopera con
+	# quien recuerda como asesino mientras no haya reparaciones reales — ni
+	# aunque ese bot sea hoy su lider de equipo (acudir, dar o seguirle si).
+	if cmd in ["come", "give", "follow", "assist"] \
+		and not _bot_pair_can_cooperate(int(b["bot_id"]), sender_id):
+		return {"ok": false, "why": "betrayed"}
 	if int(b.get("team_leader_id", 0)) == sender_id:
 		return {"ok": true, "why": "team"}
 	if str(b.get("faction", "")) == "hostile":
@@ -7017,7 +7025,7 @@ func _chat_req_recipient(b: Dictionary) -> Dictionary:
 	var best := {}
 	var best_d := 65.0
 	for oid in bots.keys():
-		if oid == my_id:
+		if oid == my_id or not _bot_pair_can_cooperate(my_id, int(oid)):
 			continue
 		var ob: Dictionary = bots[oid]
 		var op: Node3D = ob.get("proxy")
@@ -7797,6 +7805,8 @@ func _chat_dispatch(b: Dictionary, kind: String, to_id: int, to_name: String, ct
 	if to_id <= 0:
 		return
 	var my_id := int(b["bot_id"])
+	if kind in ["help", "request", "alliance"] and not _bot_pair_can_cooperate(my_id, to_id):
+		return
 	var now := Time.get_ticks_msec()
 	# Las respuestas siempre pasan (los turnos ya cortan el ping-pong); los
 	# iniciados respetan el enfriamiento por pareja y por bot.
@@ -7883,6 +7893,31 @@ func _bot_chat_tick(b: Dictionary) -> void:
 			_chat_dispatch(b, "greet", int(cand["id"]), str(cand["name"]))
 			return
 
+# Cooperation is bilateral: the aggressor must not assume the victim will
+# rescue them. Persistent killer history survives respawns and friendly chat.
+func _bot_pair_can_cooperate(a: int, other: int) -> bool:
+	if not is_bot_peer_id(a) or not is_bot_peer_id(other):
+		return true
+	for pair in [[a, other], [other, a]]:
+		var owner := int(pair[0])
+		var key := "bot_%d" % int(pair[1])
+		var rel := get_bot_relationship(owner, key)
+		if float(rel.get("hostility", 0.0)) > 0.5 or float(rel.get("trust", 0.0)) < -0.2:
+			return false
+		if rel.has("harm_t") and Time.get_ticks_msec() - int(rel.harm_t) < REL_PEACE_MS:
+			return false
+		var mem := _ensure_bot_memory(owner)
+		var killer: Dictionary = (mem.get("killers", {}) as Dictionary).get(key, {})
+		var kills := int(killer.get("count", 0))
+		if kills > 0:
+			# Old memories lack a baseline: conservatively require new help.
+			if not killer.has("helped_at_death"):
+				killer["helped_at_death"] = int(rel.get("helped", 0))
+			var reparations := int(rel.get("helped", 0)) - int(killer.helped_at_death)
+			if reparations < mini(6, kills * 3) or float(rel.get("trust", 0.0)) < 0.6 or float(rel.get("hostility", 0.0)) > 0.2:
+				return false
+	return true
+
 func _chat_best_ally(b: Dictionary) -> Dictionary:
 	var proxy: Node3D = b["proxy"]
 	var my_id := int(b["bot_id"])
@@ -7890,7 +7925,7 @@ func _chat_best_ally(b: Dictionary) -> Dictionary:
 	var best := {}
 	var best_s := -1.0
 	for oid in bots.keys():
-		if oid == my_id:
+		if oid == my_id or not _bot_pair_can_cooperate(my_id, int(oid)):
 			continue
 		var ob: Dictionary = bots[oid]
 		var op: Node3D = ob.get("proxy")

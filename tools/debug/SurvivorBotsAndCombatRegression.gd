@@ -1772,6 +1772,8 @@ func run() -> void:
 	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
 	check(not mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: rest no completa sin recuperarse")
 	st_rest.sleep = 90.0
+	check(not mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: rest sigue recuperando salud aunque haya dormido")
+	elena["health"] = 90.0
 	check(mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: rest completa descansado en el punto")
 	st_rest.sleep = 100.0
 	elena["health"] = 90.0
@@ -2399,7 +2401,7 @@ func run() -> void:
 	elena["ai_directive"] = {}
 	mgr._ai_pending_bot = 901
 	mgr._ai_on_response(HTTPRequest.RESULT_SUCCESS, 429, PackedStringArray(), PackedByteArray())
-	check(mgr._ai_429_count >= 1 and mgr._ai_backoff_until_msec > Time.get_ticks_msec() and mgr._ai_conn_status.contains("429"),
+	check(mgr._ai_429_count >= 1 and int(mgr._ai_provider_blocked_until[mgr._ai_pending_provider]) > Time.get_ticks_msec() and mgr._ai_conn_status.contains("429"),
 		"Aceptación 4a: HTTP 429 activa backoff exponencial y registra estado rate_limited (%s)" % mgr._ai_conn_status)
 	check(not (elena.get("ai_directive", {}) as Dictionary).is_empty() and str((elena["ai_directive"] as Dictionary).get("source", "")) == "local_fallback",
 		"Aceptación 4b: Cuando Groq falla o devuelve 429, el bot aplica automáticamente decisión local de respaldo (%s)" % str((elena.get("ai_directive", {}) as Dictionary).get("action", "")))
