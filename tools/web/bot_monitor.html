@@ -260,12 +260,20 @@
       <div class="val" id="mGroqStatus"><span class="badge info">Cargando...</span></div>
     </div>
     <div class="metric-pill">
+      <div class="label">Proveedor IA</div>
+      <div class="val" id="mProvider"><span class="badge info">groq</span></div>
+    </div>
+    <div class="metric-pill">
       <div class="label">Peticiones (Hoy / Total)</div>
       <div class="val" id="mGroqCalls">0 / 380</div>
     </div>
     <div class="metric-pill">
       <div class="label">Tokens (Hoy / Total)</div>
       <div class="val" id="mGroqTokens">0 / 120k</div>
+    </div>
+    <div class="metric-pill" style="min-width:235px">
+      <div class="label">Uso por modelo / pozo</div>
+      <div class="val" id="mModelUse" style="font-size:11px;line-height:1.5">--</div>
     </div>
     <div class="metric-pill">
       <div class="label">Caché / 429s / Cola</div>
@@ -382,8 +390,26 @@ function renderHeader(data) {
   const st = String(g.status || "idle");
   let cls = "info";
   if (st.includes("online") || st.includes("200")) cls = "ok";
-  else if (st.includes("429") || st.includes("quota")) cls = "warn";
+  else if (st.includes("429") || st.includes("quota") || st.includes("provider_switch")) cls = "warn";
   else if (st.includes("error")) cls = "err";
+
+  // Proveedor activo de la cadena: groq = primario (ok), cualquier otro =
+  // relevo secundario (warn — el primario fallo o agoto su cuota).
+  const provName = String(g.provider || "groq");
+  const provCls = provName === "groq" ? "ok" : "warn";
+  document.getElementById("mProvider").innerHTML = `<span class="badge ${provCls}">${esc(provName)}</span>`;
+  // Desglose por pozo: cada proveedor tiene su cuota (gemini-* -> gemini).
+  const budgets = g.providers || {groq: {max_calls: 380, max_tokens: 120000}, gemini: {max_calls: 600, max_tokens: 900000}};
+  const provOf = m => m.startsWith("gemini") ? "gemini" : "groq";
+  const tokByModel = g.tokens_day_by_model || {};
+  document.getElementById("mModelUse").innerHTML = Object.entries(g.calls_day_by_model || {}).map(([m, c]) => {
+    const p = provOf(m), bud = budgets[p] || {};
+    const tk = tokByModel[m] || 0;
+    const pctC = bud.max_calls ? Math.min(100, Math.round(100 * c / bud.max_calls)) : 0;
+    const pctT = bud.max_tokens ? Math.min(100, Math.round(100 * tk / bud.max_tokens)) : 0;
+    const col = pctC > 80 || pctT > 80 ? "var(--warn)" : "var(--muted)";
+    return `<div title="${esc(m)}" style="color:${col}"><b>${esc(p)}</b> · ${esc(m.split("/").pop())}: ${c}/${bud.max_calls || "?"} llam · ${Math.round(tk / 1000)}k/${Math.round((bud.max_tokens || 0) / 1000)}k tok</div>`;
+  }).join("") || "--";
 
   document.getElementById("mGroqStatus").innerHTML = `<span class="badge ${cls}">${esc(st)}</span>`;
   document.getElementById("mGroqCalls").textContent = `${g.calls_day || 0} / ${g.max_calls_day || 380} (tot ${g.calls_total || 0})`;

@@ -9528,6 +9528,22 @@ func _is_city_building_door_open(b_idx: int, door_world: Vector3) -> bool:
 # 4) Torre de vigilancia militar (_watchtower_climb)
 # 5) Casas del pueblo (Casa abandonada 1..10)
 func _resolve_building_interior_waypoint(b: Dictionary, cur: Vector3, goal: Vector3) -> Vector3:
+	# Finish crossing the doorway before returning to outdoor steering. The
+	# inside test stops at the wall, while the actor still overlaps the jamb.
+	var exit_wp: Vector3 = b.get("_building_exit_wp", Vector3.INF)
+	if exit_wp.is_finite():
+		var distance := Vector2(cur.x - exit_wp.x, cur.z - exit_wp.z).length()
+		if distance > 0.2 and distance < 6.0 and Time.get_ticks_msec() < int(b.get("_building_exit_until", 0)):
+			return exit_wp
+		b.erase("_building_exit_wp")
+		b.erase("_building_exit_until")
+	var waypoint := _resolve_building_interior_waypoint_uncached(b, cur, goal)
+	if waypoint != goal and _is_in_any_building_3d(cur) and not _is_in_any_building_3d(waypoint) and cur.distance_to(waypoint) < 6.0:
+		b["_building_exit_wp"] = waypoint
+		b["_building_exit_until"] = Time.get_ticks_msec() + 8000
+	return waypoint
+
+func _resolve_building_interior_waypoint_uncached(b: Dictionary, cur: Vector3, goal: Vector3) -> Vector3:
 	# 1) Torre del Reloj (41, 0, 750)
 	var cur_ct := _is_in_clock_tower(cur, 0.25)
 	var goal_ct := _is_in_clock_tower(goal, 0.8)
@@ -9847,7 +9863,10 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		# y cruzar recto hacia fuera.
 		if not is_open or across > 0.65 or along < -1.8:
 			return Vector3(dc.x - out_dir.x * 1.2, cur.y, dc.z - out_dir.y * 1.2)
-		return Vector3(dc.x + out_dir.x * 2.4, cur.y, dc.z + out_dir.y * 2.4)
+		var exit_point := Vector3(dc.x + out_dir.x * 2.4, cur.y, dc.z + out_dir.y * 2.4)
+		b["_building_exit_wp"] = exit_point
+		b["_building_exit_until"] = Time.get_ticks_msec() + 8000
+		return exit_point
 	return goal
 
 # Guia de ascenso y descenso por la carretera asfaltada en espiral hacia la
@@ -14170,6 +14189,10 @@ func get_full_web_status() -> Dictionary:
 			"tokens_day": _ai_tokens_day,
 			"tokens_day_by_model": _ai_tokens_day_by_model.duplicate(),
 			"max_tokens_day": AI_MAX_TOKENS_PER_DAY_2 if _ai_provider == 1 else ai_max_tokens_per_day,
+			"providers": {
+				"groq": {"max_calls": ai_max_calls_per_day, "max_tokens": ai_max_tokens_per_day},
+				"gemini": {"max_calls": AI_MAX_CALLS_PER_DAY_2, "max_tokens": AI_MAX_TOKENS_PER_DAY_2},
+			},
 			"tokens_total": _ai_tokens_total,
 			"cache_hits": _ai_cache_hits,
 			"http_429_count": _ai_429_count,
