@@ -1992,6 +1992,7 @@ func run() -> void:
 	world.world_actions_by_id.clear()
 
 	# --- 25) Puertas: el bot abre puertas cerradas como un jugador ---
+	elena["crouching"] = false # isolate walking-door test from previous stalking scenarios
 	world.nav = NavPathfinding.new()
 	world.nav.build([], [])
 	var house_idx: int = world._register_wildlife_blocker(Vector3(60.0, 0.0, 60.0), 8.0)
@@ -2035,6 +2036,39 @@ func run() -> void:
 			break
 	check(Vector2(elena_proxy.global_position.x - 60.0, elena_proxy.global_position.z - 60.0).length() < 2.5,
 		"Puerta: el bot entra en la casa por la puerta abierta (dist=%.2f)" % Vector2(elena_proxy.global_position.x - 60.0, elena_proxy.global_position.z - 60.0).length())
+
+	# Crouching must cap actual displacement, including residual sprint inertia.
+	elena_proxy.global_position = Vector3(60.0, 0.4, 60.0)
+	elena["crouching"] = true
+	elena["_speed"] = 6.5
+	elena["_last_move_t"] = float(Time.get_ticks_msec()) / 1000.0
+	var crouch_origin := elena_proxy.global_position
+	mgr._move_bot_towards(elena, Vector3(60.0, 0.4, 62.0), 6.5, 0.1, "run")
+	var crouch_delta := elena_proxy.global_position - crouch_origin
+	check(Vector2(crouch_delta.x, crouch_delta.z).length() <= 0.201,
+		"Crouch displacement is limited to 2 m/s even immediately after sprint")
+	check(mgr._bot_effective_net_anim(elena) == "sneak_walk" and not bool(elena_proxy.get_meta("sprinting", true)),
+		"Moving crouched bot sends crouch walk, never sprint")
+	elena["crouching"] = false
+
+	# Sprinting sideways must finish the doorway crossing before turning.
+	for exit_side in [-1.0, 1.0]:
+		elena_proxy.global_position = Vector3(60.0, 0.4, 60.0)
+		elena.erase("_building_exit_wp")
+		elena["path"] = []
+		elena["path_timer"] = 0.0
+		elena["stuck_timer"] = 0.0
+		elena["stuck_count"] = 0
+		elena["macro_timer"] = 0.0
+		elena["macro_pos"] = elena_proxy.global_position
+		var escape_goal := Vector3(60.0 + exit_side * 20.0, 0.4, 60.0)
+		var cleared_door := false
+		for exit_tick in range(60):
+			mgr._move_bot_towards(elena, escape_goal, 6.5, 0.1, "run")
+			if elena_proxy.global_position.z < 53.0:
+				cleared_door = true
+				break
+		check(cleared_door, "Sprint exit clears doorway before lateral escape %s (pos=%s)" % [exit_side, elena_proxy.global_position])
 
 	# --- 26) Depredadores: sin arma de fuego el bot huye, no caza ---
 	var wolf3 := WildlifeControllerScript.new()

@@ -1585,6 +1585,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["anim"] = "idle"
 		return
 
+	# La postura agachada vale solo para el tick en curso: cada rama que la
+	# quiere (acecho, cobertura, escondite, trabajo en cuclillas) la re-afirma
+	# dentro de su propio bloque. Si quedara pegada de un tick anterior, las
+	# huidas urgentes correrian tapadas a 2 m/s en _move_bot_towards.
+	b["crouching"] = false
+
 	# 1) Doma de lobos: va ANTES que predator para que _s_predator (radio 22..34 m)
 	# no secuestre al lobo salvaje que el bot pretende domesticar (radio 20 m)
 	# ni haga que el bot le dispare o huya mientras el lobo se come el cebo.
@@ -10066,6 +10072,12 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	if anim_name == "run" and bool(b.get("_stamina_recover", false)):
 		anim_name = "walk"
 		speed = minf(speed, 3.8)
+	# Match the player's crouched gait (2 m/s). Tactical callers may still
+	# request run/4-6.5 m/s while keeping crouching set; never sprint in that pose.
+	var crouched_move := bool(b.get("crouching", false))
+	if crouched_move:
+		speed = minf(speed, 2.0)
+		anim_name = "walk"
 	var base_spd := maxf(speed, 6.2) if (anim_name == "run" and not on_stair_segment) else speed
 	var eff_speed := minf(base_spd, 3.2) if on_stair_segment else base_spd
 	# Sobrepeso: frena igual que al jugador humano (walk * (1 - carry * 0.2))
@@ -10073,6 +10085,8 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	if carry_ratio > 0.0:
 		eff_speed *= 1.0 - carry_ratio * 0.2
 	var cur_spd := float(b.get("_speed", 0.0))
+	if crouched_move:
+		cur_spd = minf(cur_spd, eff_speed)
 	if anim_name == "run" and not on_stair_segment and cur_spd < 3.8:
 		cur_spd = 3.8
 	var spd := move_toward(cur_spd, eff_speed * (0.45 if depth_cur > 0.12 else 1.0), delta * 15.0)
