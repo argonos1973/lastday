@@ -10714,6 +10714,10 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 # Shared by wake-up, bedtime and camp selection so a hungry bot cannot
 # wake and immediately return to sleep while resources are out of reach.
 const NIGHT_SUPPLY_FIRE_RADIUS := 12.0
+# Con hambre/sed letales de noche y sin luz, una meta concreta (fuente de
+# agua conocida, seta del escaneo) puede exigir una caminata real a
+# oscuras: quedarse quieto esperando es morir seguro.
+const NIGHT_LETHAL_SUPPLY_RADIUS := 150.0
 
 func _bot_supply_goal_lit(b: Dictionary, goal: Vector3) -> bool:
 	if not _is_world_night() or b.is_empty():
@@ -10738,13 +10742,20 @@ func _bot_night_supply_emergency(b: Dictionary) -> bool:
 func _bot_supply_goal_allowed(b: Dictionary, goal: Vector3) -> bool:
 	if _bot_supply_goal_lit(b, goal):
 		return true
+	var proxy: Node3D = b.get("proxy")
+	# Urgencia letal (hambre<14, sed<10) sin luz: una meta concreta al
+	# alcance gana a la oscuridad — el bot conoce el rio o el escaneo vio
+	# la seta; quedarse quieto es morir seguro. No reabre el vagar a
+	# ciegas: solo pasan destinos dirigidos dentro del alcance.
+	if _bot_night_supply_emergency(b) and proxy != null \
+		and proxy.global_position.distance_to(goal) <= NIGHT_LETHAL_SUPPLY_RADIUS:
+		return true
 	# Last resort only after failing to prepare light. Anchor the six-metre
 	# search at its starting point so repeated decisions cannot wander away.
 	# La meta cercana al bot tambien vale para reingresar: empujado un palmo
 	# fuera de la burbuja por una colision, podria volver a un objetivo
 	# interno en vez de quedarse parado en el borde para siempre.
 	var origin: Vector3 = b.get("_night_emergency_origin", Vector3.INF)
-	var proxy: Node3D = b.get("proxy")
 	return _bot_night_supply_emergency(b) and origin != Vector3.INF and proxy != null \
 		and goal.distance_to(origin) <= 6.0 \
 		and (proxy.global_position.distance_to(origin) <= 6.0 or proxy.global_position.distance_to(goal) <= 6.0)
@@ -14615,6 +14626,11 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var d0 := _ai_active_directive(b)
 	if str(d0.get("mode", "")) == "food":
 		radius = 55.0
+	# Hambre/sed letales de noche: el escaneo crece al alcance de la
+	# urgencia — la seta a 60 m salva igual que la de al lado, y morir
+	# buscando a 30 m con comida a 40 m era la muerte tonta de siempre.
+	if _is_world_night() and _bot_night_supply_emergency(b):
+		radius = maxf(radius, NIGHT_LETHAL_SUPPLY_RADIUS)
 	var target := _find_forage_target(b, radius)
 	if target.is_empty():
 		return false
