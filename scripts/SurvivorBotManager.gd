@@ -201,6 +201,11 @@ const AI_PLAN_STALE_GRACE_SEC := 1500.0 # margen tras el TTL para revalidar un p
 const AI_STEP_DWELL_SEC := {"explore": 30.0, "scavenge": 75.0, "hunt": 150.0, "forage": 120.0, "seek_ally": 60.0, "rest": 240.0, "avoid_zone": 45.0, "fortify_camp": 90.0, "return_home": 15.0}
 const AI_MAX_CALLS_PER_DAY := 380
 const AI_MAX_TOKENS_PER_DAY := 120000
+# Presupuestos del proveedor secundario: el free tier de Gemini limita por
+# RPM/TPM/RPD (sin TPD), asi que el cortafuegos local vigila RPD con margen
+# y los tokens solo cortan fugas — no estrangula un pozo mucho mas grande.
+const AI_MAX_CALLS_PER_DAY_2 := 600
+const AI_MAX_TOKENS_PER_DAY_2 := 900000
 const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
 const AI_ALLOWED_ACTIONS := ["explore", "scavenge", "hunt", "return_home", "rest", "avoid_zone", "forage", "fortify_camp", "seek_ally"]
 const AI_PERSONALITY_TRAITS := ["bravery", "aggression", "curiosity", "sociability", "distrust", "cooperation", "survival_instinct"]
@@ -300,9 +305,14 @@ func _ai_active_chat_model() -> String:
 	return _ai_chat_model()
 
 # Presupuesto local por modelo (Groq limita por modelo y por dia):
-# agotar el de qwen no silencia al fallback ni al chat.
-func _ai_model_quota_open(model: String) -> bool:
-	return int(_ai_calls_day_by_model.get(model, 0)) < ai_max_calls_per_day and int(_ai_tokens_day_by_model.get(model, 0)) < ai_max_tokens_per_day
+# agotar el de qwen no silencia al fallback ni al chat. El techo depende del
+# proveedor dueno del modelo — el de Gemini es mucho mas holgado que el de
+# Groq (su free tier no tiene TPD; solo RPM/TPM/RPD).
+func _ai_model_quota_open(model: String, provider := -1) -> bool:
+	var p := _ai_provider if provider < 0 else provider
+	var max_calls := AI_MAX_CALLS_PER_DAY_2 if p == 1 else ai_max_calls_per_day
+	var max_tokens := AI_MAX_TOKENS_PER_DAY_2 if p == 1 else ai_max_tokens_per_day
+	return int(_ai_calls_day_by_model.get(model, 0)) < max_calls and int(_ai_tokens_day_by_model.get(model, 0)) < max_tokens
 
 func _ai_count_model_call(model: String) -> void:
 	_ai_calls_day_by_model[model] = int(_ai_calls_day_by_model.get(model, 0)) + 1
@@ -14155,11 +14165,11 @@ func get_full_web_status() -> Dictionary:
 			"chat_status": _chat_conn_status,
 			"calls_day": _ai_calls_day,
 			"calls_day_by_model": _ai_calls_day_by_model.duplicate(),
-			"max_calls_day": ai_max_calls_per_day,
+			"max_calls_day": AI_MAX_CALLS_PER_DAY_2 if _ai_provider == 1 else ai_max_calls_per_day,
 			"calls_total": _ai_calls_total,
 			"tokens_day": _ai_tokens_day,
 			"tokens_day_by_model": _ai_tokens_day_by_model.duplicate(),
-			"max_tokens_day": ai_max_tokens_per_day,
+			"max_tokens_day": AI_MAX_TOKENS_PER_DAY_2 if _ai_provider == 1 else ai_max_tokens_per_day,
 			"tokens_total": _ai_tokens_total,
 			"cache_hits": _ai_cache_hits,
 			"http_429_count": _ai_429_count,
