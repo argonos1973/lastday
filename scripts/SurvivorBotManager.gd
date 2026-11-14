@@ -187,7 +187,7 @@ const AI_CHAT_MODEL := "openai/gpt-oss-120b"
 # (Gemini AI Studio: 15 RPM / 1M TPM / ~1.5K RPD gratis) — overridable por env
 # GEMINI_URL / GEMINI_MODEL / GEMINI_CHAT_MODEL; la key va en GEMINI_API_KEY.
 const AI_PROVIDER2_URL := "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-const AI_PROVIDER2_MODEL := "gemini-2.0-flash"
+const AI_PROVIDER2_MODEL := "gemini-3.5-flash-lite"
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000 # base temporal del plan (referencia para el watchdog de planes atascados)
 const AI_SIG_POLL_SEC := 4.0           # sondeo local de firma por turnos (un bot por ciclo)
 const AI_MIN_CALL_GAP_SEC := 150.0     # minimo entre llamadas remotas de un mismo bot
@@ -12698,9 +12698,9 @@ func _ai_request_decision(bot_id: int, b: Dictionary) -> void:
 	var payload := {
 		"model": model,
 		"temperature": 0.4,
-		# gpt-oss razona antes de responder: 160 solo alcanza para la cadena
-		# de pensamiento y el JSON salia vacio (json_validate_failed).
-		"max_tokens": 600 if "gpt-oss" in model else 360,
+		# gpt-oss y gemini-3 razonan antes de responder: 160 solo alcanza para
+		# la cadena de pensamiento y el JSON salia vacio (json_validate_failed).
+		"max_tokens": 600 if ("gpt-oss" in model or model.begins_with("gemini-3")) else 360,
 		"response_format": {"type": "json_object"},
 		"messages": [
 			{"role": "system", "content": AI_SYSTEM_PROMPT},

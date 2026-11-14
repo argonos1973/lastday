@@ -685,8 +685,8 @@ func run() -> void:
 	mgr._ai_provider = 1
 	check(mgr._ai_provider_url().contains("googleapis.com") and mgr._ai_provider_key() == "test-gem-key",
 		"Proveedor 1 resuelve URL y key de Gemini")
-	check(mgr._ai_active_model() == "gemini-2.0-flash",
-		"Proveedor 1 usa gemini-2.0-flash por defecto")
+	check(mgr._ai_active_model() == "gemini-3.5-flash-lite",
+		"Proveedor 1 usa gemini-3.5-flash-lite por defecto")
 	# Cuota DIARIA agotada en ambos modelos de Groq (override ya activo)
 	# -> el 429 "per day" salta al secundario en vez de solo hacer backoff.
 	mgr._ai_provider = 0
