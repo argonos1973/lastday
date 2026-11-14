@@ -11170,10 +11170,25 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	var st: SurvivalStats = b.get("vstats")
 	if st == null:
 		return true
-	# El calor despierta antes del tope de las brasas (38 °C): dormido junto
-	# al fuego llega al cap y sigue cocinandose sin llegar nunca a 38.6.
-	if st.body_temperature < 34.8 or st.body_temperature > 37.9:
+	# Despertar al borde del dano termico, no dentro de el: el dano empieza
+	# a <35.4 y >37.8 — un umbral mas profundo dejaba al bot dormido
+	# sangrando hp en la banda ciega 34.8-35.4 sin despertar jamas.
+	if st.body_temperature > 37.75:
 		return true
+	if st.body_temperature < 35.45:
+		if st.body_temperature <= 34.5:
+			return true # dano letal: siempre despierta
+		# Banda templada 34.5-35.45 (-0.5 hp/s): despertar solo tiene
+		# sentido si hay una fuente de calor alcanzable o materiales para
+		# encenderla — sin ninguna, dormir aguanta la banda mucho mejor
+		# que vagar despierto helandose igual (ciclo despertar/dormir que
+		# terminaba en "exhausted" sin que nada pudiera calentarle).
+		var proxy_w: Node3D = b.get("proxy")
+		if proxy_w != null:
+			if _nearest_lit_campfire_pos(proxy_w.global_position, 30.0) != Vector3.INF:
+				return true
+			if _can_bot_build_campfire(proxy_w):
+				return true
 	if st.health < 25.0:
 		return true
 	if st.sleep >= 99.5 and st.energy >= 95.0:
