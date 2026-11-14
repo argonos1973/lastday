@@ -181,6 +181,13 @@ const AI_ADVISOR_MODEL := "qwen/qwen3.8-27b"
 # el asesor salta al fallback en vez de quedarse en rate_limited.
 const AI_ADVISOR_FALLBACK_MODEL := "openai/gpt-oss-20b"
 const AI_CHAT_MODEL := "openai/gpt-oss-120b"
+# Proveedor secundario GRATUITO (cadena Groq -> secundario -> cerebro local):
+# cuando la cuota diaria de Groq se agota o los 429 se encadenan, el asesor
+# salta aqui en vez de quedarse en rate_limited. Endpoint OpenAI-compatible
+# (Gemini AI Studio: 15 RPM / 1M TPM / ~1.5K RPD gratis) — overridable por env
+# GEMINI_URL / GEMINI_MODEL / GEMINI_CHAT_MODEL; la key va en GEMINI_API_KEY.
+const AI_PROVIDER2_URL := "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+const AI_PROVIDER2_MODEL := "gemini-2.0-flash"
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000 # base temporal del plan (referencia para el watchdog de planes atascados)
 const AI_SIG_POLL_SEC := 4.0           # sondeo local de firma por turnos (un bot por ciclo)
 const AI_MIN_CALL_GAP_SEC := 150.0     # minimo entre llamadas remotas de un mismo bot
@@ -246,6 +253,51 @@ var _chat_backoff_sec := 30.0
 var _chat_conn_status := "idle"
 
 var _ai_model_override := ""
+# Proveedor activo del asesor: 0 = Groq primario, 1 = secundario (Gemini).
+# La cadena es Groq -> modelo fallback de Groq -> secundario -> cerebro local;
+# _ai_pending_provider marca el proveedor de la peticion en vuelo y
+# _ai_429_streak la racha de 429 que dispara el salto por agotamiento de TPM.
+var _ai_provider := 0
+var _ai_pending_provider := 0
+var _ai_429_streak := 0
+
+func _ai_provider_name(p: int = -1) -> String:
+	var pv := _ai_provider if p < 0 else p
+	return "gemini" if pv == 1 else "groq"
+
+func _ai_provider_has_key(p: int) -> bool:
+	return not OS.get_environment("GEMINI_API_KEY" if p == 1 else "GROQ_API_KEY").strip_edges().is_empty()
+
+func _ai_provider_key() -> String:
+	return OS.get_environment("GEMINI_API_KEY" if _ai_provider == 1 else "GROQ_API_KEY").strip_edges()
+
+func _ai_provider_url() -> String:
+	if _ai_provider == 1:
+		var u := OS.get_environment("GEMINI_URL").strip_edges()
+		return u if not u.is_empty() else AI_PROVIDER2_URL
+	return AI_ADVISOR_URL
+
+# Salto al proveedor secundario con un backoff breve: el pozo de cuota es
+# independiente y el cerebro local cubre esos segundos si tampoco hay key.
+func _ai_switch_provider(reason: String) -> void:
+	_ai_provider = 1
+	_ai_backoff_until_msec = Time.get_ticks_msec() + 3000
+	_ai_conn_status = "provider_switch -> %s (%s)" % [_ai_provider_name(), reason]
+	print("[AI-ADV] cambio de proveedor -> %s (%s)" % [_ai_provider_name(), reason])
+
+# Modelo efectivo para decisiones segun el proveedor activo (los presupuestos
+# locales van por nombre de modelo, asi cada pozo se mide aparte).
+func _ai_active_model() -> String:
+	if _ai_provider == 1:
+		var m := OS.get_environment("GEMINI_MODEL").strip_edges()
+		return m if not m.is_empty() else AI_PROVIDER2_MODEL
+	return _ai_decision_model()
+
+func _ai_active_chat_model() -> String:
+	if _ai_provider == 1:
+		var m := OS.get_environment("GEMINI_CHAT_MODEL").strip_edges()
+		return m if not m.is_empty() else _ai_active_model()
+	return _ai_chat_model()
 
 # Presupuesto local por modelo (Groq limita por modelo y por dia):
 # agotar el de qwen no silencia al fallback ni al chat.
@@ -7956,15 +8008,18 @@ func _chat_attempt_llm(b: Dictionary, kind: String, to_id: int, to_name: String,
 		return false
 	if _chat_conn_status.begins_with("rate_limited") or _chat_conn_status.begins_with("pacing"):
 		_chat_conn_status = "ready (post-backoff)"
-	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
-	if key.is_empty() or not _ai_model_quota_open(_ai_chat_model()):
+	# El chat sigue al proveedor activo del asesor: si la cadena ya salto al
+	# secundario por cuota, el modelo de chat de alli (GEMINI_CHAT_MODEL o el
+	# mismo de decisiones) responde — la cuota de chat del primario no bloquea.
+	var key := _ai_provider_key()
+	var chat_model := _ai_active_chat_model()
+	if key.is_empty() or not _ai_model_quota_open(chat_model):
 		return false
 	_chat_ensure_http()
-	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent, "t": Time.get_ticks_msec()}
+	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent, "t": Time.get_ticks_msec(), "model": chat_model}
 	_ai_calls_day += 1
 	_ai_calls_total += 1
-	_ai_count_model_call(_ai_chat_model())
-	var chat_model := _ai_chat_model()
+	_ai_count_model_call(chat_model)
 	var payload := {
 		"model": chat_model,
 		"temperature": 0.85,
@@ -7979,7 +8034,7 @@ func _chat_attempt_llm(b: Dictionary, kind: String, to_id: int, to_name: String,
 	if "gpt-oss" in chat_model:
 		payload["reasoning_effort"] = "low"
 	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
-	if _chat_http.request(AI_ADVISOR_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
+	if _chat_http.request(_ai_provider_url(), headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
 		_chat_pending = {}
 		return false
 	return true
@@ -8063,7 +8118,7 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 			var tok := int((usage as Dictionary).get("total_tokens", 140)) if usage is Dictionary else 140
 			_ai_tokens_day += maxi(tok, 60)
 			_ai_tokens_total += maxi(tok, 60)
-			_ai_count_model_tokens(_ai_chat_model(), maxi(tok, 60))
+			_ai_count_model_tokens(str(req.get("model", _ai_active_chat_model())), maxi(tok, 60))
 			var ch = parsed.get("choices", [])
 			if ch is Array and not (ch as Array).is_empty():
 				var msg = (ch[0] as Dictionary).get("message", {})
@@ -8073,7 +8128,7 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 		_chat_conn_status = "offline_fallback (%d)" % response_code
 		_ai_tokens_day += 60
 		_ai_tokens_total += 60
-		_ai_count_model_tokens(_ai_chat_model(), 60)
+		_ai_count_model_tokens(str(req.get("model", _ai_active_chat_model())), 60)
 	text = _chat_sanitize(text)
 	if text.is_empty():
 		text = _chat_fallback_line(b, kind, to_name, "", intent)
@@ -12233,7 +12288,14 @@ func _ai_tick(delta: float) -> void:
 	if bots.is_empty() or not _ai_can_query_remote():
 		return
 	var now := Time.get_ticks_msec()
-	var key := OS.get_environment("GROQ_API_KEY").strip_edges()
+	# Cadena de proveedores: Groq primario; si su key falta pero hay key del
+	# secundario, el asesor va directo alli. Si el secundario pierde su key
+	# (env editada en caliente) se vuelve a probar el primario.
+	if _ai_provider == 0 and not _ai_provider_has_key(0) and _ai_provider_has_key(1):
+		_ai_provider = 1
+	elif _ai_provider == 1 and not _ai_provider_has_key(1):
+		_ai_provider = 0
+	var key := _ai_provider_key()
 	if key.is_empty():
 		_ai_conn_status = "no_api_key (local_brain)"
 		# Review local objectives at bounded intervals, including completed/stuck
@@ -12248,8 +12310,10 @@ func _ai_tick(delta: float) -> void:
 		_ai_tokens_day = 0
 		_ai_calls_day_by_model.clear()
 		_ai_tokens_day_by_model.clear()
-		# La cuota de Groq tambien se resetea cada dia: reintenta el primario.
+		# La cuota se resetea cada dia: reintenta el modelo y proveedor primarios.
 		_ai_model_override = ""
+		_ai_provider = 0
+		_ai_429_streak = 0
 	# Sondeo local y barato por turnos (~AI_SIG_POLL_SEC por bot): cambios de
 	# firma, planes terminados/atascados y la revision maxima de cortesia solo
 	# ENCOLAN — la dedup por firma y el hueco minimo filtran al despachar.
@@ -12263,13 +12327,16 @@ func _ai_tick(delta: float) -> void:
 	# en el monitor mucho despues de recuperar el servicio — se limpia aqui.
 	if _ai_conn_status.begins_with("rate_limited") or _ai_conn_status.begins_with("pacing"):
 		_ai_conn_status = "ready (post-backoff)"
-	if not _ai_model_quota_open(_ai_decision_model()):
+	if not _ai_model_quota_open(_ai_active_model()):
 		# Presupuesto local del modelo actual agotado: como la cuota real es
 		# por modelo, se salta al fallback si a el aun le queda — la misma
 		# idea que el 429 "per day" pero sin quemar el ultimo token de Groq.
-		if _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL and _ai_model_quota_open(AI_ADVISOR_FALLBACK_MODEL):
+		if _ai_provider == 0 and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL and _ai_model_quota_open(AI_ADVISOR_FALLBACK_MODEL):
 			_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
 			_ai_conn_status = "fallback_model (presupuesto %s -> %s)" % [AI_ADVISOR_MODEL, AI_ADVISOR_FALLBACK_MODEL]
+		elif _ai_provider == 0 and _ai_provider_has_key(1):
+			# Ambos modelos de Groq agotados: el pozo del secundario esta intacto.
+			_ai_switch_provider("presupuesto %s" % _ai_active_model())
 		else:
 			_ai_conn_status = "quota_reached (local_brain)"
 			return
@@ -12287,7 +12354,7 @@ func _ai_tick(delta: float) -> void:
 		_ai_next_at[target_bot] = now + int(AI_REVIEW_MAX_SEC * 1000.0)
 		return
 	_ai_last_sig[target_bot] = sig
-	_ai_request_decision(key, target_bot, tb)
+	_ai_request_decision(target_bot, tb)
 
 # Sondeo por turnos de un bot por ciclo: encola una peticion a la cola
 # compartida solo cuando hay motivo — plan cumplido, plan atascado, firma de
@@ -12616,17 +12683,18 @@ func _ai_bot_eligible(b: Dictionary) -> bool:
 		return false
 	return true
 
-func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
+func _ai_request_decision(bot_id: int, b: Dictionary) -> void:
 	_ai_pending_bot = bot_id
 	_ai_calls_day += 1
 	_ai_calls_total += 1
 	_ai_last_call_msec[bot_id] = Time.get_ticks_msec()
 	_ai_last_any_call_msec = Time.get_ticks_msec()
-	_ai_conn_status = "requesting"
+	_ai_conn_status = "requesting (%s)" % _ai_provider_name()
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_REVIEW_MAX_SEC * 1000.0)
-	var model := _ai_decision_model()
+	var model := _ai_active_model()
 	_ai_count_model_call(model)
 	_ai_pending_model = model
+	_ai_pending_provider = _ai_provider
 	var payload := {
 		"model": model,
 		"temperature": 0.4,
@@ -12641,9 +12709,16 @@ func _ai_request_decision(key: String, bot_id: int, b: Dictionary) -> void:
 	}
 	if "gpt-oss" in model:
 		payload["reasoning_effort"] = "low"
-	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
-	if _ai_http.request(AI_ADVISOR_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
+	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + _ai_provider_key()])
+	if _ai_http.request(_ai_provider_url(), headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
 		_ai_pending_bot = 0
+		# Fallo al enviar al primario: el secundario merece un intento antes
+		# de resignarse al cerebro local (recursion acotada: en proveedor 1
+		# ya no reintenta y cae al fallback de siempre).
+		if _ai_provider == 0 and _ai_provider_has_key(1):
+			_ai_switch_provider("send_error")
+			_ai_request_decision(bot_id, b)
+			return
 		_ai_conn_status = "request_error (local_fallback)"
 		_ai_apply_local_fallback_decision(bot_id, "http_send_error")
 		print("[AI-ADV] peticion fallida para bot %d" % bot_id)
@@ -12750,12 +12825,24 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 	# devuelve Groq solo libera hueco para una llamada y el cartel de
 	# rate_limited se repite todo el dia. Como la cuota es por modelo, se cambia
 	# al fallback y se reintenta pronto — el monitor muestra el motivo real.
-	if not for_chat and body_text.contains("per day") and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL:
+	if not for_chat and body_text.contains("per day") and _ai_provider == 0 and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL:
 		_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
 		var used := _ai_parse_groq_used_limit(body_text)
 		_ai_backoff_until_msec = Time.get_ticks_msec() + 3000
 		_ai_conn_status = "fallback_model (quota diaria %s -> %s)" % [used, AI_ADVISOR_FALLBACK_MODEL]
 		return
+	# El pozo de cuota del secundario es independiente (key propia): si el
+	# primario agoto tambien la diaria del fallback, o los 429 de TPM se
+	# encadenan sin dejar pasar la cola, el relevo salta alli. Si el salto ya
+	# se dio (peticion en vuelo marcada en _ai_pending_provider), el status
+	# lleva el nombre del proveedor que respondio 429.
+	if not for_chat and _ai_provider == 0 and _ai_provider_has_key(1):
+		if body_text.contains("per day") or _ai_429_streak >= 2:
+			_ai_switch_provider("quota diaria" if body_text.contains("per day") else "racha_429 x%d" % (_ai_429_streak + 1))
+			_ai_429_streak = 0
+			return
+	if not for_chat:
+		_ai_429_streak += 1
 	if for_chat:
 		if wait < 0.0:
 			wait = _chat_backoff_sec
@@ -12767,7 +12854,7 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 			wait = _ai_backoff_sec
 			_ai_backoff_sec = minf(_ai_backoff_sec * 2.0, 600.0)
 		_ai_backoff_until_msec = Time.get_ticks_msec() + int(maxf(wait, 2.0) * 1000.0)
-		_ai_conn_status = "rate_limited (429, retry_in=%ds)" % int(maxf(wait, 2.0))
+		_ai_conn_status = "rate_limited (%s 429, retry_in=%ds)" % [_ai_provider_name(_ai_pending_provider), int(maxf(wait, 2.0))]
 
 # Groq publica la cuota en cada respuesta 200: x-ratelimit-remaining-tokens +
 # x-ratelimit-reset-tokens (formato Go "4m19.2s", "172ms", "1h30m"). El tier
@@ -12869,7 +12956,8 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
 		return
 	_ai_backoff_sec = 60.0
-	_ai_conn_status = "online (200)"
+	_ai_429_streak = 0
+	_ai_conn_status = "online (%s 200)" % _ai_provider_name(_ai_pending_provider)
 	_ai_note_rate_headers(_headers)
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not (parsed is Dictionary):
@@ -14060,8 +14148,9 @@ func get_full_web_status() -> Dictionary:
 			"players_online": online_p,
 		},
 		"groq": {
-			"model": _ai_decision_model(),
-			"chat_model": _ai_chat_model(),
+			"provider": _ai_provider_name(),
+			"model": _ai_active_model(),
+			"chat_model": _ai_active_chat_model(),
 			"status": _ai_conn_status,
 			"chat_status": _chat_conn_status,
 			"calls_day": _ai_calls_day,
