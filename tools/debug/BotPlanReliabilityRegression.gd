@@ -687,18 +687,44 @@ func run() -> void:
 		"Proveedor 1 resuelve URL y key de Gemini")
 	check(mgr._ai_active_model() == "gemini-3.5-flash-lite",
 		"Proveedor 1 usa gemini-3.5-flash-lite por defecto")
-	# Cuota DIARIA agotada en ambos modelos de Groq (override ya activo)
-	# -> el 429 "per day" salta al secundario en vez de solo hacer backoff.
+	# Cuota DIARIA por modelo: un 429 "per day" encadena al siguiente modelo
+	# del mismo pozo (Gemini RPD es por modelo; Groq TPD es org-wide pero la
+	# cadena cubre los limites de minuto). Solo cuando la cadena se agota el
+	# veto diario salta al otro proveedor.
 	mgr._ai_provider = 0
 	mgr._ai_pending_provider = 0
-	mgr._ai_model_override = mgr.AI_ADVISOR_FALLBACK_MODEL
+	mgr._ai_model_override = ["", ""]
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "Rate limit reached: tokens per day (TPD): Limit 200000")
+	check(mgr._ai_provider == 0 and mgr._ai_active_model() == mgr.AI_ADVISOR_FALLBACK_MODEL,
+		"429 diario de qwen encadena a gpt-oss-20b del mismo pozo")
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "Rate limit reached: tokens per day (TPD): Limit 200000")
+	check(mgr._ai_provider == 0 and mgr._ai_active_model() == "openai/gpt-oss-120b",
+		"429 diario de 20b encadena a gpt-oss-120b, ultimo del pozo Groq")
 	mgr._ai_backoff_until_msec = 0
 	mgr._ai_register_429(PackedStringArray(), false, "Rate limit reached: tokens per day (TPD): Limit 200000")
 	check(mgr._ai_provider == 1 and mgr._ai_conn_status.contains("provider_switch"),
-		"429 diario con fallback agotado salta al proveedor secundario")
+		"429 diario con cadena Groq agotada salta al proveedor secundario")
+	# La cadena del secundario tambien encadena por modelo: el "per day" del
+	# modelo base de Gemini pasa a gemini-3.1-flash-lite sin vetar el pozo.
+	mgr._ai_model_override = ["", ""]
+	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_blocked_until = [0, 0]
+	mgr._ai_provider = 1
+	mgr._ai_pending_provider = 1
+	mgr._ai_backoff_until_msec = 0
+	mgr._ai_register_429(PackedStringArray(), false, "generate_content_free_tier_requests, limit: 500 per day")
+	check(mgr._ai_provider == 1 and mgr._ai_active_model() == "gemini-3.1-flash-lite"
+		and not bool(mgr._ai_provider_day_done[1]),
+		"429 diario del modelo base Gemini encadena a 3.1-flash-lite sin vetar el pozo")
 	# Racha de 429 por minuto: el tercero consecutivo tambien salta.
 	mgr._ai_provider = 0
+	mgr._ai_pending_provider = 0
 	mgr._ai_429_streak = 0
+	mgr._ai_provider_day_done = [false, false]
+	mgr._ai_provider_day_probe_at = [0, 0]
+	mgr._ai_provider_blocked_until = [0, 0]
 	mgr._ai_backoff_until_msec = 0
 	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
 	mgr._ai_backoff_until_msec = 0
@@ -710,9 +736,11 @@ func run() -> void:
 	check(mgr._ai_provider == 1 and mgr._ai_429_streak == 0,
 		"El tercer 429 seguido salta al proveedor secundario")
 	# Sin key del secundario no hay salto: backoff normal y cerebro local.
+	# (override al ultimo de la cadena para que el "per day" vete el pozo)
 	OS.set_environment("GEMINI_API_KEY", "")
 	mgr._ai_provider = 0
 	mgr._ai_pending_provider = 0
+	mgr._ai_model_override[0] = "openai/gpt-oss-120b"
 	mgr._ai_backoff_until_msec = 0
 	mgr._ai_provider_day_done = [false, false]
 	mgr._ai_provider_blocked_until = [0, 0]
@@ -733,8 +761,10 @@ func run() -> void:
 	mgr._ai_register_429(PackedStringArray(), false, "rate limit")
 	check(mgr._ai_provider == 0 and mgr._ai_429_streak == 0,
 		"Racha de 429 en el secundario devuelve el servicio al primario")
-	# "per day" en el secundario = veto diario propio: si el primario tambien
-	# esta vetado (sonda aun pendiente) no hay relevo — backoff y cerebro local.
+	# "per day" en el ULTIMO modelo de la cadena del secundario = veto diario
+	# propio: si el primario tambien esta vetado (sonda aun pendiente) no hay
+	# relevo — backoff y cerebro local.
+	mgr._ai_model_override = ["", "gemini-3.1-flash-lite"]
 	mgr._ai_provider = 1
 	mgr._ai_pending_provider = 1
 	mgr._ai_provider_day_done = [true, false]
@@ -743,7 +773,7 @@ func run() -> void:
 	mgr._ai_register_429(PackedStringArray(), false, "generate_requests_per_model_per_day quota exceeded")
 	check(mgr._ai_provider == 1 and bool(mgr._ai_provider_day_done[1]) and mgr._ai_conn_status.contains("rate_limited"),
 		"429 diario del secundario con primario vetado solo hace backoff")
-	# Con el primario libre, el "per day" del secundario vuelve a Groq.
+	# Con el primario libre, el "per day" del ultimo modelo vuelve a Groq.
 	mgr._ai_provider = 1
 	mgr._ai_pending_provider = 1
 	mgr._ai_provider_day_done = [false, false]
@@ -778,6 +808,9 @@ func run() -> void:
 	check(blk > 12000 and blk < 20000, "Pista 'try again in 16.4s' fija backoff ~16 s (got %d)" % blk)
 	mgr._ai_429_streak = 0
 	mgr._ai_provider_blocked_until = [0, 0]
+	# El veto diario solo se marca agotada la cadena del pozo: se fuerza el
+	# override al ultimo modelo de Groq para probar la sonda, no el relevo.
+	mgr._ai_model_override[0] = "openai/gpt-oss-120b"
 	mgr._ai_register_429(PackedStringArray(), false, "tokens per day (TPD): Limit 200000, Used 199501. Please try again in 16.4s")
 	var prb: int = int(mgr._ai_provider_day_probe_at[0]) - Time.get_ticks_msec()
 	check(bool(mgr._ai_provider_day_done[0]) and prb >= 40000 and prb <= 50000,

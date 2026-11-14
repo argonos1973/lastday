@@ -256,7 +256,11 @@ var _chat_backoff_until_msec := 0
 var _chat_backoff_sec := 30.0
 var _chat_conn_status := "idle"
 
-var _ai_model_override := ""
+# Relevo de modelo dentro de cada pozo ("" = modelo base de la cadena). La
+# cuota diaria se mide por MODELO (RPD 500 por modelo en Gemini; en Groq la
+# TPD es org-wide pero los limites de minuto son por modelo), asi que un
+# "per day" encadena al siguiente modelo del mismo proveedor antes de vetarlo.
+var _ai_model_override := ["", ""]
 # Proveedor activo del asesor: 0 = Groq primario, 1 = secundario (Gemini).
 # La cadena es Groq -> modelo fallback de Groq -> secundario -> cerebro local;
 # _ai_pending_provider marca el proveedor de la peticion en vuelo y
@@ -311,6 +315,9 @@ func _ai_switch_provider(reason: String, to := 1) -> void:
 # Modelo efectivo para decisiones segun el proveedor activo (los presupuestos
 # locales van por nombre de modelo, asi cada pozo se mide aparte).
 func _ai_active_model() -> String:
+	var o: String = _ai_model_override[_ai_provider]
+	if not o.is_empty():
+		return o
 	if _ai_provider == 1:
 		var m := OS.get_environment("GEMINI_MODEL").strip_edges()
 		return m if not m.is_empty() else AI_PROVIDER2_MODEL
@@ -342,7 +349,39 @@ func _ai_decision_model() -> String:
 	var m := OS.get_environment("GROQ_DECISION_MODEL").strip_edges()
 	if not m.is_empty():
 		return m
-	return _ai_model_override if not _ai_model_override.is_empty() else AI_ADVISOR_MODEL
+	var o: String = _ai_model_override[0]
+	return o if not o.is_empty() else AI_ADVISOR_MODEL
+
+# Cadena de relevo de modelos por proveedor: el primero es el configurable
+# por env; los siguientes son relevos verificados con cuota diaria propia.
+func _ai_model_chain(p: int) -> Array:
+	var chain: Array = []
+	if p == 1:
+		var base := OS.get_environment("GEMINI_MODEL").strip_edges()
+		chain.append(base if not base.is_empty() else AI_PROVIDER2_MODEL)
+		for m in ["gemini-3.1-flash-lite"]:
+			if m != chain[0]:
+				chain.append(m)
+	else:
+		var env_m := OS.get_environment("GROQ_DECISION_MODEL").strip_edges()
+		chain.append(env_m if not env_m.is_empty() else AI_ADVISOR_MODEL)
+		for m in [AI_ADVISOR_FALLBACK_MODEL, AI_CHAT_MODEL]:
+			if m != chain[0]:
+				chain.append(m)
+	return chain
+
+func _ai_chain_current_model(p: int) -> String:
+	var o: String = _ai_model_override[p]
+	return o if not o.is_empty() else String(_ai_model_chain(p)[0])
+
+# Avanza al siguiente modelo de la cadena del pozo; false si ya se agoto.
+func _ai_advance_model_chain(p: int) -> bool:
+	var chain := _ai_model_chain(p)
+	var i := chain.find(_ai_chain_current_model(p))
+	if i < 0 or i >= chain.size() - 1:
+		return false
+	_ai_model_override[p] = String(chain[i + 1])
+	return true
 
 func _ai_chat_model() -> String:
 	var m := OS.get_environment("GROQ_CHAT_MODEL").strip_edges()
@@ -3854,7 +3893,6 @@ func _ai_note_foe_intel(b: Dictionary, foe: Node3D, pos: Vector3, src: String) -
 	var noted := pos
 	if err > 0.0:
 		noted += Vector3(randf_range(-err, err), 0.0, randf_range(-err, err))
-	b["_last_foe_pos"] = noted
 	var key := _actor_persist_key(_peer_id_for_actor(foe)) if foe != null else ""
 	# Una pista reciente de mas confianza sobre el mismo enemigo no se rebaja
 	# (la victima vio/sintio al agresor: el relevo del equipo no la degrada).
@@ -3863,6 +3901,7 @@ func _ai_note_foe_intel(b: Dictionary, foe: Node3D, pos: Vector3, src: String) -
 			and Time.get_ticks_msec() - int(prev.get("t", 0)) < 4000 \
 			and float(prev.get("conf", 0.0)) >= conf:
 		return
+	b["_last_foe_pos"] = noted
 	b["_foe_mem"] = {"pos": noted, "t": Time.get_ticks_msec(), "src": src, "conf": conf, "key": key}
 
 # Refresco del escaneo de sentidos: la posicion exacta solo la fija la VISTA
@@ -12398,7 +12437,7 @@ func _ai_tick(delta: float) -> void:
 		_ai_calls_day_by_model.clear()
 		_ai_tokens_day_by_model.clear()
 		# La cuota se resetea cada dia: reintenta el modelo y proveedor primarios.
-		_ai_model_override = ""
+		_ai_model_override = ["", ""]
 		_ai_provider = 0
 		_ai_429_streak = 0
 		_ai_provider_day_done = [false, false]
@@ -12429,11 +12468,10 @@ func _ai_tick(delta: float) -> void:
 		_ai_conn_status = "ready (post-backoff)"
 	if not _ai_model_quota_open(_ai_active_model()):
 		# Presupuesto local del modelo actual agotado: como la cuota real es
-		# por modelo, se salta al fallback si a el aun le queda — la misma
-		# idea que el 429 "per day" pero sin quemar el ultimo token de Groq.
-		if _ai_provider == 0 and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL and _ai_model_quota_open(AI_ADVISOR_FALLBACK_MODEL):
-			_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
-			_ai_conn_status = "fallback_model (presupuesto %s -> %s)" % [AI_ADVISOR_MODEL, AI_ADVISOR_FALLBACK_MODEL]
+		# por modelo, se encadena al siguiente del pozo si le queda — la misma
+		# idea que el 429 "per day" pero sin quemar el ultimo token del pozo.
+		if _ai_advance_model_chain(_ai_provider):
+			_ai_conn_status = "fallback_model (presupuesto -> %s)" % _ai_active_model()
 		else:
 			# Todos los modelos del proveedor activo sin presupuesto local: veto
 			# diario propio hasta el reset y el otro pozo sirve si esta libre.
@@ -12533,7 +12571,7 @@ func _ai_directive_completed(b: Dictionary, d: Dictionary) -> bool:
 	var ev0: Dictionary = d.get("_ev0", {})
 	var legacy := ev0.is_empty() # directiva previa al seguimiento: semantica vieja
 	var near := func(dp, r: float) -> bool:
-		return dp is Vector3 and (dp as Vector3) != Vector3.INF and Vector2(pos.x - (dp as Vector3).x, pos.z - (dp as Vector3).z).length() < r
+		return dp is Vector3 and (dp as Vector3).is_finite() and absf(pos.y - (dp as Vector3).y) < 2.4 and Vector2(pos.x - (dp as Vector3).x, pos.z - (dp as Vector3).z).length() < r
 	match str(d.get("action", "")):
 		"return_home":
 			# El refugio CORRECTO: el punto y, si hay refugio propio conocido,
@@ -12555,7 +12593,7 @@ func _ai_directive_completed(b: Dictionary, d: Dictionary) -> bool:
 				or not str(b.get("shelter_id", "")).is_empty() or not str(b.get("campfire_id", "")).is_empty()
 		"rest":
 			var st: SurvivalStats = b.get("vstats")
-			var rested := st != null and (st.sleep > 78.0 or float(b.get("health", 100.0)) > 85.0)
+			var rested := st != null and st.sleep > 78.0 and float(b.get("health", 100.0)) > 85.0
 			return rested and near.call(d.get("pos"), 10.0) if (d.get("pos") is Vector3 and (d["pos"] as Vector3) != Vector3.INF) else rested
 		"forage":
 			return float(b.get("hunger", 100.0)) >= 75.0 or int(b.get("_loot_food_n", 0)) > int(ev0.get("food", int(b.get("_loot_food_n", 0))))
@@ -12957,13 +12995,18 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 	# primario de Groq: el wait solo libera hueco para una llamada y el cartel
 	# de rate_limited se repite todo el dia. Como la cuota es por modelo, se
 	# cambia al fallback del mismo pozo y se reintenta pronto.
-	if not for_chat and pending == 0 and body_text.contains("per day") and _ai_model_override.is_empty() and _ai_decision_model() == AI_ADVISOR_MODEL:
-		_ai_model_override = AI_ADVISOR_FALLBACK_MODEL
+	# "per day" en cualquier pozo: la cuota diaria es por modelo — se encadena
+	# al siguiente de la misma cadena y solo se veta al proveedor cuando la
+	# cadena se agota (Gemini: cada modelo tiene RPD propia; Groq: la TPD es
+	# org-wide, encadenar solo cuesta una llamada rechazada).
+	if not for_chat and body_text.contains("per day") and _ai_advance_model_chain(pending):
 		var used := _ai_parse_groq_used_limit(body_text)
 		_ai_backoff_until_msec = now + 3000
-		_ai_conn_status = "fallback_model (quota diaria %s -> %s)" % [used, AI_ADVISOR_FALLBACK_MODEL]
+		_ai_conn_status = "fallback_model (quota diaria %s -> %s)" % [used, _ai_chain_current_model(pending)]
 		return
 	if for_chat:
+		if body_text.contains("per day"):
+			_ai_advance_model_chain(pending)
 		if wait < 0.0:
 			wait = _chat_backoff_sec
 			_chat_backoff_sec = minf(_chat_backoff_sec * 2.0, 600.0)
