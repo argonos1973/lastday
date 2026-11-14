@@ -1959,7 +1959,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# encendida — ahi hay luz, alijo y quien le ayude.
 		if _bot_night_home_walk(b, delta):
 			return
+		# Sin nada alcanzable a oscuras ni refugio que caminar: dormir gana
+		# a vegetar — frena el desgaste x0.3 y despierta si el hambre llega
+		# a zona de expedicion letal. El bloque de luz veta salidas, no el
+		# descanso (morir agotado esperando el amanecer era el deadlock).
 		b["_act"] = "night_supplies"
+		if _bot_try_start_sleep(b, is_night):
+			return
 		b["anim"] = "idle"
 		b["sitting"] = false
 		return
@@ -10835,9 +10841,23 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# estas puertas le niegan el suelo no recupera sleep NUNCA (sentado solo
 	# deja de gastar) y acaba muerto de agotamiento pese a estar descansando.
 	if not collapse:
-		if _bot_needs_food_or_water(b):
+		# Necesidades sin despensa ni luz no bloquean — DE NOCHE: con la
+		# mochila vacia despierto no hay nada que hacer a oscuras, y dormir
+		# frena ambos desgastes x0.3 hasta el borde de inanicion
+		# (_bot_should_wake). Con comida/bebida/antorcha hay un plan real:
+		# comer, beber o forrajear — dormir seria procrastinar. De dia el
+		# veto de la luz no existe: el hambriento trabaja, no duerme. Y en
+		# el filo de la inanicion (<=5) tampoco: la ultima expedicion se
+		# hace despierto, dormido solo se muere sin intentarlo.
+		if _bot_needs_food_or_water(b) \
+				and (not is_night or _bot_has_edible_food(proxy, true) or _bot_has_drink(proxy) or _bot_has_item(proxy, "Antorcha") \
+					or float(b.get("hunger", 100.0)) <= 5.0 or float(b.get("thirst", 100.0)) <= 5.0):
 			return false
-		if st.body_temperature < 35.4 or st.body_temperature > 38.4:
+		# A la intemperie con frio peligroso no se duerme; bajo techo si —
+		# dentro se calienta durmiendo. El colapso pasa siempre (mejor
+		# inconsciente que muerto de pie).
+		if (st.body_temperature < 35.4 and not _bot_is_sheltered(b, proxy.global_position)) \
+				or st.body_temperature > 38.4:
 			return false
 	if st.sleep >= 99.0 and st.energy >= 98.0:
 		return false # sueño y energia al tope: queda sentado (donde recupera vida)
@@ -10975,7 +10995,12 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 	# campo; en casa hay fogata, alijo y quien le ayude.
 	if _bot_night_home_walk(b, delta):
 		return true
+	# Sin refugio ni luz ni nada alcanzable: dormir en el sitio gana a
+	# quedarse de pie hasta el amanecer — el desgaste dormido es x0.3 y
+	# el despertar de _bot_should_wake cubre hambre/sed letales y frio.
 	b["_act"] = "need_light"
+	if _bot_try_start_sleep(b, true):
+		return true
 	b["anim"] = "idle"
 	b["sleeping"] = false
 	b["sitting"] = false
@@ -10990,13 +11015,29 @@ func _bot_night_home_walk(b: Dictionary, delta: float) -> bool:
 	var refuge_n: Vector3 = shp_n if not str(b.get("shelter_id", "")).is_empty() and shp_n != Vector3.INF else _nearest_safe_refuge(b, 85.0)
 	if refuge_n == Vector3.INF:
 		return false
+	# El hogar puede tener la fogata pegada: el punto donde se sienta es el
+	# borde seguro del calor, no el centro del anillo que cocina.
+	refuge_n = _bot_fire_safe_spot(refuge_n, proxy.global_position.y)
 	b["_act"] = "rest"
 	var d_home := Vector2(proxy.global_position.x - refuge_n.x, proxy.global_position.z - refuge_n.z).length()
 	if d_home > 1.8:
 		_move_bot_towards(b, refuge_n, 3.8, delta, "walk")
 	else:
-		b["sitting"] = true
-		b["anim"] = "sit"
+		# Ya en el refugio: quedarse sentado toda la noche con necesidades
+		# sin resolver era la muerte por agotamiento en casa — el callejon
+		# sin salida cortaba el alijo guardado y el sueño. Aqui si puede:
+		# primero lo que el alijo le de (comida/agua sin salir a oscuras),
+		# luego tumbarse; solo si nada de eso aplica se queda de guardia.
+		if not str(b.get("shelter_id", "")).is_empty():
+			_bot_sync_own_shelter_stash(b)
+			if _bot_try_start_sleep(b, true):
+				return true
+		else:
+			# Refugio ajeno (casa/fogata cercana): sin alijo propio, al menos
+			# descansar — el colapso/dormir viven en _bot_try_start_sleep.
+			_bot_try_start_sleep(b, true)
+		b["sitting"] = not bool(b.get("sleeping", false))
+		b["anim"] = "sleep" if bool(b.get("sleeping", false)) else "sit"
 	return true
 
 func _bot_needs_food_or_water(b: Dictionary) -> bool:
@@ -11023,16 +11064,27 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 		# Con algo comestible en la mochila vuelven los umbrales normales
 		# y despierta para comer.
 		var proxy_nap: Node3D = b.get("proxy")
-		var lethal_nap := nap != null and nap.sleep <= 8.0 and proxy_nap != null \
-			and not _bot_has_edible_food(proxy_nap, true) and not _bot_has_drink(proxy_nap)
-		if nap == null or nap.sleep > 8.0 \
-				or float(b["hunger"]) < (4.0 if lethal_nap else 14.0) \
-				or float(b["thirst"]) < (4.0 if lethal_nap else 10.0):
+		var lethal_nap := nap != null and proxy_nap != null \
+			and not _bot_has_edible_food(proxy_nap, true) and not _bot_has_drink(proxy_nap) \
+			and not _bot_has_item(proxy_nap, "Antorcha")
+		if lethal_nap:
+			# Mochila vacia: despertar solo si despierto hay algo que hacer —
+			# la expedicion letal se desbloquea a hambre<14/sed<10 (rio,
+			# alijo, seta dirigida); entre medias la siesta frena el desgaste
+			# x0.3 y despertar con las manos vacias solo lo deja de pie
+			# muriendo (el tope "siesta a 8" tiene sentido CON despensa:
+			# despierta pronto para comer — sin ella, a vacio).
+			if float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
+				return true
+		elif nap == null or nap.sleep > 8.0 \
+				or float(b["hunger"]) < 14.0 or float(b["thirst"]) < 10.0:
 			return true
 	var st: SurvivalStats = b.get("vstats")
 	if st == null:
 		return true
-	if st.body_temperature < 34.8 or st.body_temperature > 38.6:
+	# El calor despierta antes del tope de las brasas (38 °C): dormido junto
+	# al fuego llega al cap y sigue cocinandose sin llegar nunca a 38.6.
+	if st.body_temperature < 34.8 or st.body_temperature > 37.9:
 		return true
 	if st.health < 25.0:
 		return true
