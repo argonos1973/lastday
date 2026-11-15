@@ -1502,8 +1502,13 @@ func run() -> void:
 	world.add_child(foe_npc)
 	foe_npc.global_position = elena_proxy.global_position + Vector3(12.0, 0.0, 0.0)
 	mgr._bot_fire_bow(elena, foe_npc, "Arco de madera")
+	# Tensado real: la flecha y la durabilidad se consumen al liberar
+	# (~0.46 s, PlayerController.BOW_RELEASE_DELAY), no al encarar.
+	check(mgr._bot_arrow_count(elena_proxy) == arrows0,
+		"Mientras tensa el arco aun no consume la flecha")
+	await create_timer(0.95).timeout
 	check(mgr._bot_arrow_count(elena_proxy) == arrows0 - 1,
-		"El arco consume una flecha por disparo (%d -> %d)" % [arrows0, mgr._bot_arrow_count(elena_proxy)])
+		"El arco consume una flecha al liberar (%d -> %d)" % [arrows0, mgr._bot_arrow_count(elena_proxy)])
 	var bow_dur := -1.0
 	for it in elena_proxy.get_meta("saved_inventory", []):
 		if it is Dictionary and str(it.get("name", "")) == "Arco de madera":
@@ -2277,13 +2282,20 @@ func run() -> void:
 	check(elena_proxy.global_position.distance_to(bear.global_position) > d_pred,
 		"Sin fusil el bot huye del oso igual que del lobo (d %.1f->%.1f)" % [d_pred, elena_proxy.global_position.distance_to(bear.global_position)])
 
-	# Punteria del bot: no es un aimbot — la probabilidad de fallo crece con la
-	# distancia y con la velocidad del blanco, y el melee se puede esquivar.
-	var m_close := mgr._bot_rifle_miss_chance(8.0, 0.0, 0.5)
-	var m_far := mgr._bot_rifle_miss_chance(40.0, 0.0, 0.5)
-	var m_far_run := mgr._bot_rifle_miss_chance(40.0, 7.0, 0.5)
-	check(m_close > 0.0 and m_close < m_far and m_far < m_far_run and m_far_run <= 0.62,
-		"Punteria bot: el fallo crece con distancia y carrera (%.2f < %.2f < %.2f)" % [m_close, m_far, m_far_run])
+	# Punteria del bot: no es un aimbot — ya no hay probabilidad de fallo:
+	# la dispersion empeora moviendose y la tolerancia del gatillo se cierra
+	# con la distancia (mismas reglas fisicas que el jugador).
+	var b_aim_t: Dictionary = mgr.bots[901]
+	b_aim_t["anim"] = ""   # estado base: quieto, sin apuntar
+	b_aim_t["is_aiming"] = false
+	var s_still := mgr._bot_current_spread_deg(b_aim_t, true)
+	b_aim_t["anim"] = "run"
+	var s_run := mgr._bot_current_spread_deg(b_aim_t, true)
+	b_aim_t["anim"] = ""
+	var tol_close := mgr._bot_trigger_tolerance_deg(b_aim_t, 8.0)
+	var tol_far := mgr._bot_trigger_tolerance_deg(b_aim_t, 40.0)
+	check(s_run > s_still * 2.0 and tol_close > tol_far,
+		"Punteria bot: dispersion peor en carrera y tolerancia menor de lejos (%.3f>%.3f, %.2f>%.2f)" % [s_run, s_still, tol_close, tol_far])
 	var d_still := mgr._bot_melee_dodge_chance(0.0)
 	var d_sprint := mgr._bot_melee_dodge_chance(7.0)
 	check(d_still < d_sprint and d_still >= 0.10,
@@ -5878,6 +5890,13 @@ func run() -> void:
 	b_rw["shoot_cooldown"] = 0.0
 	b_rw["is_aiming"] = false
 	mgr._engage_foe(b_rw, foe_roof, 0.1)
+	check(float(b_rw["shoot_cooldown"]) == 0.0,
+		"10S6a: la mira no se clava — el primer tick no dispara")
+	# Asentando la mira varios ticks, el tiro vertical acaba saliendo.
+	for _i in 60:
+		if float(b_rw["shoot_cooldown"]) > 0.0:
+			break
+		mgr._engage_foe(b_rw, foe_roof, 0.05)
 	check(float(b_rw["shoot_cooldown"]) > 0.0,
 		"10S6: con tiro limpio dispara hacia ARRIBA contra un enemigo en tejado (cd=%.2f)" % float(b_rw["shoot_cooldown"]))
 	foe_roof.queue_free()

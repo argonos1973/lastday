@@ -556,11 +556,14 @@ func run() -> void:
 	print(_report(env, reps[0], elena))
 	print(_report(env, reps[1], kael))
 	check(int(reps[0]["sensed_ticks"]) > 0 and int(reps[0]["sensed_blind"]) == 0, "D4 Elena detecta al bandido por sus propios sentidos")
-	check(int(reps[0]["acts"].get("loot", 0)) == 0, "D4 con el enemigo encima no se pone a saquear (loot=%d)" % int(reps[0]["acts"].get("loot", 0)))
+	var d4_bandido_muerto := float((kael["proxy"] as Node3D).get_meta("proxy_health", 100.0)) <= 0.0
+	check(int(reps[0]["acts"].get("loot", 0)) == 0 or d4_bandido_muerto,
+		"D4 con el enemigo encima no se pone a saquear — salvo que ya este muerto (loot=%d, bandido_muerto=%s)" % [int(reps[0]["acts"].get("loot", 0)), str(d4_bandido_muerto)])
 	check(int(reps[0]["acts"].get("foe", 0)) + int(reps[0]["acts"].get("cover", 0)) > 0, "D4 reacciona a la amenaza (acts=%s)" % str(reps[0]["acts"]))
 	var d4_end := (elena["proxy"] as Node3D).global_position.distance_to((kael["proxy"] as Node3D).global_position)
-	check(int(reps[0]["acts"].get("cover", 0)) > 0 or int(reps[0]["flee_ticks"]) > 0 or d4_end < d4_start,
-		"D4 con cuchillo contra fusil: se cubre, huye o cierra distancia — no se queda al descubierto (cover=%d huida=%d, d %.0f->%.0f)" % [int(reps[0]["acts"].get("cover", 0)), int(reps[0]["flee_ticks"]), d4_start, d4_end])
+	var d4_melee := float(mgr.bot_dmg.get(901, 0.0)) > 0.0
+	check(int(reps[0]["acts"].get("cover", 0)) > 0 or int(reps[0]["flee_ticks"]) > 0 or d4_end < d4_start or d4_melee,
+		"D4 con cuchillo contra fusil: se cubre, huye o cierra distancia — no se queda al descubierto (cover=%d huida=%d, melee=%s, d %.0f->%.0f)" % [int(reps[0]["acts"].get("cover", 0)), int(reps[0]["flee_ticks"]), str(d4_melee), d4_start, d4_end])
 	check(int(reps[1]["sensed_blind"]) == 0 and int(w.shots.get(903, 0)) > 0, "D4 el bandido la ve y abre fuego con municion real (%d disparos)" % int(w.shots.get(903, 0)))
 
 	# ================= D5: enemigos tras una pared ========================
