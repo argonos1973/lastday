@@ -1,6 +1,7 @@
 extends RefCounted
 ## Client-only, deterministic understory. Shared meshes and spatial batches.
 const SHADER = preload("res://shaders/forest_understory.gdshader")
+const BATCH_CELL := 48.0
 
 static func mesh_for(broad: bool) -> ArrayMesh:
 	var st := SurfaceTool.new()
@@ -96,7 +97,7 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 			if world._road_verge_growth(pos) < .45: continue
 			if preload("res://scripts/HighMountainZone.gd").blocks_vegetation(pos) or preload("res://scripts/HighMountainZone.gd").on_road(pos,1.0): continue
 			pos.y = world._get_exact_ground_y(pos.x,pos.z) + .005
-			var key := Vector3i(floori(pos.x/24.0),floori(pos.z/24.0),variant)
+			var key := Vector3i(floori(pos.x/BATCH_CELL),floori(pos.z/BATCH_CELL),variant)
 			if not batches.has(key): batches[key] = []
 			batches[key].append(Transform3D(Basis(Vector3.UP,yaw).scaled(Vector3.ONE*scale_value),pos))
 	var meshes := [mesh_for(false),mesh_for(true),bramble_mesh()]
@@ -109,7 +110,7 @@ static func build(world: Node3D, tree_positions: Array) -> void:
 		var transforms: Array = batches[key]
 		var node := MultiMeshInstance3D.new()
 		node.name = "ForestUnderstory_%s_%s_%s" % [key.x,key.y,key.z]
-		var origin := Vector3((key.x+.5)*24.0,0,(key.y+.5)*24.0)
+		var origin := Vector3((key.x+.5)*BATCH_CELL,0,(key.y+.5)*BATCH_CELL)
 		node.position = origin
 		node.multimesh = MultiMesh.new()
 		node.multimesh.transform_format = MultiMesh.TRANSFORM_3D

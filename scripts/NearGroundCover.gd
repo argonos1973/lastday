@@ -1,8 +1,10 @@
 extends Node3D
 ## Bounded local detail. No saved state, collision or gameplay RNG.
-const CELL := 6.0
-const RADIUS := 4
-const CANDIDATES_PER_CELL := 144
+# 12 m chunks halve the streaming node count in each axis. Candidate count is
+# quadrupled to keep the same average blade density and the 24 m detail radius.
+const CELL := 12.0
+const RADIUS := 2
+const CANDIDATES_PER_CELL := 576
 var world: Node3D
 var chunks: Dictionary = {}
 var pending: Array[Vector2i] = []
@@ -36,7 +38,7 @@ func update_focus(focus: Vector3, quality: float) -> void:
 		last_cell = cell
 		last_quality = quality
 		var wanted: Dictionary = {}
-		var active_radius := 3 if quality < 0.8 else RADIUS
+		var active_radius := RADIUS
 		for x in range(-active_radius,active_radius+1):
 			for z in range(-active_radius,active_radius+1):
 				if x*x+z*z > active_radius*active_radius: continue
@@ -72,7 +74,8 @@ func _build_chunk(cell: Vector2i, quality: float) -> bool:
 		if Time.get_ticks_usec()-started > budget_us:
 			break
 		job.next = i+1
-		var pos := origin + Vector3(rng.randf_range(-3,3),0,rng.randf_range(-3,3))
+		var half_cell := CELL * 0.5
+		var pos := origin + Vector3(rng.randf_range(-half_cell,half_cell),0,rng.randf_range(-half_cell,half_cell))
 		var density_sample := rng.randf()
 		var quality_sample := rng.randf()
 		var height := rng.randf_range(.12,.32)
