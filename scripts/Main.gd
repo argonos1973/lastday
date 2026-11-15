@@ -8116,10 +8116,17 @@ func _create_map() -> void:
 		# vados de carretera y pasos someros (<=0.52 m) abiertos para que los
 		# bots crucen ríos sin atascarse.
 		bot_nav = _new_nav_pathfinding()
+		var ford_test := Callable(self, "_is_bot_river_ford")
 		if bot_nav.has_method("build_with_ford"):
-			bot_nav.build_with_ford(wildlife_blockers, river_segments_data, Callable(self, "_is_bot_river_ford"))
+			bot_nav.build_with_ford(wildlife_blockers, river_segments_data, ford_test)
+		elif bot_nav.get_script() != null:
+			bot_nav.build(wildlife_blockers, river_segments_data, ford_test)
 		else:
-			bot_nav.build(wildlife_blockers, river_segments_data, Callable(self, "_is_bot_river_ford"))
+			# Binario nativo anterior a build_with_ford: su build() de 2 args
+			# cerraría los vados — usar la nav GDScript para no atascar bots.
+			bot_nav = NavPathfindingScript.new()
+			bot_nav.build(wildlife_blockers, river_segments_data, ford_test)
+			push_warning("LastDayNav lacks build_with_ford — bot_nav uses GDScript NavPathfinding")
 		_refresh_nav_door_caches()
 		await get_tree().process_frame
 		if _loading_label != null:
