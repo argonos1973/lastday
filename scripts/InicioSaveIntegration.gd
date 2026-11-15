@@ -90,10 +90,15 @@ static func update_saved_info(inicio: Node, cfg: Dictionary) -> void:
 	lbl.add_theme_color_override("font_color", Color(0.6, 0.8, 0.95) if is_server else Color(0.8, 0.85, 0.6))
 	lbl.name = "SavedCharInfo"
 	lbl.add_to_group("__saved_char_info")
-	var char_panel = inicio._char_name_label.get_parent()
+	# El arranque --auto-single y --cinematic salta la construccion del menu,
+	# por lo que todavia no existe la etiqueta del nombre del personaje.
+	var name_label = inicio._char_name_label
+	if name_label == null or not is_instance_valid(name_label):
+		return
+	var char_panel = name_label.get_parent()
 	if char_panel != null:
 		char_panel.add_child(lbl)
-		char_panel.move_child(lbl, inicio._char_name_label.get_index() + 1)
+		char_panel.move_child(lbl, name_label.get_index() + 1)
 
 static func _remove_existing_info(inicio: Node) -> void:
 	if inicio._char_name_label == null or not is_instance_valid(inicio._char_name_label):
