@@ -2869,16 +2869,38 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	var bandage_line := 72.0 + minf(12.0, float(int(d_lessons.get("combat", 0))) * 4.0) + minf(10.0, float(int(d_lessons.get("medical", 0))) * 5.0)
 	var vst_b: SurvivalStats = b.get("vstats")
 	var is_bleeding: bool = vst_b != null and vst_b.bleeding > 0.0
-	if (float(b["health"]) < bandage_line or is_bleeding) and float(b["eat_cooldown"]) <= 0.0:
+	# La regeneracion pasiva (misma regla que SurvivalStats.tick) cura sola a
+	# quien esta sano por dentro: gastar provisiones en eso es desperdicio.
+	var can_regen := _bot_passive_regen_ok(b)
+	var hp_now := float(b["health"])
+	# Con el enemigo encima no hay manos libres para vendarse ni comer: se
+	# pospone (cobertura/huida primero) salvo hemorragia o vida ya critica.
+	var pressed := _bot_treatment_pressed(b)
+	# Venda: primero cortar la hemorragia. Sin sangrado solo se gasta si la
+	# cura se aprovecha entera y el cuerpo no va a reponerse solo a tiempo.
+	var want_bandage := is_bleeding
+	if not want_bandage and hp_now < bandage_line:
+		want_bandage = hp_now < 45.0 or not can_regen or _bot_under_immediate_threat(b)
+	if want_bandage and pressed and hp_now >= 25.0 and not (is_bleeding and vst_b.bleeding >= 2.0):
+		want_bandage = false
+	if want_bandage and float(b["eat_cooldown"]) <= 0.0:
 		for i in range(inv.size()):
 			var it = inv[i]
 			if it is Dictionary and str(it.get("name", "")) in ["Venda", "Vendaje"] and int(it.get("quantity", 1)) > 0:
+				# Misma cura que al jugador (Inventory "medical"): el
+				# use_value del objeto, no un extra de bot.
+				var heal := float(it.get("use_value", 24.0))
+				if heal <= 0.0:
+					heal = 24.0
+				if not is_bleeding and hp_now + heal > 100.0 + heal * 0.35:
+					break # se desperdiciaria casi toda: guardarla
 				it["quantity"] = int(it.get("quantity", 1)) - 1
 				if int(it["quantity"]) <= 0:
 					inv.remove_at(i)
 				if vst_b != null:
 					vst_b.stop_bleeding()
-				var new_hp := minf(100.0, float(b["health"]) + 32.0)
+					vst_b.feet_wound = 0.0
+				var new_hp := minf(100.0, float(b["health"]) + heal)
 				b["health"] = new_hp
 				proxy.set_meta("proxy_health", new_hp)
 				proxy.set_meta("saved_health", new_hp)
@@ -2892,7 +2914,15 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	var force_eat := bool(b.get("forced_eat", false))
 	if force_eat:
 		b["forced_eat"] = false
-	if (force_eat or float(b["hunger"]) < hunger_line or float(b["health"]) < 80.0) and float(b["eat_cooldown"]) <= 0.0:
+	# Comer para curarse solo cuando el bocado se aprovecha (hueco real en
+	# el estomago) y la herida no se va a cerrar sola: con el hambre casi
+	# llena la racion no se toca — se guarda para cuando haga falta.
+	var hunger_now := float(b["hunger"])
+	var eat_to_heal := hp_now < 80.0 and hunger_now < 82.0 and (not can_regen or hp_now < 50.0)
+	if pressed and hunger_now >= 20.0:
+		eat_to_heal = false
+	var eat_hungry := hunger_now < hunger_line and not (pressed and hunger_now >= 20.0)
+	if (force_eat or eat_hungry or eat_to_heal) and float(b["eat_cooldown"]) <= 0.0:
 		var desperate := float(b["hunger"]) < 28.0
 		# Leccion 'medical' (se desangro o se enveneno): la carne cruda es
 		# ultimo recurso — solo se arriesga si aguanta el drenaje (vida tras
@@ -3002,6 +3032,32 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			break
 	# Auto-equipar mejor ropa o mochila que haya saqueado
 	_auto_equip_best_gear(b)
+
+# Misma puerta que la regeneracion pasiva de SurvivalStats.tick: sin
+# enfermedad ni hemorragia, con sangre, comida, agua, sueño y temperatura
+# en rango, la vida vuelve sola (0.5/s) — no hace falta gastar nada.
+func _bot_passive_regen_ok(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	if st == null:
+		return float(b.get("sick_timer", 0.0)) <= 0.0 and float(b.get("hunger", 0.0)) > 0.0 and float(b.get("thirst", 0.0)) > 0.0
+	return not st.sick and float(b.get("sick_timer", 0.0)) <= 0.0 and st.bleeding <= 0.0 and st.blood >= 50.0 \
+		and float(b.get("hunger", 0.0)) > 0.0 and float(b.get("thirst", 0.0)) > 0.0 \
+		and (st.sleep > 20.0 or bool(b.get("sleeping", false))) \
+		and st.body_temperature >= 35.4 and st.body_temperature < 37.8
+
+# Enemigo o fiera a quemarropa, o le estan dando ahora mismo: no es momento
+# de sentarse a vendarse o comer.
+func _bot_treatment_pressed(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 2500:
+		return true
+	if Time.get_ticks_msec() - int(b.get("_wolf_bite_msec", -999999)) < 2500:
+		return true
+	for key in ["_s_foe", "_s_predator"]:
+		var n := _sensed_node(b, key)
+		if n != null and proxy.global_position.distance_to(n.global_position) <= 10.0:
+			return true
+	return false
 
 func _auto_equip_best_gear(b: Dictionary) -> void:
 	# Como un jugador real: empiezan con la ropa de su preview de inicio y van
@@ -6586,7 +6642,6 @@ func _bot_gun_ammo_state(proxy: Node3D, weapon: String) -> String:
 	if _bot_gun_reserve(ammo, weapon) > 0 or _bot_gun_ammo_item_idx(proxy, weapon) >= 0:
 		return "reserve"
 	return "empty"
-
 
 # --- Percepcion honesta de otro superviviente -------------------------------
 # Lo ve (alcance visual efectivo + linea de vision real) o lo oye (pista
@@ -10949,7 +11004,11 @@ func _bot_skin_wet_factor(b: Dictionary) -> float:
 func _bot_is_freezing(b: Dictionary) -> bool:
 	var st: SurvivalStats = b.get("vstats")
 	var cold_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("cold", 0))
-	var thresh := 35.2 + minf(0.45, float(cold_lessons) * 0.15)
+	# "Helandose" empieza donde empieza el daño (SurvivalStats: <35.4 ya
+	# resta vida). Con el umbral viejo (35.2) quedaba una banda en la que
+	# el bot perdia vida sin sentirse en peligro ni buscar calor — antes la
+	# tapaba comer sin hambre para curarse; ya no se desperdicia comida asi.
+	var thresh := 35.45 + minf(0.45, float(cold_lessons) * 0.15)
 	return st != null and not st.dead and st.body_temperature < thresh
 
 func _bot_is_exhausted(b: Dictionary) -> bool:
@@ -11328,8 +11387,15 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 		# veto de la luz no existe: el hambriento trabaja, no duerme. Y en
 		# el filo de la inanicion (<=5) tampoco: la ultima expedicion se
 		# hace despierto, dormido solo se muere sin intentarlo.
+		# El "plan real" tiene que servir a la necesidad concreta: comida
+		# para el hambre, bebida para la sed. Con sed y solo comida en la
+		# mochila no hay nada que hacer a oscuras — antes ese caso lo tapaba
+		# comer sin hambre (cada bocado daba algo de agua) y sin ese apaño
+		# el bot quedaba en vela hasta morir agotado con el rio a 30 m.
+		var hungry_s := float(b.get("hunger", 100.0)) < 40.0
+		var thirsty_s := float(b.get("thirst", 100.0)) < 35.0
 		if _bot_needs_food_or_water(b) \
-				and (not is_night or _bot_has_edible_food(proxy, true) or _bot_has_drink(proxy) or _bot_has_item(proxy, "Antorcha") \
+				and (not is_night or (hungry_s and _bot_has_edible_food(proxy, true)) or (thirsty_s and _bot_has_drink(proxy)) or _bot_has_item(proxy, "Antorcha") \
 					or float(b.get("hunger", 100.0)) <= 5.0 or float(b.get("thirst", 100.0)) <= 5.0):
 			return false
 		# A la intemperie con frio peligroso no se duerme; bajo techo si —
@@ -15362,10 +15428,12 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var d0 := _ai_active_directive(b)
 	if str(d0.get("mode", "")) == "food":
 		radius = 55.0
-	# Hambre/sed letales de noche: el escaneo crece al alcance de la
-	# urgencia — la seta a 60 m salva igual que la de al lado, y morir
-	# buscando a 30 m con comida a 40 m era la muerte tonta de siempre.
-	if _is_world_night() and _bot_night_supply_emergency(b):
+	# Hambre/sed letales: el escaneo crece al alcance de la urgencia — la
+	# seta a 60 m salva igual que la de al lado, y morir buscando a 30 m
+	# con comida a 40 m era la muerte tonta de siempre. Vale tambien de
+	# dia: con luz la caminata es aun mas segura que la nocturna que ya
+	# se permitia.
+	if _bot_night_supply_emergency(b):
 		radius = maxf(radius, NIGHT_LETHAL_SUPPLY_RADIUS)
 	var target := _find_forage_target(b, radius)
 	if target.is_empty():
