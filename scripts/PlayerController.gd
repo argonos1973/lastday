@@ -13533,7 +13533,7 @@ func apply_damage(amount: float, cause: String = "") -> void:
 		if any_broken:
 			inventory.changed.emit()
 	stats.health = max(0.0, stats.health - amount)
-	if cause == "melee" or cause.ends_with("_bite") or cause in ["rifle", "m4"]:
+	if cause == "melee" or cause.ends_with("_bite") or cause in ["rifle", "m4", "arco", "lanza", "bola"]:
 		is_sitting = false
 		is_prone = false
 		_sit_cooldown = 0.0
@@ -15169,6 +15169,7 @@ func _finish_bow_shot() -> void:
 	if aim_dir.length_squared() < 0.5:
 		aim_dir = cam_ray_dir
 	_launch_primitive_projectile(shot_origin, aim_dir, arrow_speed, 140.0, exclude_arr, base_dmg, arrow_name, "ammo_arrow", 0.06, 3.0, false)
+	_play_primitive_release_sound(true)
 	var main := get_tree().current_scene
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
@@ -15259,6 +15260,7 @@ func _finish_aimed_throw() -> void:
 	if throw_dir.length_squared() < 0.001:
 		throw_dir = -camera.global_basis.z
 	_launch_primitive_projectile(release_origin, throw_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
+	_play_primitive_release_sound(false)
 	notice.emit("Lanzas %s." % item_name)
 	var main := get_tree().current_scene
 	if main != null and main.has_method("_sync_local_player_inventory"):
@@ -15467,7 +15469,7 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 			notice.emit("¡Boleadoras! Has trabado a la presa (6s).")
 		if target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy"):
 			var pvp_dmg := (18.0 if is_bola else (120.0 if is_headshot else 55.0))
-			_apply_rifle_target_damage(target_node, pvp_dmg, "bola" if is_bola else "rifle")
+			_apply_rifle_target_damage(target_node, pvp_dmg, "bola" if is_bola else ("arco" if item_name.begins_with("Flecha") else "lanza"))
 			if not is_bola:
 				notice.emit("¡Impacto en la cabeza!" if is_headshot else "¡Impacto al jugador!")
 		elif is_bola and target_node is WildlifeController and target_node.is_puppet:
@@ -15745,6 +15747,20 @@ func _play_melee_swing_sound() -> void:
 	_swing_audio_player.stream = stream
 	_swing_audio_player.volume_db = 2.0
 	_swing_audio_player.pitch_scale = randf_range(0.9, 1.15)
+	_swing_audio_player.play()
+
+# Whoosh de liberacion del arco/lanza del jugador local — mismo feedback que
+# oye el resto por _net_primitive_shot (antes el arco propio era completamente
+# silencioso).
+func _play_primitive_release_sound(is_arrow := true) -> void:
+	if _swing_audio_player == null:
+		_swing_audio_player = _make_action_sound_player("MeleeSwingSound")
+	var stream := _load_wav_stream("res://assets/audio/punch_swing.wav")
+	if stream == null:
+		return
+	_swing_audio_player.stream = stream
+	_swing_audio_player.volume_db = 1.0
+	_swing_audio_player.pitch_scale = randf_range(1.15, 1.35) if is_arrow else randf_range(0.9, 1.05)
 	_swing_audio_player.play()
 
 func _play_punch_impact_sound() -> void:
