@@ -66,6 +66,10 @@ class ProfileWorld extends "res://scripts/Main.gd":
 	var frame_costs: Dictionary = {}
 	var totals: Dictionary = {}
 	var peaks: Dictionary = {}
+	var calls: Dictionary = {}
+	var frame_cpu_usec := 0
+	var physics_usec := 0
+	var physics_calls := 0
 	func record(label: String, started: int) -> void:
 		if not sampling:
 			return
@@ -73,6 +77,7 @@ class ProfileWorld extends "res://scripts/Main.gd":
 		frame_costs[label] = int(frame_costs.get(label, 0)) + elapsed
 		totals[label] = int(totals.get(label, 0)) + elapsed
 		peaks[label] = maxi(int(peaks.get(label, 0)), elapsed)
+		calls[label] = int(calls.get(label, 0)) + 1
 	func _ready() -> void:
 		await super._ready()
 		profile_ready.emit()
@@ -100,6 +105,7 @@ class ProfileWorld extends "res://scripts/Main.gd":
 		var started := Time.get_ticks_usec()
 		super._process(delta)
 		record("main", started)
+
 	func find_path_wildlife(start: Vector3, goal: Vector3) -> Array:
 		var started := Time.get_ticks_usec()
 		var result := super.find_path_wildlife(start, goal)
@@ -162,7 +168,16 @@ func run() -> void:
 	root.add_child(world)
 	current_scene = world
 	await world.profile_ready
-	print("PROFILE_READY nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " player=", world.player.global_position, " camera=", root.get_camera_3d())
+	var type_counts := {}
+	var geometry_count := 0
+	var visible_geometry := 0
+	for node in _all_nodes(world):
+		var kind: String = node.get_class()
+		type_counts[kind] = int(type_counts.get(kind,0)) + 1
+		if node is GeometryInstance3D:
+			geometry_count += 1
+			if node.visible: visible_geometry += 1
+	print("PROFILE_READY nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " class_counts=", type_counts, " geometry=",geometry_count," visible_geometry=",visible_geometry," static_memory_bytes=",OS.get_static_memory_usage()," LastDayNav=",ClassDB.class_exists("LastDayNav")," player=", world.player.global_position, " camera=", root.get_camera_3d())
 	print("VIEWPORT size=", root.size, " screen_scale=", DisplayServer.screen_get_scale(), " drawable=", root.get_size() * DisplayServer.screen_get_scale())
 	world.player.camera.make_current()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -216,6 +231,10 @@ func run() -> void:
 			await process_frame
 	world.sampling = true
 	var samples: Array[float] = []
+	var process_samples: Array[float] = []
+	var physics_samples: Array[float] = []
+	var draw_samples: Array[float] = []
+	var primitive_samples: Array[float] = []
 	var previous := Time.get_ticks_usec()
 	var spikes := 0
 	for frame in range(frames):
@@ -224,6 +243,10 @@ func run() -> void:
 		var elapsed_ms := (now - previous) / 1000.0
 		previous = now
 		samples.append(elapsed_ms)
+		process_samples.append(float(Performance.get_monitor(Performance.TIME_PROCESS))*1000.0)
+		physics_samples.append(float(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS))*1000.0)
+		draw_samples.append(float(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)))
+		primitive_samples.append(float(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)))
 		if elapsed_ms > 50.0:
 			spikes += 1
 			if spikes <= 25:
@@ -241,9 +264,14 @@ func run() -> void:
 			var shot_path := argument.trim_prefix("--shot=")
 			print("SHOT_SAVED ", root.get_texture().get_image().save_png(shot_path), " -> ", shot_path)
 	samples.sort()
-	print("FRAME_RESULT samples=", samples.size(), " p50_ms=", samples[samples.size() / 2], " p95_ms=", samples[int(samples.size() * 0.95)], " max_ms=", samples.back(), " spikes_over_50ms=", spikes)
+	process_samples.sort(); physics_samples.sort(); draw_samples.sort(); primitive_samples.sort()
+	var p50 := samples[samples.size()/2]
+	var p95 := samples[int((samples.size()-1)*.95)]
+	var p99 := samples[int((samples.size()-1)*.99)]
+	print("FRAME_RESULT samples=", samples.size(), " p50_ms=", p50, " p95_ms=", p95, " p99_ms=",p99," max_ms=", samples.back(), " spikes_over_50ms=", spikes)
+	print("FRAME_SPLIT process_p95_ms=",process_samples[int((process_samples.size()-1)*.95)]," physics_p95_ms=",physics_samples[int((physics_samples.size()-1)*.95)]," physics_calls=",world.physics_calls," instrumented_physics_ms=",world.physics_usec/1000.0," draw_calls_p95=",draw_samples[int((draw_samples.size()-1)*.95)]," primitives_p95=",primitive_samples[int((primitive_samples.size()-1)*.95)]," static_memory_bytes=",OS.get_static_memory_usage())
 	for label in world.totals:
-		print("CPU_PROFILE ", label, " total_ms=", world.totals[label] / 1000.0, " max_call_ms=", world.peaks[label] / 1000.0)
+		print("CPU_PROFILE ", label, " calls=",world.calls[label]," total_ms=", world.totals[label] / 1000.0, " avg_ms=",float(world.totals[label])/maxi(1,int(world.calls[label]))/1000.0," max_call_ms=", world.peaks[label] / 1000.0)
 	world._scene_quitting = true
 	current_scene = null
 	world.queue_free()
