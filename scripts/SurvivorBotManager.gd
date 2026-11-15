@@ -744,8 +744,14 @@ func _nearest_tree_dist(pos: Vector3, max_dist: float) -> float:
 func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 	if world == null or not world.has_method("_default_river_segments"):
 		return Vector3.INF
-	var best := Vector3.INF
-	var best_d := 650.0
+	# Sed critica (<18): la muerte por deshidratacion no se negocia — se salta
+	# el veto de zona peligrosa (un enemigo cerca es peor que la tumba).
+	var desperate := not b.is_empty() and float(b.get("thirst", 100.0)) < 18.0
+	var cands: Array = []
+	var add_cand := func(target_pt: Vector3) -> void:
+		if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or (not desperate and not _bot_supply_goal_allowed(b, target_pt))):
+			return
+		cands.append({"pos": target_pt, "d": Vector2(from.x - target_pt.x, from.z - target_pt.z).length()})
 	for seg in world._default_river_segments():
 		if not (seg is Dictionary):
 			continue
@@ -774,12 +780,7 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 			var side_sign := 1.0 if off.dot(across) >= 0.0 else -1.0
 			var hw := maxf(0.5, sz.y * 0.5 - 0.35)
 			target_pt = c + along * lf + across * (side_sign * hw)
-		if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or not _bot_supply_goal_allowed(b, target_pt)):
-			continue
-		var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
-		if d < best_d:
-			best_d = d
-			best = target_pt
+		add_cand.call(target_pt)
 	# Fuentes y otras zonas drink_water en tierra firme (p.ej. la fuente de la
 	# plaza de la ciudad): el bot puede beber y rellenar su botella en ellas
 	# igual que un jugador con E mantenida. Las acciones drink_N del rio/lago
@@ -800,12 +801,42 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 				target_pt = _unblock_bot_point(target_pt, from)
 				if target_pt == Vector3.INF:
 					continue
-			if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or not _bot_supply_goal_allowed(b, target_pt)):
-				continue
-			var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
-			if d < best_d:
-				best_d = d
-				best = target_pt
+			add_cand.call(target_pt)
+	if cands.is_empty():
+		return Vector3.INF
+	# Si los vetos _bad_water se acumulan en un mismo rumbo, el "siguiente mas
+	# cercano" cae en la misma orilla bloqueada (la muerte de Elena en la
+	# ciudad del sur): preferir el candidato mas cercano con un rumbo a
+	# >=45° de TODOS los puntos vetados vigentes.
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var veto_dirs: Array = []
+	for e in (b.get("_bad_water", []) as Array):
+		if e is Dictionary and float(e.get("until", 0.0)) > now_s and e.get("pos") is Vector3:
+			var vd := Vector2((e["pos"] as Vector3).x - from.x, (e["pos"] as Vector3).z - from.z)
+			if vd.length() > 1.0:
+				veto_dirs.append(vd.angle())
+	if not veto_dirs.is_empty():
+		var best_dir := Vector3.INF
+		var best_dir_d := INF
+		for c in cands:
+			var cp: Vector3 = c["pos"]
+			var cd := Vector2(cp.x - from.x, cp.z - from.z).angle()
+			var blocked_dir := false
+			for va in veto_dirs:
+				if absf(wrapf(cd - float(va), -PI, PI)) < deg_to_rad(45.0):
+					blocked_dir = true
+					break
+			if not blocked_dir and float(c["d"]) < best_dir_d:
+				best_dir_d = float(c["d"])
+				best_dir = cp
+		if best_dir != Vector3.INF:
+			return best_dir
+	var best := Vector3.INF
+	var best_d := 650.0
+	for c in cands:
+		if float(c["d"]) < best_d:
+			best_d = float(c["d"])
+			best = c["pos"]
 	return best
 
 # Punto dentro de un bloqueador circular (la fuente de la plaza es un bloque
@@ -1918,7 +1949,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["drink_walk_t"] = 0.0
 				b["_drink_best_d"] = INF
 				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
-		if b["drink_at"] != Vector3.INF and not _bot_supply_goal_allowed(b, b["drink_at"]):
+		if b["drink_at"] != Vector3.INF and not _bot_supply_goal_allowed(b, b["drink_at"]) and float(b["thirst"]) >= 18.0:
 			b["drink_at"] = Vector3.INF
 		if b["drink_at"] != Vector3.INF:
 			var d_water := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
