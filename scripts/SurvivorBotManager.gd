@@ -1758,7 +1758,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			if int(nem.get("count", 1)) >= 2 or fear_n > 0.6 or unarmed or float(pers_n.get("bravery", 0.5)) < 0.42:
 				_bot_avoid_nemesis(b, human_foe, str(nem.get("name", "")), delta)
 				return
-		if (float(b["health"]) < retreat_hp or fleeing or unarmed) and not _has_combat_edge(b, human_foe):
+		# Superado en potencia de fuego: el rival lleva un arma a distancia y
+		# este bot no tiene con que responder (fusil seco, sin flechas). Herido
+		# y asi no hay pelea razonable — se retira antes del umbral normal;
+		# el valiente aguanta algo mas, el prudente se va antes.
+		var outgunned := _actor_holds_ranged(human_foe) and not _bot_has_ranged_weapon(proxy) \
+			and float(b["health"]) < 42.0 + float(_get_bot_personality(b).get("survival_instinct", 0.7)) * 22.0 - float(_get_bot_personality(b).get("bravery", 0.5)) * 14.0
+		if (float(b["health"]) < retreat_hp or fleeing or unarmed or outgunned) and not _has_combat_edge(b, human_foe):
 			if sh_pos != Vector3.INF:
 				b["hide_timer"] = 20.0
 				_move_bot_towards(b, sh_pos, 6.0, delta, "run")
@@ -4719,8 +4725,15 @@ func _has_combat_edge(b: Dictionary, foe: Node3D) -> bool:
 	var dist := proxy.global_position.distance_to(foe.global_position)
 	if dist <= 12.0:
 		return false
-	if bool(b["has_rifle"]):
-		return true
+	# El fusil solo da ventaja si dispara: con balas en el cargador vale ya;
+	# si hay que recargar (BOT_GUN_RELOAD_TIME a pecho descubierto) solo con
+	# margen de distancia; seco del todo no es un arma a distancia.
+	var gun := _bot_usable_gun(proxy)
+	if not gun.is_empty():
+		if _bot_gun_ammo_state(proxy, gun) == "loaded":
+			return true
+		if dist > 12.0 + BOT_GUN_RELOAD_TIME * 6.5:
+			return true
 	# Arco con flechas o arrojadizas tambien permiten mantener distancia
 	if dist > 4.5:
 		var bow := _bot_best_bow(proxy)
@@ -6552,9 +6565,28 @@ func _peer_id_for_actor(node: Node3D) -> int:
 	return 0
 
 func _bot_has_ranged_weapon(proxy: Node3D) -> bool:
-	if _bot_item_count(proxy, "Fusil de asalto") + _bot_item_count(proxy, "Rifle francotirador") > 0:
+	# Un fusil sin una sola bala (cargador, reserva o cajas) es un garrote.
+	if not _bot_usable_gun(proxy).is_empty():
 		return true
 	return not _bot_best_bow(proxy).is_empty() and _bot_arrow_count(proxy) > 0
+
+# Arma de fuego realmente utilizable: la lleva encima Y le queda municion.
+func _bot_usable_gun(proxy: Node3D) -> String:
+	for w in ["Fusil de asalto", "Rifle francotirador"]:
+		if _bot_item_count(proxy, w) > 0 and _bot_gun_any_ammo(proxy, w):
+			return w
+	return ""
+
+# Estado de municion de un arma: "loaded" (bala en el cargador), "reserve"
+# (hay que recargar antes de disparar: BOT_GUN_RELOAD_TIME) o "empty".
+func _bot_gun_ammo_state(proxy: Node3D, weapon: String) -> String:
+	var ammo := _bot_gun_ammo(proxy)
+	if _bot_gun_loaded(ammo, weapon) > 0:
+		return "loaded"
+	if _bot_gun_reserve(ammo, weapon) > 0 or _bot_gun_ammo_item_idx(proxy, weapon) >= 0:
+		return "reserve"
+	return "empty"
+
 
 # --- Percepcion honesta de otro superviviente -------------------------------
 # Lo ve (alcance visual efectivo + linea de vision real) o lo oye (pista
