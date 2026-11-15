@@ -21849,6 +21849,7 @@ func _migrate_old_starting_inventory(data: Dictionary) -> void:
 func _new_nav_pathfinding():
 	if ClassDB.class_exists("LastDayNav"):
 		return ClassDB.instantiate("LastDayNav")
+	print("[NAV] LastDayNav extension not loaded — using GDScript NavPathfinding fallback")
 	return NavPathfindingScript.new()
 
 func find_path_wolf(start: Vector3, goal: Vector3) -> Array:
