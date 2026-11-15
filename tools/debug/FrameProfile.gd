@@ -110,9 +110,9 @@ class ProfileWorld extends "res://scripts/Main.gd":
 		var result := super._get_exact_ground_y(x, z, from_y)
 		record("ground_raycast", started)
 		return result
-	func _update_tree_interactions() -> void:
+	func _update_tree_interactions(unlimited: bool = false) -> void:
 		var started := Time.get_ticks_usec()
-		super._update_tree_interactions()
+		super._update_tree_interactions(unlimited)
 		record("tree_interactions", started)
 	func _update_boulder_interactions() -> void:
 		var started := Time.get_ticks_usec()
@@ -122,9 +122,9 @@ class ProfileWorld extends "res://scripts/Main.gd":
 		var started := Time.get_ticks_usec()
 		super._update_forest_visibility()
 		record("forest_visibility", started)
-	func _update_forest_collision() -> void:
+	func _update_forest_collision(unlimited: bool = false) -> void:
 		var started := Time.get_ticks_usec()
-		super._update_forest_collision()
+		super._update_forest_collision(unlimited)
 		record("forest_collision", started)
 	func _update_shadow_proximity() -> void:
 		var started := Time.get_ticks_usec()
@@ -134,6 +134,10 @@ class ProfileWorld extends "res://scripts/Main.gd":
 		var started := Time.get_ticks_usec()
 		super._update_weather_effects(delta)
 		record("weather", started)
+	func _update_near_ground_cover() -> void:
+		var started := Time.get_ticks_usec()
+		super._update_near_ground_cover()
+		record("near_ground_cover", started)
 
 func _all_nodes(n: Node) -> Array:
 	var r: Array = [n]
