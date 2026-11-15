@@ -745,16 +745,15 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 	if world == null or not world.has_method("_default_river_segments"):
 		return Vector3.INF
 	# Sed critica (<18): la muerte por deshidratacion no se negocia — se salta
-	# el veto de zona peligrosa (un enemigo cerca es peor que la tumba).
+	# la puerta de oscuridad nocturna Y la lista negra de puntos vetados: la
+	# unica fuente alcanzable se reintenta aunque antes fallara la ruta (la
+	# fuente de la plaza de Elena). Ojo: solo la urgencia lo pasa — beber de
+	# noche sin urgencia abria caminatas a oscuras condenadas al veto.
 	var desperate := not b.is_empty() and float(b.get("thirst", 100.0)) < 18.0
 	var cands: Array = []
 	var add_cand := func(target_pt: Vector3) -> void:
 		var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
-		# El veto de zona protege VIAJES al peligro, no la fuente a tus pies:
-		# beber a <=60 m dentro de una zona marcada no es exponerse, es no
-		# morirse donde ya estas (la fuente de la plaza en la ciudad vetada).
-		var veto_ok := d <= 60.0 or desperate
-		if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or (not veto_ok and not _bot_supply_goal_allowed(b, target_pt))):
+		if not b.is_empty() and not desperate and (_is_water_blacklisted(b, target_pt) or not _bot_supply_goal_allowed(b, target_pt)):
 			return
 		cands.append({"pos": target_pt, "d": d})
 	for seg in world._default_river_segments():
@@ -1900,7 +1899,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 3b) Destripado en curso: caminar hasta el cadáver y dedicarle unos
 	# segundos agachado. Se abandona si el cadáver desaparece, se aleja
 	# demasiado o el bot ya no necesita nada de él.
-	var gut: Node3D = b.get("gut_target")
+	# El animal puede desaparecer entre dos ticks (p. ej. otro jugador lo
+	# recoge o se limpia el cadáver). No asignar una referencia ya liberada a
+	# una variable tipada: en Godot 4 eso genera un error cada tick y puede
+	# propagar transforms inválidos al proxy del bot.
+	var gut: Node3D = null
+	var gut_candidate: Variant = b.get("gut_target")
+	if gut_candidate != null:
+		if is_instance_valid(gut_candidate) and gut_candidate is Node3D:
+			gut = gut_candidate as Node3D
+		else:
+			b["gut_target"] = null
+			b["gut_t"] = 0.0
 	if gut != null:
 		b["_act"] = "gut"
 		var gut_ok: bool = is_instance_valid(gut) and not bool(gut.get("_gutted"))
@@ -1955,8 +1965,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["_drink_best_d"] = INF
 				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
 		if b["drink_at"] != Vector3.INF and not _bot_supply_goal_allowed(b, b["drink_at"]):
-			var dtw := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
-			if dtw > 60.0 and float(b["thirst"]) >= 18.0:
+			# Solo la sed critica retiene una meta de agua no permitida (oscura
+			# o vetada): para el resto, reescanear a la espera de la urgencia.
+			if float(b["thirst"]) >= 18.0:
 				b["drink_at"] = Vector3.INF
 		if b["drink_at"] != Vector3.INF:
 			var d_water := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
