@@ -1648,16 +1648,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			proxy.set_meta("crouching", false)
 			return
 
-	# 0a) Termostato de lumbre: pegado a las brasas te cocinas (la misma curva
-	# de calor que al jugador) y en el borde frio te hielas — cualquier tarea
-	# junto a una fogata viva regula distancia antes de seguir. El dormido no
-	# llega aqui: su puerta propia lo despierta con calor letal.
-	if _bot_camp_fire_standoff(b, delta):
-		return
-
-	# 0b) Agua demasiado profunda: un superviviente no nada — si por lo que sea
+	# 0a) Agua demasiado profunda: un superviviente no nada — si por lo que sea
 	# quedo dentro (empujon, reaparicion, hueco entre nodos del nav), sale a lo
-	# somero antes de cualquier otra decision.
+	# somero antes de cualquier otra decision. Va ANTES del termostato: un
+	# helado dentro del rio no puede "acercarse a la lumbre" — calentarse
+	# empieza por no ahogarse (y el agua fria drena temp mas rapido que el
+	# fuego la sube).
 	if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(proxy.global_position)) > WADE_DEPTH:
 		b["drink_at"] = Vector3.INF
 		b["drinking_timer"] = 0.0
@@ -1669,6 +1665,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_move_bot_towards(b, esc, 6.5, delta, "run")
 		else:
 			b["anim"] = "idle"
+		return
+
+	# 0b) Termostato de lumbre: pegado a las brasas te cocinas (la misma curva
+	# de calor que al jugador) y en el borde frio te hielas — cualquier tarea
+	# junto a una fogata viva regula distancia antes de seguir. El dormido no
+	# llega aqui: su puerta propia lo despierta con calor letal.
+	if _bot_camp_fire_standoff(b, delta):
 		return
 
 	# La postura agachada vale solo para el tick en curso: cada rama que la
@@ -9700,7 +9703,7 @@ func _bot_shoreward_goal(pos: Vector3) -> Vector3:
 			var dir := Vector3.RIGHT.rotated(Vector3.UP, TAU * float(i) / 16.0)
 			var cand: Vector3 = pos + dir * r
 			var dc := float(world.get_river_depth_at(cand))
-			if dc <= WADE_DEPTH:
+			if dc <= WADE_DEPTH and not _is_pos_blocked(cand):
 				return cand
 			if dc < best_depth - 0.02:
 				best_depth = dc
@@ -11143,6 +11146,13 @@ func _bot_needs_food_or_water(b: Dictionary) -> bool:
 
 func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	if b.get("aggro_target") != null or b.get("_s_predator") != null or b.get("_s_foe") != null:
+		return true
+	# Dormir dentro del rio no es descanso: si el agua pasa de vadeable
+	# (empujon, deriva de nav, respawn dentro) despierta al instante — el
+	# escape a lo somero va por encima de recuperar sueño.
+	var proxy_sw: Node3D = b.get("proxy")
+	if proxy_sw != null and world != null and world.has_method("get_river_depth_at") \
+			and float(world.get_river_depth_at(proxy_sw.global_position)) > WADE_DEPTH:
 		return true
 	if not (b.get("_ambush", {}) as Dictionary).is_empty():
 		return true # una emboscada activa lo saca de la cama
