@@ -749,9 +749,14 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 	var desperate := not b.is_empty() and float(b.get("thirst", 100.0)) < 18.0
 	var cands: Array = []
 	var add_cand := func(target_pt: Vector3) -> void:
-		if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or (not desperate and not _bot_supply_goal_allowed(b, target_pt))):
+		var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
+		# El veto de zona protege VIAJES al peligro, no la fuente a tus pies:
+		# beber a <=60 m dentro de una zona marcada no es exponerse, es no
+		# morirse donde ya estas (la fuente de la plaza en la ciudad vetada).
+		var veto_ok := d <= 60.0 or desperate
+		if not b.is_empty() and (_is_water_blacklisted(b, target_pt) or (not veto_ok and not _bot_supply_goal_allowed(b, target_pt))):
 			return
-		cands.append({"pos": target_pt, "d": Vector2(from.x - target_pt.x, from.z - target_pt.z).length()})
+		cands.append({"pos": target_pt, "d": d})
 	for seg in world._default_river_segments():
 		if not (seg is Dictionary):
 			continue
@@ -1949,8 +1954,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["drink_walk_t"] = 0.0
 				b["_drink_best_d"] = INF
 				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
-		if b["drink_at"] != Vector3.INF and not _bot_supply_goal_allowed(b, b["drink_at"]) and float(b["thirst"]) >= 18.0:
-			b["drink_at"] = Vector3.INF
+		if b["drink_at"] != Vector3.INF and not _bot_supply_goal_allowed(b, b["drink_at"]):
+			var dtw := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
+			if dtw > 60.0 and float(b["thirst"]) >= 18.0:
+				b["drink_at"] = Vector3.INF
 		if b["drink_at"] != Vector3.INF:
 			var d_water := Vector2(proxy.global_position.x - b["drink_at"].x, proxy.global_position.z - b["drink_at"].z).length()
 			# Con agua vadeable o ya en la orilla (_is_near_river <=3.2 m) basta
