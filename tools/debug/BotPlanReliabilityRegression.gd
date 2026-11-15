@@ -28,7 +28,7 @@ class FakeDayCycle extends Node:
 	func get_ambient_temperature() -> float:
 		return ambient_temp
 	func is_night() -> bool:
-		return time_of_day < 6.2 or time_of_day > 19.3
+		return DayNightCycle.is_night_at(time_of_day)
 
 class FakeNet extends Node:
 	var is_host := true

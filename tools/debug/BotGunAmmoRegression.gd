@@ -122,6 +122,40 @@ func _initialize() -> void:
 	check(str(pick.get("kind", "")) == "rifle" and str(pick.get("name", "")) == "Fusil de asalto",
 		"pick_fight_weapon recupera rifle con balas")
 
+	# --- Ventaja de combate: exige municion real ---
+	var pk := _make_proxy([
+		{"name": "Fusil de asalto", "type": "weapon", "quantity": 1},
+		{"name": "Cuchillo", "type": "tool", "quantity": 1}],
+		{"m4_magazine": 0, "m4_reserve": 0, "magazine": 0, "reserve": 0})
+	var foe_k := Node3D.new()
+	root.add_child(foe_k)
+	foe_k.position = Vector3(0, 0, 30)
+	foe_k.set_meta("saved_held_item", "Fusil de asalto")
+	# has_rifle=true a proposito: lleva el fusil EN LA MANO, pero vacio.
+	var bk := {"proxy": pk, "health": 35.0, "has_rifle": true}
+	check(mgr._bot_gun_ammo_state(pk, "Fusil de asalto") == "empty", "estado de municion: fusil seco = empty")
+	check(mgr._bot_usable_gun(pk).is_empty(), "fusil sin balas no es un arma de fuego utilizable")
+	check(not mgr._bot_has_ranged_weapon(pk), "fusil seco no cuenta como arma a distancia")
+	check(not mgr._has_combat_edge(bk, foe_k), "Kael 35 hp + fusil descargado vs enemigo armado: SIN ventaja tactica")
+	check(str(mgr._pick_fight_weapon(bk, 30.0).get("name", "")) == "Cuchillo", "con el fusil seco valora el arma alternativa")
+	var ammo_k: Dictionary = mgr._bot_gun_ammo(pk)
+	ammo_k["m4_reserve"] = 30
+	mgr._bot_gun_ammo_save(pk, ammo_k)
+	check(mgr._bot_gun_ammo_state(pk, "Fusil de asalto") == "reserve", "estado de municion: solo reserva = reserve (hay que recargar)")
+	foe_k.position = Vector3(0, 0, 18)
+	check(not mgr._has_combat_edge(bk, foe_k), "cargador vacio + enemigo a 18 m: la recarga de 2.2 s no da ventaja")
+	foe_k.position = Vector3(0, 0, 40)
+	check(mgr._has_combat_edge(bk, foe_k), "cargador vacio pero enemigo a 40 m: hay margen para recargar")
+	ammo_k["m4_magazine"] = 12
+	mgr._bot_gun_ammo_save(pk, ammo_k)
+	foe_k.position = Vector3(0, 0, 18)
+	check(mgr._bot_gun_ammo_state(pk, "Fusil de asalto") == "loaded" and mgr._has_combat_edge(bk, foe_k),
+		"con balas en el cargador la ventaja a distancia vuelve")
+	bk["health"] = 15.0
+	check(not mgr._has_combat_edge(bk, foe_k), "moribundo (<20 hp) no hay ventaja ni con el cargador lleno")
+	foe_k.free()
+	pk.free()
+
 	# --- Persistencia: saved_extra.rifle_ammo refleja lo consumido ---
 	var saved: Dictionary = (p3.get_meta("saved_extra", {}) as Dictionary).get("rifle_ammo", {})
 	check(int(saved.get("m4_magazine", -1)) == 5, "saved_extra.rifle_ammo persiste m4_magazine")

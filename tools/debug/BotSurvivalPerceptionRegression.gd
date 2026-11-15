@@ -2,6 +2,8 @@ extends SceneTree
 class Manager extends "res://scripts/SurvivorBotManager.gd":
 	func _peer_id_for_actor(actor: Node3D) -> int:
 		return int(actor.get_meta("peer_id", 0))
+	var los := true
+	func _has_clear_shot(_a: Vector3, _b: Vector3) -> bool: return los
 var errors := 0
 func check(ok: bool, label: String):
 	if not ok:
@@ -32,6 +34,55 @@ func run():
 	b.last_heard_actor = 8
 	actor.set_meta("moving",true)
 	check(manager._can_bot_hear_actor(b,actor,5.0), "actual footsteps remain audible")
+	# Percepcion honesta: vista exige alcance + linea de vision; oido exige pista sonora
+	var me := Node3D.new()
+	root.add_child(me)
+	var bp := {"proxy": me, "bot_id": 901, "last_heard_until": 0.0, "last_heard_pos": Vector3.INF, "last_heard_actor": 0}
+	actor.set_meta("moving", false)
+	actor.position = Vector3(8, 0, 0)
+	manager.los = false
+	check(not manager._bot_perceives_actor(bp, actor, 52.0), "still actor 8 m behind a wall is not perceived")
+	manager.los = true
+	check(manager._bot_perceives_actor(bp, actor, 52.0), "same actor with line of sight is perceived")
+	actor.position = Vector3(80, 0, 0)
+	check(not manager._bot_perceives_actor(bp, actor, 52.0), "actor beyond visual range is not perceived even in the open")
+	actor.set_meta("crouching", true)
+	actor.position = Vector3(40, 0, 0)
+	check(not manager._bot_perceives_actor(bp, actor, 52.0), "crouched actor at 40 m is harder to spot")
+	actor.set_meta("crouching", false)
+	# Valor aparente: mochila/arma/ropa visibles, jamas el inventario
+	actor.set_meta("saved_inventory", [meal.duplicate(true), meal.duplicate(true), meal.duplicate(true), meal.duplicate(true), meal.duplicate(true), meal.duplicate(true)])
+	check(is_equal_approx(manager._bot_observed_loot_value(bp, actor, 0), 0.0), "inventory contents are invisible to an observer")
+	actor.set_meta("saved_backpack", "Mochila militar")
+	actor.set_meta("saved_held_item", "Fusil de asalto")
+	actor.set_meta("saved_clothing", "Chaqueta,Pantalon")
+	check(is_equal_approx(manager._bot_observed_loot_value(bp, actor, 0), 5.0 + 4.0 + 1.2), "visible backpack + rifle + clothes define apparent value")
+	# Vulnerabilidad aparente: postura o herida presenciada, no proxy_health
+	actor.set_meta("proxy_health", 3.0)
+	check(not manager._bot_observed_vulnerable(bp, actor, 7), "low internal health alone does not look vulnerable")
+	bp["_seen_wounded"] = {7: Time.get_ticks_msec()}
+	check(manager._bot_observed_vulnerable(bp, actor, 7), "a witnessed wound does")
+	bp["_seen_wounded"] = {}
+	actor.set_meta("saved_sleeping", true)
+	check(manager._bot_observed_vulnerable(bp, actor, 7), "a sleeping survivor looks vulnerable")
+	# Horario unico: mismas fases para el mundo y para los bots
+	check(DayNightCycle.is_night_at(21.5) and not DayNightCycle.is_night_at(21.4) and DayNightCycle.is_night_at(5.9) and not DayNightCycle.is_night_at(6.0),
+		"clock night is 21:30-06:00 from a single definition")
+	check(DayNightCycle.phase_at(12.0) == "day" and DayNightCycle.phase_at(17.0) == "prep" and DayNightCycle.phase_at(20.0) == "dusk"
+			and DayNightCycle.phase_at(23.0) == "night" and DayNightCycle.phase_at(6.3) == "dawn", "day phases: dawn/day/prep/dusk/night")
+	check(not DayNightCycle.is_dark_at(19.4) and not DayNightCycle.is_dark_at(20.0) and DayNightCycle.is_dark_at(21.0),
+		"dusk keeps usable light at 20:00 and turns dark near its end")
+	check(DayNightCycle.is_dark_at(20.4, 1.0) and not DayNightCycle.is_dark_at(20.4, 0.0), "a storm brings darkness earlier at dusk")
+	check(not DayNightCycle.is_dark_at(13.0, 1.0), "a storm at midday is not night")
+	var prev_light := 2.0
+	var monotonic := true
+	for i in range(41):
+		var lt := DayNightCycle.light_amount_at(19.5 + float(i) * 0.05)
+		if lt > prev_light + 0.0001:
+			monotonic = false
+		prev_light = lt
+	check(monotonic and prev_light == 0.0, "light falls smoothly through dusk with no jumps")
+	me.free()
 	actor.free()
 	manager.free()
 	print("BOT_SURVIVAL_PERCEPTION errors=",errors)

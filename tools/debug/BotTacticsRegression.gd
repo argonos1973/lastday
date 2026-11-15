@@ -158,6 +158,138 @@ func run():
 	check(str((b9["_foe_mem"] as Dictionary).get("src")) == "seen"
 			and (b9["_foe_mem"] as Dictionary).get("pos") == Vector3(70, 0, 0),
 		"direct sight updates the clue to the exact live position")
+	# ------------------------------------------------------------------
+	# Sentidos propios: un bandido a 5 m del lider pero a 100 m del miembro
+	# NO es detectado por el miembro (antes min(d, d_lider) lo "oia").
+	# ------------------------------------------------------------------
+	manager.cover = false
+	var lead_p := Node3D.new()
+	var memb_p := Node3D.new()
+	var band_p := Node3D.new()
+	for n in [lead_p, memb_p, band_p]:
+		root.add_child(n)
+	lead_p.position = Vector3(0, 0, 0)
+	memb_p.position = Vector3(0, 0, 100)
+	band_p.position = Vector3(0, 0, 5)
+	var mk := func(id: int, p: Node3D, faction: String, lid: int) -> Dictionary:
+		return {"proxy": p, "bot_id": id, "faction": faction, "team_leader_id": lid, "name": "B%d" % id,
+			"aggro_target": null, "aggro_timer": 0.0, "_mem": {"personality": {}},
+			"_lost_foe_pos": Vector3.INF, "_lost_foe_until_msec": 0, "_lost_scan_t": 0.0,
+			"last_heard_pos": Vector3.INF, "last_heard_until": 0.0, "last_heard_actor": 0,
+			"hunger": 80.0, "thirst": 80.0, "health": 100.0, "sitting": false, "sleeping": false}
+	var lead_b: Dictionary = mk.call(904, lead_p, "friendly", 0)
+	var memb_b: Dictionary = mk.call(905, memb_p, "friendly", 904)
+	var band_b: Dictionary = mk.call(906, band_p, "hostile", 0)
+	manager.bots[904] = lead_b
+	manager.bots[905] = memb_b
+	manager.bots[906] = band_b
+	check(manager._find_combat_foe(lead_b) == band_p, "leader detects the bandit 5 m away with its own senses")
+	check(manager._find_combat_foe(memb_b) == null, "member 100 m away does NOT detect a foe that is only near its leader")
+	check(memb_b["aggro_target"] == null, "no aggro leaks to the far member")
+	# Aviso real: fuera del alcance de la voz no llega nada
+	manager._ai_note_foe_scan(lead_b, band_p)
+	(lead_b["_foe_mem"] as Dictionary)["t"] = Time.get_ticks_msec() - 30000 # lo vio hace 30 s
+	check(manager._bot_warn_team_of_foe(lead_b, band_p) == 0, "a shout does not reach a teammate 100 m away")
+	check(memb_b.get("_foe_mem", {}).is_empty(), "unwarned member holds no intel about the foe")
+	# Dentro del alcance: llega la ultima posicion CONOCIDA con su antiguedad y fiabilidad
+	memb_p.position = Vector3(0, 0, 30)
+	var known_pos: Vector3 = (lead_b["_foe_mem"] as Dictionary)["pos"]
+	band_p.position = Vector3(40, 0, 60) # el bandido ya se movio, en silencio y sin LOS
+	manager.cover = true
+	check(manager._bot_warn_team_of_foe(lead_b, band_p) == 1, "teammate within shouting range is warned")
+	var fm_m: Dictionary = memb_b.get("_foe_mem", {})
+	check(str(fm_m.get("src", "")) == "told", "warning is stored as 'told' intel (source = communication)")
+	check(float(fm_m.get("conf", 1.0)) < float((lead_b["_foe_mem"] as Dictionary).get("conf", 0.0)), "warning carries reduced reliability")
+	check(Time.get_ticks_msec() - int(fm_m.get("t", 0)) >= 30000, "warning carries the age of the original sighting")
+	check((fm_m.get("pos", Vector3.INF) as Vector3).distance_to(known_pos) <= 10.5
+			and (fm_m.get("pos", Vector3.INF) as Vector3).distance_to(band_p.position) > 30.0,
+		"warning shares the last KNOWN position, never the foe's live one")
+	check(manager._bot_warn_team_of_foe(lead_b, band_p) == 0, "warnings are rate limited")
+	# El avisado no ve ni oye al enemigo: busca en la pista, no rastrea el nodo
+	check(memb_b["aggro_target"] == band_p, "warned member reacts (aggro armed by the warning)")
+	check(manager._find_combat_foe(memb_b) == null and memb_b["aggro_target"] == null,
+		"warned member still cannot track the unseen foe")
+	check((memb_b["_lost_foe_pos"] as Vector3).distance_to(band_p.position) > 30.0 and int(memb_b["_lost_foe_until_msec"]) > 0,
+		"warned member searches the communicated last-known position")
+	# Sin ficha propia no hay nada que contar
+	lead_b["_foe_mem"] = {}
+	lead_b["_warn_foe_msec"] = -999999
+	check(manager._bot_warn_team_of_foe(lead_b, band_p) == 0, "a bot with no intel has nothing to report")
+
+	# ------------------------------------------------------------------
+	# Emboscadas sin informacion oculta
+	# ------------------------------------------------------------------
+	manager.bots.clear()
+	var hunter_p := Node3D.new()
+	var victim_p := Node3D.new()
+	var escort_p := Node3D.new()
+	for n in [hunter_p, victim_p, escort_p]:
+		root.add_child(n)
+	hunter_p.position = Vector3(0, 0, 0)
+	hunter_p.set_meta("saved_inventory", [{"name": "Cuchillo", "type": "weapon", "quantity": 1}])
+	var hunter_b: Dictionary = mk.call(907, hunter_p, "hostile", 0)
+	manager.bots[907] = hunter_b
+	var victim_b: Dictionary = mk.call(908, victim_p, "friendly", 0)
+	manager.bots[908] = victim_b
+	victim_p.add_to_group("net_player_proxy")
+	victim_p.set_meta("has_real_pos", true)
+	victim_p.set_meta("saved_backpack", "Mochila")
+	escort_p.set_meta("has_real_pos", true)
+	# Victima inmovil a 8 m tras una pared (x>=3 = sin LOS en este mock)
+	victim_p.position = Vector3(8, 0, 0)
+	manager.cover = true
+	check(manager._find_ambush_target(hunter_b).is_empty(), "motionless victim 8 m behind a wall is NOT picked as a target")
+	check(not manager._bot_perceives_actor(hunter_b, victim_p, 52.0), "silent actor behind a wall is not perceived")
+	victim_p.set_meta("moving", true)
+	check(manager._bot_perceives_actor(hunter_b, victim_p, 52.0), "audible footsteps are a valid sound cue through the wall")
+	victim_p.set_meta("moving", false)
+	# A la vista si es candidata
+	victim_p.position = Vector3(2, 0, 8)
+	var amb_t := manager._find_ambush_target(hunter_b)
+	check(int(amb_t.get("target_id", 0)) == 908, "visible lone victim with a backpack is a valid target")
+	check(amb_t.get("pos") == victim_p.position, "the plan stores the position where the victim was perceived")
+	# El inventario y la salud internos no influyen
+	victim_p.set_meta("saved_backpack", "")
+	victim_p.set_meta("saved_inventory", [{"name": "Lingote", "quantity": 50}, {"name": "a"}, {"name": "b"}, {"name": "c"}, {"name": "d"}, {"name": "e"}])
+	victim_p.set_meta("proxy_health", 5.0)
+	check(manager._find_ambush_target(hunter_b).is_empty(), "a hidden full inventory / low internal health does not make someone a target")
+	check(is_equal_approx(manager._bot_observed_loot_value(hunter_b, victim_p, 908), 0.0), "observed loot value ignores saved_inventory")
+	victim_p.set_meta("saved_backpack", "Mochila")
+	# Escolta: solo cuenta la que el bandido ha detectado
+	escort_p.add_to_group("net_player_proxy")
+	escort_p.position = Vector3(2, 0, 12)
+	check(manager._find_ambush_target(hunter_b).is_empty(), "an accompanied victim (visible escort) is left alone by a lone bandit")
+	escort_p.position = Vector3(5, 0, 8) # escondida tras la pared: no detectada
+	check(int(manager._find_ambush_target(hunter_b).get("target_id", 0)) == 908, "an undetected escort is not magically counted")
+	escort_p.remove_from_group("net_player_proxy")
+	# Tregua valida: no hay emboscada, y una tregua a mitad del acecho la cancela
+	hunter_b["_truce_peer"] = 908
+	hunter_b["_truce_t"] = 60.0
+	check(manager._find_ambush_target(hunter_b).is_empty(), "no ambush against someone under a valid truce")
+	hunter_b["_ambush"] = amb_t.duplicate()
+	check(not manager._bot_try_ambush(hunter_b, 0.1) and (hunter_b["_ambush"] as Dictionary).is_empty(), "a truce agreed mid-stalk cancels the ambush")
+	hunter_b["_truce_peer"] = 0
+	hunter_b["_truce_t"] = 0.0
+	hunter_b["_ambush_cd_until"] = 0.0
+	# Vinculo personal: confianza alta = no se le embosca
+	manager._ensure_bot_memory(907)["relationships"] = {"bot_908": {"id": "bot_908", "name": "V", "trust": 0.7, "hostility": 0.0, "fear": 0.0, "helped": 0, "attacked": 0}}
+	check(manager._find_ambush_target(hunter_b).is_empty(), "no ambush against a trusted acquaintance")
+	manager._ensure_bot_memory(907)["relationships"] = {}
+	# Acecho: sigue la ultima posicion conocida, no la viva
+	victim_p.position = Vector3(2, 0, 30)
+	amb_t = manager._find_ambush_target(hunter_b)
+	hunter_b["_ambush"] = amb_t
+	var p_known := victim_p.position
+	victim_p.position = Vector3(40, 0, 30) # se esconde en silencio
+	manager.moves = 0
+	check(manager._bot_try_ambush(hunter_b, 0.1) and manager.destination == p_known,
+		"stalking heads to the last known position while the victim is hidden")
+	(hunter_b["_ambush"] as Dictionary)["seen_msec"] = Time.get_ticks_msec() - 20000
+	check(not manager._bot_try_ambush(hunter_b, 0.1) and (hunter_b["_ambush"] as Dictionary).is_empty(),
+		"a victim lost for too long ends the ambush (no radar)")
+	for n in [lead_p, memb_p, band_p, hunter_p, victim_p, escort_p]:
+		n.free()
+	manager.bots.clear()
 	world_stub.free()
 	proxy.free()
 	foe.free()

@@ -33,7 +33,9 @@ class FakeDayCycle extends Node:
 	func get_ambient_temperature() -> float:
 		return ambient_temp
 	func is_night() -> bool:
-		return time_of_day < 6.2 or time_of_day > 19.3
+		return DayNightCycle.is_night_at(time_of_day)
+	func is_dark() -> bool:
+		return DayNightCycle.is_dark_at(time_of_day, weather_darkness)
 
 class FakeNet extends Node:
 	var is_host := true
@@ -326,7 +328,9 @@ func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 340
 			"failed_goals": 0, "peak_wet": 0.0, "dawn_clean": true})
 	var step := 0
 	while step < max_steps:
-		var is_night: bool = dc.is_night()
+		# La noche del sim acaba cuando vuelve la luz util (mismo criterio
+		# de oscuridad que usan los bots), no al toque de reloj.
+		var is_night: bool = dc.is_dark()
 		if not is_night and step > 0:
 			break
 		for i in range(bots.size()):
@@ -511,7 +515,11 @@ func run() -> void:
 	print(_report_line(reps[0], b))
 	var st6: SurvivalStats = b["vstats"]
 	check(not st6.dead, "S6 sobrevive alcanzando las fuentes dirigidas")
-	check(st6.thirst > 30.0, "S6 bebio en el rio a 100 m (sed %.0f)" % st6.thirst)
+	# Se mide que BEBIO (actos reales en el rio y sed por encima de la
+	# letal de partida), no un nivel final arbitrario: sin comer de mas ya
+	# no recibe agua "gratis" de la comida y amanece con la sed que toca.
+	check(int(reps[0]["acts"].get("drink", 0)) > 0 and st6.thirst > 15.0,
+		"S6 bebio en el rio a 100 m (sed 9 -> %.0f, %d ticks bebiendo)" % [st6.thirst, int(reps[0]["acts"].get("drink", 0))])
 	check(st6.hunger > 12.0, "S6 forrajeo la seta a 120 m (hambre %.0f)" % st6.hunger)
 
 	# ---- S7: la fogata se apaga a media noche ----

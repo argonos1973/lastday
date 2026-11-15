@@ -21,7 +21,9 @@ class FakeDayCycle extends Node:
 	func get_ambient_temperature() -> float:
 		return ambient_temp
 	func is_night() -> bool:
-		return time_of_day < 6.2 or time_of_day > 19.3
+		return DayNightCycle.is_night_at(time_of_day)
+	func is_dark() -> bool:
+		return DayNightCycle.is_dark_at(time_of_day, weather_darkness)
 
 class FakeNet extends Node:
 	var is_host := true
@@ -1674,9 +1676,77 @@ func run() -> void:
 			break
 	check(mgr._bot_item_count(elena_proxy, "Venda") >= 1,
 		"La cadena ropa->trapos->venda funciona: el bot fabrica su venda")
+	# Contrato nuevo de curacion (igual que el jugador): en calma y con la
+	# regeneracion pasiva disponible la venda se GUARDA — el cuerpo repone
+	# solo; con hemorragia se usa al instante, corta el sangrado y cura lo
+	# que marca el objeto (use_value 24), no un extra de bot.
+	elena["_last_attacker_msec"] = -999999
+	elena["_wolf_bite_msec"] = -999999
+	elena["hide_timer"] = 0.0
+	elena["_ambush"] = {}
+	elena["_lost_foe_until_msec"] = 0
+	var vst_bd: SurvivalStats = elena["vstats"]
+	vst_bd.bleeding = 0.0
+	vst_bd.sick = false
+	vst_bd.blood = 100.0
+	vst_bd.sleep = 80.0
+	vst_bd.body_temperature = 36.6
+	elena["sick_timer"] = 0.0
+	var vendas_antes := mgr._bot_item_count(elena_proxy, "Venda")
 	mgr._maintain_bot_needs(elena, 0.1)
-	check(float(elena["health"]) > 80.0,
-		"Herido, el bot usa la venda que fabrico (hp=%.0f)" % float(elena["health"]))
+	check(mgr._bot_item_count(elena_proxy, "Venda") == vendas_antes and is_equal_approx(float(elena["health"]), 55.0),
+		"Herido leve en calma: guarda la venda, la regeneracion pasiva basta (hp=%.0f)" % float(elena["health"]))
+	vst_bd.apply_bleeding(1.0)
+	elena["eat_cooldown"] = 0.0
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(mgr._bot_item_count(elena_proxy, "Venda") == vendas_antes - 1 and vst_bd.bleeding <= 0.0,
+		"Con hemorragia usa la venda que fabrico y corta el sangrado")
+	check(is_equal_approx(float(elena["health"]), 79.0),
+		"La venda cura lo mismo que al jugador: use_value 24, no 32 (hp=%.0f)" % float(elena["health"]))
+	# Herida grave sin sangrado: tampoco espera a la regeneracion
+	elena["health"] = 40.0
+	elena["eat_cooldown"] = 0.0
+	elena_proxy.set_meta("saved_inventory", [{"name": "Venda", "type": "medical", "weight": 0.12, "quantity": 2, "use_value": 24.0}])
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(is_equal_approx(float(elena["health"]), 64.0) and mgr._bot_item_count(elena_proxy, "Venda") == 1,
+		"Herida grave: se venda una vez (hp=%.0f)" % float(elena["health"]))
+	# ...y no encadena vendas: el cooldown y la regeneracion evitan gastar la segunda
+	elena["eat_cooldown"] = 0.0
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(mgr._bot_item_count(elena_proxy, "Venda") == 1,
+		"No gasta una segunda venda cuando ya puede recuperarse sola (hp=%.0f)" % float(elena["health"]))
+	# Enemigo a quemarropa: la cura se pospone salvo vida critica
+	var foe_near := Node3D.new()
+	world.add_child(foe_near)
+	foe_near.global_position = elena_proxy.global_position + Vector3(4.0, 0.0, 0.0)
+	elena["_s_foe"] = foe_near
+	elena["health"] = 40.0
+	elena["eat_cooldown"] = 0.0
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(mgr._bot_item_count(elena_proxy, "Venda") == 1,
+		"Con el enemigo a 4 m pospone la venda (primero cobertura/huida)")
+	elena["health"] = 18.0
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(mgr._bot_item_count(elena_proxy, "Venda") == 0,
+		"Con vida critica se venda aunque el enemigo este encima")
+	elena["_s_foe"] = null
+	foe_near.queue_free()
+	# Racion unica con el hambre casi llena: no se desperdicia para curar
+	elena["health"] = 75.0
+	elena["hunger"] = 95.0
+	elena["eat_cooldown"] = 0.0
+	elena_proxy.set_meta("saved_inventory", [{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 1, "use_value": 30.0}])
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(mgr._bot_item_count(elena_proxy, "Carne seca") == 1,
+		"Hambre 95 + salud 75 + una racion: la conserva (la vida vuelve sola)")
+	# Con hueco real en el estomago y sin poder regenerar (enfermo), si come para curarse
+	elena["hunger"] = 70.0
+	elena["sick_timer"] = 30.0
+	elena["eat_cooldown"] = 0.0
+	mgr._maintain_bot_needs(elena, 0.1)
+	check(mgr._bot_item_count(elena_proxy, "Carne seca") == 0,
+		"Enfermo (sin regeneracion) y con hueco: come para recuperar salud")
+	elena["sick_timer"] = 0.0
 	elena["health"] = 100.0
 
 	# Anti-acaparreo de ropa cortable: con 2 prendas sueltas en la mochila ya
@@ -2037,6 +2107,10 @@ func run() -> void:
 	check(float(arbol.get_meta("fruit_ready_time", 0.0)) > Time.get_unix_time_from_system(),
 		"Forrajeo: el arbol entra en cooldown de 5 minutos")
 	# Latas: la cerrada no se come, la abierta si; y se abren con Hacha tambien
+	elena["_last_attacker_msec"] = -999999
+	elena["_wolf_bite_msec"] = -999999
+	elena["_s_foe"] = null
+	elena["_s_predator"] = null
 	elena["hunger"] = 40.0
 	elena["health"] = 100.0
 	elena["eat_cooldown"] = 0.0
@@ -2670,6 +2744,10 @@ func run() -> void:
 	var sick_b: Dictionary = mgr.bots[901]
 	var sick_p: Node3D = sick_b["proxy"]
 	sick_p.set_meta("saved_inventory", [{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 15.0}])
+	sick_b["_last_attacker_msec"] = -999999
+	sick_b["_wolf_bite_msec"] = -999999
+	sick_b["_s_foe"] = null
+	sick_b["_s_predator"] = null
 	sick_b["hunger"] = 20.0  # desesperado: la come cruda
 	sick_b["thirst"] = 50.0
 	sick_b["health"] = 80.0
@@ -3660,9 +3738,15 @@ func run() -> void:
 	mgr.rally_bot_team(int(member_y["bot_id"]), kael_y["proxy"])
 	check(leader_y.get("aggro_target") == kael_y["proxy"] and member_y.get("aggro_target") == kael_y["proxy"],
 		"10y4: miembro atacado -> todo el equipo recibe aggro sobre el agresor")
-	check(str((member_y.get("_foe_mem", {}) as Dictionary).get("src", "")) == "told"
-			and float((member_y.get("_foe_mem", {}) as Dictionary).get("conf", 1.0)) < 1.0,
-		"10y4b: la posición del agresor llega al equipo como pista 'told' de fiabilidad menor")
+	# El compañero avisado recibe lo que la victima sabe (aqui nada concreto:
+	# solo "me atacan aqui"), nunca la posicion viva del agresor. La victima
+	# no se avisa a si misma.
+	var fm_led: Dictionary = leader_y.get("_foe_mem", {})
+	check(str(fm_led.get("src", "")) == "told" and float(fm_led.get("conf", 1.0)) < 0.5,
+		"10y4b: el aviso llega al equipo como pista 'told' de fiabilidad menor")
+	check((fm_led.get("pos", Vector3.INF) as Vector3).distance_to((member_y["proxy"] as Node3D).global_position) < 12.0
+			and (fm_led.get("pos", Vector3.INF) as Vector3) != (kael_y["proxy"] as Node3D).global_position,
+		"10y4c: sin ficha propia de la victima el aviso apunta a donde la atacan, no a la posicion viva del agresor")
 	leader_y["aggro_target"] = null
 	member_y["aggro_target"] = null
 
