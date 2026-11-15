@@ -83,6 +83,9 @@ func _ready() -> void:
 		print("[SERVER] Build ", _build_version())
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
 		return
+	# Preferencias de video guardadas: pantalla/vsync/escala aplican al arrancar.
+	GraphicsSettings.apply_window()
+	GraphicsSettings.apply_render_scale(get_viewport())
 	if OS.get_cmdline_user_args().has("--auto-single") or OS.get_cmdline_user_args().has("--cinematic"):
 		SaveIntegration.maybe_insert_saved_character(self)
 	var args := OS.get_cmdline_user_args()
@@ -118,9 +121,6 @@ func _ready() -> void:
 		else:
 			pass # print("[CLIENT] Error al conectar a %s" % ip)
 		return
-	# Preferencias de video guardadas: pantalla/vsync/escala aplican al arrancar.
-	GraphicsSettings.apply_window()
-	GraphicsSettings.apply_render_scale(get_viewport())
 	# Forzar ventana al frente (necesario en macOS al lanzar desde terminal)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, false)
