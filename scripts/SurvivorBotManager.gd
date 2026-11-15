@@ -5369,7 +5369,7 @@ func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: St
 	# capsulas de supervivientes deciden el impacto — la decision de acierto
 	# ya no existe.
 	var muzzle_speed := PlayerController.M4_MUZZLE_SPEED if is_m4 else PlayerController.RIFLE_MUZZLE_SPEED
-	_bot_launch_projectile(b, origin, dir, weapon, muzzle_speed, PlayerController.RIFLE_RANGE, dmg, false, "rifle", BOT_BULLET_DRAG, shot_wind)
+	_bot_launch_projectile(b, origin, dir, weapon, muzzle_speed, PlayerController.RIFLE_RANGE, dmg, false, "m4" if is_m4 else "rifle", BOT_BULLET_DRAG, shot_wind)
 	# Retroceso DESPUES de capturar la direccion (como el jugador): esta bala
 	# sale limpia y la siguiente paga el levantamiento — en rafaga M4 las
 	# balas 2 y 3 heredan el retroceso acumulado, sin re-apuntar perfecto.
@@ -5555,7 +5555,7 @@ func _apply_bot_damage_to_target(b: Dictionary, target: Node3D, amount: float, w
 		return
 	if target.has_method("apply_damage"):
 		target.apply_damage(amount, weapon)
-		if weapon == "rifle" and target.has_method("_play_shot_reaction"):
+		if weapon in ["rifle", "m4"] and target.has_method("_play_shot_reaction"):
 			target._play_shot_reaction()
 		elif target.has_method("_play_hit_reaction"):
 			target._play_hit_reaction(true)
@@ -5617,13 +5617,13 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	# Reaccion visual sincronizada: el kind va directo a _net_player_hit_event,
 	# que ya distingue rifle (sangre + reaccion de disparo), melee, wolf_bite
 	# y bear_bite (sangre + reaccion + sonido de dolor).
-	var hit_kind := weapon if weapon in ["rifle", "melee", "wolf_bite", "bear_bite", "bola"] else "melee"
+	var hit_kind := weapon if weapon in ["rifle", "m4", "melee", "wolf_bite", "bear_bite", "bola"] else "melee"
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["crouching"] = false
 	b["hide_timer"] = 0.0
-	b["flinch_anim"] = "shot" if hit_kind == "rifle" else "hit"
-	b["flinch_timer"] = 0.48 if hit_kind == "rifle" else 0.30
+	b["flinch_anim"] = "shot" if hit_kind in ["rifle", "m4"] else "hit"
+	b["flinch_timer"] = 0.48 if hit_kind in ["rifle", "m4"] else 0.30
 	b["anim"] = b["flinch_anim"]
 	var net = world.get("net")
 	if net != null and net.has_method("_broadcast_player_hit"):

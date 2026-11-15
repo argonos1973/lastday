@@ -3208,7 +3208,7 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	_last_hit_weapon = weapon
 	_last_hit_msec = Time.get_ticks_msec()
 	if player != null and player.has_method("apply_damage"):
-		if weapon == "rifle":
+		if weapon in ["rifle", "m4"]:
 			# _play_shot_reaction plays recibirdisparo.mp3; suppress the generic
 			# pain grunt inside apply_damage so two voices do not overlap.
 			player._pain_sound_timer = 1.5
@@ -3220,11 +3220,11 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 			if player.has_method("_play_hit_reaction"):
 				player._play_hit_reaction(true)
 			player.notice.emit("¡Boleadoras! Te han trabado las piernas (6s, -%d HP)." % int(round(amount)))
-		elif weapon == "rifle" and player.has_method("_play_shot_reaction"):
+		elif weapon in ["rifle", "m4"] and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
 		elif weapon in ["melee", "wolf_bite", "bear_bite"] and player.has_method("_play_hit_reaction"):
 			player._play_hit_reaction(not weapon.ends_with("_bite"))
-		if weapon == "rifle":
+		if weapon in ["rifle", "m4"]:
 			player._recoil_pitch -= deg_to_rad(5.5)
 			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
 	if CombatProf.enabled: CombatProf.mark("dmg.net_apply", _cpt)
@@ -3323,7 +3323,8 @@ func _weapon_death_attacker(weapon: String) -> String:
 
 func _weapon_death_label(weapon: String) -> String:
 	match weapon:
-		"rifle", "m4": return "fusil"
+		"rifle": return "rifle francotirador"
+		"m4": return "fusil de asalto"
 		"melee": return "cuerpo a cuerpo"
 		"bola": return "boleadoras"
 		"arco", "arco_madera", "arrow", "flecha": return "flecha"
@@ -4054,6 +4055,13 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 	if remote_players.has(shooter_id):
 		var rp: Node3D = remote_players[shooter_id]
 		if is_instance_valid(rp) and rp.has_method("play_rifle_shot_remote"):
+			# El snapshot fiable de held_item llega antes que el RPC del disparo:
+			# si dice fusil y el puppet aun no lo tiene, corregirlo — el failsafe
+			# de play_rifle_shot_remote forzaria M4 y un francotirador sonaria a rafaga.
+			var held_sync := str(net.players[shooter_id].get("held_item", "")) if net != null else ""
+			if PlayerControllerScript._is_rifle_item_name(held_sync) and str(rp.get("_puppet_held")) != held_sync:
+				rp.set("_puppet_held", held_sync)
+				rp._update_puppet_held_item(held_sync)
 			rp.play_rifle_shot_remote(origin, dir, wind)
 			shooter_node = rp
 	if CombatProf.enabled: CombatProf.mark("shot.puppet_visual", _cpt)
@@ -4069,7 +4077,7 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 		if along > 0.0 and along < PlayerControllerScript.RIFLE_RANGE:
 			var closest := origin + ndir * along
 			if closest.distance_to(ear) < 7.0:
-				_play_incoming_shot(closest, shooter_node)
+				_play_incoming_shot(closest, shooter_node, shooter_id)
 	if CombatProf.enabled: CombatProf.mark("shot.incoming_audio", _cpt)
 	# Server and remote clients alert all nearby wildlife so wolves, deer, foxes,
 	# bears and birds flee running when they hear a gunshot or bullet impact zone.
@@ -4089,8 +4097,15 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 # Chasquido local del tiro que pasa pegado al jugador: direccional (se posiciona
 # en el punto mas proximo del rayo al oido) y distinto del estampido 3D del
 # tirador — este sigue sonando atenuado a distancia como referencia posicional.
-func _play_incoming_shot(at_pos: Vector3, shooter: Node = null) -> void:
-	var is_m4 := shooter != null and is_instance_valid(shooter) and str(shooter.get("_puppet_held")) == PlayerControllerScript.M4_NAME
+func _play_incoming_shot(at_pos: Vector3, shooter: Node = null, shooter_id: int = 0) -> void:
+	# Sin la marioneta (RPC antes que el spawn del puppet) el estado sincronizado
+	# en net.players ya lleva held_item — si no, un M4 sonaba a francotirador.
+	var held := ""
+	if shooter != null and is_instance_valid(shooter):
+		held = str(shooter.get("_puppet_held"))
+	if held.is_empty() and shooter_id != 0 and net != null and net.players.has(shooter_id):
+		held = str(net.players[shooter_id].get("held_item", ""))
+	var is_m4 := held == PlayerControllerScript.M4_NAME
 	var now := Time.get_ticks_msec() / 1000.0
 	# El clip del M4 ya encadena la rafaga: no reiniciarlo mientras suene.
 	if now - _incoming_shot_last < (1.15 if is_m4 else 0.55):
@@ -4768,7 +4783,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# _sender_within fails closed when the attacker has no proxy — a
 		# missing proxy must not silently skip the reach check.
 		var max_reach := 5.0
-		if weapon == "rifle" or weapon == "bola":
+		if weapon in ["rifle", "m4", "bola"]:
 			max_reach = PlayerController.RIFLE_RANGE + 20.0
 		elif weapon != "melee":
 			return

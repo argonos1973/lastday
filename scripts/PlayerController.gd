@@ -13466,7 +13466,7 @@ func _update_torch(delta: float) -> void:
 #region VIDA, DAÑO Y COMBATE
 func take_damage(amount: float, from_knife: bool = false, weapon: String = "melee") -> void:
 	if is_puppet:
-		if weapon == "rifle":
+		if weapon in ["rifle", "m4"]:
 			_play_shot_reaction()
 		else:
 			_play_hit_reaction(true)
@@ -13533,7 +13533,7 @@ func apply_damage(amount: float, cause: String = "") -> void:
 		if any_broken:
 			inventory.changed.emit()
 	stats.health = max(0.0, stats.health - amount)
-	if cause == "melee" or cause.ends_with("_bite") or cause == "rifle":
+	if cause == "melee" or cause.ends_with("_bite") or cause in ["rifle", "m4"]:
 		is_sitting = false
 		is_prone = false
 		_sit_cooldown = 0.0
@@ -14444,7 +14444,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 					var net_node := scene_node.get_node_or_null("/root/NetworkManager")
 					if net_node != null and net_node.has_method("get_my_id"):
 						my_id = net_node.get_my_id()
-					scene_node._net_damage_player(peer_id, proxy_dmg, my_id, "rifle")
+					scene_node._net_damage_player(peer_id, proxy_dmg, my_id, "m4" if is_m4 else "rifle")
 				else:
 					var hp: float = node.get_meta("proxy_health", 100.0)
 					hp = max(0.0, hp - proxy_dmg)
@@ -14462,7 +14462,7 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 					else:
 						var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 						if net_node != null and net_node.peer != null and net_node.peer.has_peer(peer_id):
-							net_node.apply_damage_to_client.rpc_id(peer_id, proxy_dmg, "rifle")
+							net_node.apply_damage_to_client.rpc_id(peer_id, proxy_dmg, "m4" if is_m4 else "rifle")
 			_spawn_blood_splatter(hit_pos)
 			_hit_marker(true)
 			return
