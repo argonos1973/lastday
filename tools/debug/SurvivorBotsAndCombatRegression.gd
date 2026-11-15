@@ -5989,8 +5989,10 @@ func run() -> void:
 	b_ow["shoot_cooldown"] = 0.0
 	check(mgr._bot_overwatch_fight(b_ow, foe_ground, 0.1),
 		"10S12: la vigia en su puesto combate desde arriba sin moverse")
+	for i in range(8):
+		mgr._bot_overwatch_fight(b_ow, foe_ground, 0.1)
 	check(p_ow.global_position.distance_to(ow_post) < 0.1 and float(b_ow["shoot_cooldown"]) > 0.0,
-		"10S13: la vigia dispara manteniendo el puesto (cd=%.2f)" % float(b_ow["shoot_cooldown"]))
+		"10S13: la vigia dispara manteniendo el puesto tras asentar la mira (cd=%.2f)" % float(b_ow["shoot_cooldown"]))
 	foe_ground.global_position = ow_post + Vector3(1.0, 0.0, 0.5)
 	check(not mgr._bot_overwatch_fight(b_ow, foe_ground, 0.1) and not b_ow.has("_overwatch"),
 		"10S14: enemigo encima en la azotea -> suelta el puesto y pelea normal")
@@ -6307,8 +6309,11 @@ func run() -> void:
 	check(world._death_killer == "Kael" and world._death_weapon == "rifle",
 		"10U5: _net_death_attribution almacena asesino y arma")
 	var notice_med := world._death_notice_text()
-	check(notice_med.contains("Kael") and notice_med.contains("fusil"),
+	check(notice_med.contains("Kael") and notice_med.contains("rifle francotirador"),
 		"10U6: el aviso nombra al asesino y el arma (%s)" % notice_med)
+	world._net_death_attribution("Kael", "m4")
+	check(world._death_notice_text().contains("fusil de asalto"),
+		"10U6b: el aviso distingue el fusil de asalto (%s)" % world._death_notice_text())
 	world._last_hit_weapon = "wolf_bite"
 	world._last_hit_msec = Time.get_ticks_msec()
 	check(world._death_notice_text().contains("un lobo"),
