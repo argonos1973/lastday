@@ -1043,6 +1043,7 @@ var _water_notice_cooldown := 0.0
 var _water_query_timer := 0.0
 var _aim_screen_offset := Vector2.ZERO
 var is_puppet := false
+var _client_frame_profiler: Node = null
 var _puppet_anim := "idle"
 var _puppet_current_anim := ""
 var is_custom_character: bool = false
@@ -3839,7 +3840,17 @@ func _update_sprint_state(input_dir: Vector2) -> void:
 
 
 #region FÍSICA Y MOVIMIENTO (_physics_process)
+func set_client_frame_profiler(profiler: Node) -> void:
+	_client_frame_profiler = profiler
+
 func _physics_process(delta: float) -> void:
+	var profiler := _client_frame_profiler
+	var profile_started := Time.get_ticks_usec() if profiler != null else 0
+	_physics_process_impl(delta)
+	if profiler != null:
+		profiler.record_section("player.physics_process", profile_started)
+
+func _physics_process_impl(delta: float) -> void:
 	if is_puppet:
 		return
 	_pain_sound_timer = max(0.0, _pain_sound_timer - delta)

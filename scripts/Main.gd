@@ -2,6 +2,7 @@ extends Node3D
 
 const ShadowQuality = preload("res://scripts/ShadowQuality.gd")
 const GraphicsSettings = preload("res://scripts/GraphicsSettings.gd")
+const ClientFrameProfilerScript = preload("res://scripts/ClientFrameProfiler.gd")
 var _shadow_quality: int = ShadowQuality.selected()
 
 const PlayerControllerScript = preload("res://scripts/PlayerController.gd")
@@ -279,6 +280,7 @@ var _bot_ai_debug_visible: bool = false
 var _bot_ai_debug_poll: float = 0.0
 var _remote_bot_ai_debug_text: String = ""
 var _streaming_positions: Array[Vector3] = []
+var _client_profiler: Node = null
 
 const GRASS_BATCH_VARIANTS := 10
 var grass_batch_meshes: Array = []
@@ -869,6 +871,12 @@ func _ready() -> void:
 			_try_show_offline_death_notice()
 		else:
 			hud.show_notice("Haz clic en la ventana para capturar el raton. Sobrevive.")
+	if OS.get_environment("LD_CLIENT_PROFILE") == "1" and (net == null or not net.is_dedicated_server):
+		_client_profiler = ClientFrameProfilerScript.new()
+		add_child(_client_profiler)
+		_client_profiler.setup(self)
+		if player != null and player.has_method("set_client_frame_profiler"):
+			player.set_client_frame_profiler(_client_profiler)
 	# Cinematic mode
 	var user_args := OS.get_cmdline_user_args()
 	if user_args.has("--cinematic"):
@@ -1178,7 +1186,10 @@ func _process(delta: float) -> void:
 	if _cinematic_active:
 		_process_cinematic(delta)
 		return
+	var client_profiler := _client_profiler
+	var profile_started := Time.get_ticks_usec() if client_profiler != null else 0
 	_update_near_ground_cover()
+	if client_profiler != null: client_profiler.record_section("main.near_ground_cover", profile_started)
 	if _wolf_menu != null:
 		_update_wolf_menu_stats()
 	if _grass_any_visible:
@@ -1189,15 +1200,19 @@ func _process(delta: float) -> void:
 	if _grass_vis_timer >= 1.0:
 		_grass_vis_timer = 0.0
 		if net == null or not net.is_dedicated_server:
+			profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 			_update_grass_visibility()
+			if client_profiler != null: client_profiler.record_section("main.grass_visibility", profile_started)
 	_tree_check_timer += delta
 	if _tree_check_timer > _tree_check_interval:
 		_tree_check_timer = 0.0
+		profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 		_update_tree_interactions()
 		_update_boulder_interactions()
 		if net == null or not net.is_dedicated_server:
 			_update_forest_visibility()
 		_update_forest_collision()
+		if client_profiler != null: client_profiler.record_section("main.forest_and_interactions", profile_started)
 	_streaming_update_timer += delta
 	if _streaming_update_timer >= 1.0 and world_streaming_mgr != null:
 		_streaming_update_timer = 0.0
@@ -1327,7 +1342,9 @@ func _process(delta: float) -> void:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
 	if net != null and net.is_connected and not net.is_host:
+		profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 		_update_puppet_animals()
+		if client_profiler != null: client_profiler.record_section("main.puppet_animals", profile_started)
 		if _client_animal_debug_timer < 100:
 			_client_animal_debug_timer += 1
 	if player == null or day_cycle == null:
@@ -1392,11 +1409,19 @@ func _process(delta: float) -> void:
 	if _is_near_camo_covered_shelter(player.global_position):
 		ambient_temp += 2.0
 		shelter_warmth += 0.35
+	profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 	player.stats.tick(delta, player.is_sprinting, ambient_temp, is_sheltered, shelter_warmth, day_cycle.is_night(), player.is_moving or bool(player.get("is_rowing")), player.is_sleeping, player._get_carry_weight_ratio() if player.has_method("_get_carry_weight_ratio") else 0.0, player.is_jumping, player.is_sleeping_on_bed, 1.0 - day_cycle.weather_darkness, player._wind_strength)
+	if client_profiler != null: client_profiler.record_section("main.player_survival_stats", profile_started)
+	profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 	_update_weather_effects(delta)
+	if client_profiler != null: client_profiler.record_section("main.weather_effects", profile_started)
+	profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 	_tick_stat_warnings(delta, player)
+	if client_profiler != null: client_profiler.record_section("main.stat_warnings", profile_started)
+	profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 	_apply_campfire_effect(player, delta)
 	_apply_torch_fire_effect(player, delta)
+	if client_profiler != null: client_profiler.record_section("main.fire_effects", profile_started)
 	_door_cache_timer += delta
 	if _door_cache_timer >= 1.0:
 		_door_cache_timer = 0.0
@@ -1415,12 +1440,18 @@ func _process(delta: float) -> void:
 	if _world_action_tick_timer >= 0.5:
 		var elapsed := _world_action_tick_timer
 		_world_action_tick_timer = 0.0
+		profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 		_tick_world_actions(elapsed)
+		if client_profiler != null: client_profiler.record_section("main.world_actions", profile_started)
 	_tick_drink_hold(delta)
 	if not campfire_fire_timers.is_empty():
+		profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 		_tick_campfire_fires()
+		if client_profiler != null: client_profiler.record_section("main.campfire_timers", profile_started)
 	if survivor_bot_mgr != null:
+		profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 		survivor_bot_mgr.tick(delta)
+		if client_profiler != null: client_profiler.record_section("main.survivor_bot_manager", profile_started)
 	elif net != null and net.is_connected and not net.is_host:
 		for pid in net.players.keys():
 			if SurvivorBotManagerScript.is_bot_peer_id(int(pid)) and remote_players.has(pid):
@@ -1446,10 +1477,14 @@ func _process(delta: float) -> void:
 		_net_sync_timer += delta
 		if _net_sync_timer >= 0.05:
 			_net_sync_timer = 0.0
+			profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 			_sync_local_player_state()
+			if client_profiler != null: client_profiler.record_section("main.local_network_sync", profile_started)
 			# Remote transforms and puppet visuals do not need a full-frame pass;
 			# network state is already sampled at 20 Hz.
+			profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 			_update_remote_players()
+			if client_profiler != null: client_profiler.record_section("main.remote_network_players", profile_started)
 		_inv_sync_timer += delta
 		if _inv_sync_timer >= 2.0:
 			_inv_sync_timer = 0.0
