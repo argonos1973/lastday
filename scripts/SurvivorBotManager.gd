@@ -1684,20 +1684,37 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 1) Doma de lobos: va ANTES que predator para que _s_predator (radio 22..34 m)
 	# no secuestre al lobo salvaje que el bot pretende domesticar (radio 20 m)
 	# ni haga que el bot le dispare o huya mientras el lobo se come el cebo.
-	if not bool(b.get("_s_has_wolf", false)) and float(b.get("health", 100.0)) >= 55.0:
-		var wild_wolf := _sensed_node(b, "_s_tame_wolf")
-		if wild_wolf != null and proxy.global_position.distance_to(wild_wolf.global_position) >= 4.2:
+	# La defensa manda: bajo ataque (disparos, enemigo a la vista, otra fiera
+	# o el propio lobo ya agresivo) la doma se aparca y el tick sigue hacia
+	# cobertura/combate/huida. El progreso vive en el lobo (_tame_progress)
+	# y no se pierde; se retoma cuando vuelve la calma.
+	var wild_wolf := _sensed_node(b, "_s_tame_wolf") if not bool(b.get("_s_has_wolf", false)) else null
+	var tame_blocked := wild_wolf != null and _bot_tame_interrupted(b, wild_wolf)
+	if wild_wolf != null and not tame_blocked and float(b.get("health", 100.0)) >= 55.0:
+		if proxy.global_position.distance_to(wild_wolf.global_position) >= 4.2:
 			# El lobo exige TAME_FEEDINGS comidas del mismo alimentador: solo se
 			# intenta con el cebo completo preparado, para no quedarse a mitad
 			# y perder la confianza ganada. _tame_wait_t solo continua una
-			# secuencia ya empezada (el cebo ya esta en el suelo).
-			if (float(b["tame_cooldown"]) <= 0.0 and _bot_tame_bait_count(proxy) >= WildlifeController.TAME_FEEDINGS) or float(b.get("_tame_wait_t", 0.0)) > 0.0:
+			# secuencia ya empezada (el cebo ya esta en el suelo); una
+			# secuencia interrumpida se retoma con el cebo que le falte.
+			var fed := _bot_tame_progress(b, wild_wolf)
+			var bait_needed := maxi(1, WildlifeController.TAME_FEEDINGS - fed)
+			if (float(b["tame_cooldown"]) <= 0.0 and _bot_tame_bait_count(proxy) >= bait_needed) or float(b.get("_tame_wait_t", 0.0)) > 0.0:
 				b["_act"] = "tame"
 				_perform_wolf_taming_step(b, wild_wolf, delta)
 				return
 
 	# 2) Detectar amenazas inmediatas: lobos/osos hostiles cercanos
 	var predator := _sensed_node(b, "_s_predator")
+	# El lobo que estaba domesticando no es "un depredador mas" mientras no
+	# se revuelva: interrumpido por OTRA amenaza, no se le dispara ni se
+	# huye de el por inercia. Si se vuelve agresivo, cae aqui como cualquiera.
+	# Se le reconoce por lo ya invertido en el (tomas acreditadas), no por
+	# la ventana de distancia de la doma: al correr a cubrirse el bot puede
+	# quedar mas cerca o mas lejos y seguiria siendo "su" lobo.
+	if predator != null and not _bot_wolf_is_aggressive(b, predator) \
+			and (_bot_tame_progress(b, predator) > 0 or (predator == wild_wolf and float(b.get("_tame_wait_t", 0.0)) > 0.0)):
+		predator = null
 	if predator != null:
 		b["_act"] = "predator"
 		_handle_predator_encounter(b, predator, delta)
@@ -3868,6 +3885,51 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 		proxy.set_meta("crouching", false)
 		_move_bot_towards(b, ppos, 6.5, delta, "run")
 
+# Comidas ya acreditadas por este bot en un lobo salvaje (0 si ninguna).
+func _bot_tame_progress(b: Dictionary, wolf: Node3D) -> int:
+	if wolf == null or not is_instance_valid(wolf):
+		return 0
+	var tp = wolf.get("_tame_progress")
+	return int((tp as Dictionary).get(str(b["bot_id"]), 0)) if tp is Dictionary else 0
+
+# El lobo ha dejado de tantear y va a por el bot: lo persigue/ataca o le
+# acaba de morder. Desde aqui es un depredador como cualquier otro.
+func _bot_wolf_is_aggressive(b: Dictionary, wolf: Node3D) -> bool:
+	if wolf == null or not is_instance_valid(wolf):
+		return false
+	if Time.get_ticks_msec() - int(b.get("_wolf_bite_msec", -999999)) < 6000:
+		return true
+	return str(wolf.get("_state")) in ["chase_player", "attack"] and wolf.get("_player") == b.get("proxy")
+
+# Motivos para aparcar la doma: estan atacando al bot o hay una amenaza
+# real encima. Con histeresis (_tame_pause_until) para no alternar entre
+# soltar cebo y pelear cada medio segundo.
+const BOT_TAME_RESUME_SEC := 8.0
+
+func _bot_tame_interrupted(b: Dictionary, wolf: Node3D) -> bool:
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var threat := false
+	var aggro = b.get("aggro_target")
+	if aggro != null and is_instance_valid(aggro) and aggro != wolf:
+		threat = true
+	elif _sensed_node(b, "_s_foe") != null:
+		threat = true
+	elif Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 6000:
+		threat = true # recibio daño de alguien hace nada
+	elif float(b.get("flee_until", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0:
+		threat = true
+	elif _bot_wolf_is_aggressive(b, wolf):
+		threat = true
+	else:
+		var pred := _sensed_node(b, "_s_predator")
+		threat = pred != null and pred != wolf
+	if threat:
+		if now_s >= float(b.get("_tame_pause_until", 0.0)):
+			record_bot_event(int(b["bot_id"]), "tame_interrupted", "wolf", _poi_kind_near(wolf.global_position), wolf.global_position, "amenaza: doma aparcada")
+		b["_tame_pause_until"] = now_s + BOT_TAME_RESUME_SEC
+		return true
+	return now_s < float(b.get("_tame_pause_until", 0.0))
+
 func _find_tameable_wolf(b: Dictionary, max_dist: float) -> Node3D:
 	if world == null or world.get_tree() == null:
 		return null
@@ -5099,6 +5161,8 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	elif weapon in ["wolf_bite", "bear_bite"]:
 		b["_last_attacker_id"] = 0
 		b["_last_hit_weapon"] = weapon
+		if weapon == "wolf_bite":
+			b["_wolf_bite_msec"] = Time.get_ticks_msec()
 		_evolve_personality(b, "predator_hit", clampf(amount / 50.0, 0.1, 0.5))
 
 	# Si el atacante es un jugador o bot, responder a la agresión
