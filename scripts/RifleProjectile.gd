@@ -23,6 +23,7 @@ var _ray_query := PhysicsRayQueryParameters3D.new()
 func _physics_process(delta: float) -> void:
 	var _cpt := Time.get_ticks_usec()
 	if is_queued_for_deletion(): return
+	_refresh_proxy_candidates()
 	var space := get_world_3d().direct_space_state
 	var world := get_tree().current_scene
 	var has_distant_props := world != null and world.has_method("raycast_distant_props")
@@ -116,12 +117,17 @@ const PROXY_HIT_TOP_STAND := 1.72
 const PROXY_HIT_TOP_LOW := 1.25   # agachado / sentado
 const PROXY_HIT_TOP_LYING := 0.55 # tumbado / durmiendo
 
-func _proxy_segment_hit(from: Vector3, to: Vector3) -> Dictionary:
+# Candidatos de capsula recogidos UNA vez por _physics_process — el test por
+# subpaso (1/240 s) solo hace geometria, sin consultas de grupo ni metas.
+# Se refresca en _refresh_proxy_candidates() en caso de que el nodo viva
+# varios frames (poco habitual, vuelo <1 s).
+var _proxy_candidates: Array = []
+
+func _refresh_proxy_candidates() -> void:
+	_proxy_candidates.clear()
 	var tree := get_tree()
 	if tree == null:
-		return {}
-	var best := {}
-	var best_from := INF
+		return
 	var seen := {}
 	for grp in ["net_player_proxy", "ai_survivor_bot", "remote_player"]:
 		for n in tree.get_nodes_in_group(grp):
@@ -136,26 +142,32 @@ func _proxy_segment_hit(from: Vector3, to: Vector3) -> Dictionary:
 			if _node_has_collision(n):
 				continue
 			var base := (n as Node3D).global_position
-			# Descarte rapido: el punto mas cercano posible en su capsula esta
-			# a dist(base,from) - altura del eje; si ya hay algo mejor, fuera.
-			if base.distance_to(from) - PROXY_HIT_TOP_STAND > best_from:
-				continue
 			var top := PROXY_HIT_TOP_STAND
 			if n.get("is_prone") == true or bool(n.get_meta("prone", false)) or bool(n.get_meta("sleeping", false)):
 				top = PROXY_HIT_TOP_LYING
 			elif bool(n.get_meta("crouching", false)) or bool(n.get_meta("sitting", false)) or bool(n.get_meta("saved_sitting", false)):
 				top = PROXY_HIT_TOP_LOW
-			var axis0 := base + Vector3(0.0, 0.10, 0.0)
-			var axis1 := base + Vector3(0.0, top, 0.0)
-			var pair := _seg_seg_closest(from, to, axis0, axis1)
-			if (pair[0] as Vector3).distance_to(pair[1]) > PROXY_HIT_RADIUS:
-				continue
-			var d_from := from.distance_to(pair[0])
-			if d_from < best_from:
-				best_from = d_from
-				# Cabeza: el tercio superior de la capsula.
-				var head := (pair[1] as Vector3).y >= base.y + top - 0.35
-				best = {"node": n, "position": pair[0], "normal": (pair[0] - pair[1]).normalized(), "head": head}
+			_proxy_candidates.append([n, base, base + Vector3(0.0, 0.10, 0.0), base + Vector3(0.0, top, 0.0), top])
+
+func _proxy_segment_hit(from: Vector3, to: Vector3) -> Dictionary:
+	var best := {}
+	var best_from := INF
+	for cand in _proxy_candidates:
+		var base: Vector3 = cand[1]
+		var top: float = cand[4]
+		# Descarte rapido: el punto mas cercano posible en su capsula esta a
+		# dist(base,from) - altura del eje; si ya hay algo mejor, fuera.
+		if base.distance_to(from) - top > best_from:
+			continue
+		var pair := _seg_seg_closest(from, to, cand[2], cand[3])
+		if (pair[0] as Vector3).distance_to(pair[1]) > PROXY_HIT_RADIUS:
+			continue
+		var d_from := from.distance_to(pair[0])
+		if d_from < best_from:
+			best_from = d_from
+			# Cabeza: el tercio superior de la capsula.
+			var head: bool = (pair[1] as Vector3).y >= base.y + top - 0.35
+			best = {"node": cand[0], "position": pair[0], "normal": (pair[0] - pair[1]).normalized(), "head": head}
 	return best
 
 # El nodo ya tiene colision propia (marioneta con hitboxes): el rayo la cubre.

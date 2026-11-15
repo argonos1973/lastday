@@ -6,6 +6,11 @@ const CANDIDATES_PER_CELL := 144
 var world: Node3D
 var chunks: Dictionary = {}
 var pending: Array[Vector2i] = []
+# Nodos+MultiMesh reciclados de chunks liberados: al cruzar el mapa andando se
+# liberan/crean varios chunks por segundo; reutilizarlos evita alloc/free en
+# el hilo principal. Tope pequeno: el coste del chunk es muestreo, no el nodo.
+const POOL_MAX := 24
+var _pool: Array[MultiMeshInstance3D] = []
 var last_cell := Vector2i(2147483647,2147483647)
 var last_quality := -1.0
 var material: ShaderMaterial
@@ -26,7 +31,7 @@ func update_focus(focus: Vector3, quality: float) -> void:
 	var cell := Vector2i(floori(focus.x/CELL),floori(focus.z/CELL))
 	if cell != last_cell or not is_equal_approx(quality,last_quality):
 		if not is_equal_approx(quality,last_quality):
-			for chunk in chunks.values(): chunk.queue_free()
+			for chunk in chunks.values(): _release_chunk(chunk)
 			chunks.clear()
 		last_cell = cell
 		last_quality = quality
@@ -38,7 +43,7 @@ func update_focus(focus: Vector3, quality: float) -> void:
 				wanted[cell+Vector2i(x,z)] = true
 		for key in chunks.keys():
 			if not wanted.has(key):
-				chunks[key].queue_free()
+				_release_chunk(chunks[key])
 				chunks.erase(key)
 		job.clear()
 		pending.clear()
@@ -60,8 +65,11 @@ func _build_chunk(cell: Vector2i, quality: float) -> bool:
 	var origin := Vector3((cell.x+.5)*CELL,0,(cell.y+.5)*CELL)
 	var started := Time.get_ticks_usec()
 
+	# Presupuesto adaptativo: cola grande = prisa por rellenar (1.5 ms), cola
+	# corta = repartir fino (0.7 ms) — mismo trabajo total, picos menores.
+	var budget_us := 1500 if pending.size() > 4 else 700
 	for i in range(int(job.next),CANDIDATES_PER_CELL):
-		if Time.get_ticks_usec()-started > 1500:
+		if Time.get_ticks_usec()-started > budget_us:
 			break
 		job.next = i+1
 		var pos := origin + Vector3(rng.randf_range(-3,3),0,rng.randf_range(-3,3))
@@ -84,11 +92,12 @@ func _build_chunk(cell: Vector2i, quality: float) -> bool:
 		transforms.append(Transform3D(Basis(Vector3.UP,yaw).scaled(Vector3(radius,height,radius)),pos-origin))
 		colors.append(Color(.20,.29,.105).lerp(Color(.32,.35,.17),density*.6))
 	if int(job.next) < CANDIDATES_PER_CELL: return false
-	var node := MultiMeshInstance3D.new()
+	var node: MultiMeshInstance3D = _pool.pop_back() if not _pool.is_empty() else MultiMeshInstance3D.new()
+	if node.multimesh == null:
+		node.multimesh = MultiMesh.new()
+		node.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+		node.multimesh.use_colors = true
 	node.position = origin
-	node.multimesh = MultiMesh.new()
-	node.multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	node.multimesh.use_colors = true
 	node.multimesh.mesh = world.grass_batch_meshes[posmod(hash(cell),world.grass_batch_meshes.size())]
 	node.multimesh.instance_count = transforms.size()
 	for i in range(transforms.size()):
@@ -97,7 +106,18 @@ func _build_chunk(cell: Vector2i, quality: float) -> bool:
 	node.material_override = material
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	node.layers = 1 << 18
-	add_child(node)
+	node.visible = true
+	if node.get_parent() == null:
+		add_child(node)
 	chunks[cell] = node
 	job.clear()
 	return true
+
+func _release_chunk(node: MultiMeshInstance3D) -> void:
+	if _pool.size() >= POOL_MAX:
+		node.queue_free()
+		return
+	if node.get_parent() != null:
+		node.get_parent().remove_child(node)
+	node.multimesh.instance_count = 0
+	_pool.append(node)

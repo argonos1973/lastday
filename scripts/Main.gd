@@ -1210,6 +1210,9 @@ func _process(delta: float) -> void:
 		world_streaming_mgr.update_player_positions(_streaming_positions)
 
 	if _debug_visible and _debug_label != null:
+		_debug_frame_ms.append(delta * 1000.0)
+		if _debug_frame_ms.size() > _DEBUG_FRAME_SAMPLES:
+			_debug_frame_ms.remove_at(0)
 		_update_debug_overlay_text()
 	if _bot_ai_debug_visible:
 		_update_bot_ai_debug_text(delta)
@@ -5544,7 +5547,18 @@ func _update_remote_players() -> void:
 			continue
 		var target_pos: Vector3 = data.get("pos", Vector3(8.0, 0.4, 2.5))
 		if SurvivorBotManagerScript.is_bot_peer_id(int(pid)) or bool(data.get("is_ai_bot", false)):
-			target_pos.y = _get_exact_ground_y(target_pos.x, target_pos.z, target_pos.y + 3.0) - 0.025
+			# El raycast de suelo sale ~0.4 m de radio por llamada: cachear por
+			# puppet y solo re-sondear cuando el XZ se movio de verdad. Con un
+			# bot quieto el coste por frame pasa de un raycast a 3 flotantes.
+			var gy: float = float(rp.get_meta("puppet_ground_y", -INF))
+			var gx: float = float(rp.get_meta("puppet_ground_x", INF))
+			var gz: float = float(rp.get_meta("puppet_ground_z", INF))
+			if absf(target_pos.x - gx) > 0.4 or absf(target_pos.z - gz) > 0.4:
+				gy = _get_exact_ground_y(target_pos.x, target_pos.z, target_pos.y + 3.0)
+				rp.set_meta("puppet_ground_y", gy)
+				rp.set_meta("puppet_ground_x", target_pos.x)
+				rp.set_meta("puppet_ground_z", target_pos.z)
+			target_pos.y = gy - 0.025
 		var target_rot: float = data.get("rot", 0.0)
 		var anim: String = data.get("anim", "idle")
 		if _remote_puppet_needs_respawn(rp, anim):
@@ -5568,23 +5582,32 @@ func _update_remote_players() -> void:
 		var remote_crouching: bool = data.get("crouching", false)
 		var remote_torch_lit: bool = data.get("torch_lit", false)
 		var remote_flashlight_on: bool = data.get("flashlight_on", false)
-		# Apply character appearance if available and not yet applied (or if beard/hair changed)
-		var Grooming = preload("res://scripts/CharacterGrooming.gd")
-		var rp_char := str(data.get("char_name", ""))
-		if data.has("hair_style") or data.has("beard_stage"):
-			rp_char = Grooming.encode_identity(rp_char, str(data.get("hair_style", "")), int(data.get("beard_stage", 0)))
-		if data.has("top_color") and rp.has_method("puppet_apply_appearance") and (not rp.get("_applied_appearance") or str(rp.get("_puppet_char_name")) != rp_char):
-			rp.puppet_apply_appearance(rp_char, data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
-		if rp.has_method("puppet_set_aiming"):
-			rp.puppet_set_aiming(remote_aiming)
-		if rp.has_method("puppet_set_rifle"):
-			rp.puppet_set_rifle(remote_has_rifle)
-		if rp.has_method("puppet_set_state_flags"):
-			rp.puppet_set_state_flags(remote_sleeping, remote_sitting, remote_prone, remote_crouching)
-		if rp.has_method("puppet_set_torch"):
-			rp.puppet_set_torch(remote_torch_lit)
-		if rp.has_method("puppet_set_flashlight"):
-			rp.puppet_set_flashlight(remote_flashlight_on)
+		# LOD visual por distancia: a mas de 90 m el puppet ocupa unos pocos
+		# pixeles — se saltan las actualizaciones de manos/armas/mochila/
+		# apariencia (todas idempotentes y con cambio-gate, asi que al volver
+		# a entrar en rango se reaplican pendientes). La interpolacion de
+		# posicion y el anim corren siempre — nada de movimiento a saltos.
+		var near_enough_for_detail := true
+		if player != null and is_instance_valid(player):
+			near_enough_for_detail = player.global_position.distance_squared_to(target_pos) <= 8100.0
+		if near_enough_for_detail:
+			# Apply character appearance if available and not yet applied (or if beard/hair changed)
+			var Grooming = preload("res://scripts/CharacterGrooming.gd")
+			var rp_char := str(data.get("char_name", ""))
+			if data.has("hair_style") or data.has("beard_stage"):
+				rp_char = Grooming.encode_identity(rp_char, str(data.get("hair_style", "")), int(data.get("beard_stage", 0)))
+			if data.has("top_color") and rp.has_method("puppet_apply_appearance") and (not rp.get("_applied_appearance") or str(rp.get("_puppet_char_name")) != rp_char):
+				rp.puppet_apply_appearance(rp_char, data.get("top_color", Color(0.5,0.5,0.5)), data.get("bottom_color", Color(0.3,0.3,0.3)), data.get("shoes_color", Color(0.15,0.15,0.15)), data.get("hair_color", Color(0.2,0.15,0.1)), data.get("skin_color", Color(0.8,0.7,0.6)), data.get("top_camo", false), data.get("bottom_camo", false))
+			if rp.has_method("puppet_set_aiming"):
+				rp.puppet_set_aiming(remote_aiming)
+			if rp.has_method("puppet_set_rifle"):
+				rp.puppet_set_rifle(remote_has_rifle)
+			if rp.has_method("puppet_set_state_flags"):
+				rp.puppet_set_state_flags(remote_sleeping, remote_sitting, remote_prone, remote_crouching)
+			if rp.has_method("puppet_set_torch"):
+				rp.puppet_set_torch(remote_torch_lit)
+			if rp.has_method("puppet_set_flashlight"):
+				rp.puppet_set_flashlight(remote_flashlight_on)
 		if is_offline:
 			# Snap to exact position for offline characters
 			rp.set_meta("puppet_move_speed", 0.0)
@@ -7746,10 +7769,15 @@ func _create_debug_overlay() -> void:
 	add_child(_debug_overlay)
 
 var _debug_fps_min := INF
+# Ultimos ~10 s de tiempos de fotograma (ms) para percentiles — los tirones
+# no se ven en el FPS medio; hace falta la cola de la distribucion.
+const _DEBUG_FRAME_SAMPLES := 600
+var _debug_frame_ms: Array[float] = []
 
 func _toggle_debug_overlay() -> void:
 	_debug_visible = not _debug_visible
 	_debug_fps_min = INF
+	_debug_frame_ms.clear()
 	if _debug_overlay != null:
 		_debug_overlay.visible = _debug_visible
 
@@ -7778,6 +7806,15 @@ func _update_debug_overlay_text() -> void:
 	var text := "=== DIAGNÓSTICO DE MUNDO ABIERTO (TECLA 0) ===\n"
 	_debug_fps_min = minf(_debug_fps_min, fps)
 	text += "FPS: %d | Min. muestreado: %d | CPU proceso: %.2f ms\n" % [fps, int(_debug_fps_min), process_ms]
+	if _debug_frame_ms.size() >= 20:
+		var sorted := _debug_frame_ms.duplicate()
+		sorted.sort()
+		var n := sorted.size()
+		var over50 := 0
+		for v in sorted:
+			if v > 50.0:
+				over50 += 1
+		text += "Frame ms: p50=%.1f p95=%.1f p99=%.1f max=%.1f | >50ms: %d\n" % [sorted[n/2], sorted[int(n*0.95)], sorted[int(n*0.99)], sorted[n-1], over50]
 	text += "GPU: no disponible en este diagnóstico\n"
 	var gfx := GraphicsSettings.effective_snapshot(get_viewport())
 	text += "Ventana: %s | Escala 3D: %.0f%% | VSync: %s\n" % [gfx.window, gfx.scale * 100.0, gfx.vsync]
