@@ -1275,12 +1275,12 @@ func _publish_bot_to_net_players(b: Dictionary) -> void:
 		"clothing_colors": b["clothing_colors"],
 		"held_item": str(b["held_item"]),
 		"equipped_backpack": str(b["backpack"]),
-		"is_aiming": bool(b["is_aiming"]),
+		"is_aiming": bool(b.get("is_aiming", false)),
 		"has_rifle": bool(b["has_rifle"]),
 		"sleeping": bool(b["sleeping"]),
-		"sitting": bool(b["sitting"]),
+		"sitting": bool(b.get("sitting", false)),
 		"prone": bool(b["prone"]),
-		"crouching": bool(b["crouching"]),
+		"crouching": bool(b.get("crouching", false)),
 		"torch_lit": bool(b["torch_lit"]),
 		"flashlight_on": bool(b["flashlight_on"]),
 		"ready": true,
@@ -1461,8 +1461,8 @@ func _broadcast_bots() -> void:
 				net.sync_player_state.rpc_id(
 					pid, bot_id, b["pos"], float(b["rot"]), net_anim,
 					str(b["clothing"]), str(b["held_item"]), str(b["backpack"]),
-					bool(b["is_aiming"]), bool(b["has_rifle"]),
-					bool(b["sleeping"]), bool(b["sitting"]), bool(b["prone"]), bool(b["crouching"]),
+					bool(b.get("is_aiming", false)), bool(b["has_rifle"]),
+					bool(b["sleeping"]), bool(b.get("sitting", false)), bool(b["prone"]), bool(b.get("crouching", false)),
 					bool(b["torch_lit"]), bool(b["flashlight_on"]), b["clothing_colors"]
 				)
 	if (net == null or not net.is_connected) and world.has_method("_update_remote_players"):
@@ -1516,6 +1516,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# lumbre, y moria de frio/exhausto huyendo de un fantasma.
 	b["flee_until"] = maxf(0.0, float(b.get("flee_until", 0.0)) - delta)
 	b["hide_timer"] = maxf(0.0, float(b.get("hide_timer", 0.0)) - delta)
+	# La punteria decae igual que la del jugador: retroceso y sacudidas se
+	# recuperan con el tiempo aunque el bot no este combatiendo ahora.
+	_bot_aim_decay(b, delta)
 	b["_truce_t"] = maxf(0.0, float(b.get("_truce_t", 0.0)) - delta)
 	if float(b.get("_truce_t", 0.0)) <= 0.0:
 		b["_truce_peer"] = 0
@@ -1623,8 +1626,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["torch_lit"] = is_night and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
 	proxy.set_meta("in_built_shelter", _bot_at_own_built_shelter(b, proxy.global_position))
-	proxy.set_meta("crouching", bool(b["crouching"]))
+	proxy.set_meta("crouching", bool(b.get("crouching", false)))
 	proxy.set_meta("prone", bool(b["prone"]))
+	proxy.set_meta("sitting", bool(b.get("sitting", false)))
+	proxy.set_meta("sleeping", bool(b["sleeping"]))
 	proxy.set_meta("sprinting", str(b["anim"]) == "run")
 	var moving_now: bool = str(b["anim"]) == "walk" or str(b["anim"]) == "run"
 	proxy.set_meta("moving", moving_now)
@@ -2296,7 +2301,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			return
 		b["sitting"] = true
 		b["crouching"] = str(b["faction"]) == "hostile"
-		proxy.set_meta("crouching", bool(b["crouching"]))
+		proxy.set_meta("crouching", bool(b.get("crouching", false)))
 		b["anim"] = "sit"
 		if float(b["health"]) < 100.0 and float(b.get("sick_timer", 0.0)) <= 0.0:
 			var healed := minf(100.0, float(b["health"]) + delta * 1.8)
@@ -2324,7 +2329,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			if not _bot_night_sentry_wander(b, delta):
 				b["sitting"] = true
 				b["crouching"] = str(b["faction"]) == "hostile"
-				proxy.set_meta("crouching", bool(b["crouching"]))
+				proxy.set_meta("crouching", bool(b.get("crouching", false)))
 				b["anim"] = "sit"
 		return
 
@@ -3185,13 +3190,14 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 			proxy.set_meta("saved_held_item", sweapon)
 			b["anim"] = "idle"
 			if float(b["shoot_cooldown"]) <= 0.0:
-				if skind == "rifle":
+				var kind_s := "m4" if _bot_gun_is_m4(sweapon) else ("sniper" if skind == "rifle" else skind)
+				if skind == "rifle" and _bot_fire_ready(b, predator, dist, true, delta, kind_s):
 					b["shoot_cooldown"] = 0.95 if sweapon == "Fusil de asalto" else 1.65
 					_bot_fire_rifle_at(b, predator, 68.0 if sweapon == "Fusil de asalto" else 145.0, sweapon)
-				elif skind == "bow":
+				elif skind == "bow" and _bot_fire_ready(b, predator, dist, true, delta, "bow"):
 					b["shoot_cooldown"] = 1.55 if sweapon == "Arco reforzado" else 1.9
 					_bot_fire_bow(b, predator, sweapon)
-				else:
+				elif skind == "thrown" and _bot_fire_ready(b, predator, dist, true, delta, "throw"):
 					b["shoot_cooldown"] = 2.1
 					_bot_fire_thrown(b, predator, sweapon, false)
 			return
@@ -3231,7 +3237,8 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 		if to_pred.length_squared() > 0.001:
 			b["rot"] = atan2(-to_pred.x, -to_pred.z)
 			proxy.rotation.y = float(b["rot"])
-		if float(b["shoot_cooldown"]) <= 0.0:
+		if float(b["shoot_cooldown"]) <= 0.0 \
+				and _bot_fire_ready(b, predator, dist, true, delta, "m4" if weapon == "Fusil de asalto" else "sniper"):
 			b["shoot_cooldown"] = 0.95 if weapon == "Fusil de asalto" else 1.65
 			var dmg := 68.0 if weapon == "Fusil de asalto" else 145.0
 			_bot_fire_rifle_at(b, predator, dmg, weapon)
@@ -3289,7 +3296,7 @@ func _flee_predator(b: Dictionary, predator: Node3D, delta: float) -> void:
 		proxy.set_meta("saved_held_item", "Antorcha")
 	# Boleadoras defensivas en huida: frena 6 s al depredador sin detenerse a pelear
 	if _bot_item_count(proxy, "Boleadoras") > 0 and float(b["shoot_cooldown"]) <= 0.0 and dist >= 4.5 and dist <= 18.0:
-		if float(predator.get_meta("bola_slow_until", 0.0)) < Time.get_unix_time_from_system() and _has_clear_shot(proxy.global_position, predator.global_position):
+		if float(predator.get_meta("bola_slow_until", 0.0)) < Time.get_unix_time_from_system() and _has_clear_shot(proxy.global_position, predator.global_position) 				and _bot_fire_ready(b, predator, dist, true, delta, "throw"):
 			b["shoot_cooldown"] = 2.6
 			_bot_fire_thrown(b, predator, "Boleadoras", true)
 	var sh_pos: Vector3 = b["shelter_pos"]
@@ -3872,7 +3879,8 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 			if to_prey.length_squared() > 0.001:
 				b["rot"] = atan2(-to_prey.x, -to_prey.z)
 				proxy.rotation.y = float(b["rot"])
-		if dist <= 45.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+		var los_hunt := _has_clear_shot(proxy.global_position, ppos)
+		if _bot_fire_ready(b, prey, dist, los_hunt, delta, "m4" if weapon == "Fusil de asalto" else "sniper") 				and dist <= 45.0 and float(b["shoot_cooldown"]) <= 0.0:
 			if to_prey.length_squared() > 0.001:
 				b["rot"] = atan2(-to_prey.x, -to_prey.z)
 				proxy.rotation.y = float(b["rot"])
@@ -3892,7 +3900,8 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 			if to_prey.length_squared() > 0.001:
 				b["rot"] = atan2(-to_prey.x, -to_prey.z)
 				proxy.rotation.y = float(b["rot"])
-		if dist <= 34.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+		var los_bow := _has_clear_shot(proxy.global_position, ppos)
+		if _bot_fire_ready(b, prey, dist, los_bow, delta, "bow") 				and dist <= 34.0 and float(b["shoot_cooldown"]) <= 0.0:
 			if to_prey.length_squared() > 0.001:
 				b["rot"] = atan2(-to_prey.x, -to_prey.z)
 				proxy.rotation.y = float(b["rot"])
@@ -3911,7 +3920,8 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 			if to_prey.length_squared() > 0.001:
 				b["rot"] = atan2(-to_prey.x, -to_prey.z)
 				proxy.rotation.y = float(b["rot"])
-		if dist <= 22.0 and float(b["shoot_cooldown"]) <= 0.0 and _has_clear_shot(proxy.global_position, ppos):
+		var los_thr := _has_clear_shot(proxy.global_position, ppos)
+		if _bot_fire_ready(b, prey, dist, los_thr, delta, "throw") 				and dist <= 22.0 and float(b["shoot_cooldown"]) <= 0.0:
 			if to_prey.length_squared() > 0.001:
 				b["rot"] = atan2(-to_prey.x, -to_prey.z)
 				proxy.rotation.y = float(b["rot"])
@@ -4834,6 +4844,9 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 
 	if wkind == "rifle" and dist > 3.5 and dist <= 48.0:
 		b["is_aiming"] = clear_los
+		# La mira sigue al objetivo todo el rato (con sus limites fisicos),
+		# tambien cuando aun no se puede disparar.
+		var aim_err := _bot_aim_tick(b, foe, dist, clear_los, delta, "m4" if _bot_gun_is_m4(weapon) else "sniper")
 		# Si el objetivo está lejos o tras un muro/puerta/planta sin línea de
 		# tiro limpia, avanzar hacia él (abriendo puertas/subiendo escaleras) en
 		# lugar de quedarse strafeando enganchado contra la pared exterior.
@@ -4848,7 +4861,12 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			_move_bot_towards(b, proxy.global_position + side * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
-		if float(b["shoot_cooldown"]) <= 0.0 and clear_los:
+		# El gatillo pide mira asentada (tiempo de adquisicion) y alineada
+		# dentro de la tolerancia de su personalidad — el agresivo suelta
+		# antes, el prudente espera la mira.
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los \
+				and aim_err <= _bot_trigger_tolerance_deg(b, dist) \
+				and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b):
 			if to_foe.length_squared() > 0.001:
 				b["rot"] = atan2(-to_foe.x, -to_foe.z)
 				proxy.rotation.y = float(b["rot"])
@@ -4891,7 +4909,10 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			_move_bot_towards(b, proxy.global_position + sideb * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
-		if float(b["shoot_cooldown"]) <= 0.0 and clear_los:
+		var aim_err_b := _bot_aim_tick(b, foe, dist, clear_los, delta, "bow")
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los \
+				and aim_err_b <= _bot_trigger_tolerance_deg(b, dist) \
+				and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b):
 			if to_foe.length_squared() > 0.001:
 				b["rot"] = atan2(-to_foe.x, -to_foe.z)
 				proxy.rotation.y = float(b["rot"])
@@ -4921,7 +4942,10 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 				b["strafe_dir"] = -float(b["strafe_dir"])
 				b["strafe_timer"] = 0.0
 			_move_bot_towards(b, proxy.global_position + sidet * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
-		if float(b["shoot_cooldown"]) <= 0.0 and clear_los:
+		var aim_err_t := _bot_aim_tick(b, foe, dist, clear_los, delta, "throw")
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los \
+				and aim_err_t <= _bot_trigger_tolerance_deg(b, dist) \
+				and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b):
 			if to_foe.length_squared() > 0.001:
 				b["rot"] = atan2(-to_foe.x, -to_foe.z)
 				proxy.rotation.y = float(b["rot"])
@@ -4964,25 +4988,324 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 # falla. Al cambiar de objetivo la primera estimacion sale disparada (salto de
 # posicion), lo cual da el efecto deseado: apuntar a alguien nuevo es peor.
 func _bot_target_speed(b: Dictionary, target: Node3D) -> float:
+	return _bot_target_velocity(b, target).length()
+
+# Velocidad VECTORIAL medida del objetivo: diferencia entre posiciones
+# observadas, nunca un campo interno del nodo. Sirve para el adelanto de la
+# mira y para el esquive en melee.
+func _bot_target_velocity(b: Dictionary, target: Node3D) -> Vector3:
 	var key := int(target.get_instance_id())
 	var prev: Dictionary = b.get("_foe_track", {})
 	var now := Time.get_ticks_msec()
-	var speed := 0.0
+	var vel := Vector3.ZERO
 	var pt = prev.get("tpos", null)
 	if pt is Vector3 and int(prev.get("id", 0)) == key:
 		var dt := maxf(0.2, float(now - int(prev.get("msec", 0))) / 1000.0)
-		speed = (target.global_position - pt).length() / dt
-	b["_foe_track"] = {"id": key, "tpos": target.global_position, "msec": now}
-	return speed
-
-# Probabilidad de fallo del bot con fusil: ~12% a quemarropa quieto, ~25% a
-# 30 m quieto, ~45% a 30 m si el blanco corre (6 m/s), tope 62%.
-func _bot_rifle_miss_chance(dist: float, target_speed: float, aggression: float) -> float:
-	return clampf(0.10 + dist * 0.005 + minf(target_speed, 8.0) * 0.04 - aggression * 0.05, 0.07, 0.62)
+		vel = (target.global_position - pt) / dt
+		if vel.length() > 14.0:
+			vel = Vector3.ZERO  # salto de objetivo/teleport: no es velocidad real
+	b["_foe_track"] = {"id": key, "tpos": target.global_position, "msec": now, "vel": vel}
+	return vel
 
 # Lo mismo para el tajo cuerpo a cuerpo: ~10% quieto, ~50% si viene esprintando.
 func _bot_melee_dodge_chance(target_speed: float) -> float:
 	return clampf(0.10 + minf(target_speed, 8.0) * 0.05, 0.10, 0.5)
+
+# === Punteria fisica del bot: las mismas reglas que el jugador ===============
+# La mira es un estado persistente (_aim): direccion real del arma, retroceso
+# acumulado (rp/ry), oscilacion de respiracion (breath_t/hold_*), tiempo de
+# adquisicion (settle) y sacudida por impactos (shock). El disparo sale de ESA
+# orientacion en el instante del gatillo — nunca de un vector perfecto
+# calculado hacia el objetivo en el ultimo tick.
+const BOT_AIM_SLEW_DEG := 150.0     # velocidad angular base de la mira
+const BOT_AIM_ACQUIRE_SEC := 0.4    # tiempo minimo asentando antes de disparar
+const BOT_RECOIL_RECOVER := 3.0     # = _recoil_recover_speed del jugador
+const BOT_AIM_SHOCK_DECAY := 1.4    # la sacudida por impacto se va a este ritmo
+const BOT_BULLET_DRAG := 0.12       # = RifleProjectile.drag_coeff por defecto
+const BOT_LEAD_MIN := 0.45
+const BOT_LEAD_MAX := 0.92
+
+func _bot_aim_st(b: Dictionary) -> Dictionary:
+	var a = b.get("_aim")
+	if a is Dictionary:
+		return a
+	a = {"dir": Vector3.ZERO, "rp": 0.0, "ry": 0.0, "breath_t": randf() * 7.0,
+		"hold_on": false, "hold_t": 0.0, "hold_rec": 0.0, "settle": 0.0,
+		"tgt": 0, "shock": 0.0, "last_pt": Vector3.INF}
+	b["_aim"] = a
+	return a
+
+# Decaimiento continuo (retroceso, sacudida, contencion): corre cada tick como
+# en el jugador, este apuntando o no.
+func _bot_aim_decay(b: Dictionary, delta: float) -> void:
+	var a = b.get("_aim")
+	if not (a is Dictionary):
+		return
+	if not bool(b.get("is_aiming", false)):
+		a["hold_on"] = false
+	var decay := 1.0 - exp(-BOT_RECOIL_RECOVER * delta)
+	a["rp"] = lerpf(float(a["rp"]), 0.0, decay)
+	a["ry"] = lerpf(float(a["ry"]), 0.0, decay * 0.6)
+	a["shock"] = maxf(0.0, float(a["shock"]) - BOT_AIM_SHOCK_DECAY * delta)
+	a["hold_rec"] = maxf(0.0, float(a["hold_rec"]) - delta)
+	if bool(a["hold_on"]):
+		a["hold_t"] = float(a["hold_t"]) + delta
+		if float(a["hold_t"]) >= PlayerController.BREATH_HOLD_DURATION:
+			a["hold_on"] = false
+			a["hold_rec"] = 4.0
+
+func _bot_energy(b: Dictionary) -> float:
+	var st: SurvivalStats = b.get("vstats")
+	return st.energy if st != null else float(b.get("energy", 100.0))
+
+func _bot_is_moving(b: Dictionary) -> bool:
+	return str(b.get("anim", "")) == "walk" or str(b.get("anim", "")) == "run"
+
+# Parametros por familia de arma: velocidad de salida, drag del proyectil,
+# aumento de la mira (afecta a la oscilacion) y si es proyectil "primitivo"
+# (compensacion de caida 0.5*g*t^2 como el arco del jugador).
+func _bot_aim_weapon_params(kind: String) -> Dictionary:
+	match kind:
+		"m4":
+			return {"speed": PlayerController.M4_MUZZLE_SPEED, "drag": BOT_BULLET_DRAG, "mag": 1.35, "primitive": false}
+		"sniper":
+			return {"speed": PlayerController.RIFLE_MUZZLE_SPEED, "drag": BOT_BULLET_DRAG, "mag": 4.0, "primitive": false}
+		"bow":
+			return {"speed": 80.0, "drag": 0.30, "mag": 1.45, "primitive": true}
+		_:
+			return {"speed": 58.0, "drag": 0.28, "mag": 1.25, "primitive": true}
+
+func _bot_projectile_flight_time(dist: float, speed: float, drag: float) -> float:
+	# x(t) = v0/k·(1-e^-kt) -> t = -ln(1-x·k/v0)/k (misma forma que el jugador)
+	var arg := 1.0 - dist * drag / maxf(speed, 1.0)
+	if arg <= 0.05 or drag <= 0.001:
+		return dist / speed
+	return -log(arg) / drag
+
+# Punto al que la mira DEBERIA ir: pecho del objetivo + adelanto por su
+# velocidad medida (nunca posiciones futuras) + compensacion de caida.
+func _bot_aim_point(b: Dictionary, target: Node3D, dist: float, kind: String) -> Vector3:
+	var params := _bot_aim_weapon_params(kind)
+	var pt := target.global_position + Vector3(0.0, 1.02, 0.0)
+	var vel := _bot_target_velocity(b, target)
+	var ft := _bot_projectile_flight_time(dist, float(params["speed"]), float(params["drag"]))
+	# Adelanto imperfecto: mejora con la experiencia (bajas acreditadas),
+	# nunca exacto.
+	var mstats: Dictionary = (b.get("_mem", {}) as Dictionary).get("stats", {})
+	var kills := int(mstats.get("kills_prey", 0)) + int(mstats.get("kills_predator", 0)) + int(mstats.get("kills_bot", 0)) + int(mstats.get("kills_player", 0))
+	var lead := clampf(BOT_LEAD_MIN + float(kills) * 0.035, BOT_LEAD_MIN, BOT_LEAD_MAX)
+	pt += vel * ft * lead
+	if bool(params["primitive"]):
+		pt.y += 0.5 * 9.81 * ft * ft
+	else:
+		var v0 := float(params["speed"])
+		var k := float(params["drag"])
+		pt.y += 9.81 / maxf(0.02, k) * (ft - dist / v0)
+	return pt
+
+# Un tick de punteria: gira la mira hacia el punto deseado con velocidad
+# angular limitada y devuelve el error angular actual en grados. Sin linea de
+# tiro, el punto deseado es la ULTIMA posicion conocida — la posicion viva del
+# nodo no entra.
+func _bot_aim_tick(b: Dictionary, foe: Node3D, dist: float, clear_los: bool, delta: float, kind: String) -> float:
+	var a := _bot_aim_st(b)
+	var proxy: Node3D = b["proxy"]
+	var tid := int(foe.get_instance_id())
+	if int(a["tgt"]) != tid:
+		# Cambio de objetivo: la mira no salta — gira desde donde estaba, con
+		# penalizacion extra de re-adquisicion.
+		a["tgt"] = tid
+		a["settle"] = 0.0
+		a["shock"] = minf(1.8, float(a["shock"]) + 0.25)
+	var pt := Vector3.INF
+	if clear_los:
+		pt = _bot_aim_point(b, foe, dist, kind)
+	else:
+		var fm: Dictionary = b.get("_foe_mem", {})
+		var fpos = fm.get("pos", Vector3.INF)
+		pt = fpos if fpos is Vector3 and fpos != Vector3.INF else Vector3(a["last_pt"])
+	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if bool(b.get("crouching", false)) else 1.4), 0.0)
+	if pt == Vector3.INF:
+		pt = origin + Vector3(a["dir"]).normalized() * maxf(dist, 10.0)
+	a["last_pt"] = pt
+	var desired := (pt - origin).normalized()
+	var cur := Vector3(a["dir"]).normalized()
+	if cur.length_squared() < 0.5:
+		# Primera adquisicion: la mira arranca desviada, no clavada.
+		cur = desired.rotated(Vector3.UP, deg_to_rad(randf_range(-14.0, 14.0)))
+	var ang := cur.angle_to(desired)
+	# Velocidad angular: peor moviendo, agotado o recien impactado; la
+	# agresividad acelera algo el giro (no la precision).
+	var pers: Dictionary = _get_bot_personality(b)
+	var rate := BOT_AIM_SLEW_DEG * (0.85 + float(pers.get("aggression", 0.5)) * 0.35)
+	if _bot_is_moving(b):
+		rate *= 0.55
+	var energy_now := _bot_energy(b)
+	if energy_now < 30.0:
+		rate *= 0.55 + energy_now * 0.015
+	rate *= 1.0 - minf(0.45, float(a["shock"]) * 0.3)
+	var t := minf(1.0, deg_to_rad(rate) * delta / maxf(ang, 0.0001))
+	cur = cur.slerp(desired, t).normalized()
+	a["dir"] = cur
+	a["breath_t"] = float(a["breath_t"]) + delta
+	a["settle"] = float(a["settle"]) + delta
+	# Contencion de respiracion: el prudente la usa en tiros largos con la
+	# mira ya asentada — mismos 15 s + 4 s de recuperacion que el jugador.
+	if bool(b.get("is_aiming", false)) and not _bot_is_moving(b) and not bool(a["hold_on"]):
+		var careful := float(pers.get("survival_instinct", 0.5)) > 0.55 or float(pers.get("aggression", 0.5)) < 0.4
+		if careful and dist > 18.0 and float(a["settle"]) > 0.8 and float(a["hold_rec"]) <= 0.0:
+			a["hold_on"] = true
+			a["hold_t"] = 0.0
+	return rad_to_deg(cur.angle_to(desired))
+
+# Oscilacion de respiracion en el instante (misma formula del jugador):
+# amplitud por arma y aumento, fatiga, postura; cero bajo contencion.
+func _bot_breath_offsets(b: Dictionary, kind: String) -> Vector2:
+	var a := _bot_aim_st(b)
+	if bool(a["hold_on"]) or not bool(b.get("is_aiming", false)) or _bot_is_moving(b):
+		return Vector2.ZERO
+	var energy_now := _bot_energy(b)
+	var fatigue := 1.0 + (1.0 - clampf(energy_now / 100.0, 0.0, 1.0)) * 1.5
+	var p_amp := 0.65
+	var y_amp := 0.48
+	if kind != "m4":
+		var mag_scale := sqrt(4.0 / float(_bot_aim_weapon_params(kind)["mag"]))
+		p_amp = 0.35 * mag_scale
+		y_amp = 0.25 * mag_scale
+	var stance := 0.12 if bool(b.get("prone", false)) else (0.28 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 1.0)
+	var shock := 1.0 + float(a["shock"]) * 1.2
+	var tt := float(a["breath_t"])
+	return Vector2(deg_to_rad(p_amp * fatigue * stance * shock) * sin(tt * 1.2),
+		deg_to_rad(y_amp * fatigue * stance * shock) * sin(tt * 0.8))
+
+# Dispersion del arma — copia exacta de PlayerController._current_spread_deg.
+func _bot_current_spread_deg(b: Dictionary, is_m4: bool) -> float:
+	var a := _bot_aim_st(b)
+	var spread_deg := 0.6
+	if bool(b.get("crouching", false)) or bool(b.get("sitting", false)):
+		spread_deg = 0.20
+	if bool(b.get("prone", false)):
+		spread_deg = 0.08
+	if bool(b.get("is_aiming", false)):
+		spread_deg = 0.006 if bool(b.get("prone", false)) else (0.012 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 0.025)
+		if bool(a["hold_on"]):
+			spread_deg *= 0.7
+	if is_m4:
+		spread_deg *= PlayerController.M4_SPREAD_MULT
+	if _bot_is_moving(b):
+		spread_deg *= 2.5
+	return minf(spread_deg, 12.0)
+
+# Retroceso tras un disparo — copia de PlayerController._apply_rifle_recoil:
+# la mira sube (rp) y deriva a un lado (ry), y se recupera con el tiempo.
+func _bot_apply_rifle_recoil(b: Dictionary, is_m4: bool) -> void:
+	var a := _bot_aim_st(b)
+	var recoil_kick := PlayerController.M4_RECOIL if is_m4 else 8.0
+	if bool(b.get("prone", false)):
+		recoil_kick *= 0.375
+	elif bool(b.get("crouching", false)):
+		recoil_kick *= 0.625
+	if bool(b.get("is_aiming", false)):
+		recoil_kick *= 0.7
+	a["rp"] = float(a["rp"]) + deg_to_rad(recoil_kick)
+	a["ry"] = float(a["ry"]) + deg_to_rad(randf_range(-recoil_kick * 0.4, recoil_kick * 0.4))
+	# El propio disparo tambien descompone la mira: el bot necesita un rato
+	# para volver a colocar el arma sobre el objetivo.
+	a["shock"] = minf(1.8, float(a["shock"]) + 0.12)
+
+# Direccion eficaz del disparo en este instante: orientacion de la mira +
+# retroceso + oscilacion de respiracion + disco uniforme de dispersion —
+# exactamente la composicion del jugador.
+func _bot_aim_fire_dir(b: Dictionary, kind: String, spread_deg: float) -> Vector3:
+	var a := _bot_aim_st(b)
+	var base := Vector3(a["dir"])
+	if base.length_squared() < 0.5:
+		# Mira sin adquirir aun (liberacion de arco sin combate previo, tests):
+		# el arma va donde mira el cuerpo, nunca instantaneamente al enemigo.
+		base = -(b["proxy"] as Node3D).global_transform.basis.z
+	base = base.normalized()
+	var right := base.cross(Vector3.UP)
+	if right.length_squared() < 0.01:
+		right = Vector3.RIGHT
+	right = right.normalized()
+	var sway := _bot_breath_offsets(b, kind)
+	# rp>0 = arma levantada por el retroceso; sway.x>0 = mira alta ese instante.
+	var dir := base.rotated(right, float(a["rp"]) + sway.x).rotated(Vector3.UP, float(a["ry"]) + sway.y).normalized()
+	var spr := deg_to_rad(spread_deg)
+	var ang := randf() * TAU
+	var rad := sqrt(randf()) * tan(spr)
+	var up := right.cross(dir).normalized()
+	return (dir + right * cos(ang) * rad + up * sin(ang) * rad).normalized()
+
+# Alineacion que exige antes de apretar el gatillo: el tamaño angular del
+# blanco pone el techo (a 10 m hay margen, a 50 m hay que estar encima). El
+# agresivo dispara antes de asentar; el prudente espera.
+func _bot_trigger_tolerance_deg(b: Dictionary, dist: float) -> float:
+	var pers: Dictionary = _get_bot_personality(b)
+	var base := clampf(rad_to_deg(atan2(0.42, maxf(dist, 2.0))) * 1.9, 0.8, 4.5)
+	return base * (0.75 + float(pers.get("aggression", 0.5)) * 0.9)
+
+func _bot_acquire_sec(b: Dictionary) -> float:
+	var pers: Dictionary = _get_bot_personality(b)
+	return BOT_AIM_ACQUIRE_SEC * (1.35 - float(pers.get("aggression", 0.5)) * 0.9)
+
+# Puerta comun del gatillo: un tick de punteria + mira asentada + alineada
+# dentro de la tolerancia. Devuelve true cuando el disparo fisico puede salir.
+# Usada por todos los caminos de fuego (combate, depredadores, caza, vigia).
+func _bot_fire_ready(b: Dictionary, target: Node3D, dist: float, clear_los: bool, delta: float, kind: String) -> bool:
+	var err := _bot_aim_tick(b, target, dist, clear_los, delta, kind)
+	if not clear_los:
+		return false
+	return err <= _bot_trigger_tolerance_deg(b, dist) and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b)
+
+# Coste de energia del disparo, igual que el jugador (M4 1.2 / franco 3.0 /
+# arco 3.5 / arrojadiza 6.0): agotado no se dispara igual que el humano.
+func _bot_shot_energy_cost(kind: String) -> float:
+	match kind:
+		"m4": return PlayerController.M4_ENERGY_COST
+		"sniper": return 3.0
+		"bow": return 3.5
+		_: return 6.0
+
+func _bot_pay_shot_energy(b: Dictionary, kind: String) -> bool:
+	var cost := _bot_shot_energy_cost(kind)
+	var st: SurvivalStats = b.get("vstats")
+	var en := st.energy if st != null else float(b.get("energy", 100.0))
+	if en < cost:
+		return false
+	if st != null:
+		st.energy = maxf(0.0, st.energy - cost)
+	b["energy"] = maxf(0.0, en - cost)
+	return true
+
+# Registro para depuracion/tests: lo ultimo que salio del arma con el estado
+# de punteria en ese instante.
+func _bot_log_shot(b: Dictionary, weapon: String, origin: Vector3, dir: Vector3, spread: float, foe: Node3D) -> void:
+	var a := _bot_aim_st(b)
+	var log_arr: Array = b.get("_shot_log", [])
+	log_arr.append({"t": Time.get_ticks_msec(), "weapon": weapon, "origin": origin, "dir": dir,
+		"aim_dir": Vector3(a["dir"]), "recoil": Vector2(float(a["rp"]), float(a["ry"])),
+		"spread": spread, "dist": origin.distance_to(foe.global_position) if foe != null else -1.0,
+		"moving": _bot_is_moving(b), "crouch": bool(b.get("crouching", false)), "prone": bool(b.get("prone", false)),
+		"energy": _bot_energy(b)})
+	if log_arr.size() > 24:
+		log_arr.pop_front()
+	b["_shot_log"] = log_arr
+
+# Viento de disparo del bot: el que sopla en el mundo (observacion meteo)
+# en m/s — equivalente al _wind_dir*_wind_strength local del jugador.
+func _bot_shot_wind() -> Vector3:
+	if world == null or not world.has_method("_get_weather_observation"):
+		return Vector3.ZERO
+	# _get_weather_observation lee hud.* en la rama local: sin HUD ni red
+	# conectada (mundo de pruebas) no hay observacion — viento cero.
+	var wnet = world.get("net")
+	if not (wnet != null and bool(wnet.get("is_connected"))) and world.get("hud") == null:
+		return Vector3.ZERO
+	var obs: Dictionary = world._get_weather_observation()
+	var sp := float(obs.get("wind_speed", 0.0)) / 3.6  # km/h -> m/s
+	var dir := deg_to_rad(float(obs.get("wind_direction", 0.0)))
+	return Vector3(-sin(dir), 0.0, cos(dir)) * sp * 0.35
 
 func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float, weapon := "") -> void:
 	var _cpt := Time.get_ticks_usec()
@@ -5008,7 +5331,9 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float, weapon := "")
 			_bot_fire_rifle_round(b, target, dmg, weapon)
 		)
 
-# Una bala del bot: linea de tiro + municion + proyectil/RPC + daño.
+# Una bala del bot: sale de la orientacion REAL de la mira (adquisicion +
+# respiracion + retroceso + dispersion, las reglas del jugador) y vuela como
+# proyectil fisico — el daño solo existe si la trayectoria intersecta.
 func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: String) -> void:
 	var _cpt := Time.get_ticks_usec()
 	var proxy: Node3D = b["proxy"]
@@ -5016,43 +5341,39 @@ func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: St
 	if not is_instance_valid(proxy) or not is_instance_valid(target) or not _has_clear_shot(proxy.global_position, target.global_position):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.recheck_fail", _cpt)
 		return
+	var is_m4 := _bot_gun_is_m4(weapon)
+	var kind := "m4" if is_m4 else "sniper"
+	# Coste de energia del disparo — el mismo que el jugador: un bot agotado
+	# no puede disparar igual que un jugador agotado no puede. Se comprueba
+	# ANTES de consumir la bala para no perderla en un intento abortado.
+	if not _bot_pay_shot_energy(b, kind):
+		if CombatProf.enabled: CombatProf.mark("bot_fire.tired", _cpt)
+		return
 	if not _bot_gun_prepare_shot(b, weapon):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.no_ammo", _cpt)
 		return
 	var bot_id := int(b["bot_id"])
-	var origin := proxy.global_position + Vector3(0.0, 1.4, 0.0)
-	var aim_pos := target.global_position + Vector3(0.0, 1.0, 0.0)
-	var dist := origin.distance_to(aim_pos)
-	var dir := (aim_pos - origin).normalized()
-	# Punteria humana, no laser: el fallo crece con la distancia y con la
-	# velocidad del blanco; los agresivos mantienen algo mas la calma.
-	var spd := _bot_target_speed(b, target)
-	var aggr := float(_get_bot_personality(b).get("aggression", 0.5))
-	var hits := randf() >= _bot_rifle_miss_chance(dist, spd, aggr)
-	if not hits:
-		# El fogonazo sale igual pero desviado ~1 paso del blanco: el jugador
-		# ve el tracero pasar de largo en vez de un daño automatico.
-		var off := Vector3(randf_range(-1.0, 1.0), randf_range(-0.35, 0.85), randf_range(-1.0, 1.0)).normalized() * randf_range(0.7, 1.7)
-		dir = (aim_pos + off - origin).normalized()
+	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if bool(b.get("crouching", false)) else 1.4), 0.0)
+	var spread := _bot_current_spread_deg(b, is_m4)
+	var dir := _bot_aim_fire_dir(b, kind, spread)
+	_bot_log_shot(b, weapon, origin, dir, spread, target)
+	var shot_wind := _bot_shot_wind()
 	if world.has_method("_net_player_shot_rifle"):
-		world._net_player_shot_rifle(bot_id, origin, dir, Vector3.ZERO)
+		world._net_player_shot_rifle(bot_id, origin, dir, shot_wind)
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
-				net.player_shot_rifle.rpc_id(pid, bot_id, origin, dir, Vector3.ZERO)
-	if not hits:
-		if CombatProf.enabled: CombatProf.mark("bot_fire.miss", _cpt)
-		return
-	if target is WildlifeController or target.is_in_group("wildlife"):
-		if target.has_method("take_damage"):
-			target.take_damage(dmg, false, proxy)
-		if bool(target.get("_is_dead")):
-			_bot_credit_kill(b, target)
-			_bot_start_gutting(b, target)
-	else:
-		_apply_bot_damage_to_target(b, target, dmg, "rifle")
-	if CombatProf.enabled: CombatProf.mark("bot_fire.hit", _cpt)
+				net.player_shot_rifle.rpc_id(pid, bot_id, origin, dir, shot_wind)
+	# Proyectil real en el servidor: gravedad, drag, viento, paredes y
+	# capsulas de supervivientes deciden el impacto — la decision de acierto
+	# ya no existe.
+	var muzzle_speed := PlayerController.M4_MUZZLE_SPEED if is_m4 else PlayerController.RIFLE_MUZZLE_SPEED
+	_bot_launch_projectile(b, origin, dir, weapon, muzzle_speed, PlayerController.RIFLE_RANGE, dmg, false, "rifle", BOT_BULLET_DRAG, shot_wind)
+	# Retroceso DESPUES de capturar la direccion (como el jugador): esta bala
+	# sale limpia y la siguiente paga el levantamiento — en rafaga M4 las
+	# balas 2 y 3 heredan el retroceso acumulado, sin re-apuntar perfecto.
+	_bot_apply_rifle_recoil(b, is_m4)
 
 # Daño base de cada flecha, igual que en el arco del jugador.
 func _bot_arrow_base_damage(arrow_name: String) -> float:
@@ -5073,23 +5394,47 @@ func _bot_projectile_drag(item_name: String) -> float:
 		"Boleadoras": return 0.40
 	return 0.30
 
-# El bot dispara con arco igual que un jugador: consume la mejor flecha,
-# gasta durabilidad del arco, lanza el proyectil real en el servidor y
-# avisa a los clientes para que vean la flecha volar.
+# El bot tensa el arco como un jugador: el disparo no sale en el instante de
+# la decision — hay un tiempo de preparacion (BOW_RELEASE_DELAY) durante el
+# que la mira sigue moviendose, y la flecha sale con la orientacion REAL en
+# el momento de la liberacion. Consume la mejor flecha, gasta durabilidad,
+# lanza el proyectil real en el servidor y avisa a los clientes.
 func _bot_fire_bow(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
-	var bot_id := int(b["bot_id"])
+	if bool(b.get("_bow_drawing", false)):
+		return  # ya esta tensando: el arco no dispara dos veces
+	# Energia para tensar: la misma puerta que el jugador (3.5).
+	if _bot_energy(b) < 3.5:
+		return
+	if _bot_arrow_count(proxy) <= 0:
+		return
+	b["_bow_drawing"] = true
+	var mgr = self
+	get_tree().create_timer(PlayerController.BOW_RELEASE_DELAY, false).timeout.connect(func():
+		if is_instance_valid(mgr):
+			mgr._bot_bow_release(b, foe, bow_name))
+
+# La liberacion: la flecha sale con la mira de ESE momento (la oscilacion ha
+# seguido corriendo durante la preparacion) + compensacion de caida real.
+func _bot_bow_release(b: Dictionary, foe: Node3D, bow_name: String) -> void:
+	b["_bow_drawing"] = false
+	var proxy: Node3D = b["proxy"]
+	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
+		return
+	if not _bot_pay_shot_energy(b, "bow"):
+		return
 	var arrow_name := _consume_bot_arrow(proxy)
 	if arrow_name.is_empty():
 		return
 	_reduce_bot_item_durability(proxy, bow_name, 2.0)
-	var origin := proxy.global_position + Vector3(0.0, 1.5, 0.0)
-	var aim_pos := foe.global_position + Vector3(0.0, 1.0, 0.0)
-	var dir := (aim_pos - origin).normalized()
-	# Pequeña dispersion como en el tiro humano
-	dir = (dir + Vector3(randf_range(-0.018, 0.018), randf_range(-0.012, 0.012), randf_range(-0.018, 0.018))).normalized()
+	var bot_id := int(b["bot_id"])
+	var origin := proxy.global_position + Vector3(0.0, 1.0 if bool(b.get("crouching", false)) else 1.5, 0.0)
+	var dir := _bot_aim_fire_dir(b, "bow", _bot_current_spread_deg(b, false) * 0.6)
 	var speed := 95.0 if bow_name == "Arco reforzado" else 75.0
+	if arrow_name == "Flecha improvisada":
+		speed *= 0.80  # igual que el jugador: el astil desnudo sale mas lento
 	var dmg := _bot_arrow_base_damage(arrow_name) * (1.18 if bow_name == "Arco reforzado" else 1.0)
+	_bot_log_shot(b, bow_name, origin, dir, 0.0, foe if is_instance_valid(foe) else null)
 	_broadcast_bot_projectile(bot_id, origin, dir, arrow_name, speed)
 	# Alerta a la fauna cercana (el RPC devuelve limpio: el proxy no es un jugador)
 	if world.has_method("_net_primitive_shot"):
@@ -5097,16 +5442,19 @@ func _bot_fire_bow(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 	_bot_launch_projectile(b, origin, dir, arrow_name, speed, 140.0, dmg, false)
 
 # Lanzas, palo afilado y boleadoras: el arma no se consume (solo durabilidad),
-# como al recogerla del suelo tras el lanzamiento.
+# como al recogerla del suelo tras el lanzamiento. La direccion sale de la
+# mira real — preparacion, oscilacion y fatiga como cualquier otro arma.
 func _bot_fire_thrown(b: Dictionary, foe: Node3D, item_name: String, is_bola: bool) -> void:
 	var proxy: Node3D = b["proxy"]
 	var bot_id := int(b["bot_id"])
+	# Energia para lanzar: la misma puerta que el jugador (6.0).
+	if not _bot_pay_shot_energy(b, "throw"):
+		return
 	_reduce_bot_item_durability(proxy, item_name, 3.0)
-	var origin := proxy.global_position + Vector3(0.0, 1.4, 0.0)
-	var aim_pos := foe.global_position + Vector3(0.0, 0.9, 0.0)
-	var dir := (aim_pos - origin).normalized()
-	dir = (dir + Vector3(randf_range(-0.015, 0.015), randf_range(-0.01, 0.01), randf_range(-0.015, 0.015))).normalized()
+	var origin := proxy.global_position + Vector3(0.0, 1.0 if bool(b.get("crouching", false)) else 1.4, 0.0)
+	var dir := _bot_aim_fire_dir(b, "throw", _bot_current_spread_deg(b, false) * 0.6)
 	var speed := 55.0 if is_bola else 60.0
+	_bot_log_shot(b, item_name, origin, dir, 0.0, foe)
 	_broadcast_bot_projectile(bot_id, origin, dir, item_name, speed)
 	if world.has_method("_net_primitive_shot"):
 		world._net_primitive_shot(bot_id, origin, dir, item_name, speed)
@@ -5123,18 +5471,22 @@ func _broadcast_bot_projectile(bot_id: int, origin: Vector3, dir: Vector3, item_
 
 # Proyectil real en el servidor (autoritativo): vuela con fisica y al impactar
 # aplica el daño. Los clientes ven la copia visual del RPC anterior.
-func _bot_launch_projectile(b: Dictionary, origin: Vector3, dir: Vector3, item_name: String, speed: float, max_dist: float, dmg_base: float, is_bola: bool) -> void:
+# weapon_kind etiqueta el daño ("rifle"/"bow"/"melee"/"bola"); -1 en drag usa
+# la tabla por tipo de proyectil; wind es la velocidad de viento del disparo.
+func _bot_launch_projectile(b: Dictionary, origin: Vector3, dir: Vector3, item_name: String, speed: float, max_dist: float, dmg_base: float, is_bola: bool, weapon_kind := "", drag := -1.0, wind := Vector3.ZERO) -> void:
 	if world == null or not (world is Node3D):
 		return
 	var proxy: Node3D = b["proxy"]
 	var projectile: Node3D = preload("res://scripts/RifleProjectile.gd").new()
 	projectile.velocity = dir.normalized() * speed
 	projectile.max_distance = max_dist
+	projectile.wind_velocity = wind
+	projectile.shooter = proxy
 	var excl: Array[RID] = []
 	if proxy is CollisionObject3D:
 		excl.append(proxy.get_rid())
 	projectile.excluded = excl
-	projectile.drag_coeff = _bot_projectile_drag(item_name)
+	projectile.drag_coeff = drag if drag >= 0.0 else _bot_projectile_drag(item_name)
 	projectile.launch_speed = speed
 	projectile.align_flight = item_name.begins_with("Flecha") or item_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
 	projectile.spin_speed = 22.0 if is_bola else 0.0
@@ -5143,9 +5495,9 @@ func _bot_launch_projectile(b: Dictionary, origin: Vector3, dir: Vector3, item_n
 	projectile.look_at(origin + dir.normalized(), Vector3.UP if absf(dir.normalized().y) < 0.97 else Vector3.FORWARD)
 	var bot_ref: Dictionary = b
 	projectile.impact.connect(func(collider, hit_pos: Vector3, _dist: float, _normal: Vector3):
-		_on_bot_projectile_impact(bot_ref, projectile, collider, hit_pos, dmg_base, is_bola))
+		_on_bot_projectile_impact(bot_ref, projectile, collider, hit_pos, dmg_base, is_bola, weapon_kind))
 
-func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_pos: Vector3, dmg_base: float, is_bola: bool) -> void:
+func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_pos: Vector3, dmg_base: float, is_bola: bool, weapon_kind := "") -> void:
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
 		return
@@ -5161,6 +5513,10 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 				target = walked
 				break
 			walked = walked.get_parent()
+	# Impacto por capsula (proxy sin fisica): cabeza = tercio superior.
+	if target != null and not is_headshot and (target.is_in_group("net_player_proxy") or target.is_in_group("ai_survivor_bot")):
+		var top := 0.55 if bool(target.get_meta("prone", false)) or bool(target.get_meta("sleeping", false)) else (1.25 if bool(target.get_meta("crouching", false)) or bool(target.get_meta("sitting", false)) or bool(target.get_meta("saved_sitting", false)) else 1.72)
+		is_headshot = hit_pos.y - (target as Node3D).global_position.y >= top - 0.35
 	if target == null:
 		return
 	# Energia residual del proyectil: igual que en el impacto del jugador
@@ -5175,7 +5531,7 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 			_bot_credit_kill(b, target)
 			_bot_start_gutting(b, target)
 	else:
-		var wname := "rifle" if dmg_base > 100.0 else ("bola" if is_bola else "melee")
+		var wname := weapon_kind if not weapon_kind.is_empty() else ("rifle" if dmg_base > 100.0 else ("bola" if is_bola else "melee"))
 		_apply_bot_damage_to_target(b, target, dmg, wname)
 
 func _apply_bot_damage_to_target(b: Dictionary, target: Node3D, amount: float, weapon: String) -> void:
@@ -5216,6 +5572,10 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	b["health"] = hp
 	proxy.set_meta("proxy_health", hp)
 	proxy.set_meta("saved_health", hp)
+	# Recibir un impacto descompone la punteria (jugador: _recoil_pitch en
+	# _net_apply_damage). La sacudida se recupera con el tiempo.
+	var aim_hit := _bot_aim_st(b)
+	aim_hit["shock"] = minf(1.8, float(aim_hit["shock"]) + amount / 42.0)
 
 	# Aprendizaje conductual por daño real: registrar riesgo en la zona y, si el
 	# atacante es un jugador/bot, actualizar relación social (desconfianza/hostilidad/miedo).
@@ -5673,7 +6033,7 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 	var d_goal := Vector2(cur.x - fgoal.x, cur.z - fgoal.z).length()
 	if d_goal > 1.7 or separated_by_structure:
 		var leader_sprinting: bool = bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true)
-		var should_run: bool = not bool(b["crouching"]) and (d_goal > 7.0 or (d_goal > 3.0 and leader_sprinting))
+		var should_run: bool = not bool(b.get("crouching", false)) and (d_goal > 7.0 or (d_goal > 3.0 and leader_sprinting))
 		var spd := 6.8 if should_run else 4.2
 		var clip := "run" if should_run else "walk"
 		_move_bot_towards(b, fgoal, spd, delta, clip)
@@ -6127,7 +6487,9 @@ func _bot_overwatch_fight(b: Dictionary, foe: Node3D, delta: float) -> bool:
 		proxy.rotation.y = float(b["rot"])
 	var clear := _has_clear_shot(cur, foe.global_position)
 	b["is_aiming"] = clear
-	if clear and float(b["shoot_cooldown"]) <= 0.0:
+	var ow_kind := "m4" if weapon == "Fusil de asalto" else ("sniper" if wkind == "rifle" else wkind)
+	var ow_ready := _bot_fire_ready(b, foe, dist, clear, delta, ow_kind)
+	if ow_ready and float(b["shoot_cooldown"]) <= 0.0:
 		match wkind:
 			"rifle":
 				b["shoot_cooldown"] = (1.15 if weapon == "Fusil de asalto" else 1.85) + randf_range(0.0, 0.45)
