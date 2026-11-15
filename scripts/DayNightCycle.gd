@@ -21,6 +21,51 @@ var moon_illumination := 1.0
 
 var _real_time_initialized := false
 var _lighting_update_accum := 999.0
+# Sol estacional: amanecer/atardecer de la fecha real del sistema. En
+# noviembre (~40 N) sale ~8:10 y se pone ~17:55; en junio ~6:40/~21:20.
+var _sunrise := 6.0
+var _sunset := 21.0
+var _solar_noon := 13.5
+var _peak_elevation := 68.0
+var _season_day := -1
+
+const _MONTH_DAYS := [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+func _ready() -> void:
+	_apply_seasonal_sun()
+
+func _day_of_year(y: int, m: int, d: int) -> int:
+	var n := d
+	for i in m - 1:
+		n += _MONTH_DAYS[i]
+	if m > 2 and ((y % 4 == 0 and y % 100 != 0) or y % 400 == 0):
+		n += 1
+	return n
+
+# Amanecer/atardecer de verdad para la fecha de hoy: declinacion solar por
+# dia del año, horas de luz por latitud, mediodia solar corregido por huso
+# horario local, longitud y ecuacion del tiempo. Escribe los umbrales unicos
+# de GameConst para que bots, supervivencia y cielo sigan el mismo sol.
+func _apply_seasonal_sun() -> void:
+	var date := Time.get_date_dict_from_system()
+	var n := _day_of_year(int(date.year), int(date.month), int(date.day))
+	var decl := deg_to_rad(-23.44) * cos(TAU * float(n + 10) / 365.0)
+	var cos_h := clampf(-tan(deg_to_rad(GameConst.WORLD_LATITUDE)) * tan(decl), -0.98, 0.98)
+	var daylight := 2.0 * rad_to_deg(acos(cos_h)) / 15.0
+	var b_ang := TAU * float(n - 81) / 364.0
+	var eot := 9.87 * sin(2.0 * b_ang) - 7.53 * cos(b_ang) - 1.5 * sin(b_ang)
+	var tz_bias := float(Time.get_time_zone_from_system().get("bias", 60)) / 60.0
+	_solar_noon = 12.0 + tz_bias - GameConst.WORLD_LONGITUDE / 15.0 - eot / 60.0
+	_sunrise = _solar_noon - daylight * 0.5
+	_sunset = _solar_noon + daylight * 0.5
+	_peak_elevation = 90.0 - absf(GameConst.WORLD_LATITUDE - rad_to_deg(decl))
+	GameConst.DAWN_START = _sunrise - 0.55
+	GameConst.NIGHT_END = _sunrise - 0.25
+	GameConst.SUNRISE_END = _sunrise + 0.55
+	GameConst.PREP_START = _sunset - 2.6
+	GameConst.DUSK_START = _sunset - 0.85
+	GameConst.NIGHT_START = _sunset + 0.65
+	_season_day = int(Time.get_unix_time_from_system() / 86400.0)
 
 func _process(delta: float) -> void:
 	_lighting_update_accum += delta
@@ -38,6 +83,8 @@ func _process(delta: float) -> void:
 	elif not fixed_time:
 		var dt := Time.get_time_dict_from_system(false)
 		time_of_day = float(dt.hour) + float(dt.minute) / 60.0 + float(dt.second) / 3600.0
+		if int(Time.get_unix_time_from_system() / 86400.0) != _season_day:
+			_apply_seasonal_sun()
 	var night := is_night()
 	if night and not last_was_night:
 		night_started.emit()
@@ -107,7 +154,7 @@ func get_ambient_temperature() -> float:
 	var day_amount: float = get_day_amount()
 	# Curva térmica templada realista (6 °C de noche .. 18-19 °C al mediodía),
 	# evitando el antiguo tope de 35 °C cuando Open-Meteo no está disponible.
-	var noon_warmth := maxf(0.0, cos((time_of_day - 15.0) * PI / 12.0))
+	var noon_warmth := maxf(0.0, cos((time_of_day - _solar_noon) * PI / 12.0))
 	return lerpf(6.0, 16.0, day_amount) + 3.0 * day_amount * noon_warmth
 
 func get_hour_text() -> String:
@@ -119,7 +166,7 @@ func skip_to_morning() -> void:
 	if fixed_time:
 		time_of_day = 12.0
 	else:
-		time_of_day = 7.0
+		time_of_day = GameConst.SUNRISE_END + 0.3
 	last_was_night = false
 	_update_lighting()
 	time_changed.emit()
@@ -131,8 +178,8 @@ func _update_lighting() -> void:
 	var night_amount: float = 1.0 - day_amount
 	# Solar position follows the hour, not the daylight fade (which stays at
 	# 1 for most of the day). Dawn and dusk now cast opposite, long shadows.
-	var solar_phase := clampf((time_of_day - 5.5) / 16.0, 0.0, 1.0)
-	var elevation := sin(solar_phase * PI) * 68.0 - 4.0
+	var solar_phase := clampf((time_of_day - _sunrise) / maxf(_sunset - _sunrise, 0.5), 0.0, 1.0)
+	var elevation := sin(solar_phase * PI) * _peak_elevation - 4.0
 	var sun_height := smoothstep(0.0, 48.0, elevation)
 	var cloud := clampf(weather_cloud_cover, 0.0, 1.0)
 	var darkness := clampf(weather_darkness, 0.0, 1.0)

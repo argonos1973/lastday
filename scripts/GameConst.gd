@@ -18,14 +18,20 @@ const INTERACTION_CELL_SIZE := 4.0
 
 # -- DayNightCycle -------------------------------------------------------
 const LIGHTING_UPDATE_INTERVAL := 0.20
+# Posicion del mundo en el globo: de ella salen amanecer/atardecer reales.
+const WORLD_LATITUDE := 40.0    # peninsula iberica
+const WORLD_LONGITUDE := -3.7   # centro peninsular (mediodia solar ~13:00 CET)
 # Horario unico del mundo (hora decimal). Lo usan DayNightCycle y los bots:
-# ningun sistema define sus propios umbrales de dia/noche.
-const DAWN_START := 5.5     # primera luz
-const NIGHT_END := 6.0      # fin de la noche de reloj
-const SUNRISE_END := 7.0    # pleno dia
-const PREP_START := 16.5    # ultimas horas de luz plena: preparar la noche
-const DUSK_START := 19.5    # el sol empieza a caer (crepusculo)
-const NIGHT_START := 21.5   # noche de reloj
+# ningun sistema define sus propios umbrales de dia/noche. Son `static var`
+# porque DayNightCycle los recalcula al arrancar y cada medianoche a partir
+# de la fecha real del sistema — en noviembre el sol se pone ~18:00, en junio
+# ~21:30; los valores de abajo son los respaldos de arranque.
+static var DAWN_START := 5.5     # primera luz
+static var NIGHT_END := 6.0      # fin de la noche de reloj
+static var SUNRISE_END := 7.0    # pleno dia
+static var PREP_START := 16.5    # ultimas horas de luz plena: preparar la noche
+static var DUSK_START := 19.5    # el sol empieza a caer (crepusculo)
+static var NIGHT_START := 21.5   # noche de reloj
 const DARK_LIGHT := 0.35    # luz ambiente por debajo de la cual hace falta antorcha
 
 # -- Farming -------------------------------------------------------------
