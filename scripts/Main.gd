@@ -16485,9 +16485,12 @@ func _create_mountain_peak(node_name: String, pos: Vector3, radius_x: float, rad
 			"radius_x": radius_x,
 			"radius_z": radius_z,
 			"height": height,
-			"yaw_rad": deg_to_rad(yaw)
+			"yaw_rad": deg_to_rad(yaw),
+			"backdrop": node_name == "MountainPeak"
 		})
-		var cover := maxf(radius_x, radius_z)
+		# La malla sobrepasa el radio analitico: radial_mod llega a ~1.2-1.3 por
+		# las aretes — registrar con margen o el borde visible queda sin altura.
+		var cover := maxf(radius_x, radius_z) * 1.35
 		var hc0 := Vector2i(floori((pos.x - cover) / _HILL_CELL), floori((pos.z - cover) / _HILL_CELL))
 		var hc1 := Vector2i(floori((pos.x + cover) / _HILL_CELL), floori((pos.z + cover) / _HILL_CELL))
 		for hcx in range(hc0.x, hc1.x + 1):
@@ -18357,27 +18360,69 @@ func _get_ground_height(pos: Vector3) -> float:
 	var max_h := 0.0
 	var hcell := Vector2i(floori(pos.x / _HILL_CELL), floori(pos.z / _HILL_CELL))
 	for hill_idx in _hill_grid.get(hcell, []):
-		var hill: Dictionary = _generated_hills[hill_idx]
-		var dx_world: float = pos.x - hill.pos.x
-		var dz_world: float = pos.z - hill.pos.z
-		
-		# Rotación inversa para alinear con los ejes locales de la colina
-		var cos_y: float = cos(-hill.yaw_rad)
-		var sin_y: float = sin(-hill.yaw_rad)
-		var dx: float = dx_world * cos_y - dz_world * sin_y
-		var dz: float = dx_world * sin_y + dz_world * cos_y
-		
-		var rx: float = hill.radius_x
-		var rz: float = hill.radius_z
-		var dist_sq: float = (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz)
-		if dist_sq < 1.0:
-			var pct: float = sqrt(dist_sq)
-			var h: float = hill.pos.y + hill.height * pow(1.0 - pct, 0.85)
-			if h > max_h:
-				max_h = h
+		var h := _hill_surface_height(_generated_hills[hill_idx], pos.x, pos.z)
+		if h > max_h:
+			max_h = h
 	if _high_mountain_ready:
 		max_h = maxf(max_h, HighMountainZone.ground_height_at(pos))
 	return max_h
+
+# Altura real de la MALLA de la colina en (x,z): replica los vertices de
+# _create_mountain_peak (arêtes, barrancos, distorsion radial y semilla local)
+# en vez del elipsoide suave. La fauna/bots pisan lo que se ve — antes el
+# analitico era un ovalo liso y un oso sobre un filo esculpido volaba a varios
+# metros del suelo visible.
+func _hill_surface_height(hill: Dictionary, x: float, z: float) -> float:
+	var hpos: Vector3 = hill.pos
+	var dx_world: float = x - hpos.x
+	var dz_world: float = z - hpos.z
+	var cos_y: float = cos(-float(hill.yaw_rad))
+	var sin_y: float = sin(-float(hill.yaw_rad))
+	var lx: float = dx_world * cos_y - dz_world * sin_y
+	var lz: float = dx_world * sin_y + dz_world * cos_y
+	var rx: float = hill.radius_x
+	var rz: float = hill.radius_z
+	var u: float = lx / rx
+	var v: float = lz / rz
+	var rho: float = sqrt(u * u + v * v)
+	if rho > 1.35:
+		return 0.0
+	var angle: float = atan2(v, u)
+	var height: float = hill.height
+	var is_backdrop := bool(hill.get("backdrop", false))
+	var is_big_mtn := height >= 9.5 or is_backdrop
+	# Semilla local identica a la del generador de la malla.
+	var local_seed := int(round(hpos.x * 131.0)) ^ (int(round(hpos.z * 257.0)) << 8) ^ int(round(height * 97.0))
+	var phase_a := float(local_seed % 628) * 0.01
+	var phase_b := float((local_seed / 628) % 628) * 0.01
+	var visual_height := height * (1.85 if is_backdrop else 1.0)
+	# Barrido en el parametro t (0=borde, 1=cima): la superficie visible es la
+	# mas alta entre los anillos que cubren el punto (aristas no convexas).
+	var best := -1000.0
+	for i in range(29):
+		var t := float(i) / 28.0
+		var ridge_w := cos(angle * 4.0 + phase_a + t * 1.4) * 0.55 + sin(angle * 7.0 - phase_b - t * 1.9) * 0.45
+		var sharp_ridge := 1.0 - absf(ridge_w)
+		var gully := minf(0.0, ridge_w + 0.12)
+		var crag := sin(angle * 11.0 + t * 5.2 + phase_a) * 0.06
+		var radial_mod := 1.0
+		var y_base := visual_height * pow(t, 0.82 if is_big_mtn else 0.85)
+		var y_mod := 0.0
+		var flank_env := sin(t * PI)
+		if is_backdrop:
+			radial_mod = (0.86 + sharp_ridge * 0.28 + crag) * (1.0 - 0.14 * sin(angle * 3.0 + rx))
+			y_mod = (sharp_ridge * 3.8 + gully * 4.2 + sin(y_base * 0.55 + angle * 2.0) * 0.85) * flank_env
+		elif is_big_mtn:
+			radial_mod = (0.90 + sharp_ridge * 0.18 + crag * 0.6) * (1.0 - 0.12 * sin(angle * 3.0 + rx))
+			y_mod = (sharp_ridge * 1.45 + gully * 1.65 + sin(y_base * 0.65) * 0.42) * flank_env
+		else:
+			radial_mod = 0.94 + sharp_ridge * 0.09 - 0.08 * sin(angle * 3.0 + rx)
+			y_mod = (sharp_ridge * 0.18 + gully * 0.20) * flank_env
+		if (1.0 - t) * radial_mod >= rho:
+			var vy := maxf(0.0, y_base + y_mod)
+			if hpos.y + vy > best:
+				best = hpos.y + vy
+	return maxf(0.0, best)
 
 func _create_ground_clutter() -> void:
 	var total_clutter := int(45 * (MAP_EXTENT / 75.0) * (MAP_EXTENT / 75.0))
