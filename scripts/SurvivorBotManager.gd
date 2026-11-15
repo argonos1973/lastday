@@ -10799,11 +10799,36 @@ func _has_clear_shot(from_pos: Vector3, to_pos: Vector3) -> bool:
 	if CombatProf.enabled: CombatProf.mark("bot.clear_shot", _cpt)
 	return true
 
+# Horario unico: los bots leen el mismo ciclo que el resto del mundo
+# (DayNightCycle + GameConst), sin umbrales propios.
+# "Noche" para la conducta = oscuridad real: noche de reloj o luz ambiente
+# insuficiente (final del crepusculo, primera luz, tormenta al atardecer).
+# Mientras quede luz util el bot sigue con su jornada.
 func _is_world_night() -> bool:
-	if world != null and world.get("day_cycle") != null:
-		var tod := float(world.day_cycle.get("time_of_day"))
-		return tod < 6.2 or tod > 19.3
-	return false
+	var dc = world.get("day_cycle") if world != null else null
+	if dc == null:
+		return false
+	if dc.has_method("is_dark"):
+		return bool(dc.is_dark())
+	if dc.has_method("is_night"):
+		return bool(dc.is_night())
+	var wd = dc.get("weather_darkness")
+	return DayNightCycle.is_dark_at(float(dc.get("time_of_day")), float(wd) if wd != null else 0.0)
+
+# Noche de reloj: la que usa SurvivalStats para el jugador (frio/desgaste).
+func _is_clock_night() -> bool:
+	var dc = world.get("day_cycle") if world != null else null
+	if dc == null:
+		return false
+	if dc.has_method("is_night"):
+		return bool(dc.is_night())
+	return DayNightCycle.is_night_at(float(dc.get("time_of_day")))
+
+# Fase del dia para diagnostico y decisiones: night|dawn|day|prep|dusk.
+func _world_day_phase() -> String:
+	if _is_world_night():
+		return "night"
+	return DayNightCycle.phase_at(_world_time_of_day())
 
 func _world_time_of_day() -> float:
 	if world != null and world.get("day_cycle") != null:
@@ -10858,12 +10883,13 @@ func _bot_say_farewell(b: Dictionary, kind: String) -> void:
 			done.append(int(pid))
 	b[pairs_key] = done
 
-# Las ultimas horas de luz (~16.5-19.3): ventana en la que un superviviente
-# precavido ya junta el fuego y la luz que va a necesitar de noche.
+# Las ultimas horas de luz (GameConst.PREP_START hasta que oscurece de
+# verdad, crepusculo incluido): ventana en la que un superviviente precavido
+# ya junta el fuego y la luz que va a necesitar de noche.
 func _is_pre_night() -> bool:
 	if world != null and world.get("day_cycle") != null:
 		var tod := float(world.day_cycle.get("time_of_day"))
-		return tod >= 16.5 and tod <= 19.3
+		return tod >= GameConst.PREP_START and tod < GameConst.NIGHT_START and not _is_world_night()
 	return false
 
 # --- Supervivencia de bot identica a la del jugador humano -----------------
@@ -10977,7 +11003,8 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var pos: Vector3 = proxy.global_position
 	var dc = world.get("day_cycle")
 	var obs := _bot_weather_observation()
-	var is_night := _is_world_night()
+	# La fisica usa la noche de reloj, igual que el tick del jugador en Main.
+	var is_night := _is_clock_night()
 	var ambient_temp := float(obs.get("temperature", -999.0))
 	if ambient_temp <= -900.0:
 		ambient_temp = float(dc.call("get_ambient_temperature")) if dc != null and dc.has_method("get_ambient_temperature") else 15.0
@@ -15154,6 +15181,7 @@ func get_full_web_status() -> Dictionary:
 			"fps": Engine.get_frames_per_second(),
 			"time_of_day": snappedf(tod, 0.05),
 			"is_night": _is_world_night(),
+			"day_phase": _world_day_phase(),
 			"wildlife_count": wild_n,
 			"players_online": online_p,
 		},

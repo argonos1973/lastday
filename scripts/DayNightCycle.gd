@@ -46,16 +46,19 @@ func _process(delta: float) -> void:
 	time_changed.emit()
 
 func is_night() -> bool:
-	return time_of_day < 6.0 or time_of_day >= 21.5
+	return is_night_at(time_of_day)
+
+static func is_night_at(t: float) -> bool:
+	return t < GameConst.NIGHT_END or t >= GameConst.NIGHT_START
 
 func get_day_amount() -> float:
 	return get_day_amount_at(time_of_day)
 
 static func get_day_amount_at(t: float) -> float:
-	var sunrise_start := 5.5
-	var sunrise_end := 7.0
-	var sunset_start := 19.5
-	var sunset_end := 21.5
+	var sunrise_start := GameConst.DAWN_START
+	var sunrise_end := GameConst.SUNRISE_END
+	var sunset_start := GameConst.DUSK_START
+	var sunset_end := GameConst.NIGHT_START
 	if t < sunrise_start or t >= sunset_end:
 		return 0.0
 	elif t < sunrise_end:
@@ -64,6 +67,38 @@ static func get_day_amount_at(t: float) -> float:
 		return 1.0
 	else:
 		return 1.0 - smoothstep(sunset_start, sunset_end, t)
+
+# Luz ambiente real (0..1): la curva solar atenuada por la meteorologia. Una
+# tormenta adelanta la oscuridad del crepusculo pero no convierte el mediodia
+# en noche.
+static func light_amount_at(t: float, darkness: float = 0.0) -> float:
+	return get_day_amount_at(t) * (1.0 - clampf(darkness, 0.0, 1.0) * 0.5)
+
+func get_light_amount() -> float:
+	return light_amount_at(time_of_day, weather_darkness)
+
+# Oscuro de verdad: noche de reloj o luz insuficiente para moverse sin
+# antorcha (final del crepusculo, primera luz del alba, tormenta al atardecer).
+static func is_dark_at(t: float, darkness: float = 0.0) -> bool:
+	return is_night_at(t) or light_amount_at(t, darkness) < GameConst.DARK_LIGHT
+
+func is_dark() -> bool:
+	return is_dark_at(time_of_day, weather_darkness)
+
+# Fase del dia: "night" | "dawn" | "day" | "prep" | "dusk".
+static func phase_at(t: float) -> String:
+	if is_night_at(t):
+		return "night"
+	if t < GameConst.SUNRISE_END:
+		return "dawn"
+	if t >= GameConst.DUSK_START:
+		return "dusk"
+	if t >= GameConst.PREP_START:
+		return "prep"
+	return "day"
+
+func get_phase() -> String:
+	return phase_at(time_of_day)
 
 func get_cold_factor() -> float:
 	return get_ambient_temperature()

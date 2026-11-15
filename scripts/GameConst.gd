@@ -18,6 +18,15 @@ const INTERACTION_CELL_SIZE := 4.0
 
 # -- DayNightCycle -------------------------------------------------------
 const LIGHTING_UPDATE_INTERVAL := 0.20
+# Horario unico del mundo (hora decimal). Lo usan DayNightCycle y los bots:
+# ningun sistema define sus propios umbrales de dia/noche.
+const DAWN_START := 5.5     # primera luz
+const NIGHT_END := 6.0      # fin de la noche de reloj
+const SUNRISE_END := 7.0    # pleno dia
+const PREP_START := 16.5    # ultimas horas de luz plena: preparar la noche
+const DUSK_START := 19.5    # el sol empieza a caer (crepusculo)
+const NIGHT_START := 21.5   # noche de reloj
+const DARK_LIGHT := 0.35    # luz ambiente por debajo de la cual hace falta antorcha
 
 # -- Farming -------------------------------------------------------------
 const CROP_MOIST_GROWTH := 2.5    # moist soil (rain or watering) multiplies growth
