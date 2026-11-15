@@ -2615,6 +2615,8 @@ func _mark_poi_unreachable(b: Dictionary, pos: Vector3, cause: String) -> void:
 	var mem: Dictionary = b.get("_mem", {})
 	if mem.is_empty():
 		return
+	# Ultimo bloqueo de ruta para el monitor: donde y por que murio el viaje.
+	b["_last_nav_block"] = {"pos": pos, "cause": cause, "t": Time.get_unix_time_from_system()}
 	var un: Dictionary = mem.get("unreachable_pois", {})
 	for p in _explore_pois():
 		var pp: Vector3 = p["pos"]
@@ -2638,6 +2640,77 @@ func _mark_poi_unreachable(b: Dictionary, pos: Vector3, cause: String) -> void:
 			break
 		un.erase(oldest)
 	mem["unreachable_pois"] = un
+
+# Rodeo previo al veto: un find_path vacio prueba que la linea recta no
+# navega, no que el destino sea inalcanzable. Antes de quemar el plan se
+# prueba UNA alternativa — aproximacion lateral al objetivo (rodear el lago/
+# muro por un flanco) o un salto corto en la direccion del viaje. Solo un
+# intento por objetivo distinto (_detour_goal lo recuerda el llamador).
+func _bot_nav_detour(b: Dictionary, cur: Vector3, goal: Vector3, bot_nav_ref) -> Vector3:
+	if bot_nav_ref == null:
+		return Vector3.INF
+	var dir := Vector3(goal.x - cur.x, 0.0, goal.z - cur.z)
+	var dist := dir.length()
+	if dist < 0.5:
+		return Vector3.INF
+	dir = dir.normalized()
+	var perp := Vector3(-dir.z, 0.0, dir.x)
+	var cands: Array = []
+	# Flancos del objetivo: el muro/rio de la linea recta se rodea por el lado
+	for side in [1.0, -1.0]:
+		var cg: Vector3 = goal + perp * 30.0 * side
+		cg.y = _ground_y(cg.x, cg.z)
+		cands.append(cg)
+	# Salto corto hacia el objetivo: encadenar tramos navegables
+	var hop := cur + dir * minf(35.0, dist)
+	hop.y = _ground_y(hop.x, hop.z)
+	cands.append(hop)
+	# Salto diagonal corto a cada lado del rumbo
+	for side2 in [1.0, -1.0]:
+		var cd: Vector3 = cur + (dir + perp * side2).normalized() * 25.0
+		cd.y = _ground_y(cd.x, cd.z)
+		cands.append(cd)
+	for cand in cands:
+		if not (bot_nav_ref.find_path(cur, cand) as Array).is_empty():
+			return cand
+	return Vector3.INF
+
+# Salto encadenado para viajes largos: a >140 m el nav rara vez resuelve la
+# linea completa; andar POI a POI en la direccion del destino convierte la
+# ruta "imposible" en tramos cortos navegables. Al llegar al salto, el mismo
+# mecanismo elige el siguiente — la cadena se reencadena sola.
+func _bot_route_leg(b: Dictionary, far_pos: Vector3) -> Vector3:
+	if far_pos == Vector3.INF:
+		return far_pos
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return far_pos
+	var cur := proxy.global_position
+	var flat := Vector2(far_pos.x - cur.x, far_pos.z - cur.z).length()
+	if flat <= 140.0:
+		return far_pos
+	var dir := Vector2(far_pos.x - cur.x, far_pos.z - cur.z).normalized()
+	var best := Vector3.INF
+	var best_score := -1e9
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		var to := Vector2(pp.x - cur.x, pp.z - cur.z)
+		var d := to.length()
+		if d < 20.0 or d > 140.0:
+			continue
+		# Delante del rumbo (+-40°) y acercando de verdad al destino final
+		if to.normalized().dot(dir) < 0.76:
+			continue
+		var remain := Vector2(far_pos.x - pp.x, far_pos.z - pp.z).length()
+		if remain >= flat:
+			continue
+		if _is_goal_blacklisted(b, pp) or _is_poi_unreachable(b, _poi_id(p)):
+			continue
+		var score := (flat - remain) - d * 0.15
+		if score > best_score:
+			best_score = score
+			best = pp
+	return best if best != Vector3.INF else far_pos
 
 # El veto dura ~6 h reales: el terreno no cambia pero el punto de partida si —
 # inalcanzable desde aqui puede serlo alcanzable desde otro angulo.
@@ -10993,8 +11066,23 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 			b["path_timer"] = 1.8
 			path = b["path"]
 			if path.is_empty() and flat_dist > 8.0:
-				_abandon_unreachable_goal(b, raw_goal)
-				return
+				# Antes de quemar el plan, un rodeo: el fallo es de la linea
+				# recta, no necesariamente del destino (lago, muro, hueco de
+				# la malla). Un intento por objetivo; si tampoco navega,
+				# entonces si es inalcanzable.
+				var last_det: Vector3 = b.get("_detour_goal", Vector3.INF)
+				if not in_building_3d and (last_det == Vector3.INF or Vector2(raw_goal.x - last_det.x, raw_goal.z - last_det.z).length() > 4.0):
+					b["_detour_goal"] = raw_goal
+					var detour := _bot_nav_detour(b, cur, goal, bot_nav_ref)
+					if detour != Vector3.INF:
+						b["path"] = bot_nav_ref.find_path(cur, detour)
+						b["_path_goal"] = detour
+						b["path_idx"] = 0
+						b["path_timer"] = 1.8
+						path = b["path"]
+				if path.is_empty():
+					_abandon_unreachable_goal(b, raw_goal)
+					return
 		var pidx := int(b["path_idx"])
 		# Si find_path devuelve un unico punto (_nearest_free_cell) que queda
 		# MAS LEJOS del objetivo que la posicion actual, el nav esta intentando
@@ -11037,6 +11125,19 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 			b["path"] = []
 			b["stuck_count"] = int(b["stuck_count"]) + 1
 			if int(b["stuck_count"]) >= 2:
+				# Orilla equivocada != destino inalcanzable: un rodeo por el
+				# flanco (puente/vado) antes de vetar el sitio para siempre.
+				var last_det2: Vector3 = b.get("_detour_goal", Vector3.INF)
+				if not in_building_3d and (last_det2 == Vector3.INF or Vector2(raw_goal.x - last_det2.x, raw_goal.z - last_det2.z).length() > 4.0):
+					b["_detour_goal"] = raw_goal
+					var detour2 := _bot_nav_detour(b, cur, goal, bot_nav_ref)
+					if detour2 != Vector3.INF:
+						b["path"] = bot_nav_ref.find_path(cur, detour2)
+						b["_path_goal"] = detour2
+						b["path_idx"] = 0
+						b["path_timer"] = 1.8
+						b["stuck_count"] = 0
+						return
 				b["stuck_count"] = 0
 				_abandon_unreachable_goal(b, raw_goal)
 			return
@@ -15426,6 +15527,10 @@ func get_full_web_status() -> Dictionary:
 			if not rec.is_empty() and str(_crop_effective_state(rec).get("state", "")) == "ready":
 				fready += 1
 		snap["farm"] = {"plots": fplots.size(), "ready": fready}
+		var nb: Dictionary = b.get("_last_nav_block", {})
+		if not nb.is_empty() and nb.get("pos") is Vector3:
+			var nbp: Vector3 = nb["pos"]
+			snap["last_nav_block"] = {"pos": [int(nbp.x), int(nbp.z)], "cause": str(nb.get("cause", "")), "age_min": int((Time.get_unix_time_from_system() - float(nb.get("t", 0.0))) / 60.0)}
 		snap["camp_spot"] = [snappedf(camp.x, 0.1), snappedf(camp.y, 0.1), snappedf(camp.z, 0.1)] if camp != Vector3.INF else []
 		snap["shelter_pos"] = [snappedf(sh.x, 0.1), snappedf(sh.y, 0.1), snappedf(sh.z, 0.1)] if sh != Vector3.INF else []
 		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
@@ -15825,10 +15930,16 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 		# al POI con comida mas prometedor (monte = setas/fruta/caza, casa/
 		# ciudad = latas). En el camino el escaneo sigue activo y la primera
 		# seta o frutal que entre en radio lo desvia del viaje.
-		if hunger < 40.0:
+		# El viaje lejano solo de dia pleno y sin helarse: de noche el radio
+		# de emergencia (150 m) ya cubre lo alcanzable con luz propia; al
+		# atardecer toca volver al refugio, no empezar una caminata de 200 m;
+		# y un bot aterido debe calentarse antes de buscar comida.
+		if hunger < 40.0 and ["dawn", "day"].has(_world_day_phase()) and not _bot_is_freezing(b):
 			var fpoi := _ai_pick_poi(b, ["wild", "house", "city"], ["military", "tower"], false)
 			if not fpoi.is_empty():
-				var fpos: Vector3 = fpoi["pos"]
+				# A >140 m el viaje se trocea en saltos POI a POI navegables —
+				# la linea recta larga es la que terminaba vetada.
+				var fpos: Vector3 = _bot_route_leg(b, fpoi["pos"])
 				b["explore_target"] = fpos
 				b["sitting"] = false
 				b["crouching"] = false

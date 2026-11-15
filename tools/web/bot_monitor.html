@@ -1054,9 +1054,12 @@ function renderBots(data) {
         // conscientemente — memoria de fracaso con caducidad.
         const fg = b.failed_goals_list || [];
         const un = b.unreachable_list || [];
-        if (!fg.length && !un.length) return "";
+        const nb = b.last_nav_block || null;
+        if (!fg.length && !un.length && !nb) return "";
         const row = e => `<span class="item-tag" style="border-color:rgba(229,169,60,.45)"><b>${esc(e.goal)}</b> · ${esc(e.cause)} · hace ${e.age_min}m (queda ${e.left_min}m)</span>`;
+        const nbHtml = nb ? `<div class="empty-note" style="margin:4px 0 2px">Último bloqueo de ruta: <b>(${nb.pos ? esc(nb.pos.join(", ")) : "?"})</b> · ${esc(nb.cause)} · hace ${nb.age_min}m</div>` : "";
         return `<details class="sec" data-sec id="sec_${b.bot_id}_veto"><summary class="section-label">Vetos Aprendidos (${fg.length + un.length} vigentes)</summary>
+        ${nbHtml}
         ${fg.length ? `<div class="empty-note" style="margin:2px 0">Objetivos fallados</div><div class="pill-list">${fg.map(row).join("")}</div>` : ""}
         ${un.length ? `<div class="empty-note" style="margin:4px 0 2px">Destinos inalcanzables</div><div class="pill-list">${un.map(row).join("")}</div>` : ""}</details>`;
       })()}
