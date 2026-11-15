@@ -10934,6 +10934,13 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 	var lethal_thermal := st.body_temperature >= 37.8 or st.body_temperature <= 34.5
 	if not lethal_thermal and _bot_under_immediate_threat(b):
 		return false
+	# Una bebida en marcha (caminata a la orilla o el trago de 2.6 s) no se
+	# interrumpe por confort termico: el standoff a 30 m tiraba del bot hacia
+	# el anillo cada tick, la caminata no progresaba y a los 12 s la fuente
+	# quedaba vetada 120 s — el bot moria de sed junto a un rio alcanzable
+	# y a una fogata encendida. El daño termico letal sigue mandando igual.
+	if not lethal_thermal and str(b.get("_act", "")) == "drink":
+		return false
 	var band := _bot_fire_band_update(b)
 	if band == "cool" and d < 4.15:
 		var spot := _bot_fire_ring_spot(b, fp, dir, 4.25, proxy.global_position.y)
