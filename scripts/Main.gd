@@ -19101,8 +19101,10 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 	if _forest_tree_meshes.is_empty():
 		return
 	_tree_mm_slots.clear()
-	# Split each variant into spatial batches of ~500 to allow per-batch visibility culling
-	const BATCH_SIZE := 500
+	# Split each variant into coarser batches of <=1000 for per-batch visibility culling.
+	# Larger spatial groups reduce renderer objects while retaining bounded
+	# per-batch visibility and individual tree activation through _tree_mm_slots.
+	const BATCH_SIZE := 1000
 	for variant_idx in range(_forest_tree_meshes.size()):
 		var transforms: Array = batch_transforms[variant_idx]
 		if transforms.is_empty():
@@ -19110,7 +19112,7 @@ func _flush_forest_multimeshes(batch_transforms: Array) -> void:
 		var entry: Dictionary = _forest_tree_meshes[variant_idx]
 		var src_mesh: ArrayMesh = entry.mesh
 		# Create sub-batches for visibility culling
-		var spatial_batches := _spatial_instance_batches(transforms, 64.0, BATCH_SIZE)
+		var spatial_batches := _spatial_instance_batches(transforms, 96.0, BATCH_SIZE)
 		for b in range(spatial_batches.size()):
 			var indices: Array = spatial_batches[b]
 			var count := indices.size()
@@ -20006,13 +20008,14 @@ func _create_grass_tuft(_node_name: String, pos: Vector3, height: float, radius:
 
 # Builds a normalized grass tuft mesh (height 1.0, radius 1.0) used as a shared
 # MultiMesh source. Variants give a bit of visual variety without per-clump meshes.
-func _build_grass_variant_mesh(variant_seed: int) -> ArrayMesh:
+func _build_grass_variant_mesh(variant_seed: int, coarse: bool = false) -> ArrayMesh:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = variant_seed
 	var vertices := PackedVector3Array()
 	var indices := PackedInt32Array()
 	var uvs := PackedVector2Array()
-	var blade_count := 16 + rng.randi() % 9
+	var blade_count := 5 if coarse else 16 + rng.randi() % 9
+	var blade_segs := 2 if coarse else 4
 	for i in range(blade_count):
 		var angle := rng.randf_range(0.0, TAU)
 		var spread := sqrt(rng.randf()) * 0.95
@@ -20025,9 +20028,10 @@ func _build_grass_variant_mesh(variant_seed: int) -> ArrayMesh:
 		var droop := rng.randf_range(0.05, 0.42) * blade_height
 		var twist := rng.randf_range(-0.55, 0.55)
 		var start_index := vertices.size()
-		# Four curved sections and a drooping tip instead of upright ribbons.
-		for segment in range(4):
-			var t := float(segment) / 4.0
+		# Four curved sections and a drooping tip instead of upright ribbons;
+		# the coarse far-LOD variant takes two sections instead.
+		for segment in range(blade_segs):
+			var t := float(segment) / float(blade_segs)
 			var center := base + Vector3.UP * (blade_height * t - droop * pow(t, 3.0)) + lean * t * t
 			var width := right.rotated(outward, twist * t) * pow(1.0 - t, 0.72)
 			vertices.append(center - width)
@@ -20036,10 +20040,10 @@ func _build_grass_variant_mesh(variant_seed: int) -> ArrayMesh:
 			uvs.append(Vector2(1, t))
 		vertices.append(base + Vector3.UP * (blade_height - droop) + lean)
 		uvs.append(Vector2(0.5, 1))
-		for segment in range(3):
+		for segment in range(blade_segs - 1):
 			var j := start_index + segment * 2
 			indices.append_array(PackedInt32Array([j, j + 1, j + 2, j + 1, j + 3, j + 2]))
-		indices.append_array(PackedInt32Array([start_index + 6, start_index + 7, start_index + 8]))
+		indices.append_array(PackedInt32Array([start_index + blade_segs * 2 - 2, start_index + blade_segs * 2 - 1, start_index + blade_segs * 2]))
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
@@ -20117,8 +20121,14 @@ void fragment() {
 
 const GRASS_VISIBLE_RADIUS := 50.0
 const GRASS_HIDE_RADIUS := 70.0
+const GRASS_LOD_RADIUS := 32.0
+const TALL_GRASS_LOD_RADIUS := 20.0
+const TALL_GRASS_GRID_CELL := 24.0
 var _grass_vis_timer: float = 0.0
 var _grass_any_visible: bool = false
+var _grass_batch_lod: Array = []
+var _tall_grass_imposter: ArrayMesh = null
+var _grass_far_meshes: Dictionary = {}
 
 func _update_grass_visibility() -> void:
 	if _grass_batch_nodes.is_empty():
@@ -20140,6 +20150,11 @@ func _update_grass_visibility() -> void:
 		var should_show: bool = dist < ((hide_base if node.visible else show_base) + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
+		var lod: Array = _grass_batch_lod[i] if i < _grass_batch_lod.size() else null
+		if lod != null:
+			var want: Mesh = lod[0] if dist < (float(lod[2]) * detail) + batch_radius else lod[1]
+			if node.multimesh.mesh != want:
+				node.multimesh.mesh = want
 		if should_show:
 			any_visible = true
 	_grass_any_visible = any_visible
@@ -20206,6 +20221,36 @@ func _ensure_tall_grass_batches() -> void:
 	_tall_grass_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_tall_grass_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
 
+# Far LOD for tall-grass GLTF tufts: three crossed quads keep the silhouette —
+# 326-622 triangles per instance become 6 past GRASS_LOD_RADIUS. Vertex colors
+# stay near-white so the per-instance colors keep tinting.
+func _build_tall_grass_imposter() -> ArrayMesh:
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	for q in range(3):
+		var yaw := q * PI / 3.0
+		var dx := cos(yaw) * 0.5
+		var dz := sin(yaw) * 0.5
+		var b := verts.size()
+		verts.push_back(Vector3(-dx, 0.0, -dz)); verts.push_back(Vector3(dx, 0.0, dz))
+		verts.push_back(Vector3(dx, 1.15, dz)); verts.push_back(Vector3(-dx, 1.15, -dz))
+		var base := Color(0.62, 0.66, 0.52)
+		var top := Color(0.96, 0.96, 0.82)
+		colors.push_back(base); colors.push_back(base); colors.push_back(top); colors.push_back(top)
+		indices.append_array(PackedInt32Array([b, b + 1, b + 2, b, b + 2, b + 3]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var surface := SurfaceTool.new()
+	surface.create_from(mesh, 0)
+	surface.generate_normals()
+	return surface.commit()
+
 func _queue_tall_grass_instance(pos: Vector3, scale_val: float, color: Color) -> void:
 	_ensure_tall_grass_batches()
 	if _tall_grass_meshes.is_empty():
@@ -20228,8 +20273,10 @@ func _flush_grass_batches() -> void:
 	_clear_lake_granite_grass()
 	if grass_batch_meshes.is_empty():
 		return
-	const GRASS_BATCH_SIZE := 800
-	const GRID_CELL := 50.0
+	# Coarser chunks lower per-frame render-server overhead; per-instance geometry,
+	# colors and world-space placement stay unchanged.
+	const GRASS_BATCH_SIZE := 1200
+	const GRID_CELL := 75.0
 	for variant in range(grass_batch_meshes.size()):
 		var transforms: Array = grass_batch_transforms[variant]
 		var colors: Array = grass_batch_colors[variant]
@@ -20271,6 +20318,9 @@ func _flush_grass_batches() -> void:
 			_grass_batch_nodes.append(mm_instance)
 			_grass_batch_centers.append(center)
 			_grass_batch_radii.append(batch_radius)
+			if not _grass_far_meshes.has(variant):
+				_grass_far_meshes[variant] = _build_grass_variant_mesh(0x51F7 + variant * 733, true)
+			_grass_batch_lod.append([grass_batch_meshes[variant], _grass_far_meshes[variant], GRASS_LOD_RADIUS])
 		transforms.clear()
 		colors.clear()
 		await get_tree().process_frame
@@ -20280,7 +20330,7 @@ func _flush_grass_batches() -> void:
 			var t_colors: Array = _tall_grass_colors[variant]
 			if t_transforms.is_empty():
 				continue
-			var spatial_batches := _spatial_instance_batches(t_transforms, GRID_CELL, GRASS_BATCH_SIZE)
+			var spatial_batches := _spatial_instance_batches(t_transforms, TALL_GRASS_GRID_CELL, GRASS_BATCH_SIZE)
 			for b in range(spatial_batches.size()):
 				var indices: Array = spatial_batches[b]
 				var start := 0
@@ -20315,6 +20365,9 @@ func _flush_grass_batches() -> void:
 				_grass_batch_nodes.append(mm_instance)
 				_grass_batch_centers.append(center)
 				_grass_batch_radii.append(batch_radius)
+				if _tall_grass_imposter == null:
+					_tall_grass_imposter = _build_tall_grass_imposter()
+				_grass_batch_lod.append([_tall_grass_meshes[variant], _tall_grass_imposter, TALL_GRASS_LOD_RADIUS])
 			t_transforms.clear()
 			t_colors.clear()
 			await get_tree().process_frame
@@ -20426,6 +20479,10 @@ func _flush_prop_batches() -> void:
 			transforms.append(it.t)
 		var spatial := _spatial_instance_batches(transforms, 48.0, 1200)
 		for indices in spatial:
+			var center := Vector3.ZERO
+			for j in indices:
+				center += (transforms[j] as Transform3D).origin
+			center /= float(indices.size())
 			for sm in subs:
 				var mm := MultiMesh.new()
 				mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -20433,12 +20490,17 @@ func _flush_prop_batches() -> void:
 				mm.instance_count = indices.size()
 				for j in range(indices.size()):
 					var inst_xf: Transform3D = (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D)
+					inst_xf.origin -= center
 					mm.set_instance_transform(j, inst_xf)
 				var mmi := MultiMeshInstance3D.new()
 				mmi.name = "ShorePropMM_%d" % flushed
+				mmi.position = center
 				mmi.multimesh = mm
 				mmi.material_override = mat
 				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				mmi.visibility_range_end = 140.0
+				mmi.visibility_range_end_margin = 12.0
+				mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 				add_child(mmi)
 				flushed += 1
 		await get_tree().process_frame
@@ -20465,8 +20527,12 @@ func _flush_bush_multimeshes() -> void:
 		var transforms: Array = []
 		for b in items:
 			transforms.append(b.t)
-		var spatial := _spatial_instance_batches(transforms, 64.0, 600)
+		var spatial := _spatial_instance_batches(transforms, 96.0, 900)
 		for indices in spatial:
+			var center := Vector3.ZERO
+			for j in indices:
+				center += (transforms[j] as Transform3D).origin
+			center /= float(indices.size())
 			var batch_mmis: Array = []
 			for sm in subs:
 				var mm := MultiMesh.new()
@@ -20474,12 +20540,18 @@ func _flush_bush_multimeshes() -> void:
 				mm.mesh = sm.mesh
 				mm.instance_count = indices.size()
 				for j in range(indices.size()):
-					mm.set_instance_transform(j, (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D))
+					var inst_xf: Transform3D = (transforms[indices[j]] as Transform3D) * (sm.local as Transform3D)
+					inst_xf.origin -= center
+					mm.set_instance_transform(j, inst_xf)
 				var mmi := MultiMeshInstance3D.new()
 				mmi.name = "BushMM_%d" % flushed
+				mmi.position = center
 				mmi.multimesh = mm
 				if sm.mat != null:
 					mmi.material_override = sm.mat
+				mmi.visibility_range_end = 160.0
+				mmi.visibility_range_end_margin = 12.0
+				mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 				add_child(mmi)
 				batch_mmis.append(mmi)
 				flushed += 1
