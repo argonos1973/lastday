@@ -714,6 +714,7 @@ func _ready() -> void:
 	if net == null or not net.is_dedicated_server:
 		_shadow_quality = ShadowQuality.selected()
 		GraphicsSettings.apply_render_scale(get_viewport())
+		GraphicsSettings.apply_detail(get_viewport())
 	if net != null and net.is_dedicated_server:
 		seed(GameConst.WORLD_SEED)
 		_world_rng.seed = GameConst.WORLD_SEED
@@ -1837,7 +1838,7 @@ func _update_weather_effects(delta: float) -> void:
 		_rain_splash_particles.emitting = splash_active
 		_rain_splash_particles.visible = splash_active
 		if splash_active:
-			_rain_splash_particles.amount_ratio = float(int(clamp(rain_amount * 200, 200, 1500))) / 1500.0
+			_rain_splash_particles.amount_ratio = GraphicsSettings.splash_density() * float(int(clamp(rain_amount * 200, 200, 1500))) / 1500.0
 			if _rain_splash_process_mat != null:
 				_rain_splash_process_mat.initial_velocity_min = 2.2 if storm else 1.2
 				_rain_splash_process_mat.initial_velocity_max = 4.2 if storm else 2.8
@@ -7744,8 +7745,11 @@ func _create_debug_overlay() -> void:
 	_debug_overlay.add_child(panel)
 	add_child(_debug_overlay)
 
+var _debug_fps_min := INF
+
 func _toggle_debug_overlay() -> void:
 	_debug_visible = not _debug_visible
+	_debug_fps_min = INF
 	if _debug_overlay != null:
 		_debug_overlay.visible = _debug_visible
 
@@ -7772,8 +7776,13 @@ func _update_debug_overlay_text() -> void:
 		chunk_coords = world_streaming_mgr.world_to_chunk_coords(p_pos)
 	
 	var text := "=== DIAGNÓSTICO DE MUNDO ABIERTO (TECLA 0) ===\n"
-	text += "FPS: %d  |  Frame Time: %.2f ms\n" % [fps, process_ms]
-	text += "Memoria RAM: %.1f MB\n" % mem_mb
+	_debug_fps_min = minf(_debug_fps_min, fps)
+	text += "FPS: %d | Min. muestreado: %d | CPU proceso: %.2f ms\n" % [fps, int(_debug_fps_min), process_ms]
+	text += "GPU: no disponible en este diagnóstico\n"
+	var gfx := GraphicsSettings.effective_snapshot(get_viewport())
+	text += "Ventana: %s | Escala 3D: %.0f%% | VSync: %s\n" % [gfx.window, gfx.scale * 100.0, gfx.vsync]
+	text += "Sombras: %d | Detalle: %.2f | LOD: %.1f\n" % [_shadow_quality, gfx.detail, gfx.lod_threshold]
+	text += "Memoria estática del motor: %.1f MB\n" % mem_mb
 	text += "Nodos en Árbol: %d\n" % node_count
 	text += "Draw Calls: %d  |  Primitivas: %d\n" % [draw_calls, primitives]
 	text += "----------------------------------------\n"
@@ -19174,7 +19183,7 @@ func _update_forest_visibility() -> void:
 		return
 	var ppos: Vector3 = player.global_position
 	var vis_bonus := 680.0 if ppos.y > 25.0 else (320.0 if ppos.y > 2.5 else 0.0)
-	var detail_scale := GraphicsSettings.detail_factor()
+	var detail_scale := 1.0 # Existing normal range at every quality; use mesh LOD instead.
 	var hide_base := FOREST_MM_HIDE_RADIUS * detail_scale + vis_bonus
 	var show_base := FOREST_MM_VISIBLE_RADIUS * detail_scale + vis_bonus
 	var shadow_radius: float = ShadowQuality.PRESETS[_shadow_quality].forest

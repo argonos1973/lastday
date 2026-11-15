@@ -439,7 +439,7 @@ func _build_options_panel() -> void:
 	for label in GraphicsSettings.DETAIL_LABELS:
 		detail_options.add_item(label)
 	detail_options.select(GraphicsSettings.detail_index())
-	detail_options.tooltip_text = "Distancia de dibujado de bosque y hierba. Aplica al instante."
+	detail_options.tooltip_text = "LOD, hierba corta y salpicaduras. Se aplica al entrar en partida; conserva árboles y obstáculos."
 	detail_options.item_selected.connect(func(index: int):
 		GraphicsSettings.save_detail_index(index))
 	box.add_child(detail_options)
@@ -451,6 +451,31 @@ func _build_options_panel() -> void:
 	vsync_check.toggled.connect(func(on: bool):
 		GraphicsSettings.save_vsync(on)
 		GraphicsSettings.apply_window())
+
+	var profile := OptionButton.new()
+	for label in ["Perfil: rendimiento", "Perfil: equilibrado", "Perfil: calidad", "Perfil: personalizado"]:
+		profile.add_item(label)
+	profile.select(GraphicsSettings.profile_index())
+	profile.tooltip_text = "Rendimiento: 720p, escala 100%, sombras y detalles bajos. No cambia VSync. Sombras al entrar en partida."
+	box.add_child(profile)
+	box.move_child(profile, 1)
+	profile.item_selected.connect(func(index: int):
+		if index == 3:
+			return
+		if GraphicsSettings.apply_profile(index) != OK:
+			profile.select(GraphicsSettings.profile_index())
+			return
+		GraphicsSettings.apply_window()
+		GraphicsSettings.apply_render_scale(get_viewport())
+		for pos in range(res_options.item_count):
+			if int(res_options.get_item_metadata(pos)) == GraphicsSettings.resolution_index():
+				res_options.select(pos)
+		scale_options.select(GraphicsSettings.render_scale_index())
+		shadow_options.select(preload("res://scripts/ShadowQuality.gd").selected())
+		detail_options.select(GraphicsSettings.detail_index()))
+	for option in [res_options, scale_options, shadow_options, detail_options]:
+		option.item_selected.connect(func(_index: int): profile.select(GraphicsSettings.profile_index()))
+
 	box.add_child(vsync_check)
 
 # Los paneles se posicionan en píxeles: al cambiar el tamaño de la ventana

@@ -8,18 +8,10 @@ const PRESETS := [
 ]
 
 static func selected() -> int:
- var config := ConfigFile.new()
- if config.load(CONFIG_PATH) != OK:
-  return 1
- return clampi(int(config.get_value("graphics", "shadows", 1)), 0, 2)
+ return preload("res://scripts/GraphicsSettings.gd").index_value("shadows", 1, 3)
 
 static func save_selection(index: int) -> Error:
- var config := ConfigFile.new()
- config.load(CONFIG_PATH)
- config.set_value("graphics", "shadows", clampi(index, 0, 2))
- var err := config.save(CONFIG_PATH)
- preload("res://scripts/GraphicsSettings.gd").invalidate_cache()
- return err
+ return preload("res://scripts/GraphicsSettings.gd").write_values({"shadows": clampi(index, 0, 2)})
 
 static func apply(sun: DirectionalLight3D, viewport: Viewport, index: int) -> void:
  index = clampi(index, 0, 2)

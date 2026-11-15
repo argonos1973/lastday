@@ -11,7 +11,9 @@ func _check(ok: bool, label: String) -> void:
 		print("FAIL: ", label)
 
 func _init() -> void:
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(GraphicsSettings.CONFIG_PATH))
+	GraphicsSettings.config_path = "res://build/tmp/graphics_regression.cfg"
+	GraphicsSettings.invalidate_cache()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(GraphicsSettings.config_path))
 	_check(not GraphicsSettings.fullscreen(), "fullscreen por defecto = false")
 	_check(GraphicsSettings.resolution_index() == 2, "resolucion por defecto = 1920x1080")
 	_check(GraphicsSettings.render_scale() == 1.0, "escala por defecto = 100%")
@@ -29,7 +31,20 @@ func _init() -> void:
 	_check(not GraphicsSettings.vsync(), "vsync off persiste")
 	GraphicsSettings.save_detail_index(99)
 	_check(GraphicsSettings.detail_index() == GraphicsSettings.DETAIL_FACTORS.size() - 1, "indice detalle clampea")
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(GraphicsSettings.CONFIG_PATH))
+	GraphicsSettings.invalidate_cache()
+	_check(GraphicsSettings.detail_index() == 2, "reload reads disk")
+	var good_path := GraphicsSettings.config_path
+	GraphicsSettings.config_path = "res://build/tmp/no_such_graphics_directory/graphics.cfg"
+	_check(GraphicsSettings.write_values({"detail":0}) != OK, "save failure is reported")
+	GraphicsSettings.config_path = good_path
+	var broken := FileAccess.open(good_path, FileAccess.WRITE)
+	broken.store_string("[graphics\ncorrupt")
+	broken.close()
+	GraphicsSettings.invalidate_cache()
+	_check(GraphicsSettings.detail_index() == 1, "corrupt config uses safe fallback")
+	_check(GraphicsSettings.write_values({"detail":0}) != OK, "corrupt file not silently overwritten")
+	_check(FileAccess.get_file_as_string(good_path) == "[graphics\ncorrupt", "corrupt original preserved")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(GraphicsSettings.config_path))
 	if failures == 0:
 		print("PASS: graphics settings defaults, persistence and clamps")
 	else:

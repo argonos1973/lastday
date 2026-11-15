@@ -31,9 +31,10 @@ func update_focus(focus: Vector3, quality: float) -> void:
 		last_cell = cell
 		last_quality = quality
 		var wanted: Dictionary = {}
-		for x in range(-RADIUS,RADIUS+1):
-			for z in range(-RADIUS,RADIUS+1):
-				if x*x+z*z > RADIUS*RADIUS: continue
+		var active_radius := 3 if quality < 0.8 else RADIUS
+		for x in range(-active_radius,active_radius+1):
+			for z in range(-active_radius,active_radius+1):
+				if x*x+z*z > active_radius*active_radius: continue
 				wanted[cell+Vector2i(x,z)] = true
 		for key in chunks.keys():
 			if not wanted.has(key):
