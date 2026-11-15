@@ -169,15 +169,27 @@ func run() -> void:
 	current_scene = world
 	await world.profile_ready
 	var type_counts := {}
+	var subsystem_counts := {}
 	var geometry_count := 0
 	var visible_geometry := 0
+	var subsystem_prefixes := ["ForestMM_", "ForestUnderstory_", "ForestLeafLitter_", "GrassBatch_", "TallGrassBatch_", "BushMM_", "ShorePropMM_", "RockyFoothill", "City", "Road"]
 	for node in _all_nodes(world):
 		var kind: String = node.get_class()
 		type_counts[kind] = int(type_counts.get(kind,0)) + 1
+		for prefix: String in subsystem_prefixes:
+			if str(node.name).begins_with(prefix):
+				var counts: Dictionary = subsystem_counts.get(prefix, {"nodes": 0, "geometry": 0, "visible": 0, "multimesh": 0})
+				counts.nodes += 1
+				if node is GeometryInstance3D:
+					counts.geometry += 1
+					if node.visible: counts.visible += 1
+				if node is MultiMeshInstance3D and node.multimesh != null:
+					counts.multimesh += node.multimesh.instance_count
+				subsystem_counts[prefix] = counts
 		if node is GeometryInstance3D:
 			geometry_count += 1
 			if node.visible: visible_geometry += 1
-	print("PROFILE_READY nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " class_counts=", type_counts, " geometry=",geometry_count," visible_geometry=",visible_geometry," static_memory_bytes=",OS.get_static_memory_usage()," LastDayNav=",ClassDB.class_exists("LastDayNav")," player=", world.player.global_position, " camera=", root.get_camera_3d())
+	print("PROFILE_READY nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " class_counts=", type_counts, " subsystems=", subsystem_counts, " geometry=",geometry_count," visible_geometry=",visible_geometry," static_memory_bytes=",OS.get_static_memory_usage()," LastDayNav=",ClassDB.class_exists("LastDayNav")," player=", world.player.global_position, " camera=", root.get_camera_3d())
 	print("VIEWPORT size=", root.size, " screen_scale=", DisplayServer.screen_get_scale(), " drawable=", root.get_size() * DisplayServer.screen_get_scale())
 	world.player.camera.make_current()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE

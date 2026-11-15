@@ -1213,7 +1213,10 @@ func _process(delta: float) -> void:
 		_debug_frame_ms.append(delta * 1000.0)
 		if _debug_frame_ms.size() > _DEBUG_FRAME_SAMPLES:
 			_debug_frame_ms.remove_at(0)
-		_update_debug_overlay_text()
+		_debug_text_timer += delta
+		if _debug_text_timer >= _DEBUG_TEXT_REFRESH_INTERVAL:
+			_debug_text_timer = fmod(_debug_text_timer, _DEBUG_TEXT_REFRESH_INTERVAL)
+			_update_debug_overlay_text()
 	if _bot_ai_debug_visible:
 		_update_bot_ai_debug_text(delta)
 
@@ -7772,12 +7775,15 @@ var _debug_fps_min := INF
 # Ultimos ~10 s de tiempos de fotograma (ms) para percentiles — los tirones
 # no se ven en el FPS medio; hace falta la cola de la distribucion.
 const _DEBUG_FRAME_SAMPLES := 600
+const _DEBUG_TEXT_REFRESH_INTERVAL := 0.25
 var _debug_frame_ms: Array[float] = []
+var _debug_text_timer := 0.0
 
 func _toggle_debug_overlay() -> void:
 	_debug_visible = not _debug_visible
 	_debug_fps_min = INF
 	_debug_frame_ms.clear()
+	_debug_text_timer = _DEBUG_TEXT_REFRESH_INTERVAL
 	if _debug_overlay != null:
 		_debug_overlay.visible = _debug_visible
 
