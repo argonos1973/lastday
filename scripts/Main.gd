@@ -4793,6 +4793,10 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		return
 	var hp: float = proxy.get_meta("proxy_health", 100.0)
 	hp = max(0.0, hp - amount)
+	# Los bots que presencian la herida la recuerdan (unica via honesta de
+	# saber que alguien esta tocado: no consultan la vida ajena).
+	if survivor_bot_mgr != null:
+		survivor_bot_mgr.note_actor_wounded(target_peer_id)
 	if survivor_bot_mgr != null and SurvivorBotManagerScript.is_bot_peer_id(target_peer_id):
 		survivor_bot_mgr.on_bot_damaged(target_peer_id, amount, sender, weapon)
 		if sender_proxy != null:

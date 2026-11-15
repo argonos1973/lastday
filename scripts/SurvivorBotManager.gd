@@ -5672,6 +5672,7 @@ const BOT_AMBUSH_STRIKE_RANGED := 12.5
 const BOT_AMBUSH_STRIKE_MELEE := 6.0
 const BOT_AMBUSH_ABORT_DIST := 90.0
 const BOT_AMBUSH_MAX_SECONDS := 24.0
+const BOT_AMBUSH_LOST_MSEC := 14000 # sin ver ni oir a la presa: se acabo
 
 func _bot_lead_score(b: Dictionary) -> float:
 	var pers: Dictionary = _ensure_bot_memory(int(b["bot_id"])).get("personality", {})
@@ -6427,6 +6428,12 @@ func _bot_social_update(b: Dictionary) -> void:
 		var lamb: Dictionary = bots[lid].get("_ambush", {})
 		if not lamb.is_empty() and int(lamb.get("target_id", 0)) != int(am.get("target_id", -1)):
 			b["_ambush"] = lamb.duplicate()
+		elif not lamb.is_empty() and int(lamb.get("seen_msec", 0)) > int(am.get("seen_msec", 0)):
+			# El lider va cantando la ultima posicion que EL conoce de la
+			# presa; el miembro no recibe mas de lo que sabe su compañero.
+			am["pos"] = lamb.get("pos", am.get("pos", Vector3.INF))
+			am["seen_msec"] = int(lamb.get("seen_msec", 0))
+			b["_ambush"] = am
 
 	# 4) Chat: respuestas, gritos de ayuda, alianzas, saludos y susurros
 	_bot_chat_tick(b)
@@ -6485,8 +6492,64 @@ func _bot_has_ranged_weapon(proxy: Node3D) -> bool:
 		return true
 	return not _bot_best_bow(proxy).is_empty() and _bot_arrow_count(proxy) > 0
 
-# La presa ideal de una emboscada: cerca, cargada de recursos, sola y con pocos
-# aliados — el bandido roba lo que necesita, no mata por matar.
+# --- Percepcion honesta de otro superviviente -------------------------------
+# Lo ve (alcance visual efectivo + linea de vision real) o lo oye (pista
+# sonora valida). Sin ninguna de las dos no existe para el bot, este a 8 m
+# tras una pared o a 80 m en campo abierto.
+func _bot_perceives_actor(b: Dictionary, target: Node3D, sight: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var d := proxy.global_position.distance_to(target.global_position)
+	if _can_bot_hear_actor(b, target, d):
+		return true
+	return d <= _effective_human_sight(target, sight) and _has_clear_shot(proxy.global_position, target.global_position)
+
+# Valor APARENTE de una presa: solo lo que se ve desde fuera — mochila,
+# arma en la mano, ropa puesta — mas lo que el bot recuerda de encuentros
+# anteriores con ella. Jamas el contenido de su inventario.
+func _bot_observed_loot_value(b: Dictionary, target: Node3D, pid: int) -> float:
+	var val := 0.0
+	if not str(target.get_meta("saved_backpack", "")).is_empty():
+		val += 5.0
+	var held := str(target.get_meta("saved_held_item", ""))
+	if held.begins_with("Fusil") or held.begins_with("Rifle"):
+		val += 4.0
+	elif not held.is_empty():
+		val += 1.5
+	val += minf(2.4, float(str(target.get_meta("saved_clothing", "")).split(",", false).size()) * 0.6)
+	if pid > 0:
+		# Memoria: a quien ya le saco botin lo recuerda como presa rentable.
+		var rel := get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid))
+		val += minf(4.0, float(int(rel.get("robbed", 0))) * 2.0)
+	return val
+
+# Vulnerabilidad APARENTE: postura y heridas que el bot ha presenciado (el
+# o su equipo le dieron hace poco), no la barra de vida interna.
+func _bot_observed_vulnerable(b: Dictionary, target: Node3D, pid: int) -> bool:
+	if bool(target.get_meta("saved_sleeping", false)) or bool(target.get_meta("sleeping", false)) or target.get("is_sleeping") == true:
+		return true
+	if bool(target.get_meta("saved_sitting", false)) or bool(target.get_meta("sitting", false)):
+		return true
+	var seen_hit: Dictionary = b.get("_seen_wounded", {})
+	return pid > 0 and Time.get_ticks_msec() - int(seen_hit.get(pid, -999999)) < 90000
+
+# Tregua, alianza o vinculo personal: con esa persona no se monta una
+# emboscada aunque la faccion lo permita.
+func _bot_ambush_forbidden(b: Dictionary, pid: int) -> bool:
+	if pid <= 0:
+		return false
+	if int(b.get("_truce_peer", 0)) == pid and float(b.get("_truce_t", 0.0)) > 0.0:
+		return true
+	if pid == int(b.get("team_leader_id", 0)) or pid in _bot_team_ids(b):
+		return true
+	var rel := get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid))
+	if float(rel.get("trust", 0.0)) >= 0.55 and float(rel.get("hostility", 0.0)) < 0.5:
+		return true
+	return int(rel.get("helped", 0)) >= 2 and int(rel.get("attacked", 0)) == 0
+
+# La presa ideal de una emboscada: a la vista, con pinta de llevar algo que
+# merezca la pena, sola y sin vinculo con el bandido — roba lo que necesita,
+# no mata por matar. Todo se decide con informacion OBSERVABLE: lo que ve u
+# oye el propio bot y lo que recuerda, nunca inventario ni salud internos.
 func _find_ambush_target(b: Dictionary) -> Dictionary:
 	var proxy: Node3D = b["proxy"]
 	var now_s := Time.get_ticks_msec() / 1000.0
@@ -6497,52 +6560,92 @@ func _find_ambush_target(b: Dictionary) -> Dictionary:
 		return {}
 	var my_team := _bot_team_ids(b)
 	var desperate: bool = float(b["hunger"]) < 30.0 or float(b["thirst"]) < 25.0
+	# Malherido no se sale a asaltar a nadie: primero recuperarse.
+	if float(b["health"]) < 45.0:
+		return {}
+	var has_ranged := _bot_has_ranged_weapon(proxy)
 	var sight := 52.0
-	var best: Dictionary = {}
-	var best_score := -1.0
-	for p in world.get_tree().get_nodes_in_group("net_player_proxy"):
+	# Candidatos: proxies de red + el jugador local (anfitrion no dedicado,
+	# que no figura en net_player_proxy).
+	var cands: Array = world.get_tree().get_nodes_in_group("net_player_proxy")
+	var local_p = world.get("player")
+	if local_p is Node3D and is_instance_valid(local_p) and not (local_p in cands):
+		cands.append(local_p)
+	# Solo existe para el bot quien el bot percibe (vista con LOS u oido).
+	var perceived: Array = []
+	for p in cands:
 		if not (p is Node3D) or p == proxy or not is_instance_valid(p):
 			continue
-		if bool(p.get_meta("proxy_dead", false)) or not bool(p.get_meta("has_real_pos", false)):
+		if bool(p.get_meta("proxy_dead", false)) or p.get("is_dead") == true:
 			continue
-		if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
+		if p != local_p and not bool(p.get_meta("has_real_pos", false)):
+			continue
+		if _bot_perceives_actor(b, p as Node3D, sight):
+			perceived.append(p)
+	var best: Dictionary = {}
+	var best_score := -1.0
+	for p in perceived:
+		var p3 := p as Node3D
+		if bool(p3.get_meta("is_ai_bot", false)) and str(p3.get_meta("bot_faction", "")) == "hostile":
 			continue # no canibalismo entre bandidos
-		var pid := _peer_id_for_actor(p)
+		var pid := _peer_id_for_actor(p3)
 		if pid > 0 and pid in my_team:
 			continue # nunca contra el propio equipo
-		var p3 := p as Node3D
-		var d := proxy.global_position.distance_to(p3.global_position)
-		if d > sight or (d > 12.0 and not _has_clear_shot(proxy.global_position, p3.global_position)):
+		if _bot_ambush_forbidden(b, pid):
+			continue # tregua, alianza o vinculo personal
+		# Acechar cuchillo en mano a quien lleva un arma de fuego a la vista
+		# no es una emboscada, es un suicidio — salvo hambre/sed extremas.
+		if _actor_holds_ranged(p3) and not has_ranged and not desperate:
 			continue
-		# Valor del botin visible: inventario + mochila + arma en mano
-		var inv_n := (p3.get_meta("saved_inventory", []) as Array).size()
-		var loot_val := float(inv_n)
-		if not str(p3.get_meta("saved_backpack", "")).is_empty():
-			loot_val += 5.0
-		if not str(p3.get_meta("saved_held_item", "")).is_empty():
-			loot_val += 1.5
-		var victim_hp := float(p3.get_meta("proxy_health", 100.0))
-		# Escoltas: si la presa tiene compañia cerca y el mio no la supera, pasar
+		var d := proxy.global_position.distance_to(p3.global_position)
+		var loot_val := _bot_observed_loot_value(b, p3, pid)
+		# Escoltas: solo cuentan los acompañantes que el bot ha detectado.
 		var allies := 0
-		for q in world.get_tree().get_nodes_in_group("net_player_proxy"):
-			if q == p3 or not (q is Node3D) or not is_instance_valid(q):
+		for q in perceived:
+			if q == p3:
 				continue
-			if bool(q.get_meta("proxy_dead", false)):
-				continue
-			var qid := _peer_id_for_actor(q)
+			var qid := _peer_id_for_actor(q as Node3D)
 			if qid > 0 and qid in my_team:
 				continue
-			if p3.global_position.distance_to(q.global_position) <= 20.0:
+			if bool((q as Node3D).get_meta("is_ai_bot", false)) and str((q as Node3D).get_meta("bot_faction", "")) == "hostile":
+				continue
+			if p3.global_position.distance_to((q as Node3D).global_position) <= 20.0:
 				allies += 1
 		if allies >= my_team.size() and not desperate:
 			continue
 		if loot_val < 4.0 and not desperate:
 			continue
-		var score := loot_val + (8.0 if allies == 0 else 0.0) + (4.0 if victim_hp < 60.0 else 0.0) - d * 0.15
+		# Recuerdo de encuentros: a quien ya le hizo daño de verdad (miedo)
+		# o le mato no se le embosca alegremente.
+		var fear := float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid)).get("fear", 0.0)) if pid > 0 else 0.0
+		if fear > 0.68 and not desperate:
+			continue
+		var score := loot_val + (8.0 if allies == 0 else 0.0) + (4.0 if _bot_observed_vulnerable(b, p3, pid) else 0.0) - (3.0 if _actor_holds_ranged(p3) else 0.0) - fear * 6.0 - d * 0.15
 		if score > best_score:
 			best_score = score
-			best = {"target_id": pid, "target_name": _actor_display_name(pid) if pid > 0 else "?", "t": 0.0}
+			best = {"target_id": pid, "target_name": _actor_display_name(pid) if pid > 0 else "?", "t": 0.0,
+				"pos": p3.global_position, "seen_msec": Time.get_ticks_msec()}
 	return best
+
+# Cada bot que PRESENCIA como hieren a alguien lo recuerda un rato: es la
+# unica via para saber que una posible presa esta tocada (la vida ajena no
+# se consulta). Lo llama Main al aplicar daño a un jugador o bot.
+func note_actor_wounded(victim_id: int) -> void:
+	var victim := _find_actor_by_peer_id(victim_id)
+	if victim == null or not is_instance_valid(victim):
+		return
+	for bid in bots.keys():
+		if int(bid) == victim_id:
+			continue
+		var wb: Dictionary = bots[bid]
+		var wp: Node3D = wb.get("proxy")
+		if wp == null or not is_instance_valid(wp) or bool(wp.get_meta("proxy_dead", false)):
+			continue
+		var wd := wp.global_position.distance_to(victim.global_position)
+		if wd <= _effective_human_sight(victim, 52.0) and _has_clear_shot(wp.global_position, victim.global_position):
+			var sw: Dictionary = wb.get("_seen_wounded", {})
+			sw[victim_id] = Time.get_ticks_msec()
+			wb["_seen_wounded"] = sw
 
 # Ejecuta la emboscada cada tick: acecho agachado hasta el borde del asalto y
 # golpe conjunto (el equipo entero recibe aggro sobre la victima a la vez).
@@ -6564,21 +6667,35 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	var target := _find_actor_by_peer_id(int(amb.get("target_id", 0)))
 	if target == null or not is_instance_valid(target) or bool(target.get_meta("proxy_dead", false)) or target.get("is_dead") == true:
 		return abort.call(70.0)
-	var d := proxy.global_position.distance_to(target.global_position)
-	if d > BOT_AMBUSH_ABORT_DIST:
-		return abort.call(50.0)
+	# Una tregua o un vinculo sellado a mitad del acecho lo cancela.
+	if _bot_ambush_forbidden(b, int(amb.get("target_id", 0))):
+		return abort.call(90.0)
 	if float(b["thirst"]) < 16.0 or float(b["hunger"]) < 10.0 or float(b["health"]) < 30.0:
 		return abort.call(60.0)
 	amb["t"] = float(amb.get("t", 0.0)) + delta
+	# El acecho sigue la ultima posicion CONOCIDA de la presa: se refresca
+	# solo mientras este bot la percibe (o su lider se la transmite al
+	# copiar el plan). Si desaparece tras una pared no hay radar: se camina
+	# a donde se la vio y, sin volver a dar con ella, se abandona.
+	var perceived := _bot_perceives_actor(b, target, 52.0)
+	if perceived:
+		amb["pos"] = target.global_position
+		amb["seen_msec"] = Time.get_ticks_msec()
+	var known: Vector3 = amb.get("pos", Vector3.INF)
 	b["_ambush"] = amb
+	if known == Vector3.INF or Time.get_ticks_msec() - int(amb.get("seen_msec", 0)) > BOT_AMBUSH_LOST_MSEC:
+		return abort.call(45.0)
+	var d := proxy.global_position.distance_to(known)
+	if d > BOT_AMBUSH_ABORT_DIST:
+		return abort.call(50.0)
 	var strike := BOT_AMBUSH_STRIKE_RANGED if _bot_has_ranged_weapon(proxy) else BOT_AMBUSH_STRIKE_MELEE
-	if d <= strike or (float(amb["t"]) > BOT_AMBUSH_MAX_SECONDS and d <= strike + 8.0):
+	if perceived and (d <= strike or (float(amb["t"]) > BOT_AMBUSH_MAX_SECONDS and d <= strike + 8.0)):
 		# GOLPE: todo el equipo ataca a la vez
 		b["_ambush"] = {}
 		b["_ambush_cd_until"] = now_s + 75.0
 		b["aggro_target"] = target
 		b["aggro_timer"] = 30.0
-		_ai_note_foe_intel(b, target, target.global_position, "seen")
+		_ai_note_foe_intel(b, target, target.global_position, "seen" if _has_clear_shot(proxy.global_position, target.global_position) else "heard")
 		b["sleeping"] = false
 		b["crouching"] = false
 		b["sense_t"] = 0.0
@@ -6591,7 +6708,10 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["crouching"] = true
-	_move_bot_towards(b, target.global_position, 2.9, delta, "walk")
+	if d > 1.5:
+		_move_bot_towards(b, known, 2.9, delta, "walk")
+	else:
+		b["anim"] = "idle" # en el ultimo punto conocido: escucha y espera
 	return true
 
 # --- Chat entre bots y con humanos ------------------------------------------
