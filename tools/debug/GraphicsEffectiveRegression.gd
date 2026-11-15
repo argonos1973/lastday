@@ -59,5 +59,16 @@ func run() -> void:
 			check(DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_WINDOWED, "Actual windowed mode restored")
 			check(DisplayServer.window_get_size() == Vector2i(1280,720), "Window resolution restored")
 	check(is_equal_approx(root.scaling_3d_scale,0.75), "Actual 75% after reload")
+	# El alcance lejano del bosque escala con detalle — las mallas son
+	# ArrayMesh sin LOD, la distancia es la palanca real de coste.
+	var M := preload("res://scripts/Main.gd")
+	var low := M.forest_visibility_radii(G.DETAIL_FACTORS[0], 0.0)
+	var normal := M.forest_visibility_radii(G.DETAIL_FACTORS[1], 0.0)
+	var high := M.forest_visibility_radii(G.DETAIL_FACTORS[2], 0.0)
+	check(normal.x == M.FOREST_MM_VISIBLE_RADIUS and normal.y == M.FOREST_MM_HIDE_RADIUS, "Normal detail keeps designed forest range")
+	check(low.y < normal.y and low.x < normal.x, "Low detail shrinks forest range")
+	check(high.x > normal.x, "High detail extends forest vista")
+	var peak := M.forest_visibility_radii(G.DETAIL_FACTORS[0], 30.0)
+	check(peak.x > low.x and peak.x < M.forest_visibility_radii(G.DETAIL_FACTORS[1], 30.0).x, "Altitude bonus scales with detail")
 	print("GRAPHICS_EFFECTIVE errors=",errors," readback=",readback," display=",DisplayServer.get_name()," effective=",G.effective_snapshot(root))
 	quit(errors)

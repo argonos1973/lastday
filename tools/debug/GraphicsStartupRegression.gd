@@ -33,11 +33,22 @@ func run() -> void:
 			old.free()
 	var net := FakeNet.new()
 	net.name = "NetworkManager"
+	net.is_dedicated_server = OS.get_cmdline_user_args().has("--dedicated")
 	root.add_child(net)
 	G.config_path = "res://build/tmp/graphics_effective.cfg"
 	G.invalidate_cache()
 	var menu := Menu.new()
 	root.add_child(menu)
+	if net.is_dedicated_server:
+		# _ready retorna antes de tocar graficos ni auto-arranques y difiere
+		# la carga del mundo; el swap llega a instanciar Main.tscn pero
+		# Main._ready aborta al instante en FakeNet.player_connected (antes
+		# del world gen) — el ruido del SCRIPT ERROR es esperado aqui.
+		await create_timer(0.2).timeout
+		check(not menu.launched and not net.joined, "Dedicated boot skips graphics and auto-start")
+		print("GRAPHICS_STARTUP errors=", errors, " args=", OS.get_cmdline_user_args())
+		quit(errors)
+		return
 	await create_timer(1.2).timeout
 	check(is_equal_approx(root.scaling_3d_scale, 0.75), "Automatic startup applies saved scale")
 	if DisplayServer.get_name() != "headless":
