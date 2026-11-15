@@ -167,7 +167,28 @@ func _init() -> void:
 	var p_rebuilt: Array = nav_part.find_path(Vector3(-40, 0, 0), Vector3(40, 0, 0))
 	_check(not p_rebuilt.is_empty() and p_rebuilt.back().x < -22.0, "rebuild clears stale open doors and handles int yaw")
 
-	# 6) Paridad de metodos auxiliares (world_to_grid, grid_to_world, _is_path_clear).
+	# 6) build_with_ford: una Callable road_test abre vados en las celdas de río
+	#    igual que el road_test de NavPathfinding — paridad celda a celda.
+	var ford_test := func(world_pos: Vector3) -> bool:
+		return absf(world_pos.x + 50.0) < 3.0 and absf(world_pos.z) < 12.0
+	var nav_cf = ClassDB.instantiate("LastDayNav")
+	var nav_gf = NavPathfindingScript.new()
+	nav_cf.build_with_ford(blockers, rivers, ford_test)
+	nav_gf.build(blockers, rivers, ford_test)
+	var ford_mismatch := 0
+	for gx in range(180, 300):
+		for gz in range(180, 330):
+			var cell := Vector2i(gx, gz)
+			if nav_cf.is_cell_blocked(cell) != nav_gf.is_cell_blocked(cell):
+				ford_mismatch += 1
+	_check(ford_mismatch == 0, "build_with_ford cell parity vs GDScript road_test (mismatch=%d)" % ford_mismatch)
+	var river_cell_blocked := true
+	for gz in range(240, 260):
+		if not nav_cf.is_cell_blocked(Vector2i(217, gz)):
+			river_cell_blocked = false
+	_check(not river_cell_blocked, "ford strip through the river is open in LastDayNav")
+
+	# 7) Paridad de metodos auxiliares (world_to_grid, grid_to_world, _is_path_clear).
 	var sample_pos := Vector3(37.4, 0.0, -83.1)
 	var cg: Vector2i = nav_c.world_to_grid(sample_pos)
 	var gg: Vector2i = nav_gd.world_to_grid(sample_pos)

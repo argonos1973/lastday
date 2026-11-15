@@ -8111,11 +8111,15 @@ func _create_map() -> void:
 		nav.build(wildlife_blockers, _wildlife_water_obstacles())
 		wolf_nav = _new_nav_pathfinding()
 		wolf_nav.build(wildlife_blockers, river_segments_data)
-		# Nav exclusiva de los bots: usa NavPathfindingScript (la extension C
-		# LastDayNav ignora el 3er argumento road_test) con vados de carretera y
-		# pasos someros (<=0.52 m) abiertos para que crucen rios sin atascarse.
-		bot_nav = NavPathfindingScript.new()
-		bot_nav.build(wildlife_blockers, river_segments_data, Callable(self, "_is_bot_river_ford"))
+		# Nav exclusiva de los bots: LastDayNav (C) vía build_with_ford cuando
+		# la extensión está cargada; si no, NavPathfinding GDScript — ambos con
+		# vados de carretera y pasos someros (<=0.52 m) abiertos para que los
+		# bots crucen ríos sin atascarse.
+		bot_nav = _new_nav_pathfinding()
+		if bot_nav.has_method("build_with_ford"):
+			bot_nav.build_with_ford(wildlife_blockers, river_segments_data, Callable(self, "_is_bot_river_ford"))
+		else:
+			bot_nav.build(wildlife_blockers, river_segments_data, Callable(self, "_is_bot_river_ford"))
 		_refresh_nav_door_caches()
 		await get_tree().process_frame
 		if _loading_label != null:

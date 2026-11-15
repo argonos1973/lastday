@@ -130,7 +130,7 @@ static GDExtensionPtrDestructor dtor_arr;
 
 /* Persistent StringNames (live for the extension's lifetime). */
 static TypeSlot sn_class, sn_parent, sn_empty;
-static TypeSlot sn_m_build, sn_m_find_path, sn_m_is_blocked, sn_m_update_door_cache, sn_m_is_built;
+static TypeSlot sn_m_build, sn_m_build_with_ford, sn_m_find_path, sn_m_is_blocked, sn_m_update_door_cache, sn_m_is_built;
 static TypeSlot sn_m_world_to_grid, sn_m_grid_to_world, sn_m_is_path_clear;
 static TypeSlot sn_size, sn_push_back, sn_call;
 static TypeSlot s_hint; /* empty String for PropertyInfo.hint_string */
@@ -722,9 +722,29 @@ static void push_v3(GDExtensionVariantPtr arr_var, V3 v) {
 	fn_variant_destroy(&elem);
 }
 
+/* Calls a one-argument Variant Callable (a "road test" ford predicate like
+ * Main._is_bot_river_ford) and returns nonzero when it answers true. */
+static int call_pred1_v3(GDExtensionVariantPtr fn_var, V3 world_pos) {
+	VarSlot a0, ret;
+	GDExtensionCallError err;
+	fn_variant_new_nil(&ret);
+	var_from_vec3(&a0, &world_pos);
+	const GDExtensionConstVariantPtr argv[1] = { (GDExtensionConstVariantPtr)&a0 };
+	fn_variant_call(fn_var, &sn_call, argv, 1, &ret, &err);
+	int res = 0;
+	if (err.error == GDEXTENSION_CALL_OK && fn_variant_get_type(&ret) == GDEXTENSION_VARIANT_TYPE_BOOL) {
+		GDExtensionBool b = 0;
+		var_to_bool(&b, &ret);
+		res = b ? 1 : 0;
+	}
+	fn_variant_destroy(&ret);
+	fn_variant_destroy(&a0);
+	return res;
+}
+
 /* ---------------- River cells ---------------- */
 
-static void block_river_cells(NavGrid *g, GDExtensionVariantPtr rivers_var) {
+static void block_river_cells(NavGrid *g, GDExtensionVariantPtr rivers_var, GDExtensionVariantPtr road_test) {
 	if (fn_variant_get_type(rivers_var) != GDEXTENSION_VARIANT_TYPE_ARRAY)
 		return;
 	TypeSlot arr_h;
@@ -759,8 +779,18 @@ static void block_river_cells(NavGrid *g, GDExtensionVariantPtr rivers_var) {
 				float wx = center.x + along_x * la + across_x * lw;
 				float wz = center.z + along_z * la + across_z * lw;
 				V2i c = world_to_grid((V3){ wx, 0.0f, wz });
-				if (c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H)
+				if (c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H) {
+					if (road_test) {
+						/* Evaluar road_test sobre el centro de la celda para
+						 * que una sub-muestra en la esquina fuera de la
+						 * calzada no re-bloquee una celda cuyo centro si
+						 * pisa el vado. */
+						if (call_pred1_v3(road_test, (V3){ wx, 0.0f, wz }) ||
+						    call_pred1_v3(road_test, grid_to_world(c)))
+							continue;
+					}
 					g->blocked[cell_idx(c.x, c.y)] = 1;
+				}
 			}
 		}
 	}
@@ -828,7 +858,7 @@ static void nav_dispose(NavGrid *g) {
 
 /* ---------------- GDExtension method bodies ---------------- */
 
-static void nav_build_impl(NavGrid *g, GDExtensionVariantPtr blockers_var, GDExtensionVariantPtr rivers_var) {
+static void nav_build_impl(NavGrid *g, GDExtensionVariantPtr blockers_var, GDExtensionVariantPtr rivers_var, GDExtensionVariantPtr road_test) {
 	memset(g->blocked, 0, GRID_N);
 	memset(g->door_open, 0, GRID_N);
 	nav_free_regions(g);
@@ -869,7 +899,7 @@ static void nav_build_impl(NavGrid *g, GDExtensionVariantPtr blockers_var, GDExt
 			}
 	}
 	dtor_arr(&arr_h);
-	block_river_cells(g, rivers_var);
+	block_river_cells(g, rivers_var, road_test);
 	build_regions(g);
 	g->built = 1;
 }
@@ -1014,7 +1044,28 @@ static void mcall_build(void *ud, GDExtensionClassInstancePtr inst,
 		err->argument = 0;
 		return;
 	}
-	nav_build_impl((NavGrid *)inst, (GDExtensionVariantPtr)args[0], (GDExtensionVariantPtr)args[1]);
+	nav_build_impl((NavGrid *)inst, (GDExtensionVariantPtr)args[0], (GDExtensionVariantPtr)args[1], NULL);
+}
+
+static void mcall_build_with_ford(void *ud, GDExtensionClassInstancePtr inst,
+		const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
+		GDExtensionVariantPtr ret, GDExtensionCallError *err) {
+	(void)ud; (void)ret;
+	if (argc < 3) {
+		err->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+		err->expected = 3;
+		return;
+	}
+	if (fn_variant_get_type(args[0]) != GDEXTENSION_VARIANT_TYPE_ARRAY ||
+	    fn_variant_get_type(args[1]) != GDEXTENSION_VARIANT_TYPE_ARRAY) {
+		err->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+		err->argument = 0;
+		return;
+	}
+	GDExtensionVariantPtr road_test = NULL;
+	if (fn_variant_get_type(args[2]) == GDEXTENSION_VARIANT_TYPE_CALLABLE)
+		road_test = (GDExtensionVariantPtr)args[2];
+	nav_build_impl((NavGrid *)inst, (GDExtensionVariantPtr)args[0], (GDExtensionVariantPtr)args[1], road_test);
 }
 
 static void mcall_update_door_cache(void *ud, GDExtensionClassInstancePtr inst,
@@ -1237,6 +1288,12 @@ static void nav_initialize(void *ud, GDExtensionInitializationLevel level) {
 	arr_args[1] = arg_info(GDEXTENSION_VARIANT_TYPE_ARRAY);
 	register_method(&sn_m_build, mcall_build, 0, GDEXTENSION_VARIANT_TYPE_NIL, 2, arr_args);
 
+	GDExtensionPropertyInfo ford_args[3];
+	ford_args[0] = arg_info(GDEXTENSION_VARIANT_TYPE_ARRAY);
+	ford_args[1] = arg_info(GDEXTENSION_VARIANT_TYPE_ARRAY);
+	ford_args[2] = arg_info(GDEXTENSION_VARIANT_TYPE_CALLABLE);
+	register_method(&sn_m_build_with_ford, mcall_build_with_ford, 0, GDEXTENSION_VARIANT_TYPE_NIL, 3, ford_args);
+
 	GDExtensionPropertyInfo path_args[2];
 	path_args[0] = arg_info(GDEXTENSION_VARIANT_TYPE_VECTOR3);
 	path_args[1] = arg_info(GDEXTENSION_VARIANT_TYPE_VECTOR3);
@@ -1269,6 +1326,7 @@ static void nav_deinitialize(void *ud, GDExtensionInitializationLevel level) {
 	sname_free(&sn_parent);
 	sname_free(&sn_empty);
 	sname_free(&sn_m_build);
+	sname_free(&sn_m_build_with_ford);
 	sname_free(&sn_m_find_path);
 	sname_free(&sn_m_is_blocked);
 	sname_free(&sn_m_update_door_cache);
@@ -1335,6 +1393,7 @@ GDExtensionBool GDE_EXPORT lastday_nav_library_init(
 	sname_make(&sn_parent, "RefCounted");
 	sname_make(&sn_empty, "");
 	sname_make(&sn_m_build, "build");
+	sname_make(&sn_m_build_with_ford, "build_with_ford");
 	sname_make(&sn_m_find_path, "find_path");
 	sname_make(&sn_m_is_blocked, "is_cell_blocked");
 	sname_make(&sn_m_update_door_cache, "update_door_cache");
