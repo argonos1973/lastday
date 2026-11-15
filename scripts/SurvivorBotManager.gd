@@ -1567,6 +1567,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_ai_note_foe_scan(b, b["_s_foe"] as Node3D)
 			b["_lost_foe_until_msec"] = 0
 			b["_lost_scan_t"] = 0.0
+			_bot_warn_team_of_foe(b, b["_s_foe"] as Node3D)
 		# Ojo en los techos en ciudad/bases militares: un francotirador apostado
 		# en una azotea se ve desde mucho mas lejos que un enemigo a ras — el
 		# bot que entra a saquear vigila los puestos elevados antes que nada.
@@ -3066,7 +3067,9 @@ func _find_threatening_predator(b: Dictionary, max_dist: float) -> Node3D:
 				continue
 		var d := proxy.global_position.distance_to((w as Node3D).global_position)
 		var d_leader := leader.global_position.distance_to((w as Node3D).global_position) if leader != null else 9999.0
-		var eff_d := minf(d, d_leader)
+		# Defender al lider de una fiera exige verla uno mismo: la cercania
+		# del depredador al lider solo cuenta si el bot lo tiene a la vista.
+		var eff_d := minf(d, d_leader) if d <= 45.0 else d
 		if eff_d < best_d:
 			best_d = eff_d
 			best = w as Node3D
@@ -3973,7 +3976,7 @@ func _bot_needs_outing(b: Dictionary) -> bool:
 # es posicion exacta: "heard" lleva el error de localizacion del oido (crece
 # con la distancia) y "told" el de un relato. La fiabilidad de lo oido baja
 # al alejarse; la edad la aplica quien busca despues.
-func _ai_note_foe_intel(b: Dictionary, foe: Node3D, pos: Vector3, src: String) -> void:
+func _ai_note_foe_intel(b: Dictionary, foe: Node3D, pos: Vector3, src: String, told_conf: float = -1.0, age_msec: int = 0) -> void:
 	var conf := 1.0
 	var err := 0.0
 	if src == "heard":
@@ -3982,7 +3985,9 @@ func _ai_note_foe_intel(b: Dictionary, foe: Node3D, pos: Vector3, src: String) -
 		conf = clampf(0.68 - hd * 0.0025, 0.30, 0.65)
 		err = clampf(hd * 0.18, 3.0, 22.0)
 	elif src == "told":
-		conf = 0.55
+		# Un aviso hereda la fiabilidad de quien avisa (rebajada): nadie
+		# cuenta mas de lo que sabe. Sin dato, la de un grito generico.
+		conf = clampf(told_conf, 0.15, 0.8) if told_conf >= 0.0 else 0.55
 		err = 7.0
 	var noted := pos
 	if err > 0.0:
@@ -3996,7 +4001,65 @@ func _ai_note_foe_intel(b: Dictionary, foe: Node3D, pos: Vector3, src: String) -
 			and float(prev.get("conf", 0.0)) >= conf:
 		return
 	b["_last_foe_pos"] = noted
-	b["_foe_mem"] = {"pos": noted, "t": Time.get_ticks_msec(), "src": src, "conf": conf, "key": key}
+	# age_msec: antiguedad de la pista en origen — un aviso sobre algo visto
+	# hace 40 s llega ya con 40 s de viejo, no como recien observado.
+	b["_foe_mem"] = {"pos": noted, "t": Time.get_ticks_msec() - maxi(0, age_msec), "src": src, "conf": conf, "key": key}
+
+# Lo que un compañero puede contar de un enemigo: SU ultima posicion
+# conocida, con su antiguedad y su fiabilidad — nunca la posicion viva del
+# nodo. Sin ficha propia sobre ese enemigo no hay nada que transmitir.
+func _bot_foe_report(b: Dictionary, foe: Node3D) -> Dictionary:
+	var fm: Dictionary = b.get("_foe_mem", {})
+	if fm.is_empty() or foe == null or not is_instance_valid(foe):
+		return {}
+	if str(fm.get("key", "")) != _actor_persist_key(_peer_id_for_actor(foe)):
+		return {}
+	var pos: Vector3 = fm.get("pos", Vector3.INF)
+	var age := Time.get_ticks_msec() - int(fm.get("t", 0))
+	if pos == Vector3.INF or age > 120000:
+		return {}
+	return {"pos": pos, "age_msec": age, "conf": float(fm.get("conf", 0.5)) * 0.8}
+
+# Aviso real entre compañeros: quien percibe a un enemigo se lo grita a los
+# suyos al alcance de la voz. Sustituye a la vieja "telepatia" que media la
+# distancia al enemigo desde el lider: ahora cada bot detecta con sus
+# sentidos y la defensa del equipo viaja como informacion comunicada.
+const BOT_WARN_SHOUT_RANGE := 45.0
+const BOT_WARN_CD_MSEC := 2500
+
+func _bot_warn_team_of_foe(b: Dictionary, foe: Node3D) -> int:
+	var now := Time.get_ticks_msec()
+	if now - int(b.get("_warn_foe_msec", -999999)) < BOT_WARN_CD_MSEC:
+		return 0
+	var report := _bot_foe_report(b, foe)
+	if report.is_empty():
+		return 0
+	var proxy: Node3D = b["proxy"]
+	var my_id := int(b["bot_id"])
+	var warned := 0
+	for tid in _bot_team_ids(b):
+		if int(tid) == my_id or not bots.has(tid):
+			continue
+		var tb: Dictionary = bots[tid]
+		var tp: Node3D = tb.get("proxy")
+		if tp == null or not is_instance_valid(tp) or bool(tp.get_meta("proxy_dead", false)):
+			continue
+		if proxy.global_position.distance_to(tp.global_position) > BOT_WARN_SHOUT_RANGE:
+			continue
+		if tb.get("_s_foe") == foe:
+			continue # ya lo percibe por si mismo
+		_ai_note_foe_intel(tb, foe, report["pos"], "told", float(report["conf"]), int(report["age_msec"]))
+		var cur_aggro = tb.get("aggro_target")
+		if cur_aggro == null or not is_instance_valid(cur_aggro):
+			tb["aggro_target"] = foe
+			tb["aggro_timer"] = 20.0
+			tb["sense_t"] = 0.0
+		tb["sitting"] = false
+		tb["sleeping"] = false
+		warned += 1
+	if warned > 0:
+		b["_warn_foe_msec"] = now
+	return warned
 
 # Refresco del escaneo de sentidos: la posicion exacta solo la fija la VISTA
 # (linea de vision real). El oido mantiene el aggro pero NO reescribe la pista
@@ -4514,7 +4577,6 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			b["aggro_timer"] = 0.0
 
 	var faction := str(b["faction"])
-	var leader := _resolve_team_leader(b)
 	var sight := 44.0 if faction == "hostile" else 28.0
 	var best: Node3D = null
 	var best_d := sight
@@ -4573,13 +4635,15 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			var op: Node3D = ob.get("proxy")
 			if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
 				continue
+			# Sentidos PROPIOS: la distancia se mide siempre desde el bot que
+			# mira/escucha. Un bandido pegado al lider pero a 100 m de este
+			# bot no se "oye" por delegacion — la defensa del lider llega por
+			# aviso real (_bot_warn_team_of_foe / rally / notify_leader).
 			var d := proxy.global_position.distance_to(op.global_position)
-			var dl := leader.global_position.distance_to(op.global_position) if leader != null else 9999.0
-			var eff_d := minf(d, dl)
-			var heard_o := _can_bot_hear_actor(b, op, eff_d)
+			var heard_o := _can_bot_hear_actor(b, op, d)
 			var max_ro := minf(best_d, maxf(34.0 if heard_o else 0.0, _effective_human_sight(op, sight)))
-			if eff_d < max_ro and (heard_o or _has_clear_shot(proxy.global_position, op.global_position)):
-				best_d = eff_d
+			if d < max_ro and (heard_o or _has_clear_shot(proxy.global_position, op.global_position)):
+				best_d = d
 				best = op
 	return best
 
@@ -6386,8 +6450,17 @@ func rally_bot_team(victim_id: int, attacker: Node3D) -> void:
 		if tp.global_position.distance_to(attacker.global_position) <= 60.0:
 			tb["aggro_target"] = attacker
 			tb["aggro_timer"] = 25.0
-			# Posicion comunicada por el compañero: es su ultima conocida.
-			_ai_note_foe_intel(tb, attacker, attacker.global_position, "told")
+			# Posicion comunicada por el compañero: SU ultima conocida, con
+			# su antiguedad y fiabilidad. La victima no se avisa a si misma
+			# (su ficha propia es mejor) y si no sabe nada del agresor el
+			# aviso solo orienta hacia donde la estan atacando a ella.
+			if bid != victim_id:
+				var rep_v := _bot_foe_report(victim_b, attacker)
+				var vp: Node3D = victim_b.get("proxy")
+				if not rep_v.is_empty():
+					_ai_note_foe_intel(tb, attacker, rep_v["pos"], "told", float(rep_v["conf"]), int(rep_v["age_msec"]))
+				elif vp != null and is_instance_valid(vp):
+					_ai_note_foe_intel(tb, attacker, vp.global_position, "told", 0.3)
 			tb["sitting"] = false
 			tb["sleeping"] = false
 			tb["sense_t"] = 0.0
