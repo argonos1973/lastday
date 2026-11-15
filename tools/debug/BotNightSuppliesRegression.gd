@@ -156,6 +156,19 @@ func run():
  st_cold.body_temperature = 36.6
  check(manager._bot_is_freezing(b7) == false, "sanity: 36.6 is not freezing")
  st_cold.free()
+ # --- Veto temporal de fogata inalcanzable: no atrae al buscador de
+ # calor, pero caduca y no aplica si ya estas dentro del anillo ---
+ world._lit_campfires = [{"id":"fv1","pos":Vector3(6,0,0)},{"id":"fv2","pos":Vector3(60,0,0)}]
+ world.world_actions_by_id = {"fv1":{"position":Vector3(6,0,0)},"fv2":{"position":Vector3(60,0,0)}}
+ proxy.global_position = Vector3(0,0,0)
+ var b8 := {"proxy":proxy,"bot_id":909}
+ check(manager._nearest_lit_campfire_pos(proxy.global_position, 80.0) == Vector3(6,0,0), "unvetoed call sees the near fire")
+ manager._bot_veto_fire(b8, Vector3(6,0,0))
+ check(manager._nearest_lit_campfire_pos(proxy.global_position, 80.0, b8) == Vector3(60,0,0), "vetoed fire skipped, alternative found")
+ check(manager._bot_fire_vetoed(b8, Vector3(6,0,0)), "veto holds at distance")
+ proxy.global_position = Vector3(5,0,0)
+ check(not manager._bot_fire_vetoed(b8, Vector3(6,0,0)), "veto ignored when already inside the ring")
+ proxy.global_position = Vector3(0,0,0)
  world.free()
  print("BotNightSuppliesRegression errors=",errors)
  quit(1 if errors else 0)

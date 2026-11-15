@@ -71,6 +71,27 @@ class SimWorld extends "res://scripts/Main.gd":
 	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float:
 		return 0.4
 	func get_river_depth_at(pos: Vector3) -> float:
+		# Mismo perfil que Main.get_river_depth_at para tramos rectos: somero
+		# en la orilla y hondo en el eje. Sin el, la orilla calculada por
+		# _nearest_water_pos (0.35 m dentro del borde) saltaba a profunda y
+		# la caminata a beber se abortaba como meta inalcanzable.
+		for seg in river_segs:
+			if not (seg is Dictionary):
+				continue
+			var c: Vector3 = seg.get("center", Vector3.ZERO)
+			var sz: Vector2 = seg.get("size", Vector2.ZERO)
+			var yaw := deg_to_rad(float(seg.get("yaw", 0.0)))
+			var along := Vector3(cos(yaw), 0.0, -sin(yaw))
+			var across := Vector3(sin(yaw), 0.0, cos(yaw))
+			var off := pos - c
+			var lf := off.dot(along)
+			var ls := off.dot(across)
+			var hl := sz.x * 0.5
+			var hw2 := sz.y * 0.5
+			if absf(lf) <= hl and absf(ls) <= hw2:
+				var sd := 1.0 - absf(ls) / maxf(0.01, hw2)
+				var ld := 1.0 - absf(lf) / maxf(0.01, hl)
+				return clampf(minf(sd, ld) * 3.0, 0.18, 2.5)
 		return 1.0 if water_rect.has_point(Vector2(pos.x, pos.z)) else 0.0
 	func _is_near_river(pos: Vector3, margin: float = 0.5) -> bool:
 		return water_rect.grow(margin).has_point(Vector2(pos.x, pos.z))
@@ -257,6 +278,8 @@ func _place_bot(b: Dictionary, pos: Vector3, stats := {}) -> void:
 	b.erase("_night_wander")
 	b.erase("_forage")
 	b.erase("_bad_water")
+	b.erase("_fire_veto")
+	b.erase("_fire_band")
 	var st: SurvivalStats = b["vstats"]
 	st.health = float(b["health"])
 	st.hunger = float(b["hunger"])
@@ -299,8 +322,8 @@ func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 340
 	var reports: Array = []
 	for b in bots:
 		reports.append({"bot_id": int(b["bot_id"]), "name": str(b.get("name", "?")), "acts": {},
-			"slept": false, "cause": "", "survived_s": 0.0, "failed_goals": 0,
-			"peak_wet": 0.0, "dawn_clean": true})
+			"act_first": {}, "slept": false, "cause": "", "survived_s": 0.0,
+			"failed_goals": 0, "peak_wet": 0.0, "dawn_clean": true})
 	var step := 0
 	while step < max_steps:
 		var is_night: bool = dc.is_night()
@@ -325,6 +348,10 @@ func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 340
 			r["failed_goals"] = int(r["failed_goals"]) + maxi(0, (b.get("_bad_water", []) as Array).size() - bad_water_before)
 			var act := str(b.get("_act", "idle"))
 			r["acts"][act] = int(r["acts"].get(act, 0)) + 1
+			# Orden de aparicion de cada acto: la prioridad entre sistemas se
+			# verifica sobre la secuencia real, no sobre conteos finales.
+			if not (r["act_first"] as Dictionary).has(act):
+				(r["act_first"] as Dictionary)[act] = step
 			# Ventana de amenaza: todo acto con un enemigo encima va aparte —
 			# regular la fogata mientras te atacan es un bug de prioridades.
 			if b.get("aggro_target") != null or b.get("_s_predator") is Node3D or b.get("_s_foe") is Node3D:
@@ -562,17 +589,22 @@ func run() -> void:
 	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 45.0,
 		"inventory": [
 			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 15, "use_value": 45.0},
-			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 100, "use_value": 14.0}]})
+			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 160, "use_value": 14.0}]})
+	var woke_mid := [false]
 	reps = simulate(env, [b], [{"at": 300, "fn": func():
 		b["aggro_target"] = wolf
 		b["aggro_timer"] = 60.0},
+		{"at": 330, "fn": func():
+		# Despertar medido dentro de la ventana: el estado final no vale, el
+		# bot puede volver a dormir (y debe) cuando la amenaza pasa.
+		woke_mid[0] = not bool(b.get("sleeping", false))},
 		{"at": 360, "fn": func():
 		# La amenaza rompe el contacto: el bot reacciono y sobrevivio.
 		b["aggro_target"] = null
 		b["aggro_timer"] = 0.0}])
 	print(_report_line(reps[0], b))
 	check(bool(reps[0]["slept"]), "S8 llego a dormir antes del ataque")
-	check(not bool(b["sleeping"]), "S8 el aggro lo desperto")
+	check(woke_mid[0], "S8 el aggro lo desperto")
 	check(not (b["vstats"] as SurvivalStats).dead, "S8 sobrevive a la amenaza")
 	# Prioridad combate>termostato: con el lobo encima nunca ejecuta
 	# warm_up/cool_off — la regulacion termica cede a la amenaza.
@@ -726,6 +758,115 @@ func run() -> void:
 	check(wall_viol[0] == 0, "S12 jamas atraviesa el muro (viol=%d)" % wall_viol[0])
 	check(max_z[0] > 11.5, "S12 rodeo el muro por el hueco norte (z_max=%.1f)" % max_z[0])
 	check(d12 < 10.0, "S12 llego a su refugio al otro lado (d=%.0f)" % d12)
+
+	# ---- S13: hipotermico DENTRO del rio — la orilla manda sobre la lumbre ----
+	# Antes el termostato corria primero: un helado en agua profunda podia
+	# intentar "acercarse a la fogata" desde el rio. Ahora el escape al
+	# somero es la primera decision del tick, siempre.
+	print("S13: agua profunda con fogata cerca")
+	env = _new_world(8.0)
+	w = env["world"]
+	mgr = env["mgr"]
+	w.water_rect = Rect2(-5.0, -5.0, 10.0, 10.0) # depth 1.0 > WADE 0.55
+	w.river_segs = [{"center": Vector3(0.0, 0.0, 0.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w._net_campfire_built("s13_cf", Vector3(20.0, 0.4, 0.0))
+	w._net_campfire_lit("s13_cf", "fire_s13", Vector3(20.0, 0.4, 0.0))
+	w.house_pts = [Vector3(30.0, 0.4, 0.0)]
+	w.wildlife_blockers = [{"house_bounds": Rect2(25.0, -5.0, 10.0, 10.0)}]
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 35.0, "wetness": 0.9,
+		"sleep": 60.0, "inventory": [
+			{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0},
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 10, "use_value": 45.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st13: SurvivalStats = b["vstats"]
+	var af13: Dictionary = reps[0]["act_first"]
+	var i_esc13 := int(af13.get("water_escape", -1))
+	check(i_esc13 >= 0, "S13 el escape de agua profunda ocurrio")
+	check(af13.get("warm_up", 1 << 30) is int and i_esc13 >= 0 and int(af13.get("warm_up", 1 << 30)) > i_esc13 \
+		and int(af13.get("cool_off", 1 << 30)) > i_esc13,
+		"S13 salio del agua ANTES de regular la lumbre (esc=%d warm=%s cool=%s)" % [
+			i_esc13, str(af13.get("warm_up", "-")), str(af13.get("cool_off", "-"))])
+	check(float(w.get_river_depth_at((b["proxy"] as Node3D).global_position)) <= 0.55,
+		"S13 termino fuera del agua profunda")
+	check(not st13.dead, "S13 sobrevive: escapa, se seca y se calienta")
+
+	# ---- S14: fogata amurallada — veto y fuente de calor alternativa ----
+	# NavSimMgr trae _is_step_blocked real (blockers de verdad). Un cerco de
+	# obstaculos cubre TODO el anillo termico: el destino imposible se veta
+	# y el bot busca la otra lumbre en vez de empujar el muro toda la noche.
+	print("S14: fogata inaccesible, calor alternativo")
+	env = _new_world(9.0, {}, true)
+	w = env["world"]
+	mgr = env["mgr"]
+	var fp14 := Vector3(30.0, 0.4, 0.0)
+	for i in range(16):
+		var a := TAU * float(i) / 16.0
+		w._register_wildlife_blocker(fp14 + Vector3(cos(a) * 3.9, 0.0, sin(a) * 3.9), 1.2)
+	w._net_campfire_built("s14_cf", fp14)
+	w._net_campfire_lit("s14_cf", "fire_s14", fp14)
+	var alt14 := Vector3(95.0, 0.4, 0.0)
+	w._net_campfire_built("s14_alt", alt14)
+	w._net_campfire_lit("s14_alt", "fire_s14alt", alt14)
+	# Rio real junto a la alternativa: la sed de una noche entera exige una
+	# fuente, no solo la mochila.
+	w.river_segs = [{"center": Vector3(112.0, 0.0, 0.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(107.0, -5.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(10.0, 0.4, 0.0), {"body_temperature": 34.2, "sleep": 55.0,
+		"inventory": [
+			{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0},
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 10, "use_value": 45.0}]})
+	var veto14 := [false]
+	reps = simulate(env, [b], [{"every": 1, "fn": func():
+		if not (b.get("_fire_veto", {}) as Dictionary).is_empty():
+			veto14[0] = true}])
+	print(_report_line(reps[0], b))
+	var st14: SurvivalStats = b["vstats"]
+	var proxy14: Node3D = b["proxy"]
+	var d_walled := Vector2(proxy14.global_position.x - fp14.x, proxy14.global_position.z - fp14.z).length()
+	var d_alt := Vector2(proxy14.global_position.x - alt14.x, proxy14.global_position.z - alt14.z).length()
+	check(veto14[0], "S14 la fogata amurallada quedo vetada al no tener anillo libre")
+	check(d_alt < 10.0 and d_walled > 12.0,
+		"S14 busco la fuente alternativa, no se quedo contra el muro (alt=%.0f wall=%.0f)" % [d_alt, d_walled])
+	check(not st14.dead, "S14 sobrevive calentandose en la alternativa")
+
+	# ---- S15: fogata parcialmente tapada — el veto NO se dispara ----
+	# Muro solo al este del anillo: los puntos libres del oeste son
+	# alcanzables, asi que no hay veto — el termostato funciona normal.
+	print("S15: fogata con muro parcial")
+	env = _new_world(9.0, {}, true)
+	w = env["world"]
+	mgr = env["mgr"]
+	var fp15 := Vector3(30.0, 0.4, 0.0)
+	for i in range(5):
+		var a := -PI * 0.25 + PI * 0.125 * float(i) # ~45° de arco al este
+		w._register_wildlife_blocker(fp15 + Vector3(cos(a) * 3.9, 0.0, sin(a) * 3.9), 1.2)
+	w._net_campfire_built("s15_cf", fp15)
+	w._net_campfire_lit("s15_cf", "fire_s15", fp15)
+	w.house_pts = [Vector3(20.0, 0.4, 0.0)]
+	# La casa se registra, no se asigna: machacar wildlife_blockers aqui
+	# dejaria los indices de _blocker_grid apuntando a entradas muertas.
+	var h15 := w._register_wildlife_blocker(Vector3(20.0, 0.0, 0.0), 5.0)
+	w.wildlife_blockers[h15]["house_bounds"] = Rect2(15.0, -5.0, 10.0, 10.0)
+	# Rio al norte para la sed de la noche (fuera del muro parcial y de la
+	# casa): beber a la orilla sigue siendo una salida normal.
+	w.river_segs = [{"center": Vector3(30.0, 0.0, -18.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(25.0, -23.0, 10.0, 10.0)
+	b = mgr.bots[901]
+	_place_bot(b, Vector3(12.0, 0.4, 0.0), {"body_temperature": 35.0, "sleep": 55.0,
+		"inventory": [
+			{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0},
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 10, "use_value": 45.0}]})
+	reps = simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st15: SurvivalStats = b["vstats"]
+	check((b.get("_fire_veto", {}) as Dictionary).is_empty(),
+		"S15 el muro parcial no veto la fogata (anillo libre por el oeste)")
+	check(int(reps[0]["acts"].get("warm_up", 0)) + int(reps[0]["acts"].get("cool_off", 0)) > 0,
+		"S15 el termostato regulo distancia de verdad (acts=%s)" % str(reps[0]["acts"]))
+	check(not st15.dead, "S15 sobrevive regulando por el lado libre")
 
 	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures else 0)

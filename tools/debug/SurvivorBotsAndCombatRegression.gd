@@ -607,6 +607,83 @@ func run() -> void:
 	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
 	world.water_depth = 1.0
 
+	# 9d) Agua profunda + fogata encendida a tiro + frio: el escape sigue
+	# ganando al termostato — un helado en el rio no puede "acercarse a la
+	# lumbre" antes de llegar a lo somero; ya fuera, warm_up si le lleva.
+	carlos["thirst"] = 80.0
+	carlos["hunger"] = 80.0
+	carlos["sleeping"] = false
+	carlos["aggro_target"] = null
+	carlos["flee_until"] = 0.0
+	carlos["hide_timer"] = 0.0
+	var vst9d: SurvivalStats = carlos["vstats"]
+	vst9d.body_temperature = 34.2
+	vst9d.wetness = 0.8
+	vst9d.sleep = 80.0
+	vst9d.dead = false
+	var cp9: Vector3 = carlos_proxy.global_position + Vector3(15.0, 0.0, 0.0)
+	var cf9d := Node3D.new()
+	cf9d.position = cp9
+	cf9d.set_meta("lit", true)
+	world.add_child(cf9d)
+	world.world_actions_by_id["cf9d"] = cf9d
+	var lit_bak9d: Array = world._lit_campfires.duplicate(true)
+	world._lit_campfires = [{"id": "cf9d", "fire_name": "Fogata", "pos": cp9}]
+	world.water_rect = Rect2(carlos_proxy.global_position.x - 2.0, carlos_proxy.global_position.z - 2.0, 4.0, 4.0)
+	world.water_depth = 1.2
+	mgr._tick_bot(carlos, 0.1)
+	check(str(carlos.get("_act", "")) == "water_escape",
+		"Helado en agua profunda escapa al somero aunque haya lumbre a 15 m (act=%s)" % str(carlos.get("_act", "")))
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	mgr._tick_bot(carlos, 0.1)
+	check(str(carlos.get("_act", "")) == "warm_up",
+		"Ya en tierra el helado si va a la lumbre (act=%s)" % str(carlos.get("_act", "")))
+
+	# 9e) Fogata amurallada: el anillo inalcanzable se veta y nunca se
+	# ofrece un punto bloqueado como destino seguro.
+	carlos.erase("_fire_veto")
+	var fp9e: Vector3 = carlos_proxy.global_position + Vector3(18.0, 0.0, 0.0)
+	for i in range(16):
+		var a9 := TAU * float(i) / 16.0
+		world._register_wildlife_blocker(fp9e + Vector3(cos(a9) * 3.9, 0.0, sin(a9) * 3.9), 1.2)
+	var cf9e := Node3D.new()
+	cf9e.position = fp9e
+	cf9e.set_meta("lit", true)
+	world.add_child(cf9e)
+	world.world_actions_by_id["cf9e"] = cf9e
+	var cfalt9 := Node3D.new()
+	var altp9: Vector3 = carlos_proxy.global_position + Vector3(-40.0, 0.0, 0.0)
+	cfalt9.position = altp9
+	cfalt9.set_meta("lit", true)
+	world.add_child(cfalt9)
+	world.world_actions_by_id["cfalt9"] = cfalt9
+	world._lit_campfires = [{"id": "cf9e", "fire_name": "Fogata", "pos": fp9e},
+		{"id": "cfalt9", "fire_name": "Fogata", "pos": altp9}]
+	vst9d.body_temperature = 34.2
+	check(not mgr._bot_camp_fire_standoff(carlos, 0.1),
+		"Fogata amurallada: el termostato cede en vez de empujar el muro")
+	check(not (carlos.get("_fire_veto", {}) as Dictionary).is_empty(),
+		"La fogata sin anillo libre queda vetada temporalmente")
+	var spot9_in := fp9e + Vector3(3.2, 0.0, 0.0)
+	var spot9: Vector3 = mgr._bot_fire_safe_spot(spot9_in, 0.4, carlos)
+	check(spot9 == spot9_in or not world.is_bot_blocked_at(spot9),
+		"_bot_fire_safe_spot nunca devuelve un punto bloqueado")
+	check(mgr._nearest_lit_campfire_pos(carlos_proxy.global_position, 80.0, carlos) == altp9,
+		"Con la cercana vetada, el buscador encuentra la alternativa a 40 m")
+	world._lit_campfires = lit_bak9d
+	world.world_actions_by_id.erase("cf9d")
+	world.world_actions_by_id.erase("cf9e")
+	world.world_actions_by_id.erase("cfalt9")
+	cf9d.queue_free()
+	cf9e.queue_free()
+	cfalt9.queue_free()
+	# El test deja el estado limpio: a 34.2 °C mojado la muerte se atribuiria
+	# a hipotermia, no a la inanicion que la seccion 10 quiere medir.
+	vst9d.body_temperature = 36.6
+	vst9d.wetness = 0.0
+	carlos.erase("_fire_veto")
+	carlos.erase("_fire_band")
+
 	# --- 10) Hambre y sed a cero matan de verdad (muerte por inanicion) ---
 	carlos["hunger"] = 0.0
 	carlos["thirst"] = 0.0
