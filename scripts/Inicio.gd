@@ -439,7 +439,7 @@ func _build_options_panel() -> void:
 	for label in GraphicsSettings.DETAIL_LABELS:
 		detail_options.add_item(label)
 	detail_options.select(GraphicsSettings.detail_index())
-	detail_options.tooltip_text = "LOD, hierba corta y salpicaduras. Se aplica al entrar en partida; conserva árboles y obstáculos."
+	detail_options.tooltip_text = "LOD, hierba corta, salpicaduras y alcance del bosque lejano. Los arboles cercanos y la cobertura nunca cambian. Se aplica al entrar en partida."
 	detail_options.item_selected.connect(func(index: int):
 		GraphicsSettings.save_detail_index(index))
 	box.add_child(detail_options)

@@ -19176,16 +19176,27 @@ func _build_forest_understory_multimeshes(tree_positions: Array) -> void:
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			add_child(mmi)
 
+# Alcance de dibujado del bosque en (show, hide). Las mallas de arboles son
+# ArrayMesh procedurales sin niveles LOD — mesh_lod_threshold no las recorta —
+# asi que la distancia es la unica palanca real de coste para la GPU. Mas alla
+# de _forest_collision_radius (35 m) los troncos no tienen collider: ocultar
+# lotes lejanos nunca crea cobertura invisible ni cambia trayectorias de
+# balas; los personajes se dibujan por nodos propios.
+static func forest_visibility_radii(detail: float, player_y: float) -> Vector2:
+	var vis_bonus := (680.0 if player_y > 25.0 else (320.0 if player_y > 2.5 else 0.0)) * detail
+	return Vector2(
+		FOREST_MM_VISIBLE_RADIUS * detail + vis_bonus,
+		FOREST_MM_HIDE_RADIUS * detail + vis_bonus)
+
 func _update_forest_visibility() -> void:
 	if _forest_multimesh_nodes.is_empty():
 		return
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
-	var vis_bonus := 680.0 if ppos.y > 25.0 else (320.0 if ppos.y > 2.5 else 0.0)
-	var detail_scale := 1.0 # Existing normal range at every quality; use mesh LOD instead.
-	var hide_base := FOREST_MM_HIDE_RADIUS * detail_scale + vis_bonus
-	var show_base := FOREST_MM_VISIBLE_RADIUS * detail_scale + vis_bonus
+	var radii := forest_visibility_radii(GraphicsSettings.detail_factor(), ppos.y)
+	var hide_base := radii.y
+	var show_base := radii.x
 	var shadow_radius: float = ShadowQuality.PRESETS[_shadow_quality].forest
 	for i in range(_forest_multimesh_nodes.size()):
 		var node: MultiMeshInstance3D = _forest_multimesh_nodes[i]
@@ -19446,7 +19457,7 @@ func _create_individual_tree_visual(visual_name: String, pos: Vector3, variant_i
 	trunk_mi.name = "Trunk"
 	trunk_mi.mesh = src_mesh
 	trunk_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	trunk_mi.visibility_range_end = 480.0
+	trunk_mi.visibility_range_end = 480.0 * minf(GraphicsSettings.detail_factor(), 1.0)
 	trunk_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	mi.add_child(trunk_mi)
 	if branch_mesh != null:
@@ -19454,7 +19465,7 @@ func _create_individual_tree_visual(visual_name: String, pos: Vector3, variant_i
 		branch_mi.name = "Branches"
 		branch_mi.mesh = branch_mesh
 		branch_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		branch_mi.visibility_range_end = 480.0
+		branch_mi.visibility_range_end = 480.0 * minf(GraphicsSettings.detail_factor(), 1.0)
 		branch_mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		mi.add_child(branch_mi)
 	add_child(mi)
