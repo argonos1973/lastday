@@ -8141,6 +8141,7 @@ func _create_map() -> void:
 		await _flush_prop_batches()
 		await _flush_bush_multimeshes()
 		await get_tree().process_frame
+		_batch_static_decor()
 		for water in get_tree().get_nodes_in_group("river_water"):
 			if water.has_method("request_reflection_refresh"):
 				water.request_reflection_refresh()
@@ -9372,6 +9373,9 @@ func _create_wall_decal(origin: Vector3, node_name: String, u_axis: String, side
 		mesh_instance.rotation_degrees.y = 90.0 if side > 0.0 else -90.0
 	if mirror:
 		mesh_instance.scale.x = -1.0
+	mesh_instance.visibility_range_end = 85.0
+	mesh_instance.visibility_range_end_margin = 6.0
+	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(mesh_instance)
 
 func _create_barn_grass(origin: Vector3, half_w: float, half_d: float, ground_y: float) -> void:
@@ -20505,6 +20509,81 @@ func _flush_prop_batches() -> void:
 				flushed += 1
 		await get_tree().process_frame
 	_prop_batch_items.clear()
+
+# Static-decor batching: thousands of individually placed planes/quads/boxes
+# (shore bands, road decals, generated props) sit as direct MeshInstance3D
+# children — one draw call each. Anonymous (@-named), childless, ungrouped
+# nodes are unreferenced by gameplay code, so they collapse into MultiMesh
+# batches keyed by mesh+material+flags, spatially split with per-batch
+# centers so existing visibility ranges keep working.
+func _batch_static_decor() -> void:
+	var groups := {}
+	var rejected := {"surface":0, "named":0, "grouped":0, "children":0, "hidden":0}
+	for child in get_children():
+		var mi := child as MeshInstance3D
+		if mi == null:
+			continue
+		if mi.mesh == null or mi.mesh.get_surface_count() != 1:
+			rejected.surface += 1
+			continue
+		if not str(mi.name).begins_with("@"):
+			rejected.named += 1
+			continue
+		if not mi.get_groups().is_empty():
+			rejected.grouped += 1
+			continue
+		if mi.get_child_count() != 0:
+			rejected.children += 1
+			continue
+		if not mi.visible:
+			rejected.hidden += 1
+			continue
+		var mat: Material = mi.material_override if mi.material_override != null else mi.mesh.surface_get_material(0)
+		var key := "%x_%x_%d_%d_%d" % [mi.mesh.get_instance_id(), mat.get_instance_id() if mat != null else 0, int(mi.layers), int(mi.cast_shadow), int(roundf(mi.visibility_range_end))]
+		if not groups.has(key):
+			groups[key] = {"mesh": mi.mesh, "mat": mat, "shadow": mi.cast_shadow, "layers": mi.layers, "range": mi.visibility_range_end, "items": []}
+		(groups[key].items as Array).append(mi)
+	var batched := 0
+	var freed := 0
+	for key in groups:
+		var group: Dictionary = groups[key]
+		var items: Array = group.items
+		if items.size() < 4:
+			continue
+		var transforms: Array = []
+		for mi in items:
+			transforms.append((mi as MeshInstance3D).transform)
+		var spatial := _spatial_instance_batches(transforms, 64.0, 900)
+		for indices in spatial:
+			var center := Vector3.ZERO
+			for j in indices:
+				center += (transforms[j] as Transform3D).origin
+			center /= float(indices.size())
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = group.mesh
+			mm.instance_count = indices.size()
+			for j in range(indices.size()):
+				var t: Transform3D = transforms[indices[j]]
+				t.origin -= center
+				mm.set_instance_transform(j, t)
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "DecorMM_%d" % batched
+			mmi.position = center
+			mmi.multimesh = mm
+			mmi.layers = int(group.layers)
+			mmi.cast_shadow = int(group.shadow)
+			if group.mat != null:
+				mmi.material_override = group.mat
+			if float(group.range) > 0.0:
+				mmi.visibility_range_end = group.range
+				mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			add_child(mmi)
+			batched += 1
+		for mi in items:
+			(mi as MeshInstance3D).free()
+			freed += 1
+	print("[DECOR] batched %d static MeshInstance3D into %d MultiMesh batches; skipped %s" % [freed, batched, rejected])
 
 func _bush_pos_key(pos: Vector3) -> String:
 	return "%d_%d_%d" % [roundi(pos.x * 50.0), roundi(pos.y * 50.0), roundi(pos.z * 50.0)]
