@@ -3489,6 +3489,10 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 		for lc in world._lit_campfires:
 			if _campfire_entry_alive(lc) and lc.get("pos") is Vector3:
 				var fpos: Vector3 = lc["pos"]
+				# Fogata cuyo anillo ya resulto inalcanzable: no atrae como
+				# refugio termico hasta que el veto caduque y se reevalué.
+				if _bot_fire_vetoed(b, fpos):
+					continue
 				# La meta es el borde del calor que al bot le toca: con frio
 				# el anillo templado (calienta de verdad), si no el exterior
 				# seguro — el centro del anillo lo cocinaba y el borde frio
@@ -9586,7 +9590,7 @@ func _find_nearby_campfire_spot(b: Dictionary, origin: Vector3) -> Vector3:
 			return cand
 	return Vector3.INF
 
-func _nearest_lit_campfire_pos(from_pos: Vector3, max_dist: float) -> Vector3:
+func _nearest_lit_campfire_pos(from_pos: Vector3, max_dist: float, b = null) -> Vector3:
 	if world == null or not ("_lit_campfires" in world):
 		return Vector3.INF
 	var best := Vector3.INF
@@ -9599,6 +9603,8 @@ func _nearest_lit_campfire_pos(from_pos: Vector3, max_dist: float) -> Vector3:
 			dead.append(lc)
 			continue
 		var cp: Vector3 = lc["pos"]
+		if b != null and _bot_fire_vetoed(b, cp):
+			continue
 		var d := Vector2(from_pos.x - cp.x, from_pos.z - cp.z).length()
 		if d < best_d:
 			best_d = d
@@ -9606,6 +9612,51 @@ func _nearest_lit_campfire_pos(from_pos: Vector3, max_dist: float) -> Vector3:
 	for lc in dead:
 		world._lit_campfires.erase(lc)
 	return best
+
+# Veto temporal por bot sobre una fuente de calor cuyo anillo resulto
+# inalcanzable (rodeada de muros/obstaculos): sin el, el buscador de
+# calor volvia a elegir la misma fogata imposible cada tick y el bot se
+# quedaba empujando contra la pared toda la noche. A los 60 s caduca y
+# se reevalua (las condiciones cambian: puertas, fogatas nuevas).
+const FIRE_VETO_MSEC := 60000
+
+func _fire_key(fp: Vector3) -> String:
+	return "%d,%d" % [int(round(fp.x)), int(round(fp.z))]
+
+func _bot_fire_vetoed(b: Dictionary, fp: Vector3) -> bool:
+	var veto: Dictionary = b.get("_fire_veto", {})
+	if veto.is_empty():
+		return false
+	var key := _fire_key(fp)
+	var until := int(veto.get(key, 0))
+	if until <= Time.get_ticks_msec():
+		veto.erase(key)
+		return false
+	# Si ya estas DENTRO del anillo de calor, el veto es historia vieja:
+	# alcanzaste la fogata por otro camino (puerta abierta, otro angulo).
+	var proxy: Node3D = b.get("proxy")
+	if proxy != null and Vector2(proxy.global_position.x - fp.x, proxy.global_position.z - fp.z).length() <= 4.5:
+		veto.erase(key)
+		return false
+	return true
+
+func _bot_veto_fire(b: Dictionary, fp: Vector3) -> void:
+	var veto: Dictionary = b.get("_fire_veto", {})
+	veto[_fire_key(fp)] = Time.get_ticks_msec() + FIRE_VETO_MSEC
+	b["_fire_veto"] = veto
+
+# Punto libre del anillo a `radius` m del fuego, barriendo angulos desde la
+# direccion dada. Devuelve INF si TODOS caen bloqueados (muros, agua
+# profunda, obstaculos) — un borde inalcanzable no es destino seguro.
+func _bot_fire_ring_spot(b: Dictionary, fp: Vector3, dir: Vector2, radius: float, y: float) -> Vector3:
+	var from := (b["proxy"] as Node3D).global_position
+	var dn := dir.normalized() if dir.length() > 0.05 else Vector2(1.0, 0.0)
+	for i in range(8):
+		var ang := dn.rotated(PI * 0.25 * i)
+		var cand := Vector3(fp.x + ang.x * radius, y, fp.z + ang.y * radius)
+		if not _is_step_blocked(from, cand):
+			return cand
+	return Vector3.INF
 
 # Cocinar carne cruda igual que el jugador humano: exige ensartar primero la
 # carne en un Palo afilado ("Carne ensartada") y cocinarla en una hoguera
@@ -10815,27 +10866,24 @@ func _bot_under_immediate_threat(b: Dictionary) -> bool:
 # Con b informado, el borde depende de su modo termico: con frio proyecta
 # al anillo templado (calienta de verdad), si no al borde exterior seguro.
 func _bot_fire_safe_spot(pos: Vector3, y: float, b = null) -> Vector3:
-	var fp := _nearest_lit_campfire_pos(pos, 4.3)
+	var fp := _nearest_lit_campfire_pos(pos, 4.3, b)
 	if fp == Vector3.INF:
 		return pos
 	var radius := 4.15
-	var from := pos
 	if b != null:
 		radius = _bot_fire_warm_radius(b) if _bot_fire_band_update(b) == "warm" else 4.15
-		var proxy: Node3D = b.get("proxy")
-		if proxy != null:
-			from = proxy.global_position
-	var df := Vector2(pos.x - fp.x, pos.z - fp.z)
-	var dn := df.normalized() if df.length() > 0.05 else Vector2(1.0, 0.0)
-	var cand := Vector3(fp.x + dn.x * radius, y, fp.z + dn.y * radius)
+	var dn := Vector2(pos.x - fp.x, pos.z - fp.z)
+	if b == null:
+		dn = dn.normalized() if dn.length() > 0.05 else Vector2(1.0, 0.0)
+		return Vector3(fp.x + dn.x * radius, y, fp.z + dn.y * radius)
 	# El borde elegido debe ser alcanzable: pegado a una pared u obstaculo
-	# se barre el anillo por angulos hasta un punto libre.
-	if b != null:
-		var tries := 0
-		while tries < 8 and _is_step_blocked(from, cand):
-			tries += 1
-			var ang := dn.rotated(PI * 0.25 * tries)
-			cand = Vector3(fp.x + ang.x * radius, y, fp.z + ang.y * radius)
+	# se barre el anillo por angulos hasta un punto libre. Si no hay NINGUNO
+	# no devolvemos un punto bloqueado — el destino queda sin proyectar y
+	# la fogata queda vetada para el resto de busquedas de calor.
+	var cand := _bot_fire_ring_spot(b, fp, dn, radius, y)
+	if cand == Vector3.INF:
+		_bot_veto_fire(b, fp)
+		return pos
 	return cand
 
 # Termostato de campamento: la lumbre empuja la temperatura hacia 38 °C
@@ -10864,7 +10912,7 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 	# standoff no lo veia. Con frio, caminar hacia la lumbre conocida ES
 	# la respuesta humana (la rama warm_up le lleva hasta el anillo).
 	if fp == Vector3.INF:
-		fp = _nearest_lit_campfire_pos(proxy.global_position, 30.0)
+		fp = _nearest_lit_campfire_pos(proxy.global_position, 30.0, b)
 	if fp == Vector3.INF:
 		b.erase("_fire_band")
 		return false
@@ -10872,10 +10920,14 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 	var dir2 := Vector2(proxy.global_position.x - fp.x, proxy.global_position.z - fp.z)
 	var dir := dir2.normalized() if dir2.length() > 0.05 else Vector2(1.0, 0.0)
 	# Pisar las brasas (-5 hp/s): salir siempre, incluso en combate — medio
-	# metro de paso es supervivencia, no desatender la amenaza.
+	# metro de paso es supervivencia, no desatender la amenaza. Aunque el
+	# punto de salida este tapado se intenta: salir del fuego es urgente.
 	if d < 0.85:
+		var esc := _bot_fire_ring_spot(b, fp, dir, 4.25, proxy.global_position.y)
+		if esc == Vector3.INF:
+			esc = Vector3(fp.x + dir.x * 4.25, proxy.global_position.y, fp.z + dir.y * 4.25)
 		b["_act"] = "cool_off"
-		_move_bot_towards(b, Vector3(fp.x + dir.x * 4.25, proxy.global_position.y, fp.z + dir.y * 4.25), 4.5, delta, "walk")
+		_move_bot_towards(b, esc, 4.5, delta, "walk")
 		return true
 	# Amenaza inmediata manda sobre el confort termico — salvo dano letal ya
 	# en curso: cocinarse vivo mientras se pelea tampoco es defenderse.
@@ -10884,14 +10936,20 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 		return false
 	var band := _bot_fire_band_update(b)
 	if band == "cool" and d < 4.15:
-		var spot := Vector3(fp.x + dir.x * 4.25, proxy.global_position.y, fp.z + dir.y * 4.25)
+		var spot := _bot_fire_ring_spot(b, fp, dir, 4.25, proxy.global_position.y)
+		if spot == Vector3.INF:
+			_bot_veto_fire(b, fp)
+			return false
 		b["_act"] = "cool_off"
 		_move_bot_towards(b, spot, 3.8, delta, "walk")
 		return true
 	if band == "warm":
 		var warm_r := _bot_fire_warm_radius(b)
 		if d > warm_r + 0.3 or d < warm_r - 0.6:
-			var spot_in := Vector3(fp.x + dir.x * warm_r, proxy.global_position.y, fp.z + dir.y * warm_r)
+			var spot_in := _bot_fire_ring_spot(b, fp, dir, warm_r, proxy.global_position.y)
+			if spot_in == Vector3.INF:
+				_bot_veto_fire(b, fp)
+				return false
 			b["_act"] = "warm_up"
 			_move_bot_towards(b, spot_in, 3.8, delta, "walk")
 			return true
@@ -11205,7 +11263,7 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 		# terminaba en "exhausted" sin que nada pudiera calentarle).
 		var proxy_w: Node3D = b.get("proxy")
 		if proxy_w != null:
-			if _nearest_lit_campfire_pos(proxy_w.global_position, 30.0) != Vector3.INF:
+			if _nearest_lit_campfire_pos(proxy_w.global_position, 30.0, b) != Vector3.INF:
 				return true
 			if _can_bot_build_campfire(proxy_w):
 				return true
