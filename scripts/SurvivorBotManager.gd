@@ -11370,7 +11370,11 @@ func _bot_is_freezing(b: Dictionary) -> bool:
 	# resta vida). Con el umbral viejo (35.2) quedaba una banda en la que
 	# el bot perdia vida sin sentirse en peligro ni buscar calor — antes la
 	# tapaba comer sin hambre para curarse; ya no se desperdicia comida asi.
-	var thresh := 35.45 + minf(0.45, float(cold_lessons) * 0.15)
+	# La cascada letal es frio->hambre: a <36 C el cuerpo quema comida x1.6
+	# y la hipotermia e inanicion llegan juntas. Quien ya murio de frio
+	# empieza a buscar calor mucho antes (cap 0.9: a 6 muertes actua a
+	# 36.35 C — antes de que el multiplicador de hambre arranque).
+	var thresh := 35.45 + minf(0.9, float(cold_lessons) * 0.15)
 	return st != null and not st.dead and st.body_temperature < thresh
 
 func _bot_is_exhausted(b: Dictionary) -> bool:
@@ -15790,6 +15794,12 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	var d0 := _ai_active_directive(b)
 	if str(d0.get("mode", "")) == "food":
 		radius = 55.0
+	# Hambre sin comida encima (<40, no esperar al limite 26): el escaneo
+	# local ya no basta — viajar de verdad hacia la comida en vez de
+	# orbitar el parche agotado hasta caerse. Con 200 m de radio el bot
+	# alcanza setas/frutales/latas que el escaneo normal nunca ve.
+	if float(b["hunger"]) < 40.0 and not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b)):
+		radius = maxf(radius, 200.0)
 	# Hambre/sed letales: el escaneo crece al alcance de la urgencia — la
 	# seta a 60 m salva igual que la de al lado, y morir buscando a 30 m
 	# con comida a 40 m era la muerte tonta de siempre. Vale tambien de
@@ -15799,6 +15809,20 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 		radius = maxf(radius, NIGHT_LETHAL_SUPPLY_RADIUS)
 	var target := _find_forage_target(b, radius)
 	if target.is_empty():
+		# Nada comestible ni en 200 m: no orbitar el parche agotado — viajar
+		# al POI con comida mas prometedor (monte = setas/fruta/caza, casa/
+		# ciudad = latas). En el camino el escaneo sigue activo y la primera
+		# seta o frutal que entre en radio lo desvia del viaje.
+		if hunger < 40.0:
+			var fpoi := _ai_pick_poi(b, ["wild", "house", "city"], ["military", "tower"], false)
+			if not fpoi.is_empty():
+				var fpos: Vector3 = fpoi["pos"]
+				b["explore_target"] = fpos
+				b["sitting"] = false
+				b["crouching"] = false
+				b["sleeping"] = false
+				_move_bot_towards(b, fpos, 4.8, delta, "run" if hunger < 26.0 else "walk")
+				return true
 		return false
 	b["_forage"] = target
 	if _is_world_night() and _bot_night_supply_emergency(b):
