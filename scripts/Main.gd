@@ -3222,7 +3222,7 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 			player.notice.emit("¡Boleadoras! Te han trabado las piernas (6s, -%d HP)." % int(round(amount)))
 		elif weapon in ["rifle", "m4"] and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
-		elif weapon in ["melee", "wolf_bite", "bear_bite"] and player.has_method("_play_hit_reaction"):
+		elif weapon in ["melee", "wolf_bite", "bear_bite", "arco", "lanza"] and player.has_method("_play_hit_reaction"):
 			player._play_hit_reaction(not weapon.ends_with("_bite"))
 		if weapon in ["rifle", "m4"]:
 			player._recoil_pitch -= deg_to_rad(5.5)
@@ -4047,6 +4047,7 @@ func _is_shooter_valid(shooter_id: int) -> bool:
 
 var _incoming_shot_player: AudioStreamPlayer3D = null
 var _incoming_shot_last := -10.0
+var _primitive_shot_player: AudioStreamPlayer3D = null
 
 func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	var _cpt := Time.get_ticks_usec()
@@ -4783,7 +4784,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# _sender_within fails closed when the attacker has no proxy — a
 		# missing proxy must not silently skip the reach check.
 		var max_reach := 5.0
-		if weapon in ["rifle", "m4", "bola"]:
+		if weapon in ["rifle", "m4", "bola", "arco", "lanza"]:
 			max_reach = PlayerController.RIFLE_RANGE + 20.0
 		elif weapon != "melee":
 			return
@@ -22099,6 +22100,21 @@ func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, i
 	var actor = remote_players.get(shooter_id)
 	if not is_instance_valid(actor) or not actor.has_method("_launch_primitive_projectile"):
 		return
+	# Un arco/lanza que suelta a distancia debe oirse: whoosh posicional en el
+	# tirador (el estampido de fusil ya tiene su propio canal por puppet).
+	if _primitive_shot_player == null:
+		_primitive_shot_player = AudioStreamPlayer3D.new()
+		_primitive_shot_player.name = "PrimitiveShot"
+		_primitive_shot_player.unit_size = 9.0
+		_primitive_shot_player.max_distance = 70.0
+		add_child(_primitive_shot_player)
+	var _ps_stream := PlayerControllerScript._load_audio_stream("res://assets/audio/punch_swing.wav")
+	if _ps_stream != null:
+		_primitive_shot_player.stream = _ps_stream
+		_primitive_shot_player.global_position = origin
+		_primitive_shot_player.volume_db = 2.0
+		_primitive_shot_player.pitch_scale = randf_range(1.15, 1.35) if item_name.begins_with("Flecha") else randf_range(0.9, 1.05)
+		_primitive_shot_player.play()
 	var excluded: Array[RID] = [actor.get_rid()]
 	actor._collect_child_collision_rids(actor, excluded)
 	var arrow := item_name.begins_with("Flecha")

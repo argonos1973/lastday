@@ -5439,7 +5439,7 @@ func _bot_bow_release(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 	# Alerta a la fauna cercana (el RPC devuelve limpio: el proxy no es un jugador)
 	if world.has_method("_net_primitive_shot"):
 		world._net_primitive_shot(bot_id, origin, dir, arrow_name, speed)
-	_bot_launch_projectile(b, origin, dir, arrow_name, speed, 140.0, dmg, false)
+	_bot_launch_projectile(b, origin, dir, arrow_name, speed, 140.0, dmg, false, "arco")
 
 # Lanzas, palo afilado y boleadoras: el arma no se consume (solo durabilidad),
 # como al recogerla del suelo tras el lanzamiento. La direccion sale de la
@@ -5458,7 +5458,7 @@ func _bot_fire_thrown(b: Dictionary, foe: Node3D, item_name: String, is_bola: bo
 	_broadcast_bot_projectile(bot_id, origin, dir, item_name, speed)
 	if world.has_method("_net_primitive_shot"):
 		world._net_primitive_shot(bot_id, origin, dir, item_name, speed)
-	_bot_launch_projectile(b, origin, dir, item_name, speed, 65.0, 65.0, is_bola)
+	_bot_launch_projectile(b, origin, dir, item_name, speed, 65.0, 65.0, is_bola, "bola" if is_bola else "lanza")
 
 # Proyectil visual en los clientes: mismo RPC que usan los jugadores.
 func _broadcast_bot_projectile(bot_id: int, origin: Vector3, dir: Vector3, item_name: String, speed: float) -> void:
