@@ -3008,6 +3008,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			b["eat_cooldown"] = 10.0
 			b["consume_anim"] = "eat"
 			b["consume_anim_t"] = 1.6
+			_bot_log_eaten_food(b, nm)
 			break
 	# Beber de botellas/cantimplora que lleve encima
 	var bottle_thirst_line := 55.0 + (10.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(15.0, float(int(d_lessons.get("dehydrated", 0))) * 5.0)
@@ -15233,6 +15234,10 @@ func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
 		"relationships": (mem.get("relationships", {}) as Dictionary).duplicate(true),
 		"strategies": (mem.get("strategies", {}) as Dictionary).duplicate(true),
 		"death_lessons": (mem.get("death_lessons", {}) as Dictionary).duplicate(true),
+		# Dieta: contador por tipo (setas/fruta/latas/carne/pescado/verduras/
+		# crudos/otros) + ultimo plato — el monitor muestra de que vive.
+		"food_eaten": (mem.get("food_eaten", {}) as Dictionary).duplicate(true),
+		"last_meal": str(b.get("last_meal", "")),
 		"adaptations": _bot_death_adaptations(mem),
 		"pending_goals": (mem.get("pending_goals", []) as Array).duplicate(true),
 		"last_plan_result": str(b.get("_plan_last_result", "")),
@@ -15309,6 +15314,13 @@ func get_ai_debug_report() -> String:
 		var adapts: Array = snap.get("adaptations", [])
 		if not adapts.is_empty():
 			lines.append("  Evolución por muertes: %s" % " · ".join(adapts))
+		var fe: Dictionary = snap.get("food_eaten", {})
+		if not fe.is_empty():
+			var f_parts: Array[String] = []
+			for fk in fe.keys():
+				if str(fk) != "last":
+					f_parts.append("%s×%d" % [str(fk), int(fe[fk])])
+			lines.append("  Dieta: %s (última: %s)" % [", ".join(f_parts), str(fe.get("last", snap.get("last_meal", "-")))])
 	return "\n".join(lines)
 
 func get_full_web_status() -> Dictionary:
@@ -15922,6 +15934,7 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 		proxy.set_meta("saved_hunger", float(b["hunger"]))
 		proxy.set_meta("saved_thirst", float(b["thirst"]))
 		b["eat_cooldown"] = 10.0
+		_bot_log_eaten_food(b, ename)
 		if new_qty < 0 or new_qty == 0:
 			if world.has_method("_net_world_action_completed"):
 				world._net_world_action_completed(aid, [], "", pos, 0)
@@ -16084,6 +16097,31 @@ func _bot_find_farm_spot(b: Dictionary) -> Vector3:
 			continue
 		return cand
 	return Vector3.INF
+
+# Registro de dieta para el monitor: contador por tipo en memoria (persiste
+# entre muertes) y ultima comida en el estado vivo del bot.
+func _bot_log_eaten_food(b: Dictionary, item_name: String) -> void:
+	var cat := "otros"
+	if item_name.begins_with("Seta"):
+		cat = "setas"
+	elif item_name in ["Naranja", "Higo"]:
+		cat = "fruta"
+	elif item_name.begins_with("Lata"):
+		cat = "latas"
+	elif item_name == "Verduras":
+		cat = "verduras"
+	elif item_name.begins_with("Carne cruda") or item_name in ["Pez crudo", "Carne ensartada", "Pez ensartado"]:
+		cat = "crudos"
+	elif item_name.begins_with("Pez") or item_name.begins_with("Pescado"):
+		cat = "pescado"
+	elif item_name.begins_with("Carne"):
+		cat = "carne"
+	b["last_meal"] = item_name
+	var mem := _ensure_bot_memory(int(b.get("bot_id", 0)), b.get("cfg", {}))
+	var fe: Dictionary = mem.get("food_eaten", {})
+	fe[cat] = int(fe.get(cat, 0)) + 1
+	fe["last"] = item_name
+	mem["food_eaten"] = fe
 
 func _bot_consume_one_item(proxy: Node3D, item_name: String) -> bool:
 	var inv: Array = proxy.get_meta("saved_inventory", [])

@@ -1027,6 +1027,17 @@ function renderBots(data) {
       })()}
 
       ${(() => {
+        // Dieta: que ha estado comiendo de verdad — contador por tipo de
+        // comida + ultimo plato, para ver si vive de setas, caza o latas.
+        const fe = Object.entries(b.food_eaten || {}).filter(([k]) => k !== "last").sort((a, c) => Number(c[1]) - Number(a[1]));
+        if (!fe.length && !b.last_meal) return "";
+        const FOOD_ES = {setas: "🍄 setas", fruta: "🍊 fruta", latas: "🥫 latas", carne: "🥩 carne", pescado: "🐟 pescado", verduras: "🥬 verduras", crudos: "⚠ crudos", otros: "🍽 otros"};
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_diet"><summary class="section-label">Dieta (${fe.reduce((s, [, n]) => s + Number(n), 0)} comidas)</summary>
+        <div class="pill-list">${fe.map(([k, n]) => `<span class="item-tag" style="border-color:rgba(82,209,138,.4)">${esc(FOOD_ES[k] || k)} ×${n}</span>`).join("")}</div>
+        ${b.last_meal ? `<div class="empty-note">Última comida: ${esc(b.last_meal)}</div>` : ""}</details>`;
+      })()}
+
+      ${(() => {
         // Autonomia local: por que el cerebro propio decidio en lugar del
         // asesor remoto — perfil de independencia real.
         const fr = Object.entries((b.ai_stats || {}).fallback_reasons || {}).sort((a, c) => Number(c[1]) - Number(a[1])).slice(0, 8);
