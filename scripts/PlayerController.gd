@@ -14430,6 +14430,11 @@ func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal
 			var peer_id: int = node.get_meta("peer_id", 0)
 			var is_proxy_dead: bool = node.get_meta("proxy_dead", false)
 			if not is_proxy_dead and peer_id != 0:
+				# Capsula sin hitboxes: la cabeza es el tercio superior de la
+				# postura actual (los proxies del servidor no tienen HeadHitbox).
+				var _cap_top := 0.55 if bool(node.get_meta("prone", false)) or bool(node.get_meta("sleeping", false)) else (1.25 if bool(node.get_meta("crouching", false)) or bool(node.get_meta("sitting", false)) else 1.72)
+				if hit_pos.y - node.global_position.y >= _cap_top - 0.35:
+					is_headshot = true
 				var proxy_dmg := ((M4_PVP_HEAD if is_headshot else M4_PVP_BODY) if is_m4
 					else (120.0 if is_headshot else 60.0))
 				proxy_dmg *= exp(-0.0002 * hit_dist)

@@ -13,6 +13,10 @@ var drag_coeff := 0.12
 var align_flight := false
 var launch_speed := 0.0
 var spin_speed := 0.0
+# Entidades sin cuerpo fisico (net_player_proxy / ai_survivor_bot son
+# Node3D puros en el servidor): el rayo de fisicas nunca los toca, asi que
+# cada subpaso comprueba ademas la capsula vertical del superviviente.
+var shooter: Node3D = null
 # One query per projectile, reused by every swept integration step.
 var _ray_query := PhysicsRayQueryParameters3D.new()
 
@@ -52,6 +56,15 @@ func _physics_process(delta: float) -> void:
 		# Transparent rivers/lakes have no physics surface: stop at the water
 		# before a submerged terrain hit, and use the existing splash/ripple FX.
 		var end: Vector3 = hit.position if not hit.is_empty() else global_position+displacement
+		# Supervivientes sin cuerpo fisico: si la capsula esta mas cerca que
+		# el impacto de la raycast, la bala los alcanza a ellos primero.
+		var cap := _proxy_segment_hit(global_position, end)
+		if not cap.is_empty() and (hit.is_empty() or global_position.distance_to(cap.position) < global_position.distance_to(hit.position)):
+			traveled += global_position.distance_to(cap.position)
+			impact.emit(cap.node, cap.position, traveled, cap.normal)
+			if CombatProf.enabled: CombatProf.mark("proj.capsule_impact", _cpt)
+			queue_free()
+			return
 		if has_water:
 			var surface_y: float = world.get_river_surface_y_at(end)
 			if global_position.y > surface_y and end.y <= surface_y:
@@ -90,3 +103,98 @@ func _is_passthrough_area(collider) -> bool:
 	if not (collider is Area3D):
 		return false
 	return not ("hitbox" in str((collider as Node).name).to_lower())
+
+# --- Capsulas de supervivientes sin fisica ----------------------------------
+# En el servidor, jugadores y bots son Node3D invisibles para el rayo: un
+# segmento los atraviesa sin registrarse. Este test los trata como capsulas
+# verticales (radio ~0.36, altura por postura) — misma forma que tiene el
+# cuerpo del jugador local para las balas ajenas. Los nodos que ya ofrecen
+# colision (marionetas remote_player con HeadHitbox/BodyHitbox) los cubre el
+# rayo de fisicas; se saltan para no contar el impacto dos veces.
+const PROXY_HIT_RADIUS := 0.36
+const PROXY_HIT_TOP_STAND := 1.72
+const PROXY_HIT_TOP_LOW := 1.25   # agachado / sentado
+const PROXY_HIT_TOP_LYING := 0.55 # tumbado / durmiendo
+
+func _proxy_segment_hit(from: Vector3, to: Vector3) -> Dictionary:
+	var tree := get_tree()
+	if tree == null:
+		return {}
+	var best := {}
+	var best_from := INF
+	var seen := {}
+	for grp in ["net_player_proxy", "ai_survivor_bot", "remote_player"]:
+		for n in tree.get_nodes_in_group(grp):
+			if not (n is Node3D) or n == shooter or not is_instance_valid(n):
+				continue
+			var nid := int(n.get_instance_id())
+			if seen.has(nid):
+				continue
+			seen[nid] = true
+			if n.get("is_dead") == true or bool(n.get_meta("proxy_dead", false)):
+				continue
+			if _node_has_collision(n):
+				continue
+			var base := (n as Node3D).global_position
+			# Descarte rapido: el punto mas cercano posible en su capsula esta
+			# a dist(base,from) - altura del eje; si ya hay algo mejor, fuera.
+			if base.distance_to(from) - PROXY_HIT_TOP_STAND > best_from:
+				continue
+			var top := PROXY_HIT_TOP_STAND
+			if n.get("is_prone") == true or bool(n.get_meta("prone", false)) or bool(n.get_meta("sleeping", false)):
+				top = PROXY_HIT_TOP_LYING
+			elif bool(n.get_meta("crouching", false)) or bool(n.get_meta("sitting", false)) or bool(n.get_meta("saved_sitting", false)):
+				top = PROXY_HIT_TOP_LOW
+			var axis0 := base + Vector3(0.0, 0.10, 0.0)
+			var axis1 := base + Vector3(0.0, top, 0.0)
+			var pair := _seg_seg_closest(from, to, axis0, axis1)
+			if (pair[0] as Vector3).distance_to(pair[1]) > PROXY_HIT_RADIUS:
+				continue
+			var d_from := from.distance_to(pair[0])
+			if d_from < best_from:
+				best_from = d_from
+				# Cabeza: el tercio superior de la capsula.
+				var head := (pair[1] as Vector3).y >= base.y + top - 0.35
+				best = {"node": n, "position": pair[0], "normal": (pair[0] - pair[1]).normalized(), "head": head}
+	return best
+
+# El nodo ya tiene colision propia (marioneta con hitboxes): el rayo la cubre.
+func _node_has_collision(n: Node) -> bool:
+	if n is CollisionObject3D:
+		return true
+	for c in n.get_children():
+		if _node_has_collision(c):
+			return true
+	return false
+
+# Puntos mas cercanos entre dos segmentos (p,q): devuelve [punto_en_p, punto_en_q].
+func _seg_seg_closest(p0: Vector3, p1: Vector3, q0: Vector3, q1: Vector3) -> Array:
+	var d1 := p1 - p0
+	var d2 := q1 - q0
+	var r := p0 - q0
+	var a := d1.dot(d1)
+	var e := d2.dot(d2)
+	var f := d2.dot(r)
+	var s := 0.0
+	var t := 0.0
+	if a < 0.000001 and e < 0.000001:
+		return [p0, q0]
+	if a < 0.000001:
+		t = clampf(f / e, 0.0, 1.0)
+	else:
+		var c := d1.dot(r)
+		if e < 0.000001:
+			s = clampf(-c / a, 0.0, 1.0)
+		else:
+			var bb := d1.dot(d2)
+			var den := a * e - bb * bb
+			if den > 0.000001:
+				s = clampf((bb * f - c * e) / den, 0.0, 1.0)
+			t = (bb * s + f) / e
+			if t < 0.0:
+				t = 0.0
+				s = clampf(-c / a, 0.0, 1.0)
+			elif t > 1.0:
+				t = 1.0
+				s = clampf((bb - c) / a, 0.0, 1.0)
+	return [p0 + d1 * s, q0 + d2 * t]
