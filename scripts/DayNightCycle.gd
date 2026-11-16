@@ -202,10 +202,12 @@ func _update_lighting() -> void:
 	if world_environment != null and world_environment.environment != null:
 		var night_bg := Color(0.001, 0.001, 0.002)
 		world_environment.environment.background_color = night_bg.lerp(Color(0.56, 0.76, 0.96), day_amount)
-		var night_ambient := Color(0.18, 0.23, 0.32)
+		var night_ambient := Color(0.24, 0.30, 0.42)
 		world_environment.environment.ambient_light_color = night_ambient.lerp(Color(.72,.81,.94).lerp(Color(.88,.89,.91),cloud), day_amount)
-		world_environment.environment.ambient_light_energy = lerp(0.16 + moon_illum, lerpf(.40,.53,cloud), day_amount) * (1.0 - darkness * 0.6) + lightning_intensity * 1.0
-		var night_fog := Color(0.002, 0.003, 0.004)
+		# Noche jugable: ~4x mas oscuro que el dia pero con formas legibles —
+		# una noche cerrada sin luna sigue siendo noche, no un pozo negro.
+		world_environment.environment.ambient_light_energy = lerp(0.32 + moon_illum, lerpf(.40,.53,cloud), day_amount) * (1.0 - darkness * 0.6) + lightning_intensity * 1.0
+		var night_fog := Color(0.006, 0.008, 0.012)
 		world_environment.environment.fog_light_color = night_fog.lerp(Color(0.62, 0.70, 0.74).lerp(Color(.78,.61,.47), golden_hour*.35), day_amount)
 		# Weak aerial perspective in clear weather; storm/fog values still dominate.
 		var aerial_density := lerpf(.00004,.00025,day_amount)
@@ -221,14 +223,14 @@ func _update_lighting() -> void:
 			var sun_dir := sun.global_transform.basis.z.normalized()
 			sm.set_shader_parameter("sun_direction", sun_dir)
 			sm.set_shader_parameter("sun_intensity", day_amount)
-			sm.set_shader_parameter("night_sky_brightness", 0.03)
-			sm.set_shader_parameter("sky_top_color", Color(0.0005, 0.0005, 0.001, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
-			sm.set_shader_parameter("sky_mid_color", Color(0.001, 0.002, 0.004, 1).lerp(Color(0.55, 0.75, 0.98, 1), day_amount))
-			sm.set_shader_parameter("sky_horizon_color", Color(0.004, 0.005, 0.007, 1).lerp(Color(0.78, 0.90, 1.0, 1).lerp(Color(1.0,.69,.43),golden_hour*.45), day_amount))
-			sm.set_shader_parameter("sky_energy", lerp(0.02, 1.0, day_amount))
-			sm.set_shader_parameter("ground_bottom_color", Color(0.001, 0.001, 0.002, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))
-			sm.set_shader_parameter("ground_horizon_color", Color(0.004, 0.004, 0.006, 1).lerp(Color(0.30, 0.36, 0.30, 1), day_amount))
-			sm.set_shader_parameter("ground_energy", lerp(0.02, 1.0, day_amount))
+			sm.set_shader_parameter("night_sky_brightness", 0.15)
+			sm.set_shader_parameter("sky_top_color", Color(0.002, 0.003, 0.006, 1).lerp(Color(0.34, 0.62, 0.95, 1), day_amount))
+			sm.set_shader_parameter("sky_mid_color", Color(0.004, 0.007, 0.014, 1).lerp(Color(0.55, 0.75, 0.98, 1), day_amount))
+			sm.set_shader_parameter("sky_horizon_color", Color(0.012, 0.016, 0.026, 1).lerp(Color(0.78, 0.90, 1.0, 1).lerp(Color(1.0,.69,.43),golden_hour*.45), day_amount))
+			sm.set_shader_parameter("sky_energy", lerp(0.10, 1.0, day_amount))
+			sm.set_shader_parameter("ground_bottom_color", Color(0.003, 0.004, 0.006, 1).lerp(Color(0.17, 0.19, 0.14, 1), day_amount))
+			sm.set_shader_parameter("ground_horizon_color", Color(0.010, 0.012, 0.018, 1).lerp(Color(0.30, 0.36, 0.30, 1), day_amount))
+			sm.set_shader_parameter("ground_energy", lerp(0.10, 1.0, day_amount))
 
 func to_dict() -> Dictionary:
 	return {"time_of_day": time_of_day}
