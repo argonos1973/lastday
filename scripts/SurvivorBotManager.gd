@@ -1458,13 +1458,6 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	var raw := str(b.get("anim", "idle"))
 	if raw.begins_with("dead"):
 		return raw
-	# Tensado y suelta de arco: los clips viven en la librería "bow" de cada
-	# puppet — el nombre exacto resuelve directo en el cliente. Sin esto el
-	# arquero parecía quieto y la flecha salía de la nada.
-	if Time.get_ticks_msec() < int(b.get("_bow_shot_anim_until", 0)):
-		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION
-	if bool(b.get("_bow_drawing", false)):
-		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
 	if bool(b.get("sleeping", false)):
 		return "sleep"
 	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw == "idle":
@@ -1476,6 +1469,14 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 			return "sneak_walk"
 		if raw == "idle":
 			return "sneak"
+	# Tensado y suelta de arco: los clips viven en la librería "bow" de cada
+	# puppet — el nombre exacto resuelve directo en el cliente. Sin esto el
+	# arquero parecía quieto y la flecha salía de la nada. Va tras los estados
+	# de cuerpo completo (dormir/sentarse/agacharse): esos ganan si coinciden.
+	if Time.get_ticks_msec() < int(b.get("_bow_shot_anim_until", 0)):
+		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION
+	if bool(b.get("_bow_drawing", false)):
+		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
 	if bool(b.get("has_rifle", false)):
 		if raw == "run":
 			return "riflerun"
