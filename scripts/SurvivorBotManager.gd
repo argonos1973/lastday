@@ -1458,6 +1458,13 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	var raw := str(b.get("anim", "idle"))
 	if raw.begins_with("dead"):
 		return raw
+	# Tensado y suelta de arco: los clips viven en la librería "bow" de cada
+	# puppet — el nombre exacto resuelve directo en el cliente. Sin esto el
+	# arquero parecía quieto y la flecha salía de la nada.
+	if Time.get_ticks_msec() < int(b.get("_bow_shot_anim_until", 0)):
+		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION
+	if bool(b.get("_bow_drawing", false)):
+		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
 	if bool(b.get("sleeping", false)):
 		return "sleep"
 	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw == "idle":
@@ -5541,6 +5548,7 @@ func _bot_fire_bow(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 # seguido corriendo durante la preparacion) + compensacion de caida real.
 func _bot_bow_release(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 	b["_bow_drawing"] = false
+	b["_bow_shot_anim_until"] = Time.get_ticks_msec() + 900
 	var proxy: Node3D = b["proxy"]
 	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return

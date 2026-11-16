@@ -6964,6 +6964,13 @@ func die(cause: String = "") -> void:
 		return
 	is_dead = true
 	_action_serial += 1
+	# Un golpe letal llega por force_death sin pasar por apply_damage — si el
+	# jugador dormía, is_sleeping quedaba en true: el _sleep_fade del HUD
+	# oscurecía la pantalla y la animación de muerte era invisible.
+	if is_sleeping:
+		stop_sleep()
+	# El golpe letal tampoco reproduce el grito de dolor (vive en apply_damage).
+	_play_pain_sound()
 	# Si moría con el alijo abierto, ninguna tecla podía cerrarlo (todo el
 	# gate de _input exige !is_dead) — ciérralo aquí.
 	var death_scene := get_tree().current_scene
