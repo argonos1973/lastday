@@ -6449,6 +6449,99 @@ func run() -> void:
 	mem_med["death_lessons"] = dl_save_med
 
 	# ------------------------------------------------------------------
+	# 10X) Afilar antes que intoxicarse: con Palo + filo el bot desesperado
+	#      craftea Palo afilado (2.4 s) y luego cocina — no come crudo.
+	# ------------------------------------------------------------------
+	# 10X0: carne + Palo + Cuchillo -> no come crudo, arranca el afilado
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["eat_cooldown"] = 0.0
+	b_med["hunger"] = 20.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 20.0},
+		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 1},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
+	])
+	mem_med["death_lessons"] = {}
+	mgr._maintain_bot_needs(b_med, 0.25)
+	var cs_sharp: Dictionary = b_med.get("_craft_state", {})
+	check(float(b_med.get("sick_timer", 0.0)) <= 0.0 and not cs_sharp.is_empty()
+			and str((cs_sharp.get("recipe", {}) as Dictionary).get("output", {}).get("name", "")) == "Palo afilado",
+		"10X0: con Palo+filo afila en vez de comer crudo (sick=%.0f, craft=%s)" % [float(b_med.get("sick_timer", 0.0)), str(cs_sharp.get("recipe", {}).get("output", {}).get("name", ""))])
+	# 10X1: el afilado termina -> Palo afilado en mochila, carne intacta y sigue sin comerla cruda
+	for _t in range(12):
+		mgr._maintain_bot_needs(b_med, 0.25)
+	check(mgr._bot_item_count(p_med, "Palo afilado") == 1 and mgr._bot_item_count(p_med, "Carne cruda de ciervo") == 2
+			and float(b_med.get("sick_timer", 0.0)) <= 0.0,
+		"10X1: afilado completo -> Palo afilado + carne cruda intacta sin enfermar (sharp=%d, sick=%.0f)" % [mgr._bot_item_count(p_med, "Palo afilado"), float(b_med.get("sick_timer", 0.0))])
+	# 10X2: un filo sustituto (Cuchillo de piedra) tambien habilita el afilado
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["eat_cooldown"] = 0.0
+	b_med["hunger"] = 20.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
+		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 1},
+		{"name": "Cuchillo de piedra", "type": "weapon", "weight": 0.3, "quantity": 1, "durability": 60.0, "max_durability": 60.0},
+	])
+	mem_med["death_lessons"] = {}
+	mgr._maintain_bot_needs(b_med, 0.25)
+	check(float(b_med.get("sick_timer", 0.0)) <= 0.0 and not (b_med.get("_craft_state", {}) as Dictionary).is_empty(),
+		"10X2: filo sustituto (Cuchillo de piedra) tambien afila (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	# 10X3: Palo sin filo -> no puede afilar: la cruda sigue siendo el ultimo recurso
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["eat_cooldown"] = 0.0
+	b_med["hunger"] = 20.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
+		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 1},
+	])
+	mem_med["death_lessons"] = {}
+	mgr._maintain_bot_needs(b_med, 0.25)
+	check(float(b_med.get("sick_timer", 0.0)) > 0.0 and (b_med.get("_craft_state", {}) as Dictionary).is_empty(),
+		"10X3: sin filo no puede afilar — la cruda sigue ganando a la inanicion (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	# 10X4: con espeton listo pero sin fogata posible, a hambre~0 el crudo
+	# deja de estar vedado (la inanicion es peor que el veneno)
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["eat_cooldown"] = 0.0
+	b_med["hunger"] = 4.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
+		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1},
+	])
+	mem_med["death_lessons"] = {}
+	mgr._maintain_bot_needs(b_med, 0.25)
+	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
+		"10X4: a hambre 4 el crudo gana aunque pueda cocinarlo (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	mem_med["death_lessons"] = dl_save_med
+
+	# ------------------------------------------------------------------
 	# 10W) Siesta de emergencia: sueño letal (<=4) sin despensa — dormir
 	#      con hambre mata lento, quedarse de pie con sueño~0 mata ya.
 	# ------------------------------------------------------------------

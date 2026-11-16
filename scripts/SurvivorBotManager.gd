@@ -3017,8 +3017,8 @@ func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: 
 		return {}
 	return {"pos": best, "id": _poi_id(best_p), "kind": str(best_p.get("kind", "")), "route": best_p.get("route")}
 
-func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
-	b["consume_anim_t"] = maxf(0.0, float(b.get("consume_anim_t", 0.0)) - _delta)
+func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
+	b["consume_anim_t"] = maxf(0.0, float(b.get("consume_anim_t", 0.0)) - delta)
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	# Vendarse si tiene poca salud o sangrado (si aprendio de muertes en combate, se venda antes)
@@ -3079,14 +3079,25 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 	if pressed and hunger_now >= 20.0:
 		eat_to_heal = false
 	var eat_hungry := hunger_now < hunger_line and not (pressed and hunger_now >= 20.0)
+	# Con crudos encima y sin Palo afilado, el superviviente se afana en
+	# afilar un palo para ensartar y cocinar en vez de intoxicarse: el craft
+	# corre aqui cada tick, tambien durante el cooldown de comida.
+	var desperate := float(b["hunger"]) < 28.0
+	var can_cook_raw := _bot_can_cook_raw_meat(proxy)
+	var can_sharpen := desperate and not can_cook_raw and float(b["hunger"]) > 5.0 and _bot_can_sharpen_for_meat(proxy)
+	if can_sharpen:
+		_bot_try_craft_named(b, delta, ["Palo afilado"], false)
+	# El crudo queda vedado solo mientras la inanicion no sea lo peor: a
+	# hambre ~0 su -2/s supera el -1/s del veneno y el bocado crudo gana,
+	# aunque haya espeton esperando una fogata que no llega.
+	var raw_locked := (can_cook_raw or can_sharpen) and float(b["hunger"]) > 5.0
 	if (force_eat or eat_hungry or eat_to_heal) and float(b["eat_cooldown"]) <= 0.0:
-		var desperate := float(b["hunger"]) < 28.0
 		# Leccion 'medical' (se desangro o se enveneno): la carne cruda es
 		# ultimo recurso — solo se arriesga si aguanta el drenaje (vida tras
 		# el bocado + cura/comida encima) o si la inanicion es ya peor que el
 		# veneno (hambre casi a 0: su -2/s supera el -1/s de la enfermedad).
 		var med_lessons := int(d_lessons.get("medical", 0))
-		if med_lessons > 0 and desperate and float(b.get("sick_timer", 0.0)) <= 0.0 and not _bot_can_cook_raw_meat(proxy):
+		if med_lessons > 0 and desperate and float(b.get("sick_timer", 0.0)) <= 0.0 and not raw_locked:
 			var margin := 70.0 + minf(10.0, float(med_lessons) * 4.0)
 			desperate = float(b["hunger"]) <= 5.0 or float(b["health"]) * 0.5 + _bot_poison_cover(proxy) > margin
 		for i in range(inv.size()):
@@ -3102,7 +3113,7 @@ func _maintain_bot_needs(b: Dictionary, _delta: float) -> void:
 			# La carne cruda solo se come desesperado y sin poder cocinarla:
 			# un superviviente real la cocina (_bot_try_cook_meat), y durante
 			# la doma las piezas son cebo que no se toca.
-			if (nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado") and (not desperate or _bot_can_cook_raw_meat(proxy) or str(b.get("_act", "")) == "tame"):
+			if (nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado") and (not desperate or raw_locked or str(b.get("_act", "")) == "tame"):
 				continue
 			var use_v := float(it.get("use_value", 18.0))
 			var gain_h := use_v
@@ -12505,6 +12516,19 @@ func _bot_can_cook_raw_meat(proxy: Node3D) -> bool:
 	if _bot_has_skewered_meat(proxy):
 		return true
 	return _bot_has_raw_meat(proxy) and _bot_item_count(proxy, "Palo afilado") > 0
+
+# Puede cocinar en cuanto afile un palo: lleva carne/pescado crudo + Palo +
+# filo (Cuchillo o cualquier sustituto de receta). Desesperado, afilar un
+# palo (2.4 s) es mejor que comer crudo y enfermar.
+func _bot_can_sharpen_for_meat(proxy: Node3D) -> bool:
+	if not _bot_has_raw_meat(proxy):
+		return false
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for recipe in CraftingSystem.RECIPES:
+		if str((recipe.get("output", {}) as Dictionary).get("name", "")) == "Palo afilado" \
+				and _bot_can_craft(recipe, inv):
+			return true
+	return false
 
 func _bot_skewer_raw_meat(proxy: Node3D) -> bool:
 	if _bot_has_skewered_meat(proxy):
