@@ -716,6 +716,7 @@ func _ensure_world_action_caches() -> void:
 		var at := str(a.get("action_type"))
 		if at == "fell_tree":
 			_cached_tree_positions.append((a as Node3D).global_position)
+			_cached_mat_ids.append(aid)
 		elif at == "fell_bush":
 			_cached_tree_positions.append((a as Node3D).global_position)
 			_cached_mat_ids.append(aid)
@@ -16412,6 +16413,15 @@ func _bot_bush_tool(proxy: Node3D) -> String:
 			return t
 	return ""
 
+# Talar arboles grandes exige hacha de verdad, igual que al jugador
+# (has_axe_in_hand): un cuchillo o piedra afilada no vale para un tronco.
+func _bot_axe_tool(proxy: Node3D) -> String:
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and (str(it.get("name", "")) in ["Hacha", "Hacha de piedra"] or str(it.get("type", "")) == "tool_axe") \
+				and float(it.get("durability", 1.0)) > 0.0:
+			return str(it.get("name", ""))
+	return ""
+
 func _bot_release_gather_claim(b: Dictionary, st: Dictionary) -> void:
 	if world == null or not ("_pickup_claims" in world):
 		return
@@ -16797,32 +16807,37 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 		if world != null and "_pickup_claims" in world:
 			var claimer := int((world._pickup_claims as Dictionary).get(aid, int(b["bot_id"])))
 			taken = claimer != int(b["bot_id"])
+		var kind_g := str(st.get("kind", "fell_bush"))
+		var is_tree := kind_g == "fell_tree"
+		var held_g := _bot_axe_tool(proxy) if is_tree else tool
 		if not (apos is Vector3) or act == null or not is_instance_valid(act) or taken \
 				or (world != null and "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid)) \
-				or (str(st.get("kind", "fell_bush")) in ["fell_bush", "wood"] and tool.is_empty()):
+				or (kind_g in ["fell_bush", "wood"] and tool.is_empty()) or (is_tree and held_g.is_empty()):
 			_bot_release_gather_claim(b, st)
 			b["_gather"] = {}
 			return false
 		var flat := Vector2(proxy.global_position.x - (apos as Vector3).x, proxy.global_position.z - (apos as Vector3).z).length()
-		var cutting := str(st.get("kind", "fell_bush")) == "fell_bush"
-		if flat > 2.2:
+		var cutting := kind_g in ["fell_bush", "fell_tree"]
+		if flat > (2.6 if is_tree else 2.2):
 			b["sitting"] = false
 			b["crouching"] = false
 			if cutting:
-				b["held_item"] = tool
-				proxy.set_meta("saved_held_item", tool)
+				b["held_item"] = held_g
+				proxy.set_meta("saved_held_item", held_g)
 			_move_bot_towards(b, apos, 4.8 if flat > 9.0 else 3.8, delta, "run" if flat > 9.0 else "walk")
 			return true
 		st["t"] = float(st.get("t", 0.0)) + delta
-		b["anim"] = "forage"
-		b["crouching"] = true
+		b["anim"] = "chop" if is_tree else "forage"
+		b["crouching"] = not is_tree
 		b["sitting"] = false
 		if cutting:
-			b["held_item"] = tool
-			proxy.set_meta("saved_held_item", tool)
+			b["held_item"] = held_g
+			proxy.set_meta("saved_held_item", held_g)
 		if float(st["t"]) >= float(st.get("t_need", 5.0)):
 			b["_gather"] = {}
-			if cutting:
+			if is_tree:
+				_bot_fell_tree_complete(b, st)
+			elif cutting:
 				_bot_fell_bush_complete(b, st)
 			else:
 				_bot_node_collect_complete(b, st)
@@ -16858,7 +16873,9 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var can_fit_palo := _bot_would_fit(b, inv, {"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1})
 	var can_fit_wood := _bot_would_fit(b, inv, {"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2})
+	var can_fit_log := _bot_would_fit(b, inv, {"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 1})
 	var can_fit_stone := _bot_would_fit(b, inv, {"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 1})
+	var axe := _bot_axe_tool(proxy)
 	var camp: Vector3 = b.get("camp_spot", proxy.global_position)
 	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
@@ -16875,6 +16892,10 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 		var serves := false
 		if atype == "fell_bush":
 			serves = not tool.is_empty() and (need_palo or need_seeds) and can_fit_palo
+		elif atype == "fell_tree":
+			# Arbol de verdad: solo con hacha y si le cabe al menos un tronco
+			# de 1.2 kg (el resto queda en el suelo para la vuelta).
+			serves = not axe.is_empty() and need_palo and can_fit_log
 		elif atype == "wood":
 			# Troncos solo valen con filo y si le caben los 2.4 kg en la mochila.
 			serves = not tool.is_empty() and need_palo and can_fit_wood
@@ -16891,7 +16912,9 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 		var score := d + d_camp * 0.5
 		if score < best_score:
 			best_score = score
-			var t_need := 5.0 if atype == "fell_bush" else 1.4
+			# Arbol: 10 s de tala como el jugador; arbusto 5 s; piedra/tronco
+			# sueltos 1.4 s a mano.
+			var t_need := 10.0 if atype == "fell_tree" else (5.0 if atype == "fell_bush" else 1.4)
 			best = {"id": str(aid), "pos": (a as Node3D).global_position, "t": 0.0, "t_need": t_need, "kind": atype}
 	return best
 
@@ -16932,6 +16955,45 @@ func _bot_fell_bush_complete(b: Dictionary, st: Dictionary) -> void:
 				net.world_action_completed.rpc_id(pid, aid, spawns, "", pos)
 	# Los palos caen al suelo: forzar refresco inmediato de sentidos para que
 	# los recoja en el proximo tick antes de marcharse a otro arbusto.
+	_loot_clear(b)
+	b["sense_t"] = 0.0
+
+# Tala de arbol completa (fell_tree): mismos numeros que el jugador — hacha
+# -10 de durabilidad, ruido que atrae lobos a 45 m y 4 Troncos al suelo junto
+# a los restos del tronco cortado.
+func _bot_fell_tree_complete(b: Dictionary, st: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	var aid := str(st.get("id", ""))
+	var pos: Vector3 = st.get("pos", Vector3.INF)
+	_bot_release_gather_claim(b, st)
+	if world == null or aid.is_empty() or pos == Vector3.INF:
+		return
+	var action = world.world_actions_by_id.get(aid) if "world_actions_by_id" in world else null
+	if action == null or not is_instance_valid(action):
+		return
+	if "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid):
+		return
+	var axe := _bot_axe_tool(proxy)
+	if axe.is_empty():
+		return
+	_reduce_bot_item_durability(proxy, axe, 10.0)
+	if world.has_method("_attract_wolves_to_noise"):
+		world._attract_wolves_to_noise(pos, 45.0)
+	if "_legit_cut_trees" in world and not (world._legit_cut_trees as Array).has(aid):
+		(world._legit_cut_trees as Array).append(aid)
+	var base := Time.get_ticks_msec()
+	var offsets: Array = [Vector3(1.0, 0.06, 0.3), Vector3(1.5, 0.06, -0.2), Vector3(0.5, 0.06, 0.8), Vector3(2.0, 0.06, 0.1)]
+	var spawns: Array = []
+	for off in offsets:
+		spawns.append({"id": "pickup_Tronco_%d" % (base + randi() % 1000), "name": "Tronco", "type": "resource", "pos": pos + off, "weight": 1.2, "qty": 1, "use": 0.0})
+	if world.has_method("_net_world_action_completed"):
+		world._net_world_action_completed(aid, spawns, "tree_remains", pos, 0)
+	var net = world.get("net")
+	if net != null and net.is_host and net.peer != null:
+		for pid in net.players.keys():
+			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
+				net.world_action_completed.rpc_id(pid, aid, spawns, "tree_remains", pos)
+	# Troncos al suelo: refresco de sentidos para recogerlos al tick siguiente.
 	_loot_clear(b)
 	b["sense_t"] = 0.0
 

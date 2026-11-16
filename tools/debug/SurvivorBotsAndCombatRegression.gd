@@ -91,9 +91,11 @@ class TestWorld extends "res://scripts/Main.gd":
 		return river_segs
 	func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		hit_events.append({"id": peer_id, "kind": kind, "pos": pos})
-	func _net_world_action_completed(aid: String, _b: Array, _c: String, _d: Vector3, _e: int = 0) -> bool:
+	var last_action_completed: Dictionary = {}
+	func _net_world_action_completed(aid: String, spawns: Array, extra_visual: String, _d: Vector3, _e: int = 0) -> bool:
 		# Réplica mínima del camino dedicado: agotada + retirada del registro,
 		# sin visuals ni RPC — suficiente para que el forrajeo verifique consumo.
+		last_action_completed = {"aid": aid, "spawns": spawns, "extra": extra_visual}
 		if not aid.is_empty() and not _depleted_action_ids.has(aid):
 			_depleted_action_ids.append(aid)
 		var act = world_actions_by_id.get(aid)
@@ -429,6 +431,59 @@ func run() -> void:
 	check(mgr._bot_try_gather_mats(kael, 0.1), "Con filo y sin palos sale a talar el arbusto")
 	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
 	check(g_kind == "fell_bush", "Sigue eligiendo el arbusto a talar (kind=%s)" % g_kind)
+	# Arboles de verdad: con HACHA (no vale cualquier filo) el bot tala el
+	# tronco entero — 10 s, -10 de hacha y 4 Troncos al suelo como el jugador.
+	var prep_tree := WorldActionScript.new()
+	prep_tree.setup("prep_tree", "fell_tree", "Arbol", Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), true, false)
+	world.add_child(prep_tree)
+	prep_tree.global_position = kael_proxy.global_position + Vector3(6.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_tree"] = prep_tree
+	world.last_action_completed = {}
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael_proxy.set_meta("saved_inventory", [
+		{"name": "Hacha", "type": "tool_axe", "weight": 1.4, "quantity": 1, "durability": 80.0, "max_durability": 80.0}])
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Con hacha y sin palos sale a talar el arbol")
+	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
+	check(g_kind == "fell_tree", "Elige el arbol grande como fuente de palos (kind=%s)" % g_kind)
+	kael_proxy.global_position = prep_tree.global_position
+	kael["pos"] = kael_proxy.global_position
+	for i in range(70):
+		mgr._bot_try_gather_mats(kael, 0.2)
+		if not (world.last_action_completed as Dictionary).is_empty():
+			break
+	var tree_ok := not (world.last_action_completed as Dictionary).is_empty()
+	var t_spawns: Array = (world.last_action_completed.get("spawns", []) as Array)
+	var t_logs := 0
+	for _sp in t_spawns:
+		if str((_sp as Dictionary).get("name", "")) == "Tronco":
+			t_logs += int((_sp as Dictionary).get("qty", 1))
+	check(tree_ok and str(world.last_action_completed.get("aid", "")) == "prep_tree"
+			and str(world.last_action_completed.get("extra", "")) == "tree_remains" and t_logs == 4
+			and world._depleted_action_ids.has("prep_tree"),
+		"Tala el arbol: 4 Troncos + restos del tronco (logs=%d, extra=%s)" % [t_logs, str(world.last_action_completed.get("extra", ""))])
+	var axe_dur := -1.0
+	for _it in kael_proxy.get_meta("saved_inventory", []):
+		if _it is Dictionary and str(_it.get("type", "")) == "tool_axe":
+			axe_dur = float(_it.get("durability", 0.0))
+	check(axe_dur == 70.0, "El hacha gasta 10 de durabilidad por arbol (dur=%.0f)" % axe_dur)
+	# Sin hacha el arbol no se elige: un cuchillo no tumba un tronco
+	world.last_action_completed = {}
+	var prep_tree2 := WorldActionScript.new()
+	prep_tree2.setup("prep_tree2", "fell_tree", "Arbol", Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), true, false)
+	world.add_child(prep_tree2)
+	prep_tree2.global_position = kael_proxy.global_position + Vector3(6.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_tree2"] = prep_tree2
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael_proxy.set_meta("saved_inventory", [k_blade])
+	mgr._bot_try_gather_mats(kael, 0.1)
+	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
+	check(g_kind != "fell_tree", "Con solo cuchillo el arbol grande no sirve (kind=%s)" % g_kind)
+	world.world_actions_by_id.erase("prep_tree2")
+	prep_tree2.queue_free()
+	world.world_actions_by_id.erase("prep_tree")
+	prep_tree.queue_free()
 	# Sin filo no tala nada: un bot sin cuchillo no sale a por palos
 	kael["_gather"] = {}
 	kael["_gather_scan"] = 0.0
