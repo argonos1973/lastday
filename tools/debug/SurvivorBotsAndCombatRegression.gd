@@ -2228,6 +2228,16 @@ func run() -> void:
 		"Moving crouched bot sends crouch walk, never sprint")
 	elena["crouching"] = false
 
+	# Sitting (or sleeping) must clear the moment the bot moves — otherwise the
+	# puppet glides across the ground holding the sit/sleep pose mid-flee.
+	elena["sitting"] = true
+	elena["anim"] = "sit"
+	mgr._move_bot_towards(elena, Vector3(62.0, 0.4, 62.0), 6.0, 0.1, "run")
+	check(not bool(elena.get("sitting", true)) and not bool(elena.get("sleeping", true)),
+		"Moving clears sitting/sleeping — no seated gliding on flee")
+	check(mgr._bot_effective_net_anim(elena) != "sit",
+		"Fleeing bot no longer broadcasts the sit pose")
+
 	# Sprinting sideways must finish the doorway crossing before turning.
 	for exit_side in [-1.0, 1.0]:
 		elena_proxy.global_position = Vector3(60.0, 0.4, 60.0)

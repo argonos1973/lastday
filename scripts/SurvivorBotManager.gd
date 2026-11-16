@@ -1823,6 +1823,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				return
 			if not fleeing:
 				b["flee_until"] = 14.0
+			# Huir es de pie y a sprint: un bot que descansaba agachado (los
+			# hostiles lo hacen) escaparia a 2 m/s en sneak si no se suelta.
+			b["crouching"] = false
+			proxy.set_meta("crouching", false)
 			var away := proxy.global_position - human_foe.global_position
 			away.y = 0.0
 			var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
@@ -4500,6 +4504,8 @@ func _bot_avoid_nemesis(b: Dictionary, foe: Node3D, nem_name: String, delta: flo
 			b["anim"] = "sit"
 	else:
 		b["flee_until"] = 14.0
+		b["crouching"] = false
+		proxy.set_meta("crouching", false)
 		var away := proxy.global_position - foe.global_position
 		away.y = 0.0
 		var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
@@ -11092,6 +11098,12 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 
 func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
+	# Moverse implica estar de pie: si una rama de decision pone a correr a un
+	# bot sentado/dormido sin levantarlo (la huida lo hacia), en los clientes
+	# se deslizaba manteniendo la pose de descanso. Todas las rutas de
+	# descanso legitimas ponen el flag y retornan sin llamar aqui.
+	b["sitting"] = false
+	b["sleeping"] = false
 	var cur := proxy.global_position
 	var road_goal := _resolve_mountain_road_waypoint(cur, raw_goal)
 	var goal := _resolve_building_interior_waypoint(b, cur, road_goal)
