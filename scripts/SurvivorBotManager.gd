@@ -5653,6 +5653,12 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 	# Energia residual del proyectil: igual que en el impacto del jugador
 	var energy := clampf(projectile.velocity.length() / maxf(projectile.launch_speed, 1.0), 0.45, 1.0)
 	var dmg := dmg_base * (2.2 if is_headshot else 1.0) * energy
+	# Paridad PvP: contra jugadores reales el bot cobra lo mismo que cobra un
+	# jugador con ese arma (55 cuerpo / 120 cabeza en arco y lanza, 18 plano
+	# en boleadoras — PlayerController.gd::_apply_rifle_target_damage). Antes
+	# las flechas heredaban el daño PvE (125-215) y cualquier impacto mataba.
+	if target.is_in_group("net_player_proxy") and weapon_kind in ["arco", "lanza", "bola"]:
+		dmg = 18.0 if is_bola or weapon_kind == "bola" else (120.0 if is_headshot else 55.0)
 	if is_bola and target is Node3D:
 		target.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
 	if target is WildlifeController or target.is_in_group("wildlife"):
