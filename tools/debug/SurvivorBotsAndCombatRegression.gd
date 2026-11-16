@@ -3035,9 +3035,9 @@ func run() -> void:
 	])
 	for i in range(25):
 		mgr._bot_try_cook_meat(fresh_b, 0.2)
-		if mgr._bot_item_count(fresh_b["proxy"], "Carne asada en palo") > 0:
+		if mgr._bot_item_count(fresh_b["proxy"], "Carne asada de ciervo") > 0:
 			break
-	check(not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Carne asada en palo") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Palo afilado") == 0,
+	check(not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Carne asada de ciervo") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Palo afilado") == 0,
 		"SpawnReal 10n: con Palo afilado + 2 Palos + 2 Piedras el bot hace hoguera, ensarta la carne y la cocina (cf=%s)" % str(fresh_b.get("campfire_id", "")))
 
 	# 10o: percepcion auditiva — un disparo de rifle a 85 m es oido por los
@@ -6439,13 +6439,26 @@ func run() -> void:
 	b_med["sick_timer"] = 0.0
 	p_med.set_meta("saved_inventory", [
 		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
-		{"name": "Venda", "type": "medical", "weight": 0.05, "quantity": 1, "use_value": 35.0},
-		{"name": "Lata de guiso abierta", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 35.0, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Venda", "type": "medical", "weight": 0.05, "quantity": 2, "use_value": 35.0},
 	])
 	mem_med["death_lessons"] = {"medical": 2}
 	mgr._maintain_bot_needs(b_med, 0.25)
 	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
 		"10V3: con vida y cura de sobra si que arriesga la cruda (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	# 10V4: con un filete bueno en la mochila el crudo ni se mira — el bot
+	# come el plato de mas valor aunque el crudo vaya primero en el array.
+	b_med["hunger"] = 20.0
+	b_med["health"] = 95.0
+	b_med["sick_timer"] = 0.0
+	b_med["eat_cooldown"] = 0.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
+		{"name": "Pez cocinado", "type": "food", "weight": 0.35, "quantity": 1, "use_value": 50.0},
+	])
+	mgr._maintain_bot_needs(b_med, 0.25)
+	check(float(b_med.get("sick_timer", 0.0)) <= 0.0 and str(b_med.get("last_meal", "")) == "Pez cocinado"
+			and mgr._bot_item_count(p_med, "Pez cocinado") == 0 and mgr._bot_item_count(p_med, "Carne cruda de ciervo") == 1,
+		"10V4: con Pez cocinado a mano el crudo ni se mira (sick=%.0f, meal=%s)" % [float(b_med.get("sick_timer", 0.0)), str(b_med.get("last_meal", ""))])
 	mem_med["death_lessons"] = dl_save_med
 
 	# ------------------------------------------------------------------
@@ -6540,6 +6553,76 @@ func run() -> void:
 	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
 		"10X4: a hambre 4 el crudo gana aunque pueda cocinarlo (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
 	mem_med["death_lessons"] = dl_save_med
+
+	# ------------------------------------------------------------------
+	# 10Y) Carne cocinada por especie y pesca en la orilla.
+	#      oso>ciervo>lobo>zorro>ave y el pez por encima de toda la carne.
+	# ------------------------------------------------------------------
+	# 10Y0: espeton de oso -> Carne asada de oso (45)
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 22.0, "species": "oso"},
+	])
+	check(mgr._bot_cook_meat_at_fire(b_med)
+			and mgr._bot_item_count(p_med, "Carne asada de oso") == 1
+			and mgr._bot_item_count(p_med, "Carne ensartada") == 0,
+		"10Y0: espeton de oso -> Carne asada de oso (inv=%s)" % str(p_med.get_meta("saved_inventory", [])))
+	# 10Y1: espeton de pez -> Pez cocinado (50, por encima de toda la carne)
+	p_med.set_meta("saved_inventory", [
+		{"name": "Pez ensartado", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 18.0, "species": "pez"},
+	])
+	b_med["cook_cooldown"] = 0.0
+	mgr._bot_cook_meat_at_fire(b_med)
+	var fish_inv: Array = p_med.get_meta("saved_inventory", [])
+	check(fish_inv.size() == 1 and str(fish_inv[0].get("name", "")) == "Pez cocinado" and float(fish_inv[0].get("use_value", 0.0)) == 50.0,
+		"10Y1: espeton de pez -> Pez cocinado de 50 (inv=%s)" % str(fish_inv))
+	# 10Y2: espeton sin especie (legacy) -> Carne asada en palo
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 20.0},
+	])
+	b_med["cook_cooldown"] = 0.0
+	mgr._bot_cook_meat_at_fire(b_med)
+	check(mgr._bot_item_count(p_med, "Carne asada en palo") == 1,
+		"10Y2: espeton sin especie -> Carne asada en palo (legacy)")
+	# 10Y3: el ensartado desde carne cruda estampa la especie
+	p_med.set_meta("saved_inventory", [
+		{"name": "Carne cruda de oso", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 22.0},
+		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1},
+	])
+	check(mgr._bot_skewer_raw_meat(p_med), "10Y3a: ensarta carne cruda de oso con Palo afilado")
+	var skew_inv: Array = p_med.get_meta("saved_inventory", [])
+	check(skew_inv.size() == 1 and str(skew_inv[0].get("name", "")) == "Carne ensartada" and str(skew_inv[0].get("species", "")) == "oso",
+		"10Y3b: la ensartada conserva la especie oso (inv=%s)" % str(skew_inv))
+	# 10Y4: pesca — el bot llega a la orilla, lanza y resuelve con desgaste de caña
+	world.day_cycle.time_of_day = 14.0
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	b_med["pos"] = p_med.global_position
+	b_med["aggro_target"] = null
+	b_med["hunger"] = 30.0
+	p_med.set_meta("saved_inventory", [
+		{"name": "Caña de pescar", "type": "tool_fishing", "weight": 0.4, "quantity": 1, "durability": 3.0, "max_durability": 3.0},
+	])
+	var river_bak: Array = world.river_segs
+	world.river_segs = [{"center": Vector3(402.0, 0.4, 400.0), "size": Vector2(30.0, 6.0), "yaw": 0.0}]
+	check(mgr._bot_try_fish(b_med, 0.1) and not (b_med.get("_fish_state", {}) as Dictionary).is_empty(),
+		"10Y4a: con caña y hambre el bot lanza el hilo en la orilla")
+	mgr._bot_try_fish(b_med, 0.2)
+	check(str(b_med.get("anim", "")) == "sit" and str(p_med.get_meta("saved_held_item", "")) == "Caña de pescar",
+		"10Y4b: espera sentado con la caña en la mano (anim=%s)" % str(b_med.get("anim", "")))
+	mgr._bot_try_fish(b_med, 8.0)
+	var rod_left := -1.0
+	for _it in p_med.get_meta("saved_inventory", []):
+		if _it is Dictionary and str(_it.get("type", "")) == "tool_fishing":
+			rod_left = float(_it.get("durability", 0.0))
+	check((b_med.get("_fish_state", {}) as Dictionary).is_empty() and float(b_med.get("fish_cd", 0.0)) > 0.0 and rod_left == -1.0,
+		"10Y4c: el lance resuelve — la caña gasta su uso (dur=%.0f, cd=%.0f)" % [rod_left, float(b_med.get("fish_cd", 0.0))])
+	world.river_segs = river_bak
 
 	# ------------------------------------------------------------------
 	# 10W) Siesta de emergencia: sueño letal (<=4) sin despensa — dormir

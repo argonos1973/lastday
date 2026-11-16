@@ -41,6 +41,21 @@ const CROP_RAIN_MIN := 0.1        # mm of rain that counts as moist soil
 const CROP_WATER_USE := 40.0      # bottle durability drained per watering
 const CROP_ROT_SECONDS := 600.0   # a ripe crop rots this many seconds after ready
 
+# -- Food ------------------------------------------------------------------
+# Carne cocinada por especie: [nombre, use_value, peso]. La especie viaja en
+# el meta "species" del espeton (Carne ensartada) desde la pieza cruda.
+# Orden nutritivo: oso > ciervo > lobo > zorro > ave; el pescado cocinado
+# supera a toda la carne (COOKED_FISH = 50).
+const COOKED_MEAT := {
+	"": ["Carne cocinada", 35.0, 0.4],
+	"oso": ["Carne asada de oso", 45.0, 0.5],
+	"ciervo": ["Carne asada de ciervo", 40.0, 0.5],
+	"lobo": ["Carne asada de lobo", 36.0, 0.4],
+	"zorro": ["Carne asada de zorro", 32.0, 0.4],
+	"ave": ["Carne asada de ave", 30.0, 0.35],
+}
+const COOKED_FISH := ["Pez cocinado", 50.0, 0.35]
+
 # -- Shared asset paths ----------------------------------------------------
 # Adapted character (Mixamo body + survival clothing skinned to the same rig).
 const PLAYER_MODEL := "res://assets/characters/adapted/player_with_clothes.glb"

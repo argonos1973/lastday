@@ -112,7 +112,7 @@ const RECIPES := [
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de lobo": 1 },
-		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.4, "use_value": 15.0 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.4, "use_value": 15.0, "species": "lobo" },
 		"label": "Ensartar carne de lobo en palo"
 	},
 	{
@@ -122,27 +122,27 @@ const RECIPES := [
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de ciervo": 1 },
-		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.5, "use_value": 20.0 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.5, "use_value": 20.0, "species": "ciervo" },
 		"label": "Ensartar carne de ciervo en palo"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de zorro": 1 },
-		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.4, "use_value": 15.0 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.4, "use_value": 15.0, "species": "zorro" },
 		"label": "Ensartar carne de zorro en palo"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de ave": 1 },
-		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.35, "use_value": 16.0 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.35, "use_value": 16.0, "species": "ave" },
 		"label": "Ensartar carne de ave en palo"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Carne cruda de oso": 1 },
-		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.5, "use_value": 22.0 },
+		"output": { "name": "Carne ensartada", "type": "food", "weight": 0.5, "use_value": 22.0, "species": "oso" },
 		"label": "Ensartar carne de oso en palo"
 	},
 	{
 		"inputs": { "Palo afilado": 1, "Pez crudo": 1 },
-		"output": { "name": "Pez ensartado", "type": "food", "weight": 0.45, "use_value": 18.0 },
+		"output": { "name": "Pez ensartado", "type": "food", "weight": 0.45, "use_value": 18.0, "species": "pez" },
 		"label": "Ensartar pez en palo"
 	},
 	{
@@ -445,6 +445,8 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 	var output = ItemScript.create(out.name, out.type, out.weight, int(out.get("quantity", 1)), out.use_value)
 	if not pelt_species.is_empty():
 		output.set_meta("pelt_species", pelt_species)
+	if out.has("species"):
+		output.set_meta("species", str(out["species"]))
 	output.durability = float(out.get("durability", output.durability))
 	output.max_durability = float(out.get("max_durability", output.durability))
 	return {"sources": sources, "output": output}
@@ -518,6 +520,8 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 	var new_item = ItemScript.create(out["name"], out["type"], out["weight"], int(out.get("quantity", 1)), out["use_value"])
 	if not pelt_species.is_empty():
 		new_item.set_meta("pelt_species", pelt_species)
+	if out.has("species"):
+		new_item.set_meta("species", str(out["species"]))
 	if out.has("durability"):
 		new_item.durability = float(out["durability"])
 		new_item.max_durability = float(out.get("max_durability", out["durability"]))

@@ -2116,6 +2116,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "hunt"
 		return
 
+	# 4d) Pesca en la orilla: el pez cocinado es la comida mas nutritiva del
+	# juego — con caña (o materiales para hacerla) y agua a mano se sienta a
+	# pescar igual que un jugador humano.
+	if (leader == null or desperate_food or _bot_vital_break(b)) and _bot_try_fish(b, delta):
+		b["_act"] = "fish"
+		return
+
 	# 5) Si está reclutado en un equipo, seguir al líder — salvo emergencia
 	# vital (salud/hambre/sed/frío/sueño, en equipos de bots o de humanos: la
 	# supervivencia manda sobre la orden) o cuando un miembro bot-bot ya tiene
@@ -3100,21 +3107,40 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 		if med_lessons > 0 and desperate and float(b.get("sick_timer", 0.0)) <= 0.0 and not raw_locked:
 			var margin := 70.0 + minf(10.0, float(med_lessons) * 4.0)
 			desperate = float(b["hunger"]) <= 5.0 or float(b["health"]) * 0.5 + _bot_poison_cover(proxy) > margin
+		# Elegir el mejor bocado: la comida segura de mas valor gana (Pez
+		# cocinado 50 > carne de oso 45 > latas > setas) y el crudo solo se
+		# come si no queda otra cosa — un humano no se intoxica teniendo un
+		# filete bueno en la mochila.
+		var pick_i := -1
+		var pick_score := -1e9
 		for i in range(inv.size()):
-			var it = inv[i]
-			if not (it is Dictionary):
+			var it_s = inv[i]
+			if not (it_s is Dictionary):
 				continue
-			var nm := str(it.get("name", ""))
+			var nm_s := str(it_s.get("name", ""))
 			# Latas cerradas y pescado crudo no se pueden comer directamente:
 			# la lata hay que abrirla antes con cuchillo/hacha (receta de crafteo).
-			if str(it.get("type", "")) != "food" or nm == "Carne humana" or nm == "Pez crudo" \
-					or (nm.begins_with("Lata de ") and not nm.ends_with(" abierta")):
+			if str(it_s.get("type", "")) != "food" or nm_s == "Carne humana" or nm_s == "Pez crudo" \
+					or (nm_s.begins_with("Lata de ") and not nm_s.ends_with(" abierta")):
 				continue
-			# La carne cruda solo se come desesperado y sin poder cocinarla:
-			# un superviviente real la cocina (_bot_try_cook_meat), y durante
-			# la doma las piezas son cebo que no se toca.
-			if (nm.begins_with("Carne cruda") or nm == "Carne ensartada" or nm == "Pez ensartado") and (not desperate or raw_locked or str(b.get("_act", "")) == "tame"):
+			var is_raw_s: bool = nm_s.begins_with("Carne cruda") or nm_s == "Carne ensartada" or nm_s == "Pez ensartado"
+			if is_raw_s and (not desperate or raw_locked or str(b.get("_act", "")) == "tame"):
 				continue
+			var sc := float(it_s.get("use_value", 18.0))
+			if nm_s.begins_with("Lata de ") and nm_s.ends_with(" abierta"):
+				var dmax_s := float(it_s.get("max_durability", 100.0))
+				if dmax_s <= 0.0 or float(it_s.get("durability", dmax_s)) <= 0.0:
+					continue
+				sc *= clampf(float(it_s.get("durability", dmax_s)) / dmax_s, 0.0, 0.5)
+			elif is_raw_s:
+				sc = sc * 0.4 - 1000.0 # el crudo siempre queda ultimo
+			if sc > pick_score:
+				pick_score = sc
+				pick_i = i
+		if pick_i >= 0:
+			var i := pick_i
+			var it = inv[i]
+			var nm := str(it.get("name", ""))
 			var use_v := float(it.get("use_value", 18.0))
 			var gain_h := use_v
 			var gain_t := use_v * 0.20
@@ -3128,8 +3154,6 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 				var dmax := float(it.get("max_durability", 100.0))
 				var dcur := float(it.get("durability", dmax))
 				var rem := clampf(dcur / dmax, 0.0, 1.0) if dmax > 0.0 else 0.0
-				if rem <= 0.0:
-					continue
 				bite = minf(0.5, rem)
 				gain_h = use_v * bite
 				gain_t = use_v * 0.15 * bite
@@ -3172,7 +3196,6 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 			b["consume_anim"] = "eat"
 			b["consume_anim_t"] = 1.6
 			_bot_log_eaten_food(b, nm)
-			break
 	# Beber de botellas/cantimplora que lleve encima
 	var bottle_thirst_line := 55.0 + (10.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(15.0, float(int(d_lessons.get("dehydrated", 0))) * 5.0)
 	if float(b["thirst"]) < bottle_thirst_line and float(b["eat_cooldown"]) <= 0.0:
@@ -10624,16 +10647,131 @@ func _bot_cook_meat_at_fire(b: Dictionary) -> bool:
 		is_fish = true
 	if skewered.is_empty():
 		return false
+	var species := ""
+	var inv_pre: Array = proxy.get_meta("saved_inventory", [])
+	for it in inv_pre:
+		if it is Dictionary and str(it.get("name", "")) == skewered:
+			species = str(it.get("species", ""))
+			break
 	if _consume_bot_item(proxy, skewered, 1):
 		var inv: Array = proxy.get_meta("saved_inventory", [])
 		if is_fish:
-			_bot_add_inventory_item(inv, {"name": "Pez cocinado", "type": "food", "weight": 0.35, "quantity": 1, "use_value": 30.0})
+			_bot_add_inventory_item(inv, {"name": str(GameConst.COOKED_FISH[0]), "type": "food", "weight": float(GameConst.COOKED_FISH[2]), "quantity": 1, "use_value": float(GameConst.COOKED_FISH[1])})
+		elif not species.is_empty() and GameConst.COOKED_MEAT.has(species):
+			var row = GameConst.COOKED_MEAT[species]
+			_bot_add_inventory_item(inv, {"name": str(row[0]), "type": "food", "weight": float(row[2]), "quantity": 1, "use_value": float(row[1])})
 		else:
 			_bot_add_inventory_item(inv, {"name": "Carne asada en palo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 28.0})
 		proxy.set_meta("saved_inventory", inv)
 		b["cook_cooldown"] = 12.0
 		return true
 	return false
+
+# ==================== PESCA ====================
+# El pez cocinado es la comida mas nutritiva del juego (50): con caña en la
+# mochila (la fabrica el crafteo general o la encuentra loteando) y agua a
+# mano, el bot camina a la orilla, lanza el hilo y espera el picado igual
+# que un jugador humano (~7 s, 72% de picada, -3 de caña por lance).
+const BOT_FISH_WAIT_SEC := 7.0
+const BOT_FISH_COOLDOWN_SEC := 55.0
+const BOT_FISH_CHANCE := 0.72
+const BOT_FISH_MAX_RAW := 4
+
+func _bot_rod_name(proxy: Node3D) -> String:
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and str(it.get("type", "")) == "tool_fishing" and float(it.get("durability", 1.0)) > 0.0:
+			return str(it.get("name", "Caña de pescar"))
+	return ""
+
+func _bot_has_fishing_rod(proxy: Node3D) -> bool:
+	return not _bot_rod_name(proxy).is_empty()
+
+# Un lance gasta 3 puntos de la caña (la receta da 3.0 = un uso, igual que
+# para el jugador); rota se tira.
+func _bot_wear_fishing_rod(proxy: Node3D) -> void:
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for it in inv.duplicate():
+		if it is Dictionary and str(it.get("type", "")) == "tool_fishing":
+			it["durability"] = float(it.get("durability", 3.0)) - 3.0
+			if float(it["durability"]) <= 0.0:
+				inv.erase(it)
+			break
+	proxy.set_meta("saved_inventory", inv)
+
+func _bot_fish_resolve(b: Dictionary) -> void:
+	var proxy: Node3D = b["proxy"]
+	if randf() < BOT_FISH_CHANCE:
+		var inv: Array = proxy.get_meta("saved_inventory", [])
+		var entry := {"name": "Pez crudo", "type": "food", "weight": 0.55, "quantity": 1, "use_value": 24.0}
+		# Sin hueco el pez cae a sus pies, igual que al jugador en la orilla.
+		if not _bot_try_add_inventory_item(b, inv, entry):
+			_bot_drop_to_ground(b, entry)
+		else:
+			proxy.set_meta("saved_inventory", inv)
+		_evolve_personality(b, "forage", 0.10)
+	_bot_wear_fishing_rod(proxy)
+	_publish_bot_to_net_players(b)
+
+func _bot_try_fish(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	b["fish_cd"] = maxf(0.0, float(b.get("fish_cd", 0.0)) - delta)
+	var st: Dictionary = b.get("_fish_state", {})
+	if not st.is_empty():
+		# Si otra rama (combate, huida, emergencia) desplazo la pesca, el
+		# lance quedo abandonado: el estado caduca y hay que lanzar de nuevo.
+		var now_ms := Time.get_ticks_msec()
+		if now_ms - int(st.get("at", 0)) > 2500:
+			b["_fish_state"] = {}
+			return false
+		st["at"] = now_ms
+		# Hilo lanzado: sentado en la orilla con la caña esperando el picado.
+		st["t"] = float(st.get("t", 0.0)) + delta
+		b["_fish_state"] = st
+		b["sitting"] = true
+		b["crouching"] = false
+		b["anim"] = "sit"
+		var rod_wait := _bot_rod_name(proxy)
+		if rod_wait.is_empty():
+			rod_wait = "Caña de pescar"
+		b["held_item"] = rod_wait
+		proxy.set_meta("saved_held_item", rod_wait)
+		if float(st["t"]) >= BOT_FISH_WAIT_SEC:
+			b["_fish_state"] = {}
+			b["fish_cd"] = BOT_FISH_COOLDOWN_SEC
+			_bot_fish_resolve(b)
+		return true
+	if float(b["fish_cd"]) > 0.0:
+		return false
+	# Pesca de dia: de noche y al caer la tarde un superviviente vuelve al
+	# fuego — caminar al rio a oscuras no es plan. La caña la hace el crafteo
+	# general (_bot_recipe_score) o la encuentra loteando; sin caña no hay
+	# lance y la rama cede el tick.
+	if _is_world_night() or _is_pre_night():
+		return false
+	# Solo pesca con despensa flaca o hambre: el pez es comida premium pero
+	# lenta — forrajear y lootear siguen ganando si hay de sobra.
+	if float(b["hunger"]) >= 55.0 and _bot_has_edible_food(proxy, false):
+		return false
+	if _bot_item_count(proxy, "Pez crudo") >= BOT_FISH_MAX_RAW:
+		return false
+	if not _bot_has_fishing_rod(proxy):
+		return false
+	var wp := _nearest_water_pos(proxy.global_position, b)
+	if wp == Vector3.INF:
+		return false
+	var cur := proxy.global_position
+	var d := Vector2(cur.x - wp.x, cur.z - wp.z).length()
+	if d > 160.0:
+		return false
+	if d > 3.6:
+		b["sitting"] = false
+		b["crouching"] = false
+		b["held_item"] = _bot_rod_name(proxy)
+		proxy.set_meta("saved_held_item", str(b["held_item"]))
+		_move_bot_towards(b, wp, 5.0, delta, "walk")
+		return true
+	b["_fish_state"] = {"t": 0.0, "pos": wp, "at": Time.get_ticks_msec()}
+	return true
 
 # Agua vadeable: un humano cruza rios someros (~hasta la cintura); solo el agua
 # profunda bloquea el paso.
@@ -12542,11 +12680,15 @@ func _bot_skewer_raw_meat(proxy: Node3D) -> bool:
 		return false
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	if raw == "Pez crudo":
-		_bot_add_inventory_item(inv, {"name": "Pez ensartado", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 18.0})
+		_bot_add_inventory_item(inv, {"name": "Pez ensartado", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 18.0, "species": "pez"})
 	else:
-		_bot_add_inventory_item(inv, {"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 20.0})
+		_bot_add_inventory_item(inv, {"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 20.0, "species": _meat_species(raw)})
 	proxy.set_meta("saved_inventory", inv)
 	return true
+
+# "Carne cruda de oso" -> "oso"; "Carne cruda" generica -> "".
+func _meat_species(raw_name: String) -> String:
+	return raw_name.trim_prefix("Carne cruda de ") if raw_name.begins_with("Carne cruda de ") else ""
 
 func _first_raw_meat_name(proxy: Node3D) -> String:
 	for it in proxy.get_meta("saved_inventory", []):
@@ -12581,8 +12723,9 @@ func _bot_add_inventory_item(inv: Array, item_dict: Dictionary) -> void:
 	var tp := str(item_dict.get("type", "resource"))
 	var qty := int(item_dict.get("quantity", 1))
 	if tp in ["food", "resource", "material", "medical", "ammo", "ammo_arrow", "water", "misc"]:
+		var sp := str(item_dict.get("species", ""))
 		for it in inv:
-			if it is Dictionary and str(it.get("name", "")) == nm:
+			if it is Dictionary and str(it.get("name", "")) == nm and str(it.get("species", "")) == sp:
 				it["quantity"] = int(it.get("quantity", 1)) + qty
 				return
 	inv.append(item_dict.duplicate(true))
@@ -12817,6 +12960,8 @@ func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 	if out.has("durability"):
 		entry["durability"] = float(out["durability"])
 		entry["max_durability"] = float(out.get("max_durability", out["durability"]))
+	if out.has("species"):
+		entry["species"] = str(out["species"])
 	if not pelt_species.is_empty():
 		entry["pelt_species"] = pelt_species
 	if not _bot_try_add_inventory_item(b, inv, entry):
@@ -12833,9 +12978,20 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	var out: Dictionary = recipe.get("output", {})
 	var oname := str(out.get("name", ""))
 	var otype := str(out.get("type", ""))
-	# Fogata y refugio tienen su logica propia; la caña de pescar no se usa
-	if otype in ["campfire", "shelter"] or otype == "tool_fishing":
+	# Fogata y refugio tienen su logica propia
+	if otype in ["campfire", "shelter"]:
 		return -1.0
+	# Caña de pescar: la fabrica cuando le aprieta la despensa y hay agua a
+	# mano — el pez cocinado es la comida mas valiosa. Nunca duplica cañas.
+	if otype == "tool_fishing":
+		if _bot_has_fishing_rod(proxy) or _bot_item_count(proxy, "Pez crudo") >= BOT_FISH_MAX_RAW:
+			return -1.0
+		if float(b["hunger"]) >= 62.0 and _bot_has_edible_food(proxy, false):
+			return -1.0
+		var wp_rod := _nearest_water_pos(proxy.global_position, b)
+		if wp_rod == Vector3.INF or Vector2(proxy.global_position.x - wp_rod.x, proxy.global_position.z - wp_rod.z).length() > 160.0:
+			return -1.0
+		return 6.6
 	# Latas: las cerradas no se comen — hay que abrirlas con cuchillo/hacha.
 	# Solo cuando tiene hambre real o salud baja, y sin acaparar abiertas.
 	if oname.ends_with(" abierta"):
@@ -12951,6 +13107,7 @@ func _bot_try_craft(b: Dictionary, delta: float) -> bool:
 	var st: Dictionary = b.get("_craft_state", {})
 	if not st.is_empty():
 		st["t"] = float(st.get("t", 0.0)) - delta
+		st["at"] = Time.get_ticks_msec()
 		b["anim"] = "idle"
 		b["crouching"] = true
 		b["sitting"] = false
@@ -12975,7 +13132,7 @@ func _bot_try_craft(b: Dictionary, delta: float) -> bool:
 			best = recipe
 	if best.is_empty():
 		return false
-	b["_craft_state"] = {"recipe": best, "t": 2.4}
+	b["_craft_state"] = {"recipe": best, "t": 2.4, "at": Time.get_ticks_msec()}
 	b["anim"] = "idle"
 	b["crouching"] = true
 	return true
@@ -12988,16 +13145,23 @@ func _bot_try_craft_named(b: Dictionary, delta: float, wanted: Array, protect_st
 	if not st.is_empty():
 		var cur := str(((st.get("recipe", {}) as Dictionary).get("output", {}) as Dictionary).get("name", ""))
 		if not wanted.has(cur):
-			return false
-		st["t"] = float(st.get("t", 0.0)) - delta
-		b["anim"] = "idle"
-		b["crouching"] = true
-		b["sitting"] = false
-		if float(st["t"]) <= 0.0:
+			# Un craft de otra rama abandonado a medias (la urgencia paso y
+			# nadie lo retoma) no puede bloquear esta para siempre: si lleva
+			# ~6 s sin tick caduca y cede el torno.
+			if Time.get_ticks_msec() - int(st.get("at", 0)) <= 6000:
+				return false
 			b["_craft_state"] = {}
-			b["_craft_check"] = 0.4
-			_bot_apply_craft(b, st.get("recipe", {}))
-		return true
+		else:
+			st["at"] = Time.get_ticks_msec()
+			st["t"] = float(st.get("t", 0.0)) - delta
+			b["anim"] = "idle"
+			b["crouching"] = true
+			b["sitting"] = false
+			if float(st["t"]) <= 0.0:
+				b["_craft_state"] = {}
+				b["_craft_check"] = 0.4
+				_bot_apply_craft(b, st.get("recipe", {}))
+			return true
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	for recipe in CraftingSystem.RECIPES:
@@ -13007,7 +13171,7 @@ func _bot_try_craft_named(b: Dictionary, delta: float, wanted: Array, protect_st
 			continue
 		if protect_sticks and oname == "Antorcha" and not _bot_can_spare_torch_stick(b, proxy):
 			continue
-		b["_craft_state"] = {"recipe": recipe, "t": 2.4}
+		b["_craft_state"] = {"recipe": recipe, "t": 2.4, "at": Time.get_ticks_msec()}
 		b["anim"] = "idle"
 		b["crouching"] = true
 		b["sitting"] = false

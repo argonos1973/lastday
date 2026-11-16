@@ -13253,9 +13253,11 @@ func _execute_world_action(action, actor) -> void:
 				actor.notice.emit("Ya no tienes %s en la mano." % raw_name.to_lower())
 				return
 			# Comprobar espacio ANTES de consumir el crudo para no perderlo
-			var cooked_name := "Carne cocinada" if not is_fish else "Pez cocinado"
-			var cooked_use := 35.0 if not is_fish else 30.0
-			var cooked_weight := 0.4 if not is_fish else 0.35
+			var sp := str(held_c.get_meta("species", "")) if held_c.has_meta("species") else ""
+			var row = GameConst.COOKED_FISH if is_fish else GameConst.COOKED_MEAT.get(sp, GameConst.COOKED_MEAT[""])
+			var cooked_name := str(row[0])
+			var cooked_use := float(row[1])
+			var cooked_weight := float(row[2])
 			var cooked_item = ItemScript.create(cooked_name, "food", cooked_weight, 1, cooked_use)
 			# Verificar si hay slot libre o si puede apilarse con algo existente
 			var can_hold := false

@@ -30,6 +30,12 @@ const PERISHABLE_FOODS := {
 	"Carne cruda de oso": 0.5,
 	"Carne cruda de lobo": 0.5,
 	"Carne asada en palo": 0.3,
+	"Carne asada de oso": 0.35,
+	"Carne asada de ciervo": 0.35,
+	"Carne asada de lobo": 0.3,
+	"Carne asada de zorro": 0.3,
+	"Carne asada de ave": 0.3,
+	"Carne cocinada": 0.3,
 	"Carne ensartada": 0.4,
 	"Carne seca": 0.04,
 	"Pez crudo": 0.9,
@@ -180,6 +186,8 @@ func to_dict() -> Dictionary:
 		d["clothing_color"] = [c.r, c.g, c.b, c.a]
 	if has_meta("pelt_species"):
 		d["pelt_species"] = str(get_meta("pelt_species"))
+	if has_meta("species"):
+		d["species"] = str(get_meta("species"))
 	if not contents.is_empty():
 		var cdata: Array = []
 		for c in contents:
@@ -223,6 +231,8 @@ static func from_dict(data: Dictionary):
 			item.set_meta("clothing_color", Color(float(c_arr[0]), float(c_arr[1]), float(c_arr[2]), float(c_arr[3]) if c_arr.size() > 3 else 1.0))
 	if data.has("pelt_species"):
 		item.set_meta("pelt_species", str(data["pelt_species"]))
+	if data.has("species"):
+		item.set_meta("species", str(data["species"]))
 	if data.has("contents") and data["contents"] is Array:
 		for cd in data["contents"]:
 			if cd is Dictionary:
