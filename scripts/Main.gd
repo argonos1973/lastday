@@ -3247,6 +3247,7 @@ var _last_hit_msec := -999999
 
 func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	var _cpt := Time.get_ticks_usec()
+	if CombatProf.enabled: CombatProf.event("rpc.apply_damage")
 	_last_hit_weapon = weapon
 	_last_hit_msec = Time.get_ticks_msec()
 	if player != null and player.has_method("apply_damage"):
@@ -3409,6 +3410,7 @@ func _net_force_death(cause: String = "") -> void:
 		return
 	if game_over:
 		return
+	if CombatProf.enabled: CombatProf.event("rpc.force_death")
 	if player.has_method("die"):
 		player.die(cause)
 	# Trigger death handler to notify server and close game
@@ -4093,6 +4095,8 @@ var _primitive_shot_player: AudioStreamPlayer3D = null
 
 func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	var _cpt := Time.get_ticks_usec()
+	var _cpt_all := _cpt
+	if CombatProf.enabled: CombatProf.event("rpc.shot_rifle")
 	var ndir := dir.normalized() if dir.length_squared() > 0.001 else Vector3.FORWARD
 	var shooter_node: Node3D = null
 	if remote_players.has(shooter_id):
@@ -4107,7 +4111,7 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 				rp._update_puppet_held_item(held_sync)
 			rp.play_rifle_shot_remote(origin, dir, wind)
 			shooter_node = rp
-	if CombatProf.enabled: CombatProf.mark("shot.puppet_visual", _cpt)
+	if CombatProf.enabled: CombatProf.mark("shot.puppet_visual", _cpt); _cpt = Time.get_ticks_usec()
 	# Balas que pasan cerca del jugador local: el chasquido supersonico suena en
 	# el punto mas proximo de la trayectoria aunque el tirador este a 200 m. Este
 	# RPC reliable siempre llega antes que el de dano, asi el tiro se oye antes
@@ -4121,7 +4125,7 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 			var closest := origin + ndir * along
 			if closest.distance_to(ear) < 7.0:
 				_play_incoming_shot(closest, shooter_node, shooter_id)
-	if CombatProf.enabled: CombatProf.mark("shot.incoming_audio", _cpt)
+	if CombatProf.enabled: CombatProf.mark("shot.incoming_audio", _cpt); _cpt = Time.get_ticks_usec()
 	# Server and remote clients alert all nearby wildlife so wolves, deer, foxes,
 	# bears and birds flee running when they hear a gunshot or bullet impact zone.
 	var mid_impact := origin + ndir * 65.0
@@ -4132,10 +4136,10 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 			w.flee_from_gunshot(origin, 120.0)
 			if w is Node3D and (w as Node3D).global_position.distance_to(origin) > 120.0 and (w as Node3D).global_position.distance_to(mid_impact) <= 75.0:
 				w.flee_from_gunshot(mid_impact, 75.0)
-	if CombatProf.enabled: CombatProf.mark("shot.wildlife_flee", _cpt)
+	if CombatProf.enabled: CombatProf.mark("shot.wildlife_flee", _cpt); _cpt = Time.get_ticks_usec()
 	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
 		survivor_bot_mgr.notify_sound_event(shooter_id, origin, "gunshot", 220.0)
-	if CombatProf.enabled: CombatProf.mark("shot.notify_bots", _cpt)
+	if CombatProf.enabled: CombatProf.mark("shot.notify_bots", _cpt); CombatProf.mark("shot.rpc_total", _cpt_all)
 
 # Chasquido local del tiro que pasa pegado al jugador: direccional (se posiciona
 # en el punto mas proximo del rayo al oido) y distinto del estampido 3D del
@@ -4257,6 +4261,7 @@ func _net_door_state_changed(door_name: String, is_open: bool, sender_id: int = 
 func _net_damage_animal(animal_name: String, amount: float, from_knife: bool, sender_id: int = 0, bola: bool = false) -> void:
 	if not is_finite(amount) or amount <= 0.0:
 		return
+	if CombatProf.enabled: CombatProf.event("rpc.damage_animal")
 	# The animal_name from puppet is "Puppet_Wildlife_wolf_0" — extract the real name
 	var real_name := animal_name.replacen("Puppet_", "")
 	var animal := get_node_or_null(real_name)
@@ -22342,6 +22347,7 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 	return ""
 
 func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float, wind: Vector3 = Vector3.ZERO) -> void:
+	if CombatProf.enabled: CombatProf.event("rpc.primitive_shot")
 	# Alert server-authoritative wildlife near the archer/thrower and along the
 	# arrow/spear trajectory even on dedicated server (where remote_players has no mesh).
 	if direction.length_squared() > 0.001:

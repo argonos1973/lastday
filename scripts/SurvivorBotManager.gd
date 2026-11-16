@@ -1399,7 +1399,7 @@ func tick(delta: float) -> void:
 		_refresh_client_bot_avatars()
 		return
 	var _pt := Time.get_ticks_usec()
-	if CombatProf.enabled:
+	if CombatProf.driver:
 		_combat_probe_driver(delta)
 	_voice_tick(delta)
 	_pbm("voice", _pt)

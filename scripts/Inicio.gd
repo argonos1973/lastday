@@ -86,6 +86,11 @@ func _ready() -> void:
 	# Preferencias de video guardadas: pantalla/vsync/escala aplican al arrancar.
 	GraphicsSettings.apply_window()
 	GraphicsSettings.apply_render_scale(get_viewport())
+	# Medicion opt-in de combate en el cliente exportado (las plantillas release
+	# ignoran --script): el runner sustituye al menu y nunca toca las partidas.
+	if OS.get_cmdline_user_args().has("--combat-profile"):
+		get_tree().root.add_child.call_deferred(load("res://tools/debug/CombatProfileRunner.gd").new())
+		return
 	if OS.get_cmdline_user_args().has("--auto-single") or OS.get_cmdline_user_args().has("--cinematic"):
 		SaveIntegration.maybe_insert_saved_character(self)
 	var args := OS.get_cmdline_user_args()

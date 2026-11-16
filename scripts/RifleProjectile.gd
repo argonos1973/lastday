@@ -23,7 +23,11 @@ var _ray_query := PhysicsRayQueryParameters3D.new()
 func _physics_process(delta: float) -> void:
 	var _cpt := Time.get_ticks_usec()
 	if is_queued_for_deletion(): return
+	var _prof := CombatProf.enabled
+	var _pt := 0
 	_refresh_proxy_candidates()
+	if _prof: CombatProf.mark("proj.refresh_candidates", _cpt)
+	_p_ray = 0; _p_props = 0; _p_cap = 0; _p_water = 0; _p_steps = 0
 	var space := get_world_3d().direct_space_state
 	var world := get_tree().current_scene
 	var has_distant_props := world != null and world.has_method("raycast_distant_props")
@@ -43,6 +47,7 @@ func _physics_process(delta: float) -> void:
 		displacement = displacement.limit_length(max_distance - traveled)
 		query.from = global_position
 		query.to = global_position + displacement
+		if _prof: _pt = Time.get_ticks_usec(); _p_steps += 1
 		var hit := space.intersect_ray(query)
 		# Las Area3D que no son hitboxes de daño (zonas de interaccion,
 		# triggers, volumenes) no detienen la bala: se atraviesan.
@@ -50,20 +55,24 @@ func _physics_process(delta: float) -> void:
 			excluded.append(hit.rid)
 			query.exclude = excluded
 			hit = space.intersect_ray(query)
+		if _prof: var _n := Time.get_ticks_usec(); _p_ray += _n - _pt; _pt = _n
 		if has_distant_props:
 			var endpoint: Vector3 = hit.position if not hit.is_empty() else global_position+displacement
 			var distant: Dictionary = world.raycast_distant_props(global_position, endpoint)
 			if not distant.is_empty(): hit = distant
+		if _prof: var _n2 := Time.get_ticks_usec(); _p_props += _n2 - _pt; _pt = _n2
 		# Transparent rivers/lakes have no physics surface: stop at the water
 		# before a submerged terrain hit, and use the existing splash/ripple FX.
 		var end: Vector3 = hit.position if not hit.is_empty() else global_position+displacement
 		# Supervivientes sin cuerpo fisico: si la capsula esta mas cerca que
 		# el impacto de la raycast, la bala los alcanza a ellos primero.
 		var cap := _proxy_segment_hit(global_position, end)
+		if _prof: var _n3 := Time.get_ticks_usec(); _p_cap += _n3 - _pt; _pt = _n3
 		if not cap.is_empty() and (hit.is_empty() or global_position.distance_to(cap.position) < global_position.distance_to(hit.position)):
 			traveled += global_position.distance_to(cap.position)
+			if _prof: _prof_flush(); _pt = Time.get_ticks_usec()
 			impact.emit(cap.node, cap.position, traveled, cap.normal)
-			if CombatProf.enabled: CombatProf.mark("proj.capsule_impact", _cpt)
+			if _prof: CombatProf.mark("proj.impact_handler", _pt); CombatProf.mark("proj.capsule_impact", _cpt)
 			queue_free()
 			return
 		if has_water:
@@ -73,12 +82,15 @@ func _physics_process(delta: float) -> void:
 				var water_point := global_position.lerp(end,t)
 				if float(world.get_river_depth_at(water_point)) > .02:
 					if world.has_method("_play_water_drop_effect"): world._play_water_drop_effect(water_point)
+					if _prof: _prof_flush(); CombatProf.mark("proj.water_impact", _cpt)
 					queue_free()
 					return
+		if _prof: var _n4 := Time.get_ticks_usec(); _p_water += _n4 - _pt; _pt = _n4
 		if not hit.is_empty():
 			traveled += global_position.distance_to(hit.position)
+			if _prof: _prof_flush(); _pt = Time.get_ticks_usec()
 			impact.emit(hit.collider, hit.position, traveled, hit.normal)
-			if CombatProf.enabled: CombatProf.mark("proj.phys_impact", _cpt)
+			if _prof: CombatProf.mark("proj.impact_handler", _pt); CombatProf.mark("proj.phys_impact", _cpt)
 			queue_free()
 			return
 		global_position += displacement
@@ -93,10 +105,26 @@ func _physics_process(delta: float) -> void:
 			rotate_y(spin_speed * step)
 		if traveled >= max_distance - 0.001 or velocity.length_squared() < 1.0:
 			expired.emit(global_position)
-			if CombatProf.enabled: CombatProf.mark("proj.phys_expired", _cpt)
+			if _prof: _prof_flush(); CombatProf.mark("proj.phys_expired", _cpt)
 			queue_free()
 			return
-	if CombatProf.enabled: CombatProf.mark("proj.phys_frame", _cpt)
+	if _prof: _prof_flush(); CombatProf.mark("proj.phys_frame", _cpt)
+
+# Profiler-only accumulators (usec) for one physics tick of this projectile.
+var _p_ray := 0
+var _p_props := 0
+var _p_cap := 0
+var _p_water := 0
+var _p_steps := 0
+
+func _prof_flush() -> void:
+	if _p_steps <= 0:
+		return
+	CombatProf.add("proj.godot_ray", _p_ray, _p_steps)
+	CombatProf.add("proj.distant_props", _p_props, _p_steps)
+	CombatProf.add("proj.capsule_search", _p_cap, _p_steps)
+	CombatProf.add("proj.water_query", _p_water, _p_steps)
+	_p_steps = 0
 
 func _is_passthrough_area(collider) -> bool:
 	# Solo las hitboxes de daño detienen la bala; el resto de areas son

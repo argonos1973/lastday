@@ -264,6 +264,17 @@ func notify_puppet_order(mode: String, target: Node = null) -> void:
 
 # Puppet take_damage: forward to server via RPC and apply locally for visual feedback
 func take_damage(amount: float, from_knife: bool, attacker: Node = null) -> void:
+	if CombatProf.enabled:
+		var _cpt := Time.get_ticks_usec()
+		var _was_dead := _is_dead
+		_take_damage_impl(amount, from_knife, attacker)
+		CombatProf.mark("wild.take_damage", _cpt)
+		CombatProf.event("damage.animal")
+		if _is_dead and not _was_dead: CombatProf.event("death.animal")
+		return
+	_take_damage_impl(amount, from_knife, attacker)
+
+func _take_damage_impl(amount: float, from_knife: bool, attacker: Node = null) -> void:
 	if animal_type == "bear" and not from_knife:
 		# Bears require 3 rifle shots (650 HP / max 240 dmg per shot -> 3 shots).
 		amount = minf(amount, 240.0)
@@ -888,6 +899,14 @@ func flee_from_gunshot(pos: Vector3, radius: float) -> void:
 		return
 	_last_gunshot_ms = now
 	_last_gunshot_origin = pos
+	if CombatProf.enabled:
+		var _cpt := Time.get_ticks_usec()
+		_flee_from_gunshot_react(pos, dist)
+		CombatProf.mark("wild.flee_gunshot", _cpt)
+		return
+	_flee_from_gunshot_react(pos, dist)
+
+func _flee_from_gunshot_react(pos: Vector3, dist: float) -> void:
 	if animal_type == "bear" and dist <= 68.0:
 		# A nearby gunshot alerts and angers the bear instead of making it flee
 		_prey_flee_timer = 0.0
@@ -1718,6 +1737,14 @@ func _rally_pack_on_howl() -> void:
 func _alert_nearby_herd(threat_pos: Vector3, radius: float = 36.0) -> void:
 	if not is_inside_tree() or get_tree() == null:
 		return
+	if CombatProf.enabled:
+		var _cpt := Time.get_ticks_usec()
+		_alert_nearby_herd_impl(threat_pos, radius)
+		CombatProf.mark("wild.alert_herd", _cpt)
+		return
+	_alert_nearby_herd_impl(threat_pos, radius)
+
+func _alert_nearby_herd_impl(threat_pos: Vector3, radius: float) -> void:
 	var origin_pos := threat_pos if threat_pos.is_finite() else global_position
 	var list: Array = _cached_wildlife if not _cached_wildlife.is_empty() else get_tree().get_nodes_in_group("wildlife")
 	for node in list:

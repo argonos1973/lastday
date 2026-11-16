@@ -1616,6 +1616,15 @@ func _puppet_swap_to_naked() -> void:
 func _update_puppet_held_item(item_name: String) -> void:
 	if third_person_hand_item_root == null:
 		return
+	if CombatProf.enabled:
+		var _hpt := Time.get_ticks_usec()
+		_update_puppet_held_item_impl(item_name)
+		CombatProf.mark("pc.puppet_held_update", _hpt)
+		CombatProf.event("puppet.held_rebuild")
+		return
+	_update_puppet_held_item_impl(item_name)
+
+func _update_puppet_held_item_impl(item_name: String) -> void:
 	# Always clean up rifle bone attachment when switching items
 	_clear_rifle_attachment()
 	# The torch lives in the torch hand socket, not the item root — clear it
@@ -6963,6 +6972,7 @@ func die(cause: String = "") -> void:
 			_apply_melee_death_visual()
 		return
 	is_dead = true
+	if CombatProf.enabled: CombatProf.event("death.player")
 	_action_serial += 1
 	# Un golpe letal llega por force_death sin pasar por apply_damage — si el
 	# jugador dormía, is_sleeping quedaba en true: el _sleep_fade del HUD
@@ -13526,6 +13536,7 @@ func apply_damage(amount: float, cause: String = "") -> void:
 	if is_puppet or is_dead:
 		return
 	var _cpt := Time.get_ticks_usec()
+	if CombatProf.enabled: CombatProf.event("damage.player")
 	if is_sleeping:
 		stop_sleep()
 		notice.emit("Te han despertado!")
@@ -14230,6 +14241,9 @@ func _shoot_rifle() -> void:
 	_rifle_burst_revision += 1
 	var burst_revision := _rifle_burst_revision
 	var selection_revision := _held_selection_revision
+	var _cpt := Time.get_ticks_usec()
+	var _cpt2 := _cpt
+	if CombatProf.enabled: CombatProf.event("shot.local")
 	_shoot_cooldown = _rifle_cooldown_time()
 	_crosshair_bloom = minf(_crosshair_bloom + 26.0, 60.0)
 	stats.energy = max(0.0, stats.energy - energy_cost)
@@ -14245,6 +14259,7 @@ func _shoot_rifle() -> void:
 			continue
 		if w.has_method("flee_from_gunshot"):
 			w.flee_from_gunshot(gunshot_pos, 120.0)
+	if CombatProf.enabled: CombatProf.mark("pc.shoot_alert_wild", _cpt2); _cpt2 = Time.get_ticks_usec()
 	_apply_rifle_recoil(is_m4_shot)
 	if third_person_animation_player != null:
 		var fire_anim_name := ""
@@ -14264,7 +14279,9 @@ func _shoot_rifle() -> void:
 	if not _is_aiming and not is_sitting and not is_prone:
 		_update_rifle_visuals(0.0)
 		_on_skeleton_updated()
+	if CombatProf.enabled: CombatProf.mark("pc.shoot_anim", _cpt2); _cpt2 = Time.get_ticks_usec()
 	_play_shoot_sound(is_m4_shot)
+	if CombatProf.enabled: CombatProf.mark("fx.shoot_sound", _cpt2); _cpt2 = Time.get_ticks_usec()
 	var space_state := get_world_3d().direct_space_state
 	if _cached_rids_dirty:
 		_cached_exclude_rids = [self.get_rid()]
@@ -14319,10 +14336,13 @@ func _shoot_rifle() -> void:
 	if not blocked.is_empty():
 		shot_origin = blocked.position - aim_dir*.01
 	var shot_wind := _wind_dir * _wind_strength
+	if CombatProf.enabled: CombatProf.mark("pc.shoot_aim_rays", _cpt2)
 	_launch_rifle_projectile(shot_origin, aim_dir, shot_wind, exclude_arr, true, is_m4_shot)
 	# Fogonazo en la punta REAL del cañon (sin rayo/trazadora).
 	var flash_pos: Vector3 = shot_origin
+	if CombatProf.enabled: _cpt2 = Time.get_ticks_usec()
 	_spawn_muzzle_flash(flash_pos, aim_dir)
+	if CombatProf.enabled: CombatProf.mark("fx.muzzle", _cpt2)
 	for extra_i in range(1, burst_rounds):
 		get_tree().create_timer(0.09 * float(extra_i)).timeout.connect(func():
 			if not is_inside_tree() or is_dead or _is_reloading or camera == null or not _held_is_m4() or get_held_item() != held or _held_selection_revision != selection_revision or _rifle_burst_revision != burst_revision or _loaded_rounds() <= 0:
@@ -14383,9 +14403,11 @@ func _shoot_rifle() -> void:
 		if net_node != null and net_node.is_connected:
 			net_node.player_shot_rifle.rpc_id(1, net_node.get_my_id(), shot_origin, aim_dir, shot_wind)
 	# Refrescar contador de municion en el HUD
+	if CombatProf.enabled: _cpt2 = Time.get_ticks_usec()
 	var main := get_tree().current_scene
 	if main != null and main.get("hud") != null and main.hud.has_method("_update_equipment_labels"):
 		main.hud._update_equipment_labels()
+	if CombatProf.enabled: CombatProf.mark("pc.shoot_hud", _cpt2); CombatProf.mark("pc.shoot_local", _cpt)
 
 func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3 = Vector3.UP, is_m4 := false) -> void:
 	var _cpt := Time.get_ticks_usec()
@@ -14637,10 +14659,12 @@ func prepare_combat_effects() -> void:
 func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
 	var net_node := get_tree().root.get_node_or_null("NetworkManager")
 	if net_node != null and net_node.get("is_dedicated_server") == true: return
+	var _cpt := Time.get_ticks_usec()
 	var pool := _prepare_blood_effects()
 	if pool != null:
 		var pos := at_pos if at_pos != Vector3.ZERO else global_position + Vector3(0,1.2,0)
 		pool.burst(pos, strength)
+	if CombatProf.enabled: CombatProf.mark("fx.blood", _cpt)
 
 # --- Impactos en superficies no vivas ---
 static var _bullet_hole_texture: Texture2D = null
@@ -14994,14 +15018,19 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vec
 		_is_firing = true
 		third_person_animation_player.play(_rifle_fire_animation, 0.05)
 	var remote_m4 := is_puppet and _puppet_held == M4_NAME
+	var _cpt2 := Time.get_ticks_usec()
 	if not _is_aiming and not is_sitting and not is_prone:
 		_update_rifle_visuals(0.0)
 		_on_skeleton_updated()
+	if CombatProf.enabled: CombatProf.mark("pc.remote_anim", _cpt2); _cpt2 = Time.get_ticks_usec()
 	_play_shoot_sound(remote_m4)
+	if CombatProf.enabled: CombatProf.mark("fx.shoot_sound", _cpt2); _cpt2 = Time.get_ticks_usec()
 	# Show muzzle flash at the reported muzzle (no tracer streak) and impact on static surfaces.
 	_spawn_muzzle_flash(_origin, _dir)
+	if CombatProf.enabled: CombatProf.mark("fx.muzzle", _cpt2); _cpt2 = Time.get_ticks_usec()
 	var excluded: Array[RID] = [get_rid()]
 	_collect_child_collision_rids(self, excluded)
+	if CombatProf.enabled: CombatProf.mark("pc.remote_collect_rids", _cpt2)
 	_launch_rifle_projectile(_origin, _dir, wind, excluded, false, remote_m4)
 	if CombatProf.enabled: CombatProf.mark("pc.play_shot_remote", _cpt)
 	# Each RPC describes one actual round; never synthesize extra burst shots.
