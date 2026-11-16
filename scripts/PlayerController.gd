@@ -6972,6 +6972,8 @@ func die(cause: String = "") -> void:
 			_apply_melee_death_visual()
 		return
 	is_dead = true
+	var _cpt := Time.get_ticks_usec()
+	var _cpt2 := _cpt
 	if CombatProf.enabled: CombatProf.event("death.player")
 	_action_serial += 1
 	# Un golpe letal llega por force_death sin pasar por apply_damage — si el
@@ -6990,6 +6992,7 @@ func die(cause: String = "") -> void:
 		death_scene._close_wolf_orders()
 	if death_scene != null and death_scene.has_method("_close_loot_ui") and death_scene.get("_loot_panel") != null:
 		death_scene._close_loot_ui()
+	if CombatProf.enabled: CombatProf.mark("die.wake_sound_ui", _cpt2); _cpt2 = Time.get_ticks_usec()
 	_is_aiming = false
 	_breath_hold_active = false
 	_remove_scope_overlay()
@@ -6999,10 +7002,12 @@ func die(cause: String = "") -> void:
 	_apply_view_mode()
 	if flashlight != null:
 		flashlight.visible = false
+	if CombatProf.enabled: CombatProf.mark("die.view_mode", _cpt2); _cpt2 = Time.get_ticks_usec()
 	velocity = Vector3.ZERO
 	stats.health = 0.0
 	stats.dead = true
 	stats.changed.emit()
+	if CombatProf.enabled: CombatProf.mark("die.stats_changed", _cpt2); _cpt2 = Time.get_ticks_usec()
 	third_person_action_timer = 0.0
 	third_person_action_animation = ""
 	_restore_aim_pitch_pose(_hand_skeleton)
@@ -7014,11 +7019,13 @@ func die(cause: String = "") -> void:
 	_apply_melee_death_visual()
 	if not _beaten_death and third_person_animation_player != null:
 		third_person_animation_player.stop()
+	if CombatProf.enabled: CombatProf.mark("die.death_visual", _cpt2); _cpt2 = Time.get_ticks_usec()
 	# Unequip all clothing so the body shows naked parts
 	for slot in _equipped_slots.keys():
 		var equipped_item := str(_equipped_slots[slot])
 		if not equipped_item.is_empty():
 			unequip_clothing(equipped_item)
+	if CombatProf.enabled: CombatProf.mark("die.unequip_clothing", _cpt2); CombatProf.mark("die.total", _cpt)
 
 func _apply_melee_death_visual() -> void:
 	if _beaten_death:

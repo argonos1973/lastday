@@ -77,8 +77,23 @@ func _settle(seconds: float) -> void:
 		_keep_alive()
 		await get_tree().process_frame
 
+# A/B switches (diagnosis only, never used for the reported numbers).
+var _ab_no_flash := false
+
+func _apply_ab() -> void:
+	if not _ab_no_flash:
+		return
+	var actors: Array = [player]
+	actors.append_array(world.remote_players.values())
+	for actor in actors:
+		if is_instance_valid(actor):
+			var flash: Node = actor.get_node_or_null("MuzzleFlash")
+			if flash != null and flash.get("light") != null:
+				flash.light.visible = false
+
 var _nan_reported := false
 func _keep_alive() -> void:
+	_apply_ab()
 	if not _nan_reported and not (player.global_position.is_finite() and player.camera.global_transform.is_finite()):
 		_nan_reported = true
 		print("HARNESS_WARN player/camera transform is not finite: pos=", player.global_position, " rot=", player.rotation, " pitch=", player._pitch)
@@ -232,13 +247,21 @@ func _pump_bursts() -> void:
 # Samples `seconds` of real frames. `tick` runs once per frame BEFORE it renders
 # with (elapsed, delta) and performs the scenario's actions.
 func _scenario(label: String, seconds: float, tick: Callable) -> void:
-	if not only.is_empty() and not only.has(label):
+	if not only.is_empty() and not only.has(label) and not label.begins_with("idle_forest_adj"):
 		return
+	await _wait_drawable()
 	CombatProf.reset()
 	CombatProf.spike_ms = _spike_ms
 	var frames: Array = []
 	var physics: Array = []
 	var process: Array = []
+	var render_cpu: Array = []
+	var render_gpu: Array = []
+	# Frame classes: frames with a shot, with a projectile impact, the frame
+	# right after a shot, and quiet frames (the scenario's own baseline).
+	var classes := {"shot": [], "impact": [], "after_shot": [], "quiet": []}
+	var previous_was_shot := false
+	var vp: RID = get_tree().root.get_viewport_rid()
 	var started := Time.get_ticks_usec()
 	var previous := started
 	var elapsed := 0.0
@@ -264,11 +287,26 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 		frames.append(ms)
 		physics.append(float(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)) * 1000.0)
 		process.append(float(Performance.get_monitor(Performance.TIME_PROCESS)) * 1000.0)
-		CombatProf.end_frame(ms)
-	if frames.is_empty():
-		frames.append(0.0)
-		physics.append(0.0)
-		process.append(0.0)
+		var rc := RenderingServer.viewport_get_measured_render_time_cpu(vp) + RenderingServer.get_frame_setup_time_cpu()
+		var rg := RenderingServer.viewport_get_measured_render_time_gpu(vp)
+		render_cpu.append(rc)
+		render_gpu.append(rg)
+		var ev: Dictionary = CombatProf.frame_events()
+		var is_shot := ev.has("shot.local") or ev.has("rpc.shot_rifle")
+		if is_shot:
+			classes.shot.append(ms)
+		elif CombatProf.frame_has("proj.impact_handler"):
+			classes.impact.append(ms)
+		elif previous_was_shot:
+			classes.after_shot.append(ms)
+		else:
+			classes.quiet.append(ms)
+		previous_was_shot = is_shot
+		CombatProf.end_frame(ms, {"render_cpu_ms": rc, "render_gpu_ms": rg})
+	if frames.size() < 10:
+		print("SCN %-22s SKIPPED: window occluded (%d frames dropped, %d kept)" % [label, occluded, frames.size()])
+		rows.append({"scenario": label, "skipped": true, "occluded_frames": occluded})
+		return
 	var combat: Dictionary = CombatProf.snapshot()
 	var events: Dictionary = CombatProf.events_snapshot()
 	var spikes: Dictionary = CombatProf.take_spikes()
@@ -289,6 +327,18 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 		if ms >= threshold: hitches += 1
 	physics.sort()
 	process.sort()
+	render_cpu.sort()
+	render_gpu.sort()
+	var class_stats := {}
+	for key: String in classes:
+		var values: Array = classes[key]
+		if values.is_empty():
+			continue
+		values.sort()
+		var total := 0.0
+		for v: float in values:
+			total += v
+		class_stats[key] = {"n": values.size(), "p50": _pct(values, 0.5), "mean": total / float(values.size()), "max": float(values.back())}
 	var proj_usec := 0
 	var proj_ticks := 0
 	for key: String in ["proj.phys_frame", "proj.phys_impact", "proj.capsule_impact", "proj.phys_expired", "proj.water_impact"]:
@@ -304,12 +354,19 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 		"projectile_ms": float(proj_usec) / 1000.0, "projectile_ticks": proj_ticks,
 		"impact_ms": float(impact_usec) / 1000.0, "impacts": int(combat.get("proj.impact_handler", {}).get("calls", 0)),
 		"memory_mb": float(OS.get_static_memory_usage()) / 1048576.0, "occluded_frames": occluded,
+		"render_cpu_p50": _pct(render_cpu, 0.5), "render_cpu_p95": _pct(render_cpu, 0.95), "render_cpu_max": float(render_cpu.back()),
+		"render_gpu_p50": _pct(render_gpu, 0.5), "render_gpu_p95": _pct(render_gpu, 0.95), "frame_classes": class_stats,
 		"events": events, "sections": combat, "spikes": spikes.samples, "spike_count": int(spikes.count),
 	}
 	rows.append(row)
 	print("SCN %-22s fps=%5.1f p50=%6.2f p95=%6.2f p99=%6.2f max=%7.2f >50=%d >100=%d hitch(>=%.0f)=%d phys_p95=%5.2f phys_max=%6.2f proj=%7.2fms/%d impact=%6.2fms/%d mem=%.0fMB" % [
 		label, row.fps, row.p50, row.p95, row.p99, row.max, over_50, over_100, threshold, hitches, row.physics_p95, row.physics_max,
 		row.projectile_ms, proj_ticks, row.impact_ms, row.impacts, row.memory_mb])
+	print("  RENDER cpu_p50=%.2f cpu_p95=%.2f cpu_max=%.2f gpu_p50=%.2f gpu_p95=%.2fms" % [row.render_cpu_p50, row.render_cpu_p95, row.render_cpu_max, row.render_gpu_p50, row.render_gpu_p95])
+	var class_parts: Array = []
+	for key: String in class_stats:
+		class_parts.append("%s[n=%d p50=%.1f mean=%.1f max=%.1f]" % [key, int(class_stats[key].n), float(class_stats[key].p50), float(class_stats[key].mean), float(class_stats[key].max)])
+	print("  FRAMES ", " ".join(class_parts))
 	if occluded > 0:
 		print("  OCCLUDED frames dropped=%d kept=%d (window occluded: not game time)" % [occluded, frames.size()])
 	if not events.is_empty():
@@ -323,7 +380,205 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 		var parts: Array = []
 		for key: String in spike.sections_usec:
 			parts.append("%s=%.2f" % [key, float(spike.sections_usec[key]) / 1000.0])
-		print("  SPIKE %7.1fms events=%s sections_ms=[%s]" % [float(spike.ms), str(spike.events) if not (spike.events as Dictionary).is_empty() else "none", ", ".join(parts)])
+		var extra: Dictionary = spike.get("extra", {})
+		print("  SPIKE %7.1fms render_cpu=%6.1f render_gpu=%6.1f events=%s sections_ms=[%s]" % [float(spike.ms), float(extra.get("render_cpu_ms", 0.0)), float(extra.get("render_gpu_ms", 0.0)), str(spike.events) if not (spike.events as Dictionary).is_empty() else "none", ", ".join(parts)])
+
+# Diagnosis: does the first positional light on a set of materials stall the
+# draw, and does a zero-energy light already count? Bare lights, no gameplay.
+# Each line lists frame_ms/render_cpu_ms per frame; render time is reported by
+# the engine one frame late, so a stall shows on the frame after its cause.
+func _probe_light_variants() -> void:
+	var vp: RID = get_tree().root.get_viewport_rid()
+	var base: Vector3 = player.global_position
+	var steps := [
+		["omni_zero_energy", "omni", 0.0, Vector3.ZERO],
+		["omni_then_lit", "omni", 5.0, Vector3.ZERO],
+		["omni_lit_again", "omni", 5.0, Vector3.ZERO],
+		["spot_lit", "spot", 5.0, Vector3.ZERO],
+		["spot_lit_again", "spot", 5.0, Vector3.ZERO],
+		["omni_lit_25m_away", "omni", 5.0, Vector3(0.0, 0.0, -25.0)],
+		["omni_lit_25m_again", "omni", 5.0, Vector3(0.0, 0.0, -25.0)],
+	]
+	for step: Array in steps:
+		await _wait_drawable()
+		var light: Light3D
+		if str(step[1]) == "omni":
+			var omni := OmniLight3D.new()
+			omni.omni_range = 7.0
+			light = omni
+		else:
+			var spot := SpotLight3D.new()
+			spot.spot_range = 9.0
+			spot.spot_angle = 80.0
+			light = spot
+		light.light_energy = float(step[2])
+		light.shadow_enabled = false
+		var previous := Time.get_ticks_usec()
+		var line: Array = []
+		for frame in 8:
+			if frame == 2:
+				world.add_child(light)
+				light.global_position = base + (step[3] as Vector3) + Vector3(0.0, 1.5, 0.0)
+				light.rotation_degrees = Vector3(-80.0, 0.0, 0.0)
+			if frame == 5:
+				light.queue_free()
+			await get_tree().process_frame
+			var now := Time.get_ticks_usec()
+			line.append("%s%.0f/%.0f" % ["*" if frame >= 2 and frame < 5 else "", float(now - previous) / 1000.0, RenderingServer.viewport_get_measured_render_time_cpu(vp)])
+			previous = now
+		print("PROBE_LIGHT %-20s drawable=%s frame_ms/render_cpu_ms (* = light present): %s" % [str(step[0]), DisplayServer.window_can_draw(), " ".join(line)])
+		await _settle(0.4)
+
+# Runs `action` once and returns the slowest of the next frames: the cost of
+# doing that thing for the first (or second) time, isolated from everything else.
+func _probe_step(label: String, action: Callable, frames_after: int = 5) -> float:
+	await _wait_drawable()
+	var quiet: Array = []
+	var previous := Time.get_ticks_usec()
+	for i in 6:
+		_keep_alive()
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		quiet.append(float(now - previous) / 1000.0)
+		previous = now
+	quiet.sort()
+	var base: float = quiet[quiet.size() / 2]
+	var script_started := Time.get_ticks_usec()
+	action.call()
+	var script_ms := float(Time.get_ticks_usec() - script_started) / 1000.0
+	var worst := 0.0
+	var line: Array = []
+	previous = Time.get_ticks_usec()
+	for i in frames_after:
+		if player.get("is_dead") != true:
+			_keep_alive()
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		var ms := float(now - previous) / 1000.0
+		previous = now
+		worst = maxf(worst, ms)
+		line.append("%.0f" % ms)
+	print("PROBE_STEP %-26s base=%5.1f worst=%7.1f excess=%7.1f script=%6.2fms frames=[%s]" % [label, base, worst, worst - base, script_ms, " ".join(line)])
+	probe_rows.append({"step": label, "base": base, "worst": worst, "excess": worst - base, "script_ms": script_ms})
+	return worst - base
+
+var probe_rows: Array = []
+
+# First use vs second use of every combat effect, in view, one at a time.
+func _probe_first_use() -> void:
+	var cam: Camera3D = player.camera
+	var fwd: Vector3 = -cam.global_transform.basis.z
+	var point: Vector3 = cam.global_position + fwd * 5.0
+	var floor_point := Vector3(point.x, _ground(point.x, point.z) + 0.02, point.z)
+	var dust := Color(0.42, 0.36, 0.30)
+	for pass_name: String in ["first", "again"]:
+		await _probe_step("muzzle_flash." + pass_name, func() -> void: player._spawn_muzzle_flash(point, fwd))
+		await _settle(0.4)
+		await _probe_step("blood." + pass_name, func() -> void: player._spawn_blood_splatter(point, 1.0))
+		await _probe_step("impact_dust." + pass_name, func() -> void: player._spawn_impact_dust(floor_point, Vector3.UP, dust))
+		await _probe_step("impact_chips." + pass_name, func() -> void: player._spawn_impact_chips(floor_point, Vector3.UP, dust, false))
+		await _probe_step("impact_sparks." + pass_name, func() -> void: player._spawn_impact_chips(floor_point, Vector3.UP, dust, true))
+		await _probe_step("bullet_hole." + pass_name, func() -> void: player._spawn_bullet_hole_decal(floor_point, Vector3.UP, world))
+		await _probe_step("shoot_sound." + pass_name, func() -> void: player._play_shoot_sound(false))
+		_hold(_rifle_item)
+		await _settle(0.5)
+		await _probe_step("local_shot_rifle." + pass_name, func() -> void: _fire())
+		await _settle(1.2)
+		_hold(_m4_item)
+		await _settle(0.5)
+		await _probe_step("local_shot_m4." + pass_name, func() -> void: _fire())
+		await _settle(1.2)
+		await _probe_step("hit_taken_m4." + pass_name, func() -> void: world._net_apply_damage(6.0, "m4"))
+		await _settle(1.0)
+		await _probe_step("hit_taken_bow." + pass_name, func() -> void: world._net_apply_damage(6.0, "arco"))
+		await _settle(1.0)
+
+# Does toggling Environment adjustments (the low-health desaturation) rebuild
+# the scene shaders? Also samples the steady cost of leaving them enabled.
+func _probe_environment_adjust() -> void:
+	var env: Environment = world.day_cycle.world_environment.environment
+	var hud: Node = world.hud
+	# The HUD owns the flag every frame: park it so the probe is the only writer.
+	var hud_overlay = hud.get("_damage_overlay")
+	hud.set("_damage_overlay", null)
+	print("PROBE_ADJUST initial adjustment_enabled=", env.adjustment_enabled)
+	var initial := env.adjustment_enabled
+	await _probe_step("adjust.flip_1", func() -> void: env.adjustment_enabled = not initial, 6)
+	await _scenario("idle_forest_adj_%s" % ("on" if env.adjustment_enabled else "off"), 5.0, func(_t: float) -> void: pass)
+	await _probe_step("adjust.flip_back", func() -> void: env.adjustment_enabled = initial, 6)
+	await _scenario("idle_forest_adj_%s" % ("on" if env.adjustment_enabled else "off"), 5.0, func(_t: float) -> void: pass)
+	await _probe_step("adjust.flip_again", func() -> void: env.adjustment_enabled = not initial, 6)
+	await _probe_step("adjust.restore", func() -> void: env.adjustment_enabled = initial, 6)
+	# Picture check: is the neutral-adjustment image the same picture? Compare
+	# against the frame-to-frame difference of the unchanged scene (wind, sky).
+	env.adjustment_enabled = false
+	await _settle(0.5)
+	var off_a := await _grab()
+	var off_b := await _grab()
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.0
+	env.adjustment_contrast = 1.0
+	env.adjustment_saturation = 1.0
+	await _settle(0.5)
+	var on_a := await _grab()
+	var on_b := await _grab()
+	env.adjustment_enabled = false
+	await _settle(0.3)
+	var off_c := await _grab()
+	print("PROBE_ADJUST_IMAGE mean_abs_diff_per_channel(0-255): off_vs_off=%.3f on_vs_on=%.3f off_vs_on=%.3f on_vs_off_after=%.3f" % [
+		_image_diff(off_a, off_b), _image_diff(on_a, on_b), _image_diff(off_b, on_a), _image_diff(on_b, off_c)])
+	var shot_dir := _arg("--shots=")
+	if not shot_dir.is_empty():
+		off_b.save_png(shot_dir.path_join("adjust_off.png"))
+		on_a.save_png(shot_dir.path_join("adjust_on_neutral.png"))
+	env.adjustment_enabled = initial
+	hud.set("_damage_overlay", hud_overlay)
+
+func _grab() -> Image:
+	await RenderingServer.frame_post_draw
+	var image: Image = get_tree().root.get_texture().get_image()
+	await get_tree().process_frame
+	return image
+
+func _image_diff(a: Image, b: Image) -> float:
+	var da := a.get_data()
+	var db := b.get_data()
+	if da.size() != db.size() or da.is_empty():
+		return -1.0
+	var total := 0
+	var step := 7 # sample every 7th byte: ~130k samples, all channels
+	var count := 0
+	for i in range(0, da.size(), step):
+		total += absi(int(da[i]) - int(db[i]))
+		count += 1
+	return float(total) / float(count)
+
+# The death of the local player, one stage per frame group, then the real call.
+func _probe_death_steps() -> void:
+	await _probe_step("death.view_mode", func() -> void: player._apply_view_mode())
+	await _probe_step("death.stats_dead_signal", func() -> void:
+		player.stats.health = 0.0
+		player.stats.changed.emit())
+	await _probe_step("death.unequip_clothing", func() -> void:
+		for slot in player._equipped_slots.keys():
+			var equipped_item := str(player._equipped_slots[slot])
+			if not equipped_item.is_empty():
+				player.unequip_clothing(equipped_item))
+	await _probe_step("death.clip", func() -> void: player._apply_melee_death_visual(), 8)
+	await _probe_step("death.full_die_call", func() -> void: world._net_force_death(""), 8)
+
+# The user's desktop can cover the window (another Space, a full-screen app):
+# an occluded window is not drawn, so wait instead of sampling nothing.
+func _wait_drawable() -> void:
+	if DisplayServer.window_can_draw():
+		return
+	print("HARNESS_WAIT window occluded - waiting until it is visible again")
+	var until := Time.get_ticks_msec() + 180000
+	while not DisplayServer.window_can_draw() and Time.get_ticks_msec() < until:
+		DisplayServer.window_move_to_foreground()
+		_keep_alive()
+		await get_tree().process_frame
+	await _settle(1.0)
 
 func _combat_block(tag: String, forest: Vector3, look: Vector3) -> void:
 	var state := {"next": 0.0, "animal": null}
@@ -436,6 +691,7 @@ func run() -> void:
 	if not only_arg.is_empty():
 		only = Array(only_arg.split(","))
 	var soak := float(_arg("--soak=", "0"))
+	_ab_no_flash = OS.get_cmdline_user_args().has("--ab-no-flash")
 	# Launched from the start menu in an exported client: drop the menu scene.
 	var menu := get_tree().current_scene
 	if menu != null:
@@ -460,6 +716,7 @@ func run() -> void:
 	seed(20240611)
 	CombatProf.enabled = true
 	CombatProf.driver = false
+	RenderingServer.viewport_set_measure_render_time(get_tree().root.get_viewport_rid(), true)
 	world = ProbeWorld.new()
 	get_tree().root.add_child(world)
 	get_tree().current_scene = world
@@ -512,6 +769,12 @@ func run() -> void:
 	await _settle(4.0)
 	print("COMBAT_PROFILE_FOREST spot=", forest, " tree=", tree_pos)
 	await _scenario("idle_forest", secs, func(_t: float) -> void: pass)
+	if OS.get_cmdline_user_args().has("--probe-light"):
+		await _probe_light_variants()
+	if OS.get_cmdline_user_args().has("--probe-adjust"):
+		await _probe_environment_adjust()
+	if OS.get_cmdline_user_args().has("--probe-first-use"):
+		await _probe_first_use()
 	state.next = 0.0
 	_hold(_rifle_item)
 	await _scenario("rifle_tree", secs, func(t: float) -> void:
@@ -591,6 +854,12 @@ func run() -> void:
 		await _scenario("soak_idle_forest", secs, func(_t: float) -> void: pass)
 		await _combat_block("soak_", forest, tree_target)
 
+	if OS.get_cmdline_user_args().has("--probe-death"):
+		_teleport(forest)
+		_aim_at(tree_target)
+		await _settle(2.0)
+		await _probe_death_steps()
+
 	# ---- Player death (last: the corpse stays down) -------------------------
 	_teleport(forest)
 	_aim_at(tree_target)
@@ -607,7 +876,7 @@ func run() -> void:
 	if not out_path.is_empty():
 		var file := FileAccess.open(out_path, FileAccess.WRITE)
 		if file != null:
-			file.store_string(JSON.stringify({"rows": rows, "secs": secs, "soak": soak}, "  "))
+			file.store_string(JSON.stringify({"rows": rows, "probes": probe_rows, "secs": secs, "soak": soak}, "  "))
 			file.close()
 			print("COMBAT_PROFILE_SAVED ", out_path)
 	print("COMBAT_PROFILE_DONE scenarios=", rows.size())

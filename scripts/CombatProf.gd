@@ -46,8 +46,9 @@ static func event(tag: String) -> void:
 	_frame_ev[tag] = int(_frame_ev.get(tag, 0)) + 1
 	_ev_total[tag] = int(_ev_total.get(tag, 0)) + 1
 
-## Called once per rendered frame by whoever owns the frame clock.
-static func end_frame(frame_ms: float) -> void:
+## Called once per rendered frame by whoever owns the frame clock. `extra`
+## travels with a stored slow frame (e.g. renderer CPU/GPU time of that frame).
+static func end_frame(frame_ms: float, extra: Dictionary = {}) -> void:
 	if frame_ms >= spike_ms:
 		_spike_count += 1
 		if _spikes.size() < SPIKE_CAPACITY:
@@ -56,11 +57,19 @@ static func end_frame(frame_ms: float) -> void:
 			var top := {}
 			for i in range(mini(SPIKE_TOP_SECTIONS, segs.size())):
 				top[segs[i]] = int(_frame[segs[i]])
-			_spikes.append({"ms": frame_ms, "events": _frame_ev.duplicate(), "sections_usec": top})
+			_spikes.append({"ms": frame_ms, "events": _frame_ev.duplicate(), "sections_usec": top, "extra": extra})
 	if not _frame.is_empty():
 		_frame.clear()
 	if not _frame_ev.is_empty():
 		_frame_ev.clear()
+
+## Events and script time (usec, all sections; nested ones overlap) of the
+## frame in progress — read before end_frame() clears them.
+static func frame_events() -> Dictionary:
+	return _frame_ev
+
+static func frame_has(seg: String) -> bool:
+	return _frame.has(seg)
 
 ## Raw totals since the last reset: {seg: {usec, calls, max_usec}}.
 static func snapshot() -> Dictionary:
