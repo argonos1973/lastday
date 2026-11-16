@@ -33,6 +33,8 @@ func burst(at: Vector3, direction: Vector3, muzzle: Node3D = null) -> void:
 	set_process(true)
 
 func _process(delta: float) -> void:
+	if not is_inside_tree():
+		return
 	var muzzle = marker.get_ref() if marker != null else null
 	if is_instance_valid(muzzle):
 		global_position = muzzle.global_position

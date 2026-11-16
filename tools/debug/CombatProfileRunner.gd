@@ -103,7 +103,7 @@ func _keep_alive() -> void:
 				_nan_reported = true
 				print("HARNESS_WARN animal with non-finite position: ", node.name, " type=", node.get("animal_type"), " state=", node.get("_state"))
 				break
-	if player.get("is_dead") == true:
+	if player.get("is_dead") == true or _health_locked:
 		return
 	player.stats.health = player.stats.max_health
 	player.stats.energy = 100.0
@@ -540,6 +540,47 @@ func _grab() -> Image:
 	await get_tree().process_frame
 	return image
 
+func _mean_luma(a: Image) -> float:
+	var da := a.get_data()
+	if da.is_empty():
+		return -1.0
+	var total := 0.0
+	var count := 0
+	for i in range(0, da.size() - 3, 28):
+		total += 0.299 * float(da[i]) + 0.587 * float(da[i + 1]) + 0.114 * float(da[i + 2])
+		count += 1
+	return total / float(count)
+
+# El grading de salud baja por overlay de pantalla: la imagen herida debe
+# oscurecer/desaturar (no quedar negra ni igual) y el cruce no debe costar
+# el ~1 s que costaba la variante de Environment.
+var _health_locked := false
+
+func _probe_health_grade() -> void:
+	if world.player == null or world.player.stats == null:
+		return
+	var stats = world.player.stats
+	var full_hp := float(stats.max_health)
+	var saved := float(stats.health)
+	stats.health = full_hp
+	await _settle(0.4)
+	var healthy_a := await _grab()
+	_health_locked = true
+	await _probe_step("grade.hurt_flip", func() -> void: stats.health = full_hp * 0.4, 6)
+	var hurt := await _grab()
+	await _probe_step("grade.heal_flip", func() -> void: stats.health = full_hp, 6)
+	_health_locked = false
+	var healthy_b := await _grab()
+	var lum_h := _mean_luma(healthy_a)
+	var lum_hurt := _mean_luma(hurt)
+	print("PROBE_GRADE diff healthy_vs_hurt=%.2f healthy_vs_healed=%.2f luma healthy=%.1f hurt=%.1f ratio=%.2f" % [
+		_image_diff(healthy_a, hurt), _image_diff(healthy_a, healthy_b), lum_h, lum_hurt, lum_hurt / maxf(lum_h, 0.01)])
+	var shot_dir := _arg("--shots=")
+	if not shot_dir.is_empty():
+		healthy_a.save_png(shot_dir.path_join("grade_healthy.png"))
+		hurt.save_png(shot_dir.path_join("grade_hurt.png"))
+	stats.health = saved
+
 func _image_diff(a: Image, b: Image) -> float:
 	var da := a.get_data()
 	var db := b.get_data()
@@ -771,6 +812,8 @@ func run() -> void:
 	await _scenario("idle_forest", secs, func(_t: float) -> void: pass)
 	if OS.get_cmdline_user_args().has("--probe-light"):
 		await _probe_light_variants()
+	if OS.get_cmdline_user_args().has("--probe-grade"):
+		await _probe_health_grade()
 	if OS.get_cmdline_user_args().has("--probe-adjust"):
 		await _probe_environment_adjust()
 	if OS.get_cmdline_user_args().has("--probe-first-use"):

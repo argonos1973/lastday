@@ -867,19 +867,16 @@ func _ready() -> void:
 			await get_tree().process_frame
 			await get_tree().process_frame
 			if _scene_quitting: return
-		# Último: la variante "adjustments" del Environment que el HUD activa al
-		# bajar del 80% de salud — su compilación perezosa era el congelón de
-		# ~0.8 s al recibir el primer impacto o morir. Debe ir tras el warm-up
-		# de combate para que esos materiales también compilen la variante.
-		if hud != null and hud.has_method("warm_damage_adjustments"):
-			hud.warm_damage_adjustments(4)
-			await get_tree().process_frame
+			player.finish_combat_render_warmup()
+		# Compilar también la copia de pantalla del overlay de grading de salud
+		# baja (la primera vez que se dibuja son ~190 ms; mejor detrás del
+		# overlay de carga que al recibir el primer impacto).
+		if hud != null and hud.has_method("warm_health_grade"):
+			hud.warm_health_grade(3)
 			await get_tree().process_frame
 			await get_tree().process_frame
 			await get_tree().process_frame
 			if _scene_quitting: return
-		if player != null and is_instance_valid(player):
-			player.finish_combat_render_warmup()
 	# Remove loading overlay immediately — everything is loaded
 	if _loading_overlay != null:
 		_loading_overlay.queue_free()

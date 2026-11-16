@@ -11,14 +11,15 @@ var day_cycle
 var main_node = null
 var _damage_overlay: ColorRect = null
 var _damage_shader_mat: ShaderMaterial = null
+var _grade_overlay: ColorRect = null
+var _grade_shader_mat: ShaderMaterial = null
 var _damage_flash: float = 0.0
 var _low_health_pulse: float = 0.0
 var _sleep_fade: float = 0.0
-# Pulso de warm-up durante la carga: activar adjustment_enabled la primera
-# vez que la salud baja del 80% recompilaba TODO el shader de escena en el
-# renderer Compatibility (~0.8 s de congelación en pleno combate). Forzarlo
-# unos frames detrás del overlay compila la variante antes de entrar.
-var _adjust_warm_frames: int = 0
+# Pulso de warm-up: mostrar el overlay de grading unos frames detrás del
+# overlay de carga compila la copia de pantalla ahora (~190 ms la primera
+# vez) y no al cruzar el umbral de salud en combate.
+var _grade_warm_frames: int = 0
 var _prev_health: float = 100.0
 
 var root: Control
@@ -2797,11 +2798,10 @@ func _on_stats_changed() -> void:
 	# frame loop coalesce updates to 10 Hz, avoiding repeated Control relayouts.
 	_stats_dirty = true
 
-# Lo llama Main durante la carga: mantiene adjustment_enabled activo `frames`
-# fotogramas (valores neutros) para que el renderer compile la variante del
-# shader de escena ahora, no al cruzar el umbral de salud en combate.
-func warm_damage_adjustments(frames: int = 3) -> void:
-	_adjust_warm_frames = frames
+# Lo llama Main durante la carga: dibuja el overlay de grading `frames`
+# fotogramas (valores neutros) para compilar la copia de pantalla ahora.
+func warm_health_grade(frames: int = 3) -> void:
+	_grade_warm_frames = frames
 
 func _update_damage_overlay(delta: float) -> void:
 	if _damage_overlay == null or player == null or player.stats == null:
@@ -2824,19 +2824,17 @@ func _update_damage_overlay(delta: float) -> void:
 		_damage_shader_mat.set_shader_parameter("vignette", vignette)
 		_damage_shader_mat.set_shader_parameter("hit_flash", _damage_flash)
 	_damage_overlay.color = Color(0.0, 0.0, 0.0, clampf(maxf(darkness, _damage_flash * 0.45), 0.0, 0.94))
-	if day_cycle != null and day_cycle.get("world_environment") != null:
-		var we: WorldEnvironment = day_cycle.world_environment
-		if we != null and we.environment != null:
-			var want_adj := severity > 0.01 or _adjust_warm_frames > 0
-			if _adjust_warm_frames > 0:
-				_adjust_warm_frames -= 1
-			we.environment.adjustment_enabled = want_adj
-			if want_adj:
-				we.environment.adjustment_saturation = lerpf(1.0, 0.08, smoothstep(0.0, 0.95, severity))
-				we.environment.adjustment_brightness = lerpf(1.0, 0.52, severity * severity)
-			else:
-				we.environment.adjustment_saturation = 1.0
-				we.environment.adjustment_brightness = 1.0
+	# Desaturación + oscurecimiento progresivo al bajar de vida: lo hace el
+	# overlay de grading (copia de pantalla, solo visible herido). El ajuste
+	# equivalente de Environment quedó descartado porque alternar
+	# adjustment_enabled recompila todos los shaders de escena en pleno combate.
+	if _grade_overlay != null and _grade_shader_mat != null:
+		_grade_overlay.visible = severity > 0.01 or _grade_warm_frames > 0
+		if _grade_warm_frames > 0:
+			_grade_warm_frames -= 1
+		if _grade_overlay.visible:
+			_grade_shader_mat.set_shader_parameter("sat", lerpf(1.0, 0.08, smoothstep(0.0, 0.95, severity)))
+			_grade_shader_mat.set_shader_parameter("bright", lerpf(1.0, 0.52, severity * severity))
 
 func _update_inventory() -> void:
 	if survival_inventory != null:
@@ -3270,6 +3268,44 @@ void fragment() {
 	_damage_shader_mat.shader = sh
 	_damage_overlay.material = _damage_shader_mat
 	root.add_child(_damage_overlay)
+	# Grading de salud baja (desaturar + oscurecer el mundo): antes se hacía
+	# con environment.adjustment_*, pero alternar adjustment_enabled crea una
+	# variante nueva del shader de escena en el renderer Compatibility y su
+	# compilación perezosa era el congelón de ~0.8-1 s al recibir el primer
+	# impacto o morir. Este ColorRect lee el framebuffer y reescribe cada
+	# pixel: mismo efecto, cero variantes de shader de escena. Solo es visible
+	# mientras la salud está baja, así el coste de la copia de pantalla no se
+	# paga en estado sano.
+	_grade_overlay = ColorRect.new()
+	_grade_overlay.anchor_left = 0.0
+	_grade_overlay.anchor_top = 0.0
+	_grade_overlay.anchor_right = 1.0
+	_grade_overlay.anchor_bottom = 1.0
+	_grade_overlay.offset_left = 0
+	_grade_overlay.offset_top = 0
+	_grade_overlay.offset_right = 0
+	_grade_overlay.offset_bottom = 0
+	_grade_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_grade_overlay.visible = false
+	var gsh := Shader.new()
+	gsh.code = """shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
+uniform float sat : hint_range(0.0, 1.0) = 1.0;
+uniform float bright : hint_range(0.0, 2.0) = 1.0;
+void fragment() {
+	vec3 c = textureLod(screen_tex, SCREEN_UV, 0.0).rgb;
+	float lum = dot(c, vec3(0.299, 0.587, 0.114));
+	COLOR = vec4(mix(vec3(lum), c, sat) * bright, 1.0);
+}
+"""
+	_grade_shader_mat = ShaderMaterial.new()
+	_grade_shader_mat.shader = gsh
+	_grade_overlay.material = _grade_shader_mat
+	# Primer hijo de root: solo reescribe el 3D y lo dibujado antes del HUD —
+	# los elementos de interfaz quedan sin gradear, igual que con
+	# adjustment_* (que solo tocaba el render 3D).
+	root.add_child(_grade_overlay)
+	root.move_child(_grade_overlay, 0)
 
 func _add_shadows_recursive(node: Node) -> void:
 	if node is Label:
