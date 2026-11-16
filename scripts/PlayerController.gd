@@ -14434,10 +14434,15 @@ func _shoot_rifle() -> void:
 	# Notify nearby wildlife of gunshot — all animals flee running
 	var gunshot_pos := global_position
 	for w in get_tree().get_nodes_in_group("wildlife"):
-		if w == null or not is_instance_valid(w):
+		if w == null or not is_instance_valid(w) or not (w is Node3D):
 			continue
-		if w.has_method("flee_from_gunshot"):
-			w.flee_from_gunshot(gunshot_pos, 120.0)
+		if not w.has_method("flee_from_gunshot"):
+			continue
+		# flee_from_gunshot repite esta misma comprobación por dentro; filtrar
+		# aquí evita la llamada para toda la fauna fuera de oído.
+		if (w as Node3D).global_position.distance_to(gunshot_pos) > 120.0:
+			continue
+		w.flee_from_gunshot(gunshot_pos, 120.0)
 	if CombatProf.enabled: CombatProf.mark("pc.shoot_alert_wild", _cpt2); _cpt2 = Time.get_ticks_usec()
 	_apply_rifle_recoil(is_m4_shot)
 	if third_person_animation_player != null:
@@ -15799,8 +15804,11 @@ func _alert_wildlife_near_point(pos: Vector3, radius: float) -> void:
 	if not is_inside_tree():
 		return
 	for w in get_tree().get_nodes_in_group("wildlife"):
-		if w != null and is_instance_valid(w) and w.has_method("flee_from_gunshot"):
-			w.flee_from_gunshot(pos, radius)
+		if w == null or not is_instance_valid(w) or not (w is Node3D) or not w.has_method("flee_from_gunshot"):
+			continue
+		if (w as Node3D).global_position.distance_to(pos) > radius:
+			continue
+		w.flee_from_gunshot(pos, radius)
 
 func _alert_wildlife_along_shot(origin: Vector3, dir: Vector3, max_len: float, origin_radius: float, corridor_radius: float) -> void:
 	if not is_inside_tree() or dir.length_squared() < 0.001:

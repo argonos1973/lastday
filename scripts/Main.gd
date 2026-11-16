@@ -4148,12 +4148,19 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 	# bears and birds flee running when they hear a gunshot or bullet impact zone.
 	var mid_impact := origin + ndir * 65.0
 	for w in get_tree().get_nodes_in_group("wildlife"):
-		if w == null or not is_instance_valid(w):
+		if w == null or not is_instance_valid(w) or not (w is Node3D):
 			continue
-		if w.has_method("flee_from_gunshot"):
+		if not w.has_method("flee_from_gunshot"):
+			continue
+		var wpos: Vector3 = (w as Node3D).global_position
+		var dist_origin := wpos.distance_to(origin)
+		if dist_origin <= 120.0:
 			w.flee_from_gunshot(origin, 120.0)
-			if w is Node3D and (w as Node3D).global_position.distance_to(origin) > 120.0 and (w as Node3D).global_position.distance_to(mid_impact) <= 75.0:
-				w.flee_from_gunshot(mid_impact, 75.0)
+		# mid_impact esta a 65 m del origen: dist(w, mid) >= dist_origin - 65,
+		# asi que solo la banda (120, 140] puede oir la zona de impacto — el
+		# resto de la fauna no necesita el segundo calculo de distancia.
+		elif dist_origin <= 140.0 and wpos.distance_to(mid_impact) <= 75.0:
+			w.flee_from_gunshot(mid_impact, 75.0)
 	if CombatProf.enabled: CombatProf.mark("shot.wildlife_flee", _cpt); _cpt = Time.get_ticks_usec()
 	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
 		survivor_bot_mgr.notify_sound_event(shooter_id, origin, "gunshot", 220.0)
