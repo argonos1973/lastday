@@ -859,6 +859,27 @@ func _ready() -> void:
 		if _scene_quitting: return
 		await get_tree().process_frame
 		if _scene_quitting: return
+		# Warm-up de render: dibuja una vez los recursos de combate (armas de
+		# puppets, fogonazo, impactos, sangre, decals) para que el renderer
+		# compile sus pipelines detrás del overlay y no en el primer tiroteo.
+		if player != null and is_instance_valid(player):
+			player.begin_combat_render_warmup()
+			await get_tree().process_frame
+			await get_tree().process_frame
+			if _scene_quitting: return
+		# Último: la variante "adjustments" del Environment que el HUD activa al
+		# bajar del 80% de salud — su compilación perezosa era el congelón de
+		# ~0.8 s al recibir el primer impacto o morir. Debe ir tras el warm-up
+		# de combate para que esos materiales también compilen la variante.
+		if hud != null and hud.has_method("warm_damage_adjustments"):
+			hud.warm_damage_adjustments(4)
+			await get_tree().process_frame
+			await get_tree().process_frame
+			await get_tree().process_frame
+			await get_tree().process_frame
+			if _scene_quitting: return
+		if player != null and is_instance_valid(player):
+			player.finish_combat_render_warmup()
 	# Remove loading overlay immediately — everything is loaded
 	if _loading_overlay != null:
 		_loading_overlay.queue_free()

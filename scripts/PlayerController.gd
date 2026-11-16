@@ -14663,6 +14663,59 @@ func prepare_combat_effects() -> void:
 		"res://assets/external/audio/downloaded/pain3.wav"]:
 		_load_audio_stream(path)
 
+# --- Warm-up de RENDER durante la carga -------------------------------------
+# prepare_combat_effects() calienta recursos (load/instancias/texturas), pero
+# el renderer Compatibility solo compila el pipeline de cada material cuando
+# se dibuja por primera vez: el primer fogonazo costaba ~300 ms, el primer
+# agujero de bala ~185 ms y el primer cruce del umbral de vida ~800 ms. Estas
+# dos funciones dibujan todo una vez detrás del overlay de carga.
+var _combat_warm_holder: Node3D = null
+var _combat_warm_holes_before := 0
+
+func begin_combat_render_warmup() -> void:
+	var scene := get_tree().current_scene if get_tree() != null else null
+	if scene == null or _combat_warm_holder != null:
+		return
+	var eye := global_position + Vector3(0.0, 1.55, 0.0)
+	var fwd := -global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized() if fwd.length_squared() > 0.01 else Vector3.FORWARD
+	var spot := eye + fwd * 2.0
+	_combat_warm_holder = Node3D.new()
+	_combat_warm_holder.name = "CombatRenderWarmup"
+	scene.add_child(_combat_warm_holder)
+	_combat_warm_holder.global_position = spot
+	# Armas que aparecen en manos de puppets sin aviso (el RPC de disparo las
+	# instanciaba en pleno intercambio): un frame dibujadas basta para compilar.
+	for wpath in [M4_MODEL, REAL_RIFLE_MODEL, M4_MAGAZINE_MODEL, RIFLE_MAGAZINE_MODEL,
+			WOODEN_BOW_MODEL, REINFORCED_BOW_MODEL, ARROW_WOOD_MODEL, ARROW_STONE_MODEL,
+			ARROW_BONE_MODEL, REAL_AXE_MODEL, REAL_TORCH_MODEL]:
+		var wm: Node3D = _load_external_node3d(wpath)
+		if wm != null:
+			_combat_warm_holder.add_child(wm)
+	# Fogonazo (variante de luz posicional), polvo/astillas/chispas, sangre y
+	# el decal del agujero de bala en sus dos variantes (suelo y pared).
+	_combat_warm_holes_before = _bullet_holes.size()
+	_spawn_bullet_impact(spot, Vector3.UP, null)
+	_spawn_bullet_impact(spot + fwd * 0.05, fwd, null)
+	_prepare_muzzle_flash().burst(spot, fwd, null)
+	var blood = _prepare_blood_effects()
+	if blood != null:
+		blood.burst(spot, 1.0)
+	var impacts = _prepare_impact_effects()
+	if impacts != null:
+		impacts.burst("sparks", spot, Vector3.UP, Color(0.7, 0.7, 0.7, 1.0))
+
+func finish_combat_render_warmup() -> void:
+	while _bullet_holes.size() > _combat_warm_holes_before:
+		var hole = _bullet_holes.pop_back()
+		if is_instance_valid(hole):
+			hole.free()
+	if _combat_warm_holder != null:
+		if is_instance_valid(_combat_warm_holder):
+			_combat_warm_holder.free()
+		_combat_warm_holder = null
+
 func _spawn_blood_splatter(at_pos: Vector3 = Vector3.ZERO, strength: float = 1.0) -> void:
 	var net_node := get_tree().root.get_node_or_null("NetworkManager")
 	if net_node != null and net_node.get("is_dedicated_server") == true: return

@@ -14,6 +14,11 @@ var _damage_shader_mat: ShaderMaterial = null
 var _damage_flash: float = 0.0
 var _low_health_pulse: float = 0.0
 var _sleep_fade: float = 0.0
+# Pulso de warm-up durante la carga: activar adjustment_enabled la primera
+# vez que la salud baja del 80% recompilaba TODO el shader de escena en el
+# renderer Compatibility (~0.8 s de congelación en pleno combate). Forzarlo
+# unos frames detrás del overlay compila la variante antes de entrar.
+var _adjust_warm_frames: int = 0
 var _prev_health: float = 100.0
 
 var root: Control
@@ -2792,6 +2797,12 @@ func _on_stats_changed() -> void:
 	# frame loop coalesce updates to 10 Hz, avoiding repeated Control relayouts.
 	_stats_dirty = true
 
+# Lo llama Main durante la carga: mantiene adjustment_enabled activo `frames`
+# fotogramas (valores neutros) para que el renderer compile la variante del
+# shader de escena ahora, no al cruzar el umbral de salud en combate.
+func warm_damage_adjustments(frames: int = 3) -> void:
+	_adjust_warm_frames = frames
+
 func _update_damage_overlay(delta: float) -> void:
 	if _damage_overlay == null or player == null or player.stats == null:
 		return
@@ -2816,7 +2827,9 @@ func _update_damage_overlay(delta: float) -> void:
 	if day_cycle != null and day_cycle.get("world_environment") != null:
 		var we: WorldEnvironment = day_cycle.world_environment
 		if we != null and we.environment != null:
-			var want_adj := severity > 0.01
+			var want_adj := severity > 0.01 or _adjust_warm_frames > 0
+			if _adjust_warm_frames > 0:
+				_adjust_warm_frames -= 1
 			we.environment.adjustment_enabled = want_adj
 			if want_adj:
 				we.environment.adjustment_saturation = lerpf(1.0, 0.08, smoothstep(0.0, 0.95, severity))
