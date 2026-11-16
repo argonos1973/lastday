@@ -786,6 +786,14 @@ var _rg_left_thumb := Vector3(-0.55, 0.65, -1.7)
 var _rg_right_grip := Vector3(0.5000, -0.5000, 1.2000)
 var _rg_left_grip := Vector3(-1.5, -0.5, -3.8)
 var _mounted_rifle_is_m4 := false
+var _mounted_rifle_item := ""
+# Montura del rifle "aparcada": reconstruir BoneAttachment+markers+IK+correa
+# son ~45 ms dentro del RPC de disparo. Al cambiar de item el conjunto se
+# retira del árbol en vez de destruirse y el próximo build del mismo rifle lo
+# recoloca intacto en microsegundos.
+var _parked_rifle_item := ""
+var _parked_rifle_is_m4 := false
+var _parked_rifle_nodes: Dictionary = {}
 var _m4_saved_left_arm_poses: Array = []
 var _fishing_session := 0
 var _rifle_magazine := 0
@@ -9638,6 +9646,12 @@ func _build_third_person_rifle(item_name := "") -> void:
 	if item_name.is_empty():
 		item_name = _held_rifle_name()
 	var _bpt := Time.get_ticks_usec()
+	# La montura de este mismo rifle puede estar aparcada de un equipado
+	# anterior (o del clear del propio _update_puppet_held_item): recolocarla
+	# son microsegundos frente a los ~45 ms de reconstruirla.
+	if _parked_rifle_item == item_name and _reattach_parked_rifle():
+		if CombatProf.enabled: CombatProf.mark("rifle_build.park_reattach", _bpt)
+		return
 	_clear_rifle_attachment()
 	if CombatProf.enabled: CombatProf.mark("rifle_build.clear", _bpt)
 	var is_m4 := item_name == M4_NAME
@@ -9792,26 +9806,8 @@ func _build_third_person_rifle(item_name := "") -> void:
 	skeleton.add_child(_rifle_aim_target)
 	# WeaponOffset remains only as the attachment frame; RifleRoot is aligned below.
 	# This way rifle rotates with character but ignores bone animation rotation
-	_rifle_bone_attachment.force_update_transform()
-	# FASE 1: attach rifle to RightHand while keeping current world placement
-	var skel_scale_wo := skeleton.global_transform.basis.get_scale().x
-	var rh_bone_idx_init := skeleton.find_bone(_resolve_bone_name_safe(right_hand_bone_name, skeleton))
-	var rh_world_init := (skeleton.global_transform * skeleton.get_bone_global_pose(rh_bone_idx_init)).origin
-	var rot_basis_init := global_basis * Basis.from_euler(weapon_offset_rot_deg * deg_to_rad(1.0))
-	var weapon_basis_init := rot_basis_init.scaled(Vector3.ONE * _rifle_weapon_scale() * skel_scale_wo)
-	_rifle_weapon_offset.global_basis = weapon_basis_init
-	# Offset so RightGrip sits on the right hand bone
-	var init_offset := Vector3.ZERO if is_m4 else weapon_offset_pos
-	_rifle_weapon_offset.global_position = rh_world_init + _rifle_weapon_offset.global_basis * (init_offset - _rifle_right_grip.position)
-	_rifle_root.transform = Transform3D.IDENTITY
-	# Force transforms
-	_rifle_bone_attachment.force_update_transform()
-	_rifle_weapon_offset.force_update_transform()
-	_rifle_root.force_update_transform()
-	# FASE 1: left IK starts inactive; will be enabled per-frame with influence 0.70
-	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
-		_rifle_left_arm_ik.active = true
-		_rifle_left_arm_ik.influence = 0.0
+	_align_rifle_attachment(skeleton, is_m4)
+	_mounted_rifle_item = item_name
 	if CombatProf.enabled: CombatProf.mark("rifle_build.targets", _bpt)
 
 #endregion
@@ -10648,6 +10644,8 @@ func _log_ik_diagnostics(skel: Skeleton3D) -> void:
 
 func _clear_rifle_attachment() -> void:
 	_restore_grip_origins()
+	if _park_rifle_attachment():
+		return
 	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
 		_rifle_left_arm_ik.active = false
 		_rifle_left_arm_ik.queue_free()
@@ -10675,6 +10673,7 @@ func _clear_rifle_attachment() -> void:
 	_rifle_model = null
 	_rifle_root = null
 	_mounted_rifle_is_m4 = false
+	_mounted_rifle_item = ""
 	_m4_saved_left_arm_poses.clear()
 	if _rifle_weapon_offset != null and is_instance_valid(_rifle_weapon_offset):
 		_rifle_weapon_offset.queue_free()
@@ -10717,6 +10716,179 @@ func _clear_rifle_attachment() -> void:
 					_sling_root_pool.append(child)
 				else:
 					child.free()
+
+func _exit_tree() -> void:
+	_free_parked_rifle()
+
+# Apartar la montura del rifle en lugar de destruirla. Devuelve true si se
+# aparcó (montura completa y válida); false si no había nada que aparcar y el
+# clear debe seguir la ruta de destrucción habitual.
+func _park_rifle_attachment() -> bool:
+	if _rifle_bone_attachment == null or not is_instance_valid(_rifle_bone_attachment):
+		return false
+	if _rifle_model == null or not is_instance_valid(_rifle_model):
+		return false
+	if _mounted_rifle_item.is_empty():
+		return false
+	_free_parked_rifle()
+	for ik in [_rifle_left_arm_ik, _rifle_right_arm_ik]:
+		if ik != null and is_instance_valid(ik):
+			ik.active = false
+	_parked_rifle_nodes = {
+		"bone_attachment": _rifle_bone_attachment,
+		"weapon_offset": _rifle_weapon_offset,
+		"rifle_root": _rifle_root,
+		"model": _rifle_model,
+		"right_grip": _rifle_right_grip,
+		"left_hand_grip": _rifle_left_hand_grip,
+		"stock_ref": _rifle_stock_ref,
+		"muzzle": _rifle_muzzle,
+		"stock_target": _rifle_stock_target,
+		"muzzle_target": _rifle_muzzle_target,
+		"shoulder_target": _rifle_shoulder_target,
+		"aim_target": _rifle_aim_target,
+		"left_elbow_pole": _rifle_left_elbow_pole,
+		"right_elbow_pole": _rifle_right_elbow_pole,
+		"left_arm_ik": _rifle_left_arm_ik,
+		"right_arm_ik": _rifle_right_arm_ik,
+		"strap_barrel": _strap_barrel_marker,
+		"strap_stock": _strap_stock_marker,
+		"sling_root": _rifle_on_back_strap,
+		"strap_skeleton": _strap_skeleton,
+	}
+	# Solo cuelgan del personaje estas raíces: el resto de referencias viven
+	# dentro del subárbol de bone_attachment (o del sling) y viajan con él.
+	for key in ["bone_attachment", "stock_target", "muzzle_target", "shoulder_target",
+			"aim_target", "left_arm_ik", "right_arm_ik", "left_elbow_pole",
+			"right_elbow_pole", "sling_root"]:
+		var n: Node = _parked_rifle_nodes[key]
+		if n != null and is_instance_valid(n) and n.get_parent() != null:
+			n.get_parent().remove_child(n)
+	_parked_rifle_item = _mounted_rifle_item
+	_parked_rifle_is_m4 = _mounted_rifle_is_m4
+	_rifle_left_arm_ik = null
+	_rifle_right_arm_ik = null
+	_rifle_left_elbow_pole = null
+	_rifle_right_elbow_pole = null
+	_rifle_stock_target = null
+	_rifle_muzzle_target = null
+	_rifle_shoulder_target = null
+	_rifle_aim_target = null
+	_rifle_right_grip = null
+	_rifle_left_hand_grip = null
+	_rifle_stock_ref = null
+	_rifle_muzzle = null
+	_rifle_model = null
+	_rifle_root = null
+	_rifle_bone_attachment = null
+	_rifle_weapon_offset = null
+	_mounted_rifle_is_m4 = false
+	_mounted_rifle_item = ""
+	_m4_saved_left_arm_poses.clear()
+	_rifle_aim_pose_active = false
+	_is_firing = false
+	_rifle_on_back_strap = null
+	_strap_skeleton = null
+	if _strap_guide_upper != null and is_instance_valid(_strap_guide_upper):
+		_strap_guide_upper.free()
+	_strap_guide_upper = null
+	if _strap_guide_lower != null and is_instance_valid(_strap_guide_lower):
+		_strap_guide_lower.free()
+	_strap_guide_lower = null
+	_strap_upper_offset = null
+	_strap_lower_offset = null
+	_strap_barrel_marker = null
+	_strap_stock_marker = null
+	_strap_initialized = false
+	_strap_prev_pts = PackedVector3Array()
+	if third_person_model != null and is_instance_valid(third_person_model):
+		for child in third_person_model.get_children():
+			if child is Node3D and (child.name == "RifleSlingRoot" or child.name.begins_with("RifleSling") or child.name == "ProceduralStrapMesh"):
+				child.free()
+	return true
+
+func _free_parked_rifle() -> void:
+	for n in _parked_rifle_nodes.values():
+		if is_instance_valid(n):
+			n.free()
+	_parked_rifle_nodes.clear()
+	_parked_rifle_item = ""
+	_parked_rifle_is_m4 = false
+
+# Recolocar la montura aparcada del mismo rifle: mismo resultado visual que un
+# rebuild completo sin reconstruir nodos, IK ni correa.
+func _reattach_parked_rifle() -> bool:
+	var ba: Node = _parked_rifle_nodes.get("bone_attachment")
+	if ba == null or not is_instance_valid(ba):
+		return false
+	var model: Node3D = _parked_rifle_nodes.get("model")
+	if model == null or not is_instance_valid(model):
+		return false
+	var skeleton: Skeleton3D = _spine_skeleton if _spine_skeleton != null and is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
+	if skeleton == null or not is_instance_valid(skeleton):
+		return false
+	var nodes := _parked_rifle_nodes
+	_parked_rifle_nodes = {}
+	var is_m4 := _parked_rifle_is_m4
+	_mounted_rifle_item = _parked_rifle_item
+	_mounted_rifle_is_m4 = is_m4
+	_parked_rifle_item = ""
+	_parked_rifle_is_m4 = false
+	_rifle_bone_attachment = nodes.get("bone_attachment")
+	_rifle_weapon_offset = nodes.get("weapon_offset")
+	_rifle_root = nodes.get("rifle_root")
+	_rifle_model = nodes.get("model")
+	_rifle_right_grip = nodes.get("right_grip")
+	_rifle_left_hand_grip = nodes.get("left_hand_grip")
+	_rifle_stock_ref = nodes.get("stock_ref")
+	_rifle_muzzle = nodes.get("muzzle")
+	_rifle_stock_target = nodes.get("stock_target")
+	_rifle_muzzle_target = nodes.get("muzzle_target")
+	_rifle_shoulder_target = nodes.get("shoulder_target")
+	_rifle_aim_target = nodes.get("aim_target")
+	_rifle_left_elbow_pole = nodes.get("left_elbow_pole")
+	_rifle_right_elbow_pole = nodes.get("right_elbow_pole")
+	_rifle_left_arm_ik = nodes.get("left_arm_ik")
+	_rifle_right_arm_ik = nodes.get("right_arm_ik")
+	_strap_barrel_marker = nodes.get("strap_barrel")
+	_strap_stock_marker = nodes.get("strap_stock")
+	_rifle_on_back_strap = nodes.get("sling_root")
+	_strap_skeleton = nodes.get("strap_skeleton")
+	skeleton.add_child(ba)
+	for k in ["stock_target", "muzzle_target", "shoulder_target", "aim_target", "left_arm_ik", "right_arm_ik"]:
+		var n: Node = nodes.get(k)
+		if n != null and is_instance_valid(n):
+			skeleton.add_child(n)
+	for k in ["left_elbow_pole", "right_elbow_pole"]:
+		var n: Node = nodes.get(k)
+		if n != null and is_instance_valid(n):
+			add_child(n)
+	if _rifle_on_back_strap != null and is_instance_valid(_rifle_on_back_strap) and third_person_model != null and is_instance_valid(third_person_model):
+		third_person_model.add_child(_rifle_on_back_strap)
+		_rifle_on_back_strap.visible = false
+	model.visible = true
+	_align_rifle_attachment(skeleton, is_m4)
+	return true
+
+# Colocación inicial de la montura en el hueso de la mano; compartida por el
+# build completo y por el reenganche de la montura aparcada.
+func _align_rifle_attachment(skeleton: Skeleton3D, is_m4: bool) -> void:
+	_rifle_bone_attachment.force_update_transform()
+	var skel_scale_wo := skeleton.global_transform.basis.get_scale().x
+	var rh_bone_idx_init := skeleton.find_bone(_resolve_bone_name_safe(right_hand_bone_name, skeleton))
+	var rh_world_init := (skeleton.global_transform * skeleton.get_bone_global_pose(rh_bone_idx_init)).origin
+	var rot_basis_init := global_basis * Basis.from_euler(weapon_offset_rot_deg * deg_to_rad(1.0))
+	var weapon_basis_init := rot_basis_init.scaled(Vector3.ONE * _rifle_weapon_scale() * skel_scale_wo)
+	_rifle_weapon_offset.global_basis = weapon_basis_init
+	var init_offset := Vector3.ZERO if is_m4 else weapon_offset_pos
+	_rifle_weapon_offset.global_position = rh_world_init + _rifle_weapon_offset.global_basis * (init_offset - _rifle_right_grip.position)
+	_rifle_root.transform = Transform3D.IDENTITY
+	_rifle_bone_attachment.force_update_transform()
+	_rifle_weapon_offset.force_update_transform()
+	_rifle_root.force_update_transform()
+	if _rifle_left_arm_ik != null and is_instance_valid(_rifle_left_arm_ik):
+		_rifle_left_arm_ik.active = true
+		_rifle_left_arm_ik.influence = 0.0
 
 func _setup_rifle_left_arm_ik(skel: Skeleton3D, target: Node3D) -> void:
 	var upper_arm := _resolve_bone_name_safe("mixamorig:LeftArm", skel)
