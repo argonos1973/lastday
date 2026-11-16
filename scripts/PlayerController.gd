@@ -393,6 +393,7 @@ const M4_NAME := "Fusil de asalto"
 const M4_MODEL := "res://assets/models/weapons/m4_carbine_rifle.glb"
 const M4_MAGAZINE_MODEL := "res://assets/models/weapons/m4_magazine.glb"
 const M4_SHOOT_SOUND := "res://assets/audio/m4_disparo.mp3"
+const RIFLE_RELOAD_SOUND := "res://assets/audio/reload.mp3"
 const M4_AMMO_TYPE := "5,56 × 45 mm NATO"
 const M4_MAG_SIZE := 30
 const M4_BURST_ROUNDS := 3
@@ -449,6 +450,16 @@ const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION := "RifleProneExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_GETUP_ANIMATION := "RifleGetupExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_SIT_FIRE_ANIMATION := "RifleSitFireExternal"
 const THIRD_PERSON_EXTERNAL_RIFLE_PRONE_FIRE_ANIMATION := "RifleProneFireExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION := "RifleReloadExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION := "RifleStrafeLeftExternal"
+const THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION := "RifleStrafeRightExternal"
+# Los GLB Mixamo traen varios takes; el take base (Layer0, idle con rifle) se
+# repite en los tres archivos — los clips reales se eligen por nombre.
+const RIFLE_MOTION_ANIM_SOURCES := {
+	"RifleReloadExternal": ["res://assets/animations/Reloading.glb", "Armature|mixamo_com|Layer0"],
+	"RifleStrafeLeftExternal": ["res://assets/animations/Strafe Left.glb", "Armature|mixamo_com|Layer0_001"],
+	"RifleStrafeRightExternal": ["res://assets/animations/Strafe Right.glb", "Armature|mixamo_com|Layer0_002"],
+}
 const THIRD_PERSON_EXTERNAL_TORCH_IDLE_ANIMATION := "TorchIdleExternal"
 const THIRD_PERSON_EXTERNAL_TORCH_WALK_ANIMATION := "TorchWalkExternal"
 const THIRD_PERSON_EXTERNAL_TORCH_RUN_ANIMATION := "TorchRunExternal"
@@ -648,6 +659,7 @@ var third_person_ground_offset := 0.0
 var third_person_has_real_idle := false
 var _pain_audio_player = null
 var _shoot_audio_player = null
+var _reload_audio_player = null
 var _swing_audio_player = null
 var _impact_audio_player = null
 var _shot_audio_player = null
@@ -690,6 +702,14 @@ var _torch_crouch_turn_left_animation := ""
 var _torch_crouch_turn_right_animation := ""
 var _torch_crouch_idle_animation := ""
 var _torch_crouch_walk_animation := ""
+var _rifle_reload_animation := ""
+var _rifle_strafe_left_animation := ""
+var _rifle_strafe_right_animation := ""
+var _rifle_motion_anims_loaded := false
+# Los clips retargeteados son datos inmutables: una misma libreria sirve para
+# todos los personajes con el mismo esqueleto (local + puppets). Sin cache
+# cada puppet re-instanciaba los 3 GLB en setup_as_puppet.
+static var _rifle_motion_lib_cache: Dictionary = {}
 var _torch_animations_loaded := false
 var _drink_animation_loaded := false
 var _drink_animation_length := 2.0
@@ -1360,6 +1380,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				_play_consumption_audio(false, 1.6, _mark_action_started())
 			elif anim.to_lower().find("chop") >= 0 or (anim.to_lower().find("forage") >= 0 and _puppet_held in ["Hacha", "Hacha de piedra", "Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada"]):
 				_play_puppet_chop_sound()
+			elif target == _rifle_reload_animation or anim.find("RifleReload") >= 0:
+				# Recarga vista de lejos: mismo clip que el emisor, mismo sonido.
+				_play_reload_sound()
 
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String, clothing_colors: Array = []) -> void:
 	if not is_puppet:
@@ -1743,6 +1766,9 @@ func _process(delta: float) -> void:
 				if is_p_sneak_move:
 					var sneak_spd := float(get_meta("puppet_move_speed", 0.0))
 					third_person_animation_player.speed_scale = clampf(sneak_spd / 3.1, 0.4, 1.7) if sneak_spd > 0.4 else 0.65
+				elif cur_p_anim == _rifle_reload_animation:
+					# Mismo truco que el emisor: 3.33 s de clip sobre 2.2 s reales.
+					third_person_animation_player.speed_scale = 1.5
 				else:
 					third_person_animation_player.speed_scale = 0.65 if is_crouching else (1.24 if is_p_run else (1.08 if is_p_walk else 1.0))
 			_update_puppet_ground_alignment(delta)
@@ -5848,6 +5874,7 @@ func _setup_third_person_animation(character: Node3D) -> void:
 	third_person_stairs_animation = preload("res://scripts/StairAnimation.gd").install(self)
 	third_person_ladder_animation = preload("res://scripts/LadderClimbAnimation.gd").install(self)
 	_load_torch_animations()
+	_load_rifle_motion_animations()
 	# Pre-cache the fishing rod pose and animations at startup so fishing starts instantly.
 	if not is_puppet:
 		_preload_rod_pose()
@@ -11688,6 +11715,9 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				third_person_animation_player.speed_scale = 1.45
 			elif third_person_action_animation == third_person_punch_animation:
 				third_person_animation_player.speed_scale = 1.65
+			elif third_person_action_animation == _rifle_reload_animation:
+				# Clip de 3.33 s comprimido a la ventana real de recarga (2.2 s).
+				third_person_animation_player.speed_scale = 1.5
 			else:
 				third_person_animation_player.speed_scale = 1.0
 			return
@@ -11813,12 +11843,24 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 			elif third_person_has_real_idle:
 				target_animation = third_person_idle_animation
 		elif _has_rifle and _is_aiming:
-			# Aiming with rifle: use aim idle when stationary, walk when moving
+			# Aiming with rifle: use aim idle when stationary, strafe/walk when moving
 			if moving:
-				if not _rifle_walk_animation.is_empty():
-					target_animation = _rifle_walk_animation
-				else:
-					target_animation = third_person_walk_animation
+				var strafe_axis := 0.0
+				var fwd_axis := 0.0
+				if not is_puppet and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not get_tree().paused:
+					var move_vec := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+					strafe_axis = move_vec.x
+					fwd_axis = move_vec.y
+				if absf(strafe_axis) > 0.5 and absf(strafe_axis) >= absf(fwd_axis):
+					if strafe_axis < 0.0 and not _rifle_strafe_left_animation.is_empty():
+						target_animation = _rifle_strafe_left_animation
+					elif strafe_axis > 0.0 and not _rifle_strafe_right_animation.is_empty():
+						target_animation = _rifle_strafe_right_animation
+				if target_animation.is_empty():
+					if not _rifle_walk_animation.is_empty():
+						target_animation = _rifle_walk_animation
+					else:
+						target_animation = third_person_walk_animation
 			elif _turn_input < -2.0 and not _rifle_left_turn_animation.is_empty():
 				target_animation = _rifle_left_turn_animation
 			elif _turn_input > 2.0 and not _rifle_right_turn_animation.is_empty():
@@ -13197,6 +13239,64 @@ func _load_torch_animations() -> void:
 			_torch_crouch_turn_right_animation = "torch/" + THIRD_PERSON_EXTERNAL_TORCH_CROUCH_TURN_RIGHT_ANIMATION
 	_torch_animations_loaded = true
 
+# Recarga de fusil y pasos laterales apuntando (Mixamo, mismo esqueleto
+# mixamorig_ que el resto de la libreria externa). Los clips se eligen por
+# nombre: cada GLB trae el take base compartido mas los takes reales.
+func _load_rifle_motion_animations() -> void:
+	if _rifle_motion_anims_loaded or third_person_animation_player == null:
+		return
+	_rifle_motion_anims_loaded = true
+	var target_skel := _find_skeleton(third_person_model)
+	if target_skel == null:
+		return
+	# La huella del esqueleto (modelo + nº de huesos) distingue variantes con
+	# distinto rest pose: solo esas necesitan una libreria retargeteada propia.
+	var cache_key := "%s|%s|%d" % [str(is_custom_character), target_skel.name, target_skel.get_bone_count()]
+	var motion_lib: AnimationLibrary = _rifle_motion_lib_cache.get(cache_key)
+	if motion_lib != null:
+		third_person_animation_player.add_animation_library("rifle_motion", motion_lib)
+		if third_person_animation_player.has_animation("rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION):
+			_rifle_reload_animation = "rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION
+		if third_person_animation_player.has_animation("rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION):
+			_rifle_strafe_left_animation = "rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION
+		if third_person_animation_player.has_animation("rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION):
+			_rifle_strafe_right_animation = "rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION
+		return
+	motion_lib = AnimationLibrary.new()
+	for anim_name in RIFLE_MOTION_ANIM_SOURCES:
+		var spec: Array = RIFLE_MOTION_ANIM_SOURCES[anim_name]
+		if not ResourceLoader.exists(spec[0]):
+			continue
+		var loaded = load(spec[0])
+		if not (loaded is PackedScene):
+			continue
+		var instance = (loaded as PackedScene).instantiate()
+		var src_skeleton := _find_skeleton(instance)
+		var src_anim_player := _find_animation_player(instance)
+		if src_anim_player != null and src_skeleton != null and src_anim_player.has_animation(spec[1]):
+			var src_anim: Animation = src_anim_player.get_animation(spec[1])
+			var copied := src_anim.duplicate(true)
+			copied.loop_mode = Animation.LOOP_NONE if anim_name == THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION else Animation.LOOP_LINEAR
+			copied.step = 0.0166667
+			_retarget_animation_to_character_skeleton(copied)
+			if is_custom_character:
+				_retarget_rotation_tracks_with_source(copied, target_skel, src_skeleton)
+				_remove_non_hips_position_tracks(copied, false, 0.0)
+			else:
+				_remove_root_motion_drift(copied, target_skel)
+			_smooth_loop_boundary(copied)
+			motion_lib.add_animation(anim_name, copied)
+		instance.queue_free()
+	if motion_lib.get_animation_list().size() > 0:
+		_rifle_motion_lib_cache[cache_key] = motion_lib
+		third_person_animation_player.add_animation_library("rifle_motion", motion_lib)
+		if third_person_animation_player.has_animation("rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION):
+			_rifle_reload_animation = "rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION
+		if third_person_animation_player.has_animation("rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION):
+			_rifle_strafe_left_animation = "rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION
+		if third_person_animation_player.has_animation("rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION):
+			_rifle_strafe_right_animation = "rifle_motion/" + THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION
+
 func _set_rod_overlay_mesh_visibility(node: Node) -> void:
 	if node is MeshInstance3D:
 		var mesh_instance := node as MeshInstance3D
@@ -14272,6 +14372,17 @@ func _reload_rifle() -> void:
 	_rifle_burst_revision += 1
 	var selection_revision := _held_selection_revision
 	notice.emit("Recargando fusil...")
+	_play_reload_sound()
+	# Anim de recarga en tercera persona (los demas jugadores la veran si el
+	# estado llega por red): 3.33 s de clip sobre 2.2 s reales, ~1.5x.
+	if third_person_animation_player != null and not _rifle_reload_animation.is_empty() and third_person_animation_player.has_animation(_rifle_reload_animation):
+		var r_anim := third_person_animation_player.get_animation(_rifle_reload_animation)
+		if r_anim != null:
+			r_anim.loop_mode = Animation.LOOP_NONE
+		third_person_action_animation = _rifle_reload_animation
+		third_person_action_timer = 2.2
+		third_person_action_start_offset = 0.0
+		third_person_animation_player.play(_rifle_reload_animation, 0.08)
 	if not await _await_local_action(2.2):
 		_is_reloading = false
 		return
@@ -14839,7 +14950,7 @@ func prepare_combat_effects() -> void:
 			_sling.visible = false
 			_sling_root_pool.append(_sling)
 	# Small shared audio assets are decoded during loading, not the first bite.
-	for path in [M4_SHOOT_SOUND, "res://assets/audio/disparo.wav", "res://assets/audio/punch_swing.wav", "res://assets/audio/recibirdisparo.mp3", "res://assets/audio/punch_impact.wav",
+	for path in [M4_SHOOT_SOUND, RIFLE_RELOAD_SOUND, "res://assets/audio/disparo.wav", "res://assets/audio/punch_swing.wav", "res://assets/audio/recibirdisparo.mp3", "res://assets/audio/punch_impact.wav",
 		"res://assets/external/audio/downloaded/pain1.wav", "res://assets/external/audio/downloaded/pain2.wav",
 		"res://assets/external/audio/downloaded/pain3.wav"]:
 		_load_audio_stream(path)
@@ -15165,6 +15276,19 @@ func _play_shoot_sound(is_m4 := false) -> void:
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
 
+func _play_reload_sound() -> void:
+	if _reload_audio_player == null:
+		# Cerrojo/cargador: se oye cerca, nada que ver con el alcance de un tiro.
+		_reload_audio_player = _make_action_sound_player("ReloadSound", 8.0, 60.0)
+	var stream := _load_audio_stream(RIFLE_RELOAD_SOUND)
+	if stream == null:
+		return
+	if _reload_audio_player.stream != stream:
+		_reload_audio_player.stream = stream
+	_reload_audio_player.volume_db = 0.0
+	_reload_audio_player.pitch_scale = randf_range(0.95, 1.05)
+	_reload_audio_player.play()
+
 func _play_puppet_chop_sound() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
@@ -15255,14 +15379,19 @@ func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vec
 	else:
 		if not _has_rifle_equipped():
 			return
-	if not _rifle_fire_animation.is_empty() and third_person_animation_player != null:
-		var fire_anim := third_person_animation_player.get_animation(_rifle_fire_animation)
+	var remote_fire_anim := _rifle_fire_animation
+	if is_prone and not _rifle_prone_fire_animation.is_empty():
+		remote_fire_anim = _rifle_prone_fire_animation
+	elif is_sitting and not _rifle_sit_fire_animation.is_empty():
+		remote_fire_anim = _rifle_sit_fire_animation
+	if not remote_fire_anim.is_empty() and third_person_animation_player != null:
+		var fire_anim := third_person_animation_player.get_animation(remote_fire_anim)
 		if fire_anim != null:
 			fire_anim.loop_mode = Animation.LOOP_NONE
-		third_person_action_animation = _rifle_fire_animation
+		third_person_action_animation = remote_fire_anim
 		third_person_action_timer = 1.0
 		_is_firing = true
-		third_person_animation_player.play(_rifle_fire_animation, 0.05)
+		third_person_animation_player.play(remote_fire_anim, 0.05)
 	var remote_m4 := is_puppet and _puppet_held == M4_NAME
 	var _cpt2 := Time.get_ticks_usec()
 	if not _is_aiming and not is_sitting and not is_prone:

@@ -1458,11 +1458,25 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	var raw := str(b.get("anim", "idle"))
 	if raw.begins_with("dead"):
 		return raw
+	# Recarga de fusil: clip propio de la libreria rifle_motion. De pie se ve;
+	# arrodillado/tumbado mantiene la postura (no hay clip de recarga bajo).
+	if bool(b.get("gun_reloading", false)) and bool(b.get("has_rifle", false)) \
+			and not bool(b.get("sitting", false)) and not bool(b.get("prone", false)):
+		return "rifle_motion/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION
 	if bool(b.get("sleeping", false)):
 		return "sleep"
 	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw == "idle":
 		return str(b.get("consume_anim", "eat"))
+	# Posturas de tiro con fusil: el nombre exacto resuelve directo en el
+	# puppet (la libreria external es la misma en todos los clientes). Sin
+	# fusil no hay clip prono: cuclillas es lo mas parecido visualmente.
+	if bool(b.get("prone", false)):
+		if bool(b.get("has_rifle", false)):
+			return "external/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION
+		return "sneak"
 	if bool(b.get("sitting", false)) or raw == "sit":
+		if bool(b.get("has_rifle", false)) and bool(b.get("is_aiming", false)):
+			return "external/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		return "sit"
 	if bool(b.get("crouching", false)):
 		if raw in ["walk", "run"]:
@@ -1478,6 +1492,10 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	if bool(b.get("_bow_drawing", false)):
 		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
 	if bool(b.get("has_rifle", false)):
+		# Paso lateral apuntando (strafe de combate): strafe_dir>0 mueve a la
+		# derecha del bot segun la misma base "side" que usa el zigzag.
+		if raw == "walk" and bool(b.get("is_aiming", false)):
+			return "rifle_motion/" + (PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION if float(b.get("strafe_dir", 1.0)) > 0.0 else PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION)
 		if raw == "run":
 			return "riflerun"
 		if raw == "walk":
@@ -3346,6 +3364,7 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["crouching"] = false
+	b["prone"] = false
 	proxy.set_meta("crouching", false)
 	b["held_item"] = weapon
 	b["has_rifle"] = is_rifle
@@ -3369,6 +3388,10 @@ func _handle_predator_encounter(b: Dictionary, predator: Node3D, delta: float) -
 			return
 		b["is_aiming"] = true
 		b["anim"] = "idle"
+		# Tiro a media/larga distancia: se arrodilla — la misma postura de
+		# estabilidad que usaria un jugador humano (0.28 vs 1.0 de dispersion).
+		# A corta distancia (< 12 m) se queda de pie para reaccionar rapido.
+		b["sitting"] = dist > 12.0
 		if to_pred.length_squared() > 0.001:
 			b["rot"] = atan2(-to_pred.x, -to_pred.z)
 			proxy.rotation.y = float(b["rot"])
@@ -4951,6 +4974,9 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["crouching"] = false
+	# Sale de la postura prona del puesto de overwatch si el combate sigue por
+	# la via normal; volvera a tumbarse solo si retoma el puesto.
+	b["prone"] = false
 
 	# Ordenar a su lobo domesticado que ataque también al objetivo
 	_command_bot_wolf_against(b, foe)
@@ -4988,7 +5014,14 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		# tiro limpia, avanzar hacia él (abriendo puertas/subiendo escaleras) en
 		# lugar de quedarse strafeando enganchado contra la pared exterior.
 		if dist > 26.0 or not clear_los:
-			_move_bot_towards(b, fpos, 6.4, delta, "run")
+			# Tiro largo (26-48 m) con linea limpia: se arrodilla en vez de
+			# correr a quemarropa — la postura sentada estabiliza la mira
+			# (0.28 vs 1.0 de dispersion) como hace un jugador humano.
+			if clear_los:
+				b["sitting"] = true
+				b["anim"] = "idle"
+			else:
+				_move_bot_towards(b, fpos, 6.4, delta, "run")
 		else:
 			b["strafe_timer"] = float(b["strafe_timer"]) + delta
 			var side := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
@@ -5261,7 +5294,7 @@ func _bot_aim_tick(b: Dictionary, foe: Node3D, dist: float, clear_los: bool, del
 		var fm: Dictionary = b.get("_foe_mem", {})
 		var fpos = fm.get("pos", Vector3.INF)
 		pt = fpos if fpos is Vector3 and fpos != Vector3.INF else Vector3(a["last_pt"])
-	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if bool(b.get("crouching", false)) else 1.4), 0.0)
+	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 1.4), 0.0)
 	if pt == Vector3.INF:
 		pt = origin + Vector3(a["dir"]).normalized() * maxf(dist, 10.0)
 	a["last_pt"] = pt
@@ -5490,7 +5523,7 @@ func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: St
 		if CombatProf.enabled: CombatProf.mark("bot_fire.no_ammo", _cpt)
 		return
 	var bot_id := int(b["bot_id"])
-	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if bool(b.get("crouching", false)) else 1.4), 0.0)
+	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 1.4), 0.0)
 	var spread := _bot_current_spread_deg(b, is_m4)
 	var dir := _bot_aim_fire_dir(b, kind, spread)
 	_bot_log_shot(b, weapon, origin, dir, spread, target)
@@ -6622,6 +6655,11 @@ func _bot_overwatch_fight(b: Dictionary, foe: Node3D, delta: float) -> bool:
 	proxy.set_meta("saved_held_item", weapon)
 	b["sitting"] = false
 	b["crouching"] = false
+	# Francotirador apostado con fusil: se tumba — postura de maxima
+	# estabilidad (0.12 vs 0.28/1.0), la que usaria un jugador humano para
+	# el tiro largo desde un puesto. Sin fusil (arco/arrojadizas) no aplica.
+	b["prone"] = wkind == "rifle"
+	proxy.set_meta("prone", bool(b["prone"]))
 	b["_act"] = "overwatch"
 	b["anim"] = "idle"
 	var to_foe := foe.global_position - cur
@@ -11099,11 +11137,12 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
 	# Moverse implica estar de pie: si una rama de decision pone a correr a un
-	# bot sentado/dormido sin levantarlo (la huida lo hacia), en los clientes
-	# se deslizaba manteniendo la pose de descanso. Todas las rutas de
-	# descanso legitimas ponen el flag y retornan sin llamar aqui.
+	# bot sentado/dormido/tumbado sin levantarlo (la huida lo hacia), en los
+	# clientes se deslizaba manteniendo la pose de descanso. Todas las rutas
+	# de descanso legitimas ponen el flag y retornan sin llamar aqui.
 	b["sitting"] = false
 	b["sleeping"] = false
+	b["prone"] = false
 	var cur := proxy.global_position
 	var road_goal := _resolve_mountain_road_waypoint(cur, raw_goal)
 	var goal := _resolve_building_interior_waypoint(b, cur, road_goal)

@@ -2237,6 +2237,46 @@ func run() -> void:
 		"Moving clears sitting/sleeping — no seated gliding on flee")
 	check(mgr._bot_effective_net_anim(elena) != "sit",
 		"Fleeing bot no longer broadcasts the sit pose")
+	elena["prone"] = true
+	mgr._move_bot_towards(elena, Vector3(62.0, 0.4, 62.5), 6.0, 0.1, "run")
+	check(not bool(elena.get("prone", true)),
+		"Moving clears prone — no prone gliding after overwatch")
+
+	# Combat postures broadcast the exact rifle clips so remote clients see
+	# the kneel/prone fire stances, the reload and the aiming strafe.
+	elena["consume_anim_t"] = 0.0
+	elena["_bow_shot_anim_until"] = 0
+	elena["_bow_drawing"] = false
+	elena["has_rifle"] = true
+	elena["is_aiming"] = true
+	elena["sitting"] = true
+	elena["anim"] = "idle"
+	check(mgr._bot_effective_net_anim(elena) == "external/RifleSitExternal",
+		"Kneeling rifle aim sends RifleSitExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	elena["sitting"] = false
+	elena["prone"] = true
+	check(mgr._bot_effective_net_anim(elena) == "external/RifleProneExternal",
+		"Prone rifle bot sends RifleProneExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	elena["prone"] = false
+	elena["gun_reloading"] = true
+	elena["anim"] = "idle"
+	check(mgr._bot_effective_net_anim(elena) == "rifle_motion/RifleReloadExternal",
+		"Reloading rifle bot sends RifleReloadExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	elena["sitting"] = true
+	check(mgr._bot_effective_net_anim(elena) != "rifle_motion/RifleReloadExternal",
+		"Kneeling reload keeps the posture clip instead of standing reload")
+	elena["sitting"] = false
+	elena["gun_reloading"] = false
+	elena["anim"] = "walk"
+	elena["strafe_dir"] = 1.0
+	check(mgr._bot_effective_net_anim(elena) == "rifle_motion/RifleStrafeRightExternal",
+		"Aiming strafe right sends RifleStrafeRightExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	elena["strafe_dir"] = -1.0
+	check(mgr._bot_effective_net_anim(elena) == "rifle_motion/RifleStrafeLeftExternal",
+		"Aiming strafe left sends RifleStrafeLeftExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	elena["is_aiming"] = false
+	elena["has_rifle"] = false
+	elena["anim"] = "idle"
 
 	# Sprinting sideways must finish the doorway crossing before turning.
 	for exit_side in [-1.0, 1.0]:
