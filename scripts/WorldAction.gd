@@ -147,6 +147,8 @@ func mark_depleted() -> void:
 	if main != null and main.get("_depleted_action_ids") != null:
 		if not main._depleted_action_ids.has(action_id):
 			main._depleted_action_ids.append(action_id)
+		if action_id.begins_with("mushroom_") and main.has_method("_track_mushroom_depleted"):
+			main._track_mushroom_depleted(action_id, global_position)
 
 func set_crop_state(state: String, new_growth := 0.0) -> void:
 	action_state = state

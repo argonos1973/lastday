@@ -91,6 +91,11 @@ var _collected_animal_tombstones: Dictionary = {}  # aid -> msec; skip re-creati
 var _puppet_absent_since: Dictionary = {}  # aid -> msec first missing from net.animals
 var world_actions_by_id := {}
 var _depleted_action_ids: Array = []
+# Setas consumidas pendientes de rebrote: id -> {"pos": Vector3, "until": unix}.
+# El reloj del juego es tiempo real — una seta recogida rebrota al dia siguiente.
+const MUSHROOM_REGROW_SECONDS := 86400.0
+var _mushroom_regrow: Dictionary = {}
+var _mushroom_regrow_timer := 0.0
 var _pickup_claims: Dictionary = {}
 var _pickup_replies: Dictionary = {}
 var _pickup_claim_until: Dictionary = {}
@@ -1312,6 +1317,12 @@ func _process(delta: float) -> void:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
 		_pm("wild_respawn", _pt)
+		_mushroom_regrow_timer += delta
+		_pt = Time.get_ticks_usec()
+		if _mushroom_regrow_timer >= 60.0:
+			_mushroom_regrow_timer = 0.0
+			_check_mushroom_regrow()
+		_pm("mushroom_regrow", _pt)
 		_door_cache_timer += delta
 		_pt = Time.get_ticks_usec()
 		if _door_cache_timer >= 1.0:
@@ -1359,6 +1370,10 @@ func _process(delta: float) -> void:
 		if _wildlife_respawn_timer >= 30.0:
 			_wildlife_respawn_timer = 0.0
 			_check_wildlife_respawn()
+		_mushroom_regrow_timer += delta
+		if _mushroom_regrow_timer >= 60.0:
+			_mushroom_regrow_timer = 0.0
+			_check_mushroom_regrow()
 	if net != null and net.is_connected and not net.is_host:
 		profile_started = Time.get_ticks_usec() if client_profiler != null else 0
 		_update_puppet_animals()
@@ -10906,6 +10921,37 @@ func _create_mushroom_pickup(id: String, pos: Vector3) -> void:
 	action.set_meta("item_weight", 0.1)
 	action.set_meta("item_quantity", 1)
 	action.set_meta("item_use_value", 12.0)
+
+func _track_mushroom_depleted(action_id: String, pos: Vector3) -> void:
+	_mushroom_regrow[action_id] = {"pos": pos, "until": Time.get_unix_time_from_system() + MUSHROOM_REGROW_SECONDS}
+
+func _check_mushroom_regrow() -> void:
+	var now := Time.get_unix_time_from_system()
+	for id in _mushroom_regrow.keys():
+		var entry: Dictionary = _mushroom_regrow[id]
+		if now < float(entry.get("until", 0.0)):
+			continue
+		_mushroom_regrow.erase(id)
+		_depleted_action_ids.erase(id)
+		var old = world_actions_by_id.get(id)
+		if old != null and is_instance_valid(old):
+			old.queue_free()
+		world_actions_by_id.erase(id)
+		var pos: Vector3 = entry.get("pos", Vector3.ZERO)
+		_create_mushroom_pickup(id, pos)
+		if net != null and net.is_connected and net.is_host:
+			net.world_action_respawned.rpc(id, pos)
+
+func _net_world_action_respawned(action_id: String, pos: Vector3) -> void:
+	if not action_id.begins_with("mushroom_"):
+		return
+	_mushroom_regrow.erase(action_id)
+	_depleted_action_ids.erase(action_id)
+	var old = world_actions_by_id.get(action_id)
+	if old != null and is_instance_valid(old):
+		old.queue_free()
+	world_actions_by_id.erase(action_id)
+	_create_mushroom_pickup(action_id, pos)
 
 #region CULTIVO
 func _crop_id_for_pos(pos: Vector3) -> String:

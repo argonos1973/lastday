@@ -1458,6 +1458,13 @@ func world_action_completed(action_id: String, spawns: Array, extra_visual: Stri
 	if scene != null and scene.has_method("_net_world_action_completed"):
 		scene._net_world_action_completed(action_id, spawns, extra_visual, extra_pos)
 
+# Servidor -> clientes: una accion agotada vuelve a estar disponible (rebrote de setas).
+@rpc("authority", "call_remote", "reliable")
+func world_action_respawned(action_id: String, pos: Vector3) -> void:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("_net_world_action_respawned"):
+		scene._net_world_action_respawned(action_id, pos)
+
 # Client tells server it built a campfire (server relays to all other clients)
 @rpc("any_peer", "reliable")
 func campfire_built(cf_id: String, pos: Vector3) -> void:
