@@ -1079,6 +1079,10 @@ func setup_as_puppet() -> void:
 	torch_light.omni_attenuation = 0.8
 	torch_light.light_color = Color(1.0, 0.7, 0.3)
 	torch_light.shadow_enabled = false
+	# El fogonazo existe desde el inicio con la luz inerte (energía 0): los
+	# materiales cercanos al puppet dibujan siempre la variante "con luz
+	# posicional" y el primer disparo remoto no compila pipelines (~150-220 ms).
+	_prepare_muzzle_flash()
 	_create_third_person_model()
 	if third_person_model != null:
 		third_person_model.visible = true
@@ -14882,6 +14886,11 @@ func begin_combat_render_warmup() -> void:
 	var impacts = _prepare_impact_effects()
 	if impacts != null:
 		impacts.burst("sparks", spot, Vector3.UP, Color(0.7, 0.7, 0.7, 1.0))
+	# Un proyectil visual real contra el suelo: compila su malla/traza y la
+	# instanciación de la clase en carga, no en el primer disparo (~100-280 ms
+	# medidos en el primer disparo local sin este paso).
+	var down_dir := (fwd * 0.35 + Vector3.DOWN).normalized()
+	_launch_rifle_projectile(spot, down_dir, Vector3.ZERO, [get_rid()], false)
 
 func finish_combat_render_warmup() -> void:
 	while _bullet_holes.size() > _combat_warm_holes_before:
