@@ -11913,6 +11913,26 @@ func _bot_is_exhausted(b: Dictionary) -> bool:
 	var thresh := 14.0 + minf(9.0, float(cold_lessons) * 3.0)
 	return st != null and not st.dead and st.sleep < thresh
 
+# Hora de acostarse del bot (horas despues de NIGHT_START). Una persona no
+# se mete en el saco al caer el sol: hace vida junto al fuego — come,
+# craftea, charla — hasta una hora personal. La valentia y la curiosidad
+# alargan la velada, el instinto de supervivencia la acorta; un jitter
+# fijo por bot evita que todos colapsen a la vez. Cacheada por estacion.
+func _bot_bedtime_hour(b: Dictionary) -> float:
+	var cached: Dictionary = b.get("_bedtime", {})
+	if not cached.is_empty() and absf(float(cached.get("base", -999.0)) - GameConst.NIGHT_START) < 0.01:
+		return float(cached.get("hour", GameConst.NIGHT_START))
+	var p: Dictionary = b.get("personality", {})
+	var jitter := float(int(b.get("bot_id", 0)) * 2654435761 % 1000) / 1000.0
+	var delay := 0.35 \
+		+ (1.0 - float(p.get("survival_instinct", 0.5))) * 0.55 \
+		+ float(p.get("bravery", 0.5)) * 0.45 \
+		+ float(p.get("curiosity", 0.5)) * 0.35 \
+		+ jitter * 0.30
+	var hour := GameConst.NIGHT_START + clampf(delay, 0.3, 1.9)
+	b["_bedtime"] = {"base": GameConst.NIGHT_START, "hour": hour}
+	return hour
+
 # La IA asesora mando "descansa/vuelve a casa" y el deposito no esta lleno:
 # de dia eso habilita la siesta donde acampa (se despierta al llegar a 55
 # via _bot_should_wake). Sin esto el bot marchaba al campamento por la
@@ -12275,6 +12295,19 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# acampar pero no para dormir" y se pasa el dia sentado sin recuperar.
 	var exhausted := _bot_is_exhausted(b)
 	if not is_night and not exhausted and not _bot_wants_day_rest(b):
+		return false
+	# La velada: anochecio pero aun no es su hora de acostarse — como una
+	# persona, sigue haciendo vida de campamento (fuego, comida, crafteo,
+	# charla) en vez de tumbarse al caer el sol. Agotamiento, colapso o
+	# necesidades urgentes acuestan antes; y sin luz propia, fuego cercano
+	# ni techo no hay velada posible — dormir a oscuras sigue ganando.
+	if is_night and not collapse and not exhausted \
+			and world != null and world.get("day_cycle") != null \
+			and not _bot_needs_food_or_water(b) and st.sleep > 45.0 \
+			and _world_time_of_day() < _bot_bedtime_hour(b) \
+			and (_bot_has_item(proxy, "Antorcha") \
+				or _is_near_any_lit_campfire(proxy.global_position, 14.0) \
+				or _bot_is_sheltered(b, proxy.global_position)):
 		return false
 	# Colapso por agotamiento letal: con el sueno al borde de la muerte el
 	# cuerpo se apaga — se desploma donde este si conserva reservas para

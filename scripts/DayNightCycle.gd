@@ -68,7 +68,7 @@ func _apply_seasonal_sun() -> void:
 	GameConst.DAWN_START = _sunrise - 0.55
 	GameConst.NIGHT_END = _sunrise - 0.25
 	GameConst.SUNRISE_END = _sunrise + 0.55
-	GameConst.PREP_START = _sunset - 2.6
+	GameConst.PREP_START = _sunset - 2.0
 	GameConst.DUSK_START = _sunset - 0.85
 	GameConst.NIGHT_START = _sunset + 0.65
 	_season_day = int(Time.get_unix_time_from_system() / 86400.0)

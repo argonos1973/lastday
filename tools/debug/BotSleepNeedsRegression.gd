@@ -3,6 +3,10 @@ class Manager extends "res://scripts/SurvivorBotManager.gd":
  func _is_world_night() -> bool: return true
  func _find_forage_target(_b: Dictionary, _radius: float) -> Dictionary:
   return {"id":"food", "pos":Vector3.ZERO,"t":0.0,"t_need":2.0}
+class FakeDayCycle extends Node:
+ var time_of_day := 20.0
+class FakeWorld extends Node:
+ var day_cycle: Node = null
 var errors := 0
 func check(ok: bool, label: String):
  if not ok:
@@ -72,6 +76,40 @@ func run():
  check(not manager._bot_try_start_sleep(b,true), "recruited bot never sleeps mid-fight")
  b["aggro_target"] = null
  b["team_leader_id"] = 0
+ # La velada: anochecido pero antes de su hora de acostarse, un bot
+ # descansado y con luz sigue en pie haciendo vida de campamento; pasada
+ # su hora duerme — y sin luz ni techo duerme al anochecer como antes.
+ var fdc := FakeDayCycle.new()
+ var fworld := FakeWorld.new()
+ fworld.day_cycle = fdc
+ stage.add_child(fworld)
+ stage.add_child(fdc)
+ manager.world = fworld
+ var prev_night := GameConst.NIGHT_START
+ GameConst.NIGHT_START = 19.9
+ b.sleeping = false
+ b.hunger = 80.0
+ b.thirst = 80.0
+ stats.sleep = 80.0
+ stats.energy = 80.0
+ stats.body_temperature = 36.8
+ fdc.time_of_day = 20.1 # 12 min tras el inicio de la noche
+ check(not manager._bot_try_start_sleep(b,true), "bot descansado con luz aguanta la velada tras el anochecer")
+ fdc.time_of_day = 22.5 # ya paso su hora de acostarse (+1.9 h max)
+ check(manager._bot_try_start_sleep(b,true) and bool(b.get("sleeping",false)), "pasada su hora de acostarse el bot duerme")
+ b.sleeping = false
+ proxy.set_meta("saved_inventory", []) # sin antorcha, fuego ni techo
+ fdc.time_of_day = 20.1
+ check(manager._bot_try_start_sleep(b,true), "sin luz ni techo el bot duerme al anochecer como antes")
+ b.sleeping = false
+ proxy.set_meta("saved_inventory", [{"name":"Antorcha", "quantity":1}])
+ stats.sleep = 20.0 # cansado de verdad: la velada no le retiene
+ fdc.time_of_day = 20.1
+ check(manager._bot_try_start_sleep(b,true), "bot cansado duerme aunque tenga luz — la velada es para descansados")
+ stats.sleep = 80.0
+ stats.energy = 80.0
+ GameConst.NIGHT_START = prev_night
+ manager.world = null
  stats.free()
  stage.free()
  print("BotSleepNeedsRegression errors=", errors)
