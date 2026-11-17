@@ -36,10 +36,11 @@ class FakeNet extends Node:
 	var relay_log: Array = []
 	var voice_relay_log: Array = []
 	var mp3_relay_log: Array = []
+	var alive_pids: Array = []
 	func get_my_id() -> int:
 		return 1
-	func peer_alive(_pid: int) -> bool:
-		return false
+	func peer_alive(pid: int) -> bool:
+		return alive_pids.has(pid)
 	func snapshot_recipients() -> Array[int]:
 		return []
 	func relay_actor_chat(sender_id: int, sender_name: String, text: String, target_peer_id: int, target_name: String = "") -> void:
@@ -741,6 +742,41 @@ func run() -> void:
 	mgr._tick_bot(carlos, 0.1)
 	check(str(carlos.get("_act", "")) == "water_escape",
 		"Helado en agua profunda escapa al somero aunque haya lumbre a 15 m (act=%s)" % str(carlos.get("_act", "")))
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	world.water_depth = 1.0
+
+	# --- 9e) Aprender del humano: verlo pescar ensenia el sitio de pesca ---
+	# Un jugador real a la vista con la caña en la mano: el bot anota la
+	# actividad, el lugar entra en known_locations como "taught" y el prompt
+	# del asesor lo recibe como sitio vetado por un humano.
+	fnet.players[42] = {"name": "sami", "pos": carlos_proxy.global_position + Vector3(10.0, 0.0, 0.0),
+		"anim": "fishing", "held_item": "Caña de pescar", "sleeping": false, "offline": false}
+	fnet.alive_pids = [42]
+	var cmem_obs: Dictionary = mgr._ensure_bot_memory(902)
+	cmem_obs["known_locations"] = {}
+	cmem_obs["observed_players"] = []
+	carlos["pos"] = carlos_proxy.global_position
+	carlos["_obs_pt"] = 0
+	mgr._observe_players(carlos)
+	var obs_arr: Array = cmem_obs["observed_players"]
+	check(obs_arr.size() >= 1 and str(obs_arr[0].get("what", "")) == "fish",
+		"El bot ve al humano pescar y lo anota en observed_players (%s)" % str(obs_arr))
+	var taught_found := false
+	for lid in (cmem_obs["known_locations"] as Dictionary).keys():
+		if str(lid).begins_with("taught:fish"):
+			taught_found = true
+	check(taught_found, "El sitio de pesca del humano entra en known_locations como 'taught'")
+	carlos["_mem"] = cmem_obs
+	var prompt_obs: String = mgr._ai_build_prompt(carlos)
+	check(prompt_obs.find("observed_players") >= 0 and prompt_obs.findn("fish") >= 0,
+		"El prompt del asesor incluye lo observado del humano (observed_players)")
+	# El mismo humano quieto no duplica: otra pasada refresca, no anade
+	carlos["_obs_pt"] = 0
+	mgr._observe_players(carlos)
+	check((cmem_obs["observed_players"] as Array).size() == 1,
+		"Reobservar la misma pesca refresca sin duplicar (n=%d)" % (cmem_obs["observed_players"] as Array).size())
+	fnet.players.erase(42)
+	fnet.alive_pids = []
 	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
 	mgr._tick_bot(carlos, 0.1)
 	check(str(carlos.get("_act", "")) == "warm_up",

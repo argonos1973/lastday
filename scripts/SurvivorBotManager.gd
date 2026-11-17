@@ -220,7 +220,7 @@ const AI_SHARE_RADIUS := 14.0
 # o menor prioridad no desbanca una directiva mas joven que esta ventana.
 const AI_DIRECTIVE_MIN_COMMIT_SEC := 300.0
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them."
+const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
@@ -13396,6 +13396,8 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["events_summary"] = {}
 	if not mem.has("known_locations") or not (mem["known_locations"] is Dictionary):
 		mem["known_locations"] = {}
+	if not mem.has("observed_players") or not (mem["observed_players"] is Array):
+		mem["observed_players"] = []
 	if not mem.has("relationships") or not (mem["relationships"] is Dictionary):
 		mem["relationships"] = {}
 	if not mem.has("strategies") or not (mem["strategies"] is Dictionary):
@@ -13500,6 +13502,88 @@ func _observe_nearby_world(b: Dictionary) -> void:
 		var pp: Vector3 = p["pos"]
 		if Vector2(pos.x - pp.x, pos.z - pp.z).length() <= AI_OBSERVE_RADIUS:
 			observe_location(bid, _poi_id(p), str(p.get("kind", "wild")), pp, "observed")
+	_observe_players(b)
+
+# Los bots aprenden de los humanos: si ven a un jugador hacer algo con valor
+# de supervivencia (dormir, pescar, acampar junto a la lumbre, guarecerse en
+# una casa), el sitio entra en su memoria como lugar "enseniado" — candidato
+# real para el asesor y sus propios planes. Cada ~3.5 s por bot.
+const OBSERVE_PLAYER_RADIUS := 30.0
+const OBSERVE_PLAYER_FRESH_SEC := 1800.0
+
+func _player_near_lit_fire(pos: Vector3) -> bool:
+	if world == null or not ("_lit_campfires" in world):
+		return false
+	for lc in world.get("_lit_campfires"):
+		var fp: Vector3 = (lc as Dictionary).get("pos", Vector3.INF)
+		if fp != Vector3.INF and Vector2(pos.x - fp.x, pos.z - fp.z).length() < 4.0:
+			return true
+	return false
+
+func _observe_players(b: Dictionary) -> void:
+	var bid := int(b.get("bot_id", 0))
+	var now_ms := Time.get_ticks_msec()
+	if int(b.get("_obs_pt", 0)) > now_ms:
+		return
+	b["_obs_pt"] = now_ms + 3500 + (bid * 421 % 900)
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy) or world == null or world.get("net") == null:
+		return
+	var net = world.net
+	var bpos: Vector3 = (proxy as Node3D).global_position
+	var mem := _ensure_bot_memory(bid)
+	var obs: Array = mem.get("observed_players", [])
+	var now_u := Time.get_unix_time_from_system()
+	for pid in net.players.keys():
+		if pid == net.get_my_id() or is_bot_peer_id(int(pid)):
+			continue
+		var pdata: Dictionary = net.players[pid]
+		if pdata.get("offline", false) or not net.peer_alive(pid):
+			continue
+		if str(pdata.get("anim", "")).begins_with("dead"):
+			continue
+		var ppos: Vector3 = pdata.get("pos", Vector3.INF)
+		if ppos == Vector3.INF:
+			continue
+		if Vector2(bpos.x - ppos.x, bpos.z - ppos.z).length() > OBSERVE_PLAYER_RADIUS:
+			continue
+		# Tiene que verlo de verdad: una pared o un desnivel no ensenan nada.
+		if not _has_clear_shot(bpos, ppos):
+			continue
+		var what := ""
+		var kind := "wild"
+		if bool(pdata.get("sleeping", false)):
+			what = "sleep"
+			kind = "camp"
+		elif str(pdata.get("held_item", "")).findn("caña") >= 0:
+			what = "fish"
+			kind = "fish"
+		elif _player_near_lit_fire(ppos):
+			what = "campfire"
+			kind = "camp"
+		elif world.has_method("_is_player_in_house") and world._is_player_in_house(ppos):
+			what = "house"
+			kind = "house"
+		if what.is_empty():
+			continue
+		var key := "%d|%s|%d:%d" % [int(pid), what, int(ppos.x / 12.0), int(ppos.z / 12.0)]
+		var found := false
+		for e in obs:
+			if str(e.get("key", "")) == key:
+				e["t"] = now_u
+				e["pos"] = [snappedf(ppos.x, 0.1), snappedf(ppos.z, 0.1)]
+				found = true
+				break
+		if not found:
+			obs.append({"key": key, "player": str(pdata.get("name", "Jugador")),
+				"what": what, "kind": kind,
+				"pos": [snappedf(ppos.x, 0.1), snappedf(ppos.z, 0.1)], "t": now_u})
+			observe_location(bid, "taught:%s:%d:%d" % [what, int(ppos.x), int(ppos.z)], kind, ppos, "taught")
+	var fresh: Array = []
+	for e in obs:
+		if now_u - float(e.get("t", 0.0)) < OBSERVE_PLAYER_FRESH_SEC:
+			fresh.append(e)
+	mem["observed_players"] = fresh.slice(0, 8)
 
 # Prefijos de "zona" (no un edificio concreto): se fusionan en un radio amplio.
 # Los canonicos (house/city/military/tower) solo fusionan dentro del mismo
@@ -14785,6 +14869,17 @@ func _ai_build_prompt(b: Dictionary) -> String:
 				"left_min": int((UNREACHABLE_VETO_TTL - (now_u - float((e as Dictionary).get("t", 0.0)))) / 60.0)})
 			if unreach.size() >= 4:
 				break
+	# Lo que el bot ha visto hacer a jugadores humanos cerca: sitios
+	# "vetados" por un superviviente real (dormir, pescar, lumbre, casa).
+	var obs_p: Array = []
+	for e in mem.get("observed_players", []):
+		var age_min := int((now_u - float((e as Dictionary).get("t", 0.0))) / 60.0)
+		if age_min > int(OBSERVE_PLAYER_FRESH_SEC / 60.0):
+			continue
+		obs_p.append({"player": str((e as Dictionary).get("player", "")), "did": str((e as Dictionary).get("what", "")),
+			"pos": (e as Dictionary).get("pos", []), "age_min": age_min})
+		if obs_p.size() >= 4:
+			break
 	var vst_p: SurvivalStats = b.get("vstats")
 	var state := {
 		"name": str(b["name"]),
@@ -14814,6 +14909,7 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"last_plan_result": str(b.get("_plan_last_result", "")),
 		"recent_failures": fails,
 		"unreachable": unreach,
+		"observed_players": obs_p,
 		"memory": _ai_memory_summary(mem),
 	}
 	return JSON.stringify(state)
@@ -15582,7 +15678,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		_ai_prune_expired_memory(mem)
@@ -15663,7 +15759,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
