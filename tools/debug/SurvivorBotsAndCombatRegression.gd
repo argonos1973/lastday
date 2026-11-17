@@ -484,6 +484,32 @@ func run() -> void:
 	prep_tree2.queue_free()
 	world.world_actions_by_id.erase("prep_tree")
 	prep_tree.queue_free()
+	# Semillas con mochila casi llena: el drop de Semillas (0.05) cabe aunque
+	# el Palo (0.3) no — el arbusto sigue sirviendo para montar el huerto.
+	var seed_bush := WorldActionScript.new()
+	seed_bush.setup("seed_bush", "fell_bush", "Arbusto", Vector3(1.2, 1.4, 1.2), Color(0.2, 0.35, 0.12), true, false)
+	world.add_child(seed_bush)
+	seed_bush.global_position = kael_proxy.global_position + Vector3(5.0, 0.0, 0.0)
+	world.world_actions_by_id["seed_bush"] = seed_bush
+	world.day_cycle.time_of_day = 14.0
+	kael["shelter_id"] = "full_sh"
+	kael["campfire_id"] = "full_cf"
+	kael["camp_spot"] = kael_proxy.global_position
+	var cap_w := float(mgr._bot_carry_capacity(kael).get("weight", 20.0))
+	var fill_q := int((cap_w - 0.1) / 0.45)
+	kael_proxy.set_meta("saved_inventory", [
+		{"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": fill_q, "use_value": 0.0},
+		k_blade])
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Con sitio solo para semillas sale a talar el arbusto")
+	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
+	check(g_kind == "fell_bush", "Tala el arbusto por las semillas aunque el palo ya no quepa (kind=%s)" % g_kind)
+	kael["shelter_id"] = ""
+	kael["campfire_id"] = ""
+	kael["_gather"] = {}
+	world.world_actions_by_id.erase("seed_bush")
+	seed_bush.queue_free()
 	# Sin filo no tala nada: un bot sin cuchillo no sale a por palos
 	kael["_gather"] = {}
 	kael["_gather_scan"] = 0.0

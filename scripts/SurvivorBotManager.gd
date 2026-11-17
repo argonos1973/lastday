@@ -16949,6 +16949,7 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var can_fit_palo := _bot_would_fit(b, inv, {"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1})
+	var can_fit_semillas := _bot_would_fit(b, inv, {"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 1})
 	var can_fit_wood := _bot_would_fit(b, inv, {"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2})
 	var can_fit_log := _bot_would_fit(b, inv, {"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 1})
 	var can_fit_stone := _bot_would_fit(b, inv, {"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 1})
@@ -16968,7 +16969,10 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 		var atype := str(a.get("action_type"))
 		var serves := false
 		if atype == "fell_bush":
-			serves = not tool.is_empty() and (need_palo or need_seeds) and can_fit_palo
+			# Palos Y semillas salen del mismo arbusto: sirve si cabe lo que
+			# busca — la semilla (0.05) cabe en una mochila donde el palo
+			# (0.3) ya no entra; los palos sobrantes quedan en el suelo.
+			serves = not tool.is_empty() and ((need_palo and can_fit_palo) or (need_seeds and can_fit_semillas))
 		elif atype == "fell_tree":
 			# Arbol de verdad: solo con hacha y si le cabe al menos un tronco
 			# de 1.2 kg (el resto queda en el suelo para la vuelta).
