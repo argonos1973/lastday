@@ -6,7 +6,8 @@ const BotUtilityAI = preload("res://scripts/BotUtilityAI.gd")
 # estabilidad, compat de memoria y funcionamiento offline.
 class Manager extends "res://scripts/SurvivorBotManager.gd":
  var test_weapon := "melee"
- func _is_world_night() -> bool: return false
+ var night := false
+ func _is_world_night() -> bool: return night
  func _sensed_node(_b: Dictionary, _key: String) -> Node3D: return null
  func _pick_fight_weapon(_b: Dictionary, _d: float) -> Dictionary:
   return {"kind": test_weapon, "name": "Arma"}
@@ -124,6 +125,17 @@ func run():
  var p_base := BotUtilityAI.threat_posterior({}, now_ms, 0.0)
  var p_env := BotUtilityAI.threat_posterior({}, now_ms, 0.0, 3.0)
  check(p_env > p_base and p_env < 0.35, "EU: predator history adds a weak env prior (%.2f)" % p_env)
+ # --- 15. Cuota nocturna: de noche solo un ataque real consulta remoto ---
+ manager.night = true
+ manager._ai_queue.clear()
+ manager._ai_enqueue_request(901, 4, "sig_change")
+ manager._ai_enqueue_request(901, 2, "scheduled")
+ manager._ai_enqueue_request(901, 4, "plan_done", true)
+ check(manager._ai_queue.is_empty(), "EU: night drops non-attack remote requests")
+ manager._ai_enqueue_request(901, 5, "attacked_by_wolf", true)
+ check(manager._ai_queue.size() == 1, "EU: a real attack still reaches remote at night")
+ manager._ai_queue.clear()
+ manager.night = false
  # --- Comparativa de motores: misma situacion, ambos caminos validos ---
  var b7 := _mk_b(); b7["hunger"] = 12.0
  var eu_d := manager.decide_situational_action(b7, {})

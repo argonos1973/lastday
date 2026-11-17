@@ -14598,7 +14598,21 @@ func _ai_can_query_remote() -> bool:
 # force=true es para sucesos relevantes (ataque, plan terminado/bloqueado,
 # plan atascado): salta el hueco mínimo entre llamadas y la deduplicacion por
 # firma. Las revisiones periodicas y los cambios de firma van sin forzar.
+# De noche el asesor remoto descansa: los bots duermen o aguantan junto al
+# fuego y la firma apenas cambia — quemar cuota de API en revisiones y
+# replanteamientos no mejora ninguna decision. Lo unico que la justifica es
+# un ataque real; todo lo demas lo cubre el motor local hasta el alba (los
+# motivos periodicos/sig_change se reencolan solos al amanecer).
+func _ai_night_allows_remote(reason: String) -> bool:
+	if not _is_world_night():
+		return true
+	return reason.begins_with("attacked_by_")
+
 func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "periodic", force: bool = false) -> void:
+	if not _ai_night_allows_remote(reason):
+		if bots.has(bot_id):
+			_ai_stat_inc(bots[bot_id], "night_skipped")
+		return
 	var p := clampi(priority, 1, 5)
 	var merged := false
 	for item in _ai_queue:
@@ -14625,6 +14639,10 @@ func _ai_pop_next_request(now: int) -> Dictionary:
 		var item: Dictionary = _ai_queue[i]
 		var bid := int(item.get("bot_id", 0))
 		if not bots.has(bid) or not _ai_bot_eligible(bots[bid]):
+			_ai_queue.remove_at(i)
+			continue
+		# Encolado antes del anochecer: de noche solo sale lo de ataque real.
+		if not _ai_night_allows_remote(str(item.get("reason", ""))):
 			_ai_queue.remove_at(i)
 			continue
 		var forced := bool(item.get("force", false))
