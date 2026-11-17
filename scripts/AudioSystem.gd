@@ -74,6 +74,15 @@ var walk_loop_player: AudioStreamPlayer3D = null
 var run_loop_player: AudioStreamPlayer3D = null
 var _walk_active := false
 var _run_active := false
+
+# Pasos de actores remotos: metronomo propio por actor (pid/aid), fase de
+# variacion de sample y pool round-robin de players 3D.
+const REMOTE_STEP_POOL := 10
+const REMOTE_STEP_MAX_DIST := 34.0
+var _remote_step_players: Array = []
+var _remote_step_index := 0
+var _remote_step_t: Dictionary = {}     # "p:3"/"a:wolf_4" -> s al proximo paso
+var _remote_step_phase: Dictionary = {} # misma clave -> indice de variacion
 var ambient_day_player: AudioStreamPlayer
 var ambient_night_player: AudioStreamPlayer
 var wind_player: AudioStreamPlayer
@@ -135,6 +144,7 @@ func _process(delta: float) -> void:
 	_update_forest_ambience(delta, refresh_spatial)
 	_update_animal_calls(delta)
 	_update_footsteps(delta)
+	_update_remote_footsteps(delta)
 
 func _create_players() -> void:
 	ambient_day_player = AudioStreamPlayer.new()
@@ -206,6 +216,18 @@ func _create_players() -> void:
 	door_player.volume_db = 10.0
 	door_player.max_db = 6.0
 	add_child(door_player)
+
+	# Pool para pasos de actores remotos (jugadores, bots y fauna): el cliente
+	# ya recibe posicion+anim en cada sync — el sonido se genera local, sin
+	# trafico nuevo. Round-robin evita que dos actores se corten el paso.
+	for i in range(REMOTE_STEP_POOL):
+		var rsp := AudioStreamPlayer3D.new()
+		rsp.name = "RemoteStep%d" % i
+		rsp.unit_size = 5.0
+		rsp.max_distance = 38.0
+		rsp.volume_db = 5.0
+		add_child(rsp)
+		_remote_step_players.append(rsp)
 
 	walk_loop_player = AudioStreamPlayer3D.new()
 	walk_loop_player.name = "WalkLoop"
@@ -811,6 +833,101 @@ func _is_inside_building() -> bool:
 		Vector3(-42, 0, -42)
 	]
 	for pos in building_positions:
+		if Vector2(p.x - pos.x, p.z - pos.z).length() < 5.5:
+			return true
+	return false
+
+# --- Pasos de actores remotos -------------------------------------------------
+# El cliente ya recibe posicion+anim de jugadores remotos (humanos y bots) y de
+# la fauna en cada sync: los pasos se sintetizan localmente — ningun RPC nuevo.
+# Superficie por posicion del actor, igual que para el jugador local.
+
+func _update_remote_footsteps(delta: float) -> void:
+	var scene := get_tree().current_scene
+	if scene == null or player == null or not is_instance_valid(player):
+		return
+	var ear: Vector3 = player.global_position
+	var seen := {}
+	var rp = scene.get("remote_players")
+	if rp is Dictionary:
+		for pid in (rp as Dictionary).keys():
+			var p = (rp as Dictionary)[pid]
+			if p != null and is_instance_valid(p) and p != player:
+				_remote_actor_steps(seen, "p:%s" % str(pid), p, str(p.get("_puppet_anim")), delta, ear, false)
+	var pa = scene.get("puppet_animals")
+	if pa is Dictionary:
+		for aid in (pa as Dictionary).keys():
+			var a = (pa as Dictionary)[aid]
+			if a != null and is_instance_valid(a) and not bool(a.get("_is_dead")):
+				_remote_actor_steps(seen, "a:%s" % str(aid), a, str(a.get("current_anim_keyword")), delta, ear, true)
+	for k in _remote_step_t.keys():
+		if not seen.has(k):
+			_remote_step_t.erase(k)
+			_remote_step_phase.erase(k)
+
+func _remote_actor_steps(seen: Dictionary, key: String, node: Node3D, anim: String, delta: float, ear: Vector3, is_animal: bool) -> void:
+	var anim_l := anim.to_lower()
+	var kind := ""
+	if anim_l.find("run") >= 0 or anim_l.find("chase") >= 0 or anim_l.find("trot") >= 0 or anim_l.find("gallop") >= 0 or anim_l.find("charge") >= 0:
+		kind = "run"
+	elif anim_l.find("walk") >= 0 or anim_l.find("strafe") >= 0:
+		kind = "walk"
+	elif anim_l.find("sneak") >= 0:
+		kind = "sneak"
+	var d: float = Vector3(node.global_position.x - ear.x, 0.0, node.global_position.z - ear.z).length()
+	if kind.is_empty() or d > REMOTE_STEP_MAX_DIST:
+		_remote_step_t.erase(key)
+		_remote_step_phase.erase(key)
+		return
+	seen[key] = true
+	var interval := 0.34 if kind == "run" else (0.80 if kind == "sneak" else 0.55)
+	if is_animal:
+		interval *= 0.85 # cuatro patas: pasos algo mas frecuentes
+	_remote_step_t[key] = float(_remote_step_t.get(key, interval)) - delta
+	if float(_remote_step_t[key]) > 0.0:
+		return
+	_remote_step_t[key] = interval
+	_play_remote_step(key, node.global_position, kind, is_animal)
+
+func _play_remote_step(key: String, pos: Vector3, kind: String, is_animal: bool) -> void:
+	var scene := get_tree().current_scene
+	var in_water := false
+	var pool: Array = []
+	if scene != null and scene.has_method("get_river_depth_at") and float(scene.call("get_river_depth_at", pos)) > 0.05:
+		in_water = true
+		pool = water_footstep_splashes
+	if pool.is_empty():
+		if _pos_inside_building(pos):
+			pool = wood_steps
+		elif absf(pos.x - 8.0) < 4.6:
+			pool = road_steps
+		else:
+			pool = grass_steps
+	if pool.is_empty() or _remote_step_players.is_empty():
+		return
+	var idx := int(_remote_step_phase.get(key, 0))
+	_remote_step_phase[key] = idx + 1
+	var ap: AudioStreamPlayer3D = _remote_step_players[_remote_step_index]
+	_remote_step_index = (_remote_step_index + 1) % _remote_step_players.size()
+	ap.global_position = pos
+	ap.pitch_scale = randf_range(0.92, 1.08) * (0.85 if is_animal else 1.0)
+	var db := 5.0
+	if kind == "run":
+		db += 2.5
+	elif kind == "sneak":
+		db -= 9.0
+	if is_animal and not in_water:
+		db -= 2.0 # patas/pesado: distinto timbre, no un zapato
+	ap.volume_db = db
+	ap.stream = pool[idx % pool.size()]
+	ap.play()
+
+func _pos_inside_building(p: Vector3) -> bool:
+	if p.distance_to(Vector3.ZERO) < 7.5:
+		return true
+	for pos in [Vector3(-25, 0, -18), Vector3(-38, 0, 18), Vector3(23, 0, 18),
+			Vector3(42, 0, 26), Vector3(-12, 0, 42), Vector3(33, 0, -30),
+			Vector3(45, 0, 0), Vector3(-42, 0, -42)]:
 		if Vector2(p.x - pos.x, p.z - pos.z).length() < 5.5:
 			return true
 	return false

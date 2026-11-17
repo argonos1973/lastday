@@ -210,8 +210,11 @@ func run() -> void:
 	world.survivor_bot_mgr = mgr
 	mgr.setup(world)
 
-	check(mgr.bots.size() == 3, "Se crean los 3 supervivientes IA (Elena, Carlos, Kael)")
-	check(mgr.bots.has(901) and mgr.bots.has(902) and mgr.bots.has(903), "IDs 901, 902 y 903 registrados")
+	check(mgr.bots.size() == 4, "Se crean los 4 supervivientes IA (Elena, Carlos, Kael, Ataulfo)")
+	check(mgr.bots.has(901) and mgr.bots.has(902) and mgr.bots.has(903) and mgr.bots.has(904), "IDs 901, 902, 903 y 904 registrados")
+	check(str(mgr.bots[904]["name"]) == "Ataulfo" and str(mgr.bots[904]["faction"]) == "hostile" and
+		str(mgr.bots[904]["cfg"].get("hair_style", "")) == "crop",
+		"Ataulfo nace hostil, de cero, con su mezcla de previews (crop+camo)")
 	check(str(mgr.bots[901]["faction"]) == "hostile" and str(mgr.bots[902]["faction"]) == "hostile" and str(mgr.bots[903]["faction"]) == "hostile",
 		"Los 3 supervivientes IA nacen hostiles (se ganan la confianza por chat/voz)")
 	# Elena y Carlos ya fueron "convencidos" en sesiones previas: para el resto
@@ -793,6 +796,35 @@ func run() -> void:
 	fnet.alive_pids = []
 	fnet.players[903]["anim"] = "idle"
 	fnet.players[903]["held_item"] = ""
+
+	# --- 9f) Oido de fauna: la carrera se oye lejos, el acecho no ---
+	var fake_wolf := WildlifeControllerScript.new()
+	fake_wolf.name = "FakeWolf_hear"
+	world.add_child(fake_wolf)
+	fake_wolf.setup("wolf", [Vector3.ZERO])
+	fake_wolf.set_process(false)
+	fake_wolf.current_anim_keyword = "run"
+	fake_wolf.global_position = carlos_proxy.global_position + Vector3(25.0, 0.0, 0.0)
+	carlos["last_heard_until"] = 0.0
+	carlos["last_heard_kind"] = ""
+	carlos["last_heard_pos"] = Vector3.INF
+	check(mgr._can_bot_hear_actor(carlos, fake_wolf, 25.0),
+		"El bot oye al lobo corriendo a 25 m")
+	fake_wolf.current_anim_keyword = "idle"
+	check(not mgr._can_bot_hear_actor(carlos, fake_wolf, 25.0),
+		"El lobo quieto a 25 m no se oye")
+	fake_wolf.current_anim_keyword = "walk"
+	check(mgr._can_bot_hear_actor(carlos, fake_wolf, 10.0),
+		"El lobo caminando a 10 m si se oye")
+	check(not mgr._can_bot_hear_actor(carlos, fake_wolf, 20.0),
+		"El lobo caminando a 20 m ya no se oye")
+	fake_wolf.current_anim_keyword = "run"
+	mgr._tick_fauna_hearing(carlos)
+	check(Vector3(carlos.get("last_heard_pos", Vector3.ZERO)).distance_to(fake_wolf.global_position) < 1.0,
+		"El paso de fauna alimenta last_heard_pos (%s)" % str(carlos.get("last_heard_pos")))
+	check(str(carlos.get("last_heard_kind", "")) == "footsteps",
+		"El tipo de ruido registrado es 'footsteps'")
+	fake_wolf.queue_free()
 	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
 	mgr._tick_bot(carlos, 0.1)
 	check(str(carlos.get("_act", "")) == "warm_up",
@@ -1245,8 +1277,13 @@ func run() -> void:
 	# solar es invalido; a 150 m ya es territorio libre.
 	check(not mgr._is_valid_camp_pos(carlos["camp_spot"] + Vector3(40.0, 0.0, 0.0)),
 		"Un solar a 40 m de otro campamento es invalido (territorio propio)")
-	check(mgr._is_valid_camp_pos(carlos["camp_spot"] + Vector3(150.0, 0.0, 0.0)),
-		"A 150 m de distancia el solar vuelve a ser valido")
+	var far_ok := false
+	for off in [Vector3(150.0, 0.0, 0.0), Vector3(-150.0, 0.0, 0.0), Vector3(0.0, 0.0, 150.0), Vector3(0.0, 0.0, -150.0)]:
+		var fp: Vector3 = carlos["camp_spot"] + off
+		if mgr._nearest_other_camp_dist(fp, 0) >= 125.0 and mgr._is_valid_camp_pos(fp):
+			far_ok = true
+			break
+	check(far_ok, "A 150 m de distancia el solar vuelve a ser valido en alguna direccion")
 	check(mgr._nearest_other_camp_dist(carlos["camp_spot"] + Vector3(40.0, 0.0, 0.0), 901) < 45.0,
 		"_nearest_other_camp_dist detecta el campamento cercano")
 
@@ -1254,10 +1291,19 @@ func run() -> void:
 	# Elena y Carlos (pacificos) acampan juntos a 14-26 m; el bandido Kael sigue
 	# a 120 m de ellos. Sin relaciones registradas vale la faccion.
 	var rels_bak := {}
-	for bid in [901, 902, 903]:
+	for bid in [901, 902, 903, 904]:
 		var mm: Dictionary = mgr._ensure_bot_memory(bid)
 		rels_bak[bid] = mm.get("relationships", {})
 		mm["relationships"] = {}
+	# Aislar a Ataulfo del experimento: en produccion compartiria llano con
+	# Kael (bandido<->bandido se tolera por faccion), aqui no.
+	for bid in [901, 902, 903]:
+		(mgr._ensure_bot_memory(bid) as Dictionary)["relationships"]["bot_904"] = {"hostility": 0.9, "fear": 0.0}
+	(mgr._ensure_bot_memory(904) as Dictionary)["relationships"] = {
+		"bot_901": {"hostility": 0.9, "fear": 0.0},
+		"bot_902": {"hostility": 0.9, "fear": 0.0},
+		"bot_903": {"hostility": 0.9, "fear": 0.0},
+	}
 	check(mgr._camps_may_share(901, 902), "dos pacificos comparten el llano de campamento")
 	check(not mgr._camps_may_share(901, 903) and not mgr._camps_may_share(903, 901),
 		"bandido y pacifico NO comparten campamento")

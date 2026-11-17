@@ -133,6 +133,44 @@ const BOT_CONFIGS := [
 			"survival_instinct": 0.78,
 		},
 	},
+	{
+		"bot_id": 904,
+		"client_id": "ai_bot_904",
+		"name": "Ataulfo",
+		"preview_id": "marc",
+		"faction": "hostile",
+		"hair_style": "crop",
+		"beard_stage": 0,
+		"top_color": Color(0.2, 0.25, 0.12),
+		"bottom_color": Color(0.3, 0.3, 0.35),
+		"shoes_color": Color(0.5, 0.25, 0.15),
+		"hair_color": Color(0.02, 0.02, 0.02),
+		"skin_color": Color(0.7, 0.58, 0.45),
+		"top_camo": true,
+		"bottom_camo": false,
+		"spawn": Vector3(-52.0, 0.0, -18.0),
+		"camp_spot": Vector3(-60.0, 0.0, -26.0),
+		"patrol": [
+			Vector3(-52.0, 0.0, -18.0),
+			Vector3(-70.0, 0.0, 20.0),
+			Vector3(-30.0, 0.0, 55.0),
+			Vector3(10.0, 0.0, 70.0),
+			Vector3(-45.0, 0.0, -55.0),
+		],
+		"starting_clothing": ["Camiseta", "Pantalones", "Zapatillas"],
+		"starting_backpack": "",
+		"starting_weapon": "Cuchillo",
+		"starting_items": [],
+		"personality": {
+			"bravery": 0.55,
+			"aggression": 0.40,
+			"curiosity": 0.70,
+			"sociability": 0.55,
+			"distrust": 0.50,
+			"cooperation": 0.60,
+			"survival_instinct": 0.75,
+		},
+	},
 ]
 
 const CLOTHING_PRIORITY := {
@@ -1695,6 +1733,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			else:
 				b["_s_raid_shelter"] = st_sh
 		_observe_nearby_world(b)
+		_tick_fauna_hearing(b)
 		_try_share_allied_knowledge(b)
 		_bot_social_update(b)
 		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
@@ -4694,6 +4733,17 @@ func _effective_human_sight(target: Node3D, base_sight: float) -> float:
 # (34-55 m), puertas (30 m) y pasos normales (16 m) se oyen aunque haya muros
 # o arboles interpuestos.
 func _can_bot_hear_actor(b: Dictionary, target: Node3D, dist: float) -> bool:
+	# Fauna: la carrera se oye lejos (una carga de lobo avisa antes de verse),
+	# el paso solo cerca y el acecho apenas nada — mismo criterio que con
+	# humanos y bots: lo que se mueve hace ruido.
+	if target.is_in_group("wildlife"):
+		var wanim := str(target.get("current_anim_keyword")).to_lower()
+		if wanim.find("run") >= 0 or wanim.find("chase") >= 0 or wanim.find("trot") >= 0 or wanim.find("gallop") >= 0:
+			if dist <= 30.0:
+				return true
+		elif wanim.find("walk") >= 0:
+			if dist <= 14.0:
+				return true
 	var is_sprint: bool = bool(target.get_meta("sprinting", false)) or str(target.get("_puppet_anim")).to_lower().find("run") >= 0 or target.get("is_sprinting") == true
 	if is_sprint and dist <= 34.0:
 		return true
@@ -13592,6 +13642,49 @@ func _observe_players(b: Dictionary) -> void:
 		if now_u - float(e.get("t", 0.0)) < OBSERVE_PLAYER_FRESH_SEC:
 			fresh.append(e)
 	mem["observed_players"] = fresh.slice(0, 8)
+
+# Pasos de fauna en el canal de oido: lo que corre se oye lejos (la carga de
+# un lobo avisa antes de verse), lo que camina solo cerca. Alimenta el mismo
+# last_heard_* que usan disparos/gritos — un lobo oido pasa a ser detectable
+# y el asesor ve "heard_footsteps" en sus eventos. No despierta al dormido:
+# los pasos no son una alarma, son contexto.
+func _tick_fauna_hearing(b: Dictionary) -> void:
+	if world == null or world.get_tree() == null:
+		return
+	var proxy: Node3D = b["proxy"]
+	var best: Node3D = null
+	var best_d := 9999.0
+	for w in world.get_tree().get_nodes_in_group("wildlife"):
+		if not (w is Node3D) or not is_instance_valid(w) or bool(w.get("_is_dead")):
+			continue
+		var wanim := str(w.get("current_anim_keyword")).to_lower()
+		var hear_r := 0.0
+		if wanim.find("run") >= 0 or wanim.find("chase") >= 0 or wanim.find("trot") >= 0 or wanim.find("gallop") >= 0:
+			hear_r = 30.0
+		elif wanim.find("walk") >= 0:
+			hear_r = 14.0
+		if hear_r <= 0.0:
+			continue
+		var d := proxy.global_position.distance_to((w as Node3D).global_position)
+		if d <= hear_r and d < best_d:
+			best_d = d
+			best = w as Node3D
+	if best == null:
+		return
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var first := float(b.get("last_heard_until", 0.0)) <= now_s
+	# Un disparo reciente pesa mas que unos pasos: no lo pisa el ruido menor.
+	if not first and str(b.get("last_heard_kind", "")) == "gunshot":
+		return
+	var hpos: Vector3 = b.get("last_heard_pos", Vector3.INF)
+	if first or hpos == Vector3.INF or best.global_position.distance_to(hpos) > 6.0:
+		b["last_heard_pos"] = best.global_position
+		b["last_heard_kind"] = "footsteps"
+		b["last_heard_actor"] = 0
+		b["last_heard_until"] = now_s + 2.5
+		if first:
+			var at := str(best.get("animal_type"))
+			record_bot_event(int(b["bot_id"]), "heard_footsteps", at, _poi_kind_near(best.global_position), best.global_position, "%s:%.0fm" % [at, best_d])
 
 # Prefijos de "zona" (no un edificio concreto): se fusionan en un radio amplio.
 # Los canonicos (house/city/military/tower) solo fusionan dentro del mismo
