@@ -2395,13 +2395,29 @@ func run() -> void:
 	elena["sitting"] = false
 	elena["gun_reloading"] = false
 	elena["anim"] = "walk"
-	elena["strafe_dir"] = 1.0
+	elena["rot"] = 0.0
+	elena["_mdir"] = Vector3(1.0, 0.0, 0.0)
 	check(mgr._bot_effective_net_anim(elena) == "rifle_motion/RifleStrafeRightExternal",
 		"Aiming strafe right sends RifleStrafeRightExternal (got %s)" % mgr._bot_effective_net_anim(elena))
-	elena["strafe_dir"] = -1.0
+	elena["_mdir"] = Vector3(-1.0, 0.0, 0.0)
 	check(mgr._bot_effective_net_anim(elena) == "rifle_motion/RifleStrafeLeftExternal",
 		"Aiming strafe left sends RifleStrafeLeftExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	# El strafe tambien aplica sin apuntar: si el desplazamiento es lateral al
+	# rumbo (pelea a distancia media), el clip lateral es el honesto.
 	elena["is_aiming"] = false
+	elena["_mdir"] = Vector3(1.0, 0.0, 0.0)
+	check(mgr._bot_effective_net_anim(elena) == "rifle_motion/RifleStrafeRightExternal",
+		"Unaimed lateral walk still sends RifleStrafeRightExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	# De frente o de espaldas no es strafe: cae al riflewalk normal.
+	elena["_mdir"] = Vector3(0.0, 0.0, -1.0)
+	check(mgr._bot_effective_net_anim(elena) == "riflewalk",
+		"Forward walk is riflewalk not strafe (got %s)" % mgr._bot_effective_net_anim(elena))
+	elena["_mdir"] = Vector3(0.0, 0.0, 1.0)
+	check(mgr._bot_effective_net_anim(elena) == "riflewalk",
+		"Backward walk is riflewalk not strafe (got %s)" % mgr._bot_effective_net_anim(elena))
+	elena["_mdir"] = Vector3.ZERO
+	check(mgr._bot_effective_net_anim(elena) == "riflewalk",
+		"No recorded heading falls back to riflewalk (got %s)" % mgr._bot_effective_net_anim(elena))
 	elena["has_rifle"] = false
 	elena["anim"] = "idle"
 

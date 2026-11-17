@@ -11824,10 +11824,15 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 					target_animation = third_person_sneak_walk_animation
 				elif is_crouching:
 					target_animation = third_person_sneak_animation
-				elif not _rifle_walk_animation.is_empty():
-					target_animation = _rifle_walk_animation
 				else:
-					target_animation = third_person_walk_animation
+					# Paso lateral tambien sin apuntar: el cuerpo mantiene el
+					# rumbo de la camara y A/D produce desplazamiento lateral.
+					target_animation = _pick_rifle_strafe_animation()
+					if target_animation.is_empty():
+						if not _rifle_walk_animation.is_empty():
+							target_animation = _rifle_walk_animation
+						else:
+							target_animation = third_person_walk_animation
 			elif is_crouching and not _rifle_sit_animation.is_empty():
 				target_animation = _rifle_sit_animation
 			elif is_crouching and not third_person_sneak_animation.is_empty():
@@ -11845,17 +11850,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		elif _has_rifle and _is_aiming:
 			# Aiming with rifle: use aim idle when stationary, strafe/walk when moving
 			if moving:
-				var strafe_axis := 0.0
-				var fwd_axis := 0.0
-				if not is_puppet and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not get_tree().paused:
-					var move_vec := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-					strafe_axis = move_vec.x
-					fwd_axis = move_vec.y
-				if absf(strafe_axis) > 0.5 and absf(strafe_axis) >= absf(fwd_axis):
-					if strafe_axis < 0.0 and not _rifle_strafe_left_animation.is_empty():
-						target_animation = _rifle_strafe_left_animation
-					elif strafe_axis > 0.0 and not _rifle_strafe_right_animation.is_empty():
-						target_animation = _rifle_strafe_right_animation
+				target_animation = _pick_rifle_strafe_animation()
 				if target_animation.is_empty():
 					if not _rifle_walk_animation.is_empty():
 						target_animation = _rifle_walk_animation
@@ -11942,6 +11937,19 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 		third_person_left_leg.rotation_degrees = third_person_left_leg.rotation_degrees.lerp(Vector3(-limb_swing * 0.85, 0.0, 0.0), delta * 12.0)
 	if third_person_right_leg != null:
 		third_person_right_leg.rotation_degrees = third_person_right_leg.rotation_degrees.lerp(Vector3(limb_swing * 0.85, 0.0, 0.0), delta * 12.0)
+
+# Paso lateral con fusil: dominante cuando el eje lateral supera al frontal.
+# Devuelve "" sin input lateral real (el cuerpo sigue a la camara, asi que A/D
+# es strafe puro) o si el clip no esta cargado — el llamador cae a rifle_walk.
+func _pick_rifle_strafe_animation() -> String:
+	if is_puppet or Input.mouse_mode != Input.MOUSE_MODE_CAPTURED or get_tree().paused:
+		return ""
+	var move_vec := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	if absf(move_vec.x) <= 0.5 or absf(move_vec.x) < absf(move_vec.y):
+		return ""
+	if move_vec.x < 0.0:
+		return _rifle_strafe_left_animation
+	return _rifle_strafe_right_animation
 
 func _loop_third_person_animation(animation_name: String) -> void:
 	if third_person_animation_player == null or animation_name.is_empty():

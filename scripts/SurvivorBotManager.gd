@@ -1499,17 +1499,35 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	if bool(b.get("_bow_drawing", false)):
 		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
 	if bool(b.get("has_rifle", false)):
-		# Paso lateral apuntando (strafe de combate): strafe_dir>0 mueve a la
-		# derecha del bot segun la misma base "side" que usa el zigzag.
-		if raw == "walk" and bool(b.get("is_aiming", false)):
-			return "rifle_motion/" + (PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION if float(b.get("strafe_dir", 1.0)) > 0.0 else PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION)
+		# Paso lateral real (strafe): el clip se elige por la direccion de
+		# desplazamiento respecto a donde mira el bot — vale apuntando o no.
+		if raw == "walk":
+			var sd := _bot_net_strafe_dir(b)
+			if sd > 0:
+				return "rifle_motion/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_RIGHT_ANIMATION
+			if sd < 0:
+				return "rifle_motion/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_STRAFE_LEFT_ANIMATION
+			return "riflewalk"
 		if raw == "run":
 			return "riflerun"
-		if raw == "walk":
-			return "riflewalk"
 		if raw == "idle":
 			return "rifleaim" if bool(b.get("is_aiming", false)) else "rifleidle"
 	return raw
+
+# +1 strafe a la derecha / -1 a la izquierda / 0 si el desplazamiento no es
+# lateral (o no hay rumbo registrado). El facing del bot es (-sin(rot), -cos(rot))
+# — el mismo convenio que atan2(-dir.x, -dir.z) usa en _move_bot_towards.
+func _bot_net_strafe_dir(b: Dictionary) -> int:
+	var mdir = b.get("_mdir", Vector3.ZERO)
+	if not (mdir is Vector3) or (mdir as Vector3).length_squared() < 0.01:
+		return 0
+	var rot := float(b.get("rot", 0.0))
+	var fwd := Vector3(-sin(rot), 0.0, -cos(rot))
+	var right := Vector3(-fwd.z, 0.0, fwd.x)
+	var d := (mdir as Vector3).normalized()
+	if absf(fwd.dot(d)) > 0.766:
+		return 0
+	return 1 if right.dot(d) > 0.0 else -1
 
 func _broadcast_bots() -> void:
 	if world == null:
