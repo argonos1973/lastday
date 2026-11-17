@@ -1779,12 +1779,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			proxy.set_meta("crouching", false)
 			return
 
-	# 0a) Agua por encima del pecho: un superviviente vadearia hasta ~1.4 m —
-	# solo lo intransitable dispara el escape. Si quedo dentro (empujon,
-	# reaparicion, hueco entre nodos del nav), sale a lo somero antes de
-	# cualquier otra decision. Va ANTES del termostato: un helado dentro del
-	# rio no puede "acercarse a la lumbre" — calentarse empieza por no
-	# ahogarse (y el agua fria drena temp mas rapido que el fuego la sube).
+	# 0a) Agua por encima de la cabeza (corazon del lago, >2.55 m): solo lo
+	# verdaderamente intransitable dispara el escape — el rio entero se
+	# vadea como hace el ciervo. Si quedo dentro (empujon, reaparicion,
+	# hueco entre nodos del nav), sale a lo somero antes de cualquier otra
+	# decision. Va ANTES del termostato: un helado dentro del rio no puede
+	# "acercarse a la lumbre" — calentarse empieza por no ahogarse (y el
+	# agua fria drena temp mas rapido que el fuego la sube).
 	if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(proxy.global_position)) > FORD_MAX_DEPTH:
 		b["drink_at"] = Vector3.INF
 		b["drinking_timer"] = 0.0
@@ -10884,10 +10885,11 @@ func _bot_try_fish(b: Dictionary, delta: float) -> bool:
 # Agua vadeable: un humano cruza rios someros (~hasta la cintura); solo el agua
 # profunda bloquea el paso.
 const WADE_DEPTH := 0.55
-# Cruce como el jugador: el bot vadearia hasta el pecho (~1.4 m) — mas lento,
-# mojandose, hundiendose. Pasada esa profundidad tendria que nadar: se mantiene
-# como limite de bloqueo (rodeo o veto de destino, como antes).
-const FORD_MAX_DEPTH := 1.4
+# Cruce como los ciervos: el bot atraviesa el rio entero (su canal toca
+# 2.5 m de fondo — el bot camina sumergido, muy lento, empapado y perdiendo
+# calor, igual que el jugador humano). Solo el agua por encima de eso — el
+# corazon del lago (hasta 4 m) — queda fuera: ahi no llega ni el ciervo.
+const FORD_MAX_DEPTH := 2.55
 
 # Punto cercano con agua vadeable o seca para salir de una zona profunda donde
 # _is_pos_blocked no dejaria dar ni un paso. Sondea en anillos y devuelve la

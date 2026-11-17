@@ -636,7 +636,7 @@ func run() -> void:
 	carlos["patrol_idx"] = 0
 	carlos["stuck_count"] = 0
 	world.water_rect = Rect2(-62.0, -62.0, 6.0, 6.0) # el punto de patrulla esta en el agua
-	world.water_depth = 2.0 # intransitable (>FORD_MAX_DEPTH=1.4): ni el humano la cruza a pie
+	world.water_depth = 3.0 # intransitable (>FORD_MAX_DEPTH=2.55): corazon de lago, ni el ciervo la cruza
 	var idx_before := int(carlos["patrol_idx"])
 	for i in range(6):
 		mgr._move_bot_towards(carlos, carlos["patrol"][0], 3.4, 0.2, "walk")
@@ -701,7 +701,7 @@ func run() -> void:
 	check(str(mgr._bot_effective_net_anim(carlos)) == "drink" and not bool(carlos["crouching"]),
 		"Bebiendo en la orilla el avatar remoto muestra 'drink' de pie (anim=%s)" % str(mgr._bot_effective_net_anim(carlos)))
 
-	# 9c) Agua intransitable (>FORD_MAX_DEPTH): el bot no se queda plantado
+	# 9c) Agua intransitable (>FORD_MAX_DEPTH=2.55): el bot no se queda plantado
 	# dentro — escapa hacia agua vadeable/seca aunque todo lo demas este hondo.
 	carlos["thirst"] = 20.0
 	carlos["drink_at"] = Vector3.INF
@@ -709,7 +709,7 @@ func run() -> void:
 	carlos["_speed"] = 0.0
 	carlos["_mdir"] = Vector3.ZERO
 	world.water_rect = Rect2(carlos_proxy.global_position.x - 2.0, carlos_proxy.global_position.z - 2.0, 4.0, 4.0)
-	world.water_depth = 1.6
+	world.water_depth = 3.0
 	var esc_from: Vector3 = carlos_proxy.global_position
 	mgr._tick_bot(carlos, 0.1)
 	var esc_moved: bool = carlos_proxy.global_position.distance_to(esc_from) > 0.01
@@ -741,7 +741,7 @@ func run() -> void:
 	var lit_bak9d: Array = world._lit_campfires.duplicate(true)
 	world._lit_campfires = [{"id": "cf9d", "fire_name": "Fogata", "pos": cp9}]
 	world.water_rect = Rect2(carlos_proxy.global_position.x - 2.0, carlos_proxy.global_position.z - 2.0, 4.0, 4.0)
-	world.water_depth = 1.6
+	world.water_depth = 3.0
 	mgr._tick_bot(carlos, 0.1)
 	check(str(carlos.get("_act", "")) == "water_escape",
 		"Helado en agua profunda escapa al somero aunque haya lumbre a 15 m (act=%s)" % str(carlos.get("_act", "")))
