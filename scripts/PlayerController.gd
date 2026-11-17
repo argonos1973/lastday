@@ -7081,14 +7081,17 @@ func _apply_melee_death_visual() -> void:
 		character.position = Vector3(0.0, third_person_ground_offset, 0.0)
 	third_person_animation_player.play(third_person_melee_death_animation, 0.1)
 
-func _play_hit_reaction(play_impact_sound: bool = true) -> void:
+func _play_hit_reaction(play_impact_sound: bool = true, force: bool = false) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
 	if play_impact_sound:
 		_play_punch_impact_sound()
 	# Nunca pisar un ataque cuerpo a cuerpo, disparo de arco o movimiento activo
-	# del jugador: la reaccion de impacto es solo visual en reposo.
-	if is_moving or is_sprinting or _is_aiming or _throw_charging or _throw_aim_hold or third_person_action_timer > 0.0:
+	# del jugador: la reaccion de impacto es solo visual en reposo. Un mordisco
+	# (force) si se muestra aunque corras — el zarpazo es el evento que te frena.
+	if _is_aiming or _throw_charging or _throw_aim_hold or third_person_action_timer > 0.0:
+		return
+	if (is_moving or is_sprinting) and not force:
 		return
 	if third_person_hit_animation.is_empty() or not third_person_animation_player.has_animation(third_person_hit_animation):
 		return

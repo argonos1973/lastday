@@ -11552,6 +11552,18 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	proxy.set_meta("prone", bool(b.get("prone", false)))
 	proxy.set_meta("sprinting", anim_name == "run" and not climbing_stairs_now)
 	proxy.set_meta("moving", anim_name == "walk" or anim_name == "run" or climbing_stairs_now)
+	# Ledger de acercamiento por objetivo: "best" es la menor distancia lograda
+	# y "grace" cuenta ventanas seguidas sin mejorarla. Un tropiezo de 2-6 s en
+	# un viaje de 500 m no prueba que el destino sea inalcanzable — el veto solo
+	# procede tras DOS ventanas sin nuevo acercamiento.
+	var gp: Dictionary = b.get("_goal_prog", {})
+	if gp.get("g") != raw_goal:
+		gp = {"g": raw_goal, "best": INF, "grace": 0}
+	var _goal_dist_now := cur.distance_to(raw_goal)
+	if _goal_dist_now < float(gp.get("best", INF)) - 6.0:
+		gp["best"] = _goal_dist_now
+		gp["grace"] = 0
+	b["_goal_prog"] = gp
 	# Deteccion real de atasco: mide el avance 3D acumulado durante la ventana
 	# completa de 2.0 s (incluyendo ascenso vertical en escaleras).
 	b["stuck_timer"] = float(b["stuck_timer"]) + delta
@@ -11574,7 +11586,13 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 				b["path_timer"] = 0.0
 			else:
 				b["stuck_count"] = 0
-				_abandon_unreachable_goal(b, raw_goal)
+				gp["grace"] = int(gp.get("grace", 0)) + 1
+				if int(gp["grace"]) >= 2:
+					gp["grace"] = 0
+					_abandon_unreachable_goal(b, raw_goal)
+				else:
+					b["path"] = []
+					b["path_timer"] = 0.0
 		else:
 			b["stuck_count"] = 0
 	# Detector de oscilacion (macro-progreso 3D cada 6 s): usa distancia 3D para
@@ -11590,7 +11608,13 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		b["macro_timer"] = 0.0
 		if macro_moved < 3.0 and cur.distance_to(raw_goal) > 4.0:
 			b["avoid_sign"] = -float(b.get("avoid_sign", 1.0))
-			_abandon_unreachable_goal(b, raw_goal)
+			gp["grace"] = int(gp.get("grace", 0)) + 1
+			if int(gp["grace"]) >= 2:
+				gp["grace"] = 0
+				_abandon_unreachable_goal(b, raw_goal)
+			else:
+				b["path"] = []
+				b["path_timer"] = 0.0
 
 func _has_clear_shot(from_pos: Vector3, to_pos: Vector3) -> bool:
 	var _cpt := Time.get_ticks_usec()

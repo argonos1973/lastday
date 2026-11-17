@@ -3299,7 +3299,8 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 		elif weapon in ["rifle", "m4"] and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
 		elif weapon in ["melee", "wolf_bite", "bear_bite", "arco", "lanza"] and player.has_method("_play_hit_reaction"):
-			player._play_hit_reaction(not weapon.ends_with("_bite"))
+			var is_bite := weapon.ends_with("_bite")
+			player._play_hit_reaction(true, is_bite)
 		if weapon in ["rifle", "m4"]:
 			player._recoil_pitch -= deg_to_rad(5.5)
 			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
@@ -3322,7 +3323,7 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 				player._attach_bola_snare_visual(player, 6.0)
 		elif kind in ["melee", "wolf_bite", "bear_bite"]:
 			player._spawn_blood_splatter(pos, 0.8)
-			player._play_hit_reaction(not kind.ends_with("_bite"))
+			player._play_hit_reaction(true, kind.ends_with("_bite"))
 			if kind.ends_with("_bite"):
 				player._play_pain_sound()
 		return
@@ -3343,7 +3344,7 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 			rp._play_hit_reaction(true)
 	elif kind in ["melee", "wolf_bite", "bear_bite"]:
 		rp._spawn_blood_splatter(pos, 0.8)
-		rp._play_hit_reaction(not kind.ends_with("_bite"))
+		rp._play_hit_reaction(true, kind.ends_with("_bite"))
 		if kind.ends_with("_bite"):
 			rp._play_pain_sound()
 
