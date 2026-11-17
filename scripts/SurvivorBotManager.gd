@@ -3306,6 +3306,21 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 			b["consume_anim"] = "eat"
 			b["consume_anim_t"] = 1.6
 			_bot_log_eaten_food(b, nm)
+		else:
+			# Hambre con solo latas cerradas encima: abrir una YA con el
+			# filo que lleve — el bocado no aparece esperando a que el
+			# tick alcance el crafteo general (Kael murio forrajeando
+			# con dos latas y un hacha en la mochila). El crafteo comparte
+			# _craft_state; si otro urgente esta a media (Palo afilado) le
+			# cede el turno hasta 6 s y se retoma despues.
+			var closed_cans: Array = []
+			for it_c in inv:
+				if it_c is Dictionary:
+					var nm_c := str(it_c.get("name", ""))
+					if nm_c.begins_with("Lata de ") and not nm_c.ends_with(" abierta"):
+						closed_cans.append(nm_c + " abierta")
+			if not closed_cans.is_empty() and not can_sharpen:
+				_bot_try_craft_named(b, delta, closed_cans, false)
 	# Beber de botellas/cantimplora que lleve encima
 	var bottle_thirst_line := 55.0 + (10.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(15.0, float(int(d_lessons.get("dehydrated", 0))) * 5.0)
 	if float(b["thirst"]) < bottle_thirst_line and float(b["eat_cooldown"]) <= 0.0:

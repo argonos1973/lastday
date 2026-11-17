@@ -408,9 +408,43 @@ func _report_line(r: Dictionary, b: Dictionary) -> String:
 		st.health, st.hunger, st.thirst, st.sleep, st.energy, st.body_temperature, st.wetness,
 		str(r["acts"]), str(r.get("slept", false)), str(r.get("sleep_vetoes", {})), int(r["failed_goals"]), float(r["survived_s"]) / 3600.0]
 
+# S16 aislado: la replica del bug de Kael (latas + hacha, hambre letal).
+# Se invoca desde run() o directo con --only-s16 para iterar rapido.
+func _s16() -> void:
+	# ---- S16: lata cerrada + hacha — la cena en la mochila ----
+	# El bug real de Kael: con hambre letal, dos latas y un hacha el bot
+	# forrajeaba en bucle y moria sin abrir nunca la comida que llevaba.
+	print("S16: lata cerrada con abrelatas")
+	var env := _new_world(21.0)
+	var w = env["world"]
+	var mgr = env["mgr"]
+	# Madrugada: la mecanica a probar (abrir y comer la lata) ocurre en
+	# minutos — una noche entera solo mediria el drenaje generico.
+	(env["dc"] as FakeDayCycle).time_of_day = 5.3
+	var b = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 20.0, "thirst": 85.0, "sleep": 70.0,
+		"inventory": [
+			{"name": "Lata de guiso", "type": "food", "weight": 0.5, "quantity": 6, "use_value": 0.0},
+			{"name": "Lata de atun", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 8, "use_value": 45.0},
+			{"name": "Hacha", "type": "tool_axe", "weight": 1.5, "quantity": 1, "use_value": 0.0}]})
+	var reps := simulate(env, [b])
+	print(_report_line(reps[0], b))
+	var st16: SurvivalStats = b["vstats"]
+	var inv16 := _inv_totals(b)
+	check(not st16.dead, "S16 sobrevive abriendo su propia lata")
+	check(st16.hunger > 25.0, "S16 comio de la lata abierta (hambre %.0f)" % st16.hunger)
+	check(float(inv16.get("Lata de guiso", 0.0)) < 1.0 or float(inv16.get("Lata de atun", 0.0)) < 1.0,
+		"S16 abrio al menos una lata (inv=%s)" % str(inv16))
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
+	if "--only-s16" in OS.get_cmdline_args():
+		_s16()
+		print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
+		quit(1 if failures else 0)
+		return
 
 	# ---- S1: refugio + comida + agua + fogata — la noche resuelta ----
 	# La noche del juego es hora real (~8.5 h): la despensa del refugio es la
@@ -915,6 +949,8 @@ func run() -> void:
 	check(int(reps[0]["acts"].get("warm_up", 0)) + int(reps[0]["acts"].get("cool_off", 0)) > 0,
 		"S15 el termostato regulo distancia de verdad (acts=%s)" % str(reps[0]["acts"]))
 	check(not st15.dead, "S15 sobrevive regulando por el lado libre")
+
+	_s16()
 
 	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures else 0)
