@@ -1749,15 +1749,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if bool(b.get("equip_mission", false)) and (b["_s_loot"] as Dictionary).is_empty():
 			b["equip_mission"] = false
 
-	# Luz nocturna con antorcha (se apaga si se está ocultando en su refugio)
 	var is_night := _is_world_night()
+	if not is_night:
+		b.erase("_velada_done") # velada nueva cada noche
 	if not _is_pre_night():
 		b["_prep_logged"] = false
 	_validate_shelter_claim(b)
 	_sync_team_base(b)
 	var sh_pos: Vector3 = b["shelter_pos"]
 	var hiding_in_shelter: bool = float(b["hide_timer"]) > 0.0 and sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 2.6
-	b["torch_lit"] = is_night and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
+	# Luz nocturna con antorcha — o antorcha de rescate cuando se esta
+	# helando: de dia tambien da calor real (ver _bot_survival_tick).
+	b["torch_lit"] = (is_night or _bot_is_freezing(b)) and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
 	proxy.set_meta("in_built_shelter", _bot_at_own_built_shelter(b, proxy.global_position))
 	proxy.set_meta("crouching", bool(b.get("crouching", false)))
@@ -2389,6 +2392,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# noche: llega con luz, enciende la fogata, ordena el alijo y queda a
 	# resguardo — en el llano de la banda estan todos a tiro de ayuda.
 	var pre_night_home := _is_pre_night() and has_built_sh and not desperate_needs and not starving_or_parched
+	# Rescate por frio: antes de caminar a ciegas al refugio mas cercano, el
+	# helado intenta hacerse calor donde esta — acercarse a un fuego ya
+	# encendido, montar la fogata de emergencia con su material o salir a
+	# por los palos/piedras que faltan. Solo si nada sirve cae a la marcha.
+	if _bot_try_cold_rescue(b, delta):
+		return
 	# Sueño letal (<=4, ya drena vida): la siesta de emergencia entra aunque
 	# haya hambre/sed — sin despensa que saquear, seguir despierto es morir
 	# de pie; dormir recupera sueño y frena tambien el desgaste de hambre.
@@ -12057,6 +12066,12 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 			var wf2: float = 1.0 - sqrt(dist_sq2) / 2.0
 			st.apply_external_heat(wf2 * 1.5 * delta, 37.5)
 			st.wetness = maxf(0.0, st.wetness - wf2 * 0.02 * delta)
+	# La antorcha en la mano calienta y seca igual que la del jugador
+	# (PlayerController: delta*1.5 a techo 37.5 y wetness -0.03/s) — para el
+	# bot torch_lit ES la llama; sin esto una antorcha encendida era solo luz.
+	if bool(b.get("torch_lit", false)) and _bot_has_item(proxy, "Antorcha"):
+		st.apply_external_heat(1.5 * delta, 37.5)
+		st.wetness = maxf(0.0, st.wetness - 0.03 * delta)
 
 	var sleeping := bool(b.get("sleeping", false))
 	var anim_now := str(b["anim"])
@@ -12299,15 +12314,19 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	# La velada: anochecio pero aun no es su hora de acostarse — como una
 	# persona, sigue haciendo vida de campamento (fuego, comida, crafteo,
 	# charla) en vez de tumbarse al caer el sol. Agotamiento, colapso o
-	# necesidades urgentes acuestan antes; y sin luz propia, fuego cercano
-	# ni techo no hay velada posible — dormir a oscuras sigue ganando.
+	# necesidades urgentes acuestan antes; sin luz propia, fuego cercano
+	# ni techo no hay velada posible — dormir a oscuras sigue ganando. Y
+	# solo velan los descansados: con el deposito por debajo de ~58 el
+	# cansado se acuesta al anochecer, que amanecer sin dormir mata.
 	if is_night and not collapse and not exhausted \
 			and world != null and world.get("day_cycle") != null \
-			and not _bot_needs_food_or_water(b) and st.sleep > 45.0 \
+			and not bool(b.get("_velada_done", false)) \
+			and not _bot_needs_food_or_water(b) and st.sleep > 58.0 \
 			and _world_time_of_day() < _bot_bedtime_hour(b) \
 			and (_bot_has_item(proxy, "Antorcha") \
 				or _is_near_any_lit_campfire(proxy.global_position, 14.0) \
 				or _bot_is_sheltered(b, proxy.global_position)):
+		b["_sleep_veto"] = "velada"
 		return false
 	# Colapso por agotamiento letal: con el sueno al borde de la muerte el
 	# cuerpo se apaga — se desploma donde este si conserva reservas para
@@ -12333,20 +12352,28 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 		if _bot_needs_food_or_water(b) \
 				and (not is_night or (hungry_s and _bot_has_edible_food(proxy, true)) or (thirsty_s and _bot_has_drink(proxy)) or _bot_has_item(proxy, "Antorcha") \
 					or float(b.get("hunger", 100.0)) <= 5.0 or float(b.get("thirst", 100.0)) <= 5.0):
+			b["_sleep_veto"] = "needs"
 			return false
 		# A la intemperie con frio peligroso no se duerme; bajo techo si —
 		# dentro se calienta durmiendo. El colapso pasa siempre (mejor
 		# inconsciente que muerto de pie).
 		if (st.body_temperature < 35.4 and not _bot_is_sheltered(b, proxy.global_position)) \
 				or st.body_temperature > 38.4:
+			b["_sleep_veto"] = "temp"
 			return false
 	if st.sleep >= 99.0 and st.energy >= 98.0:
+		b["_sleep_veto"] = "full"
 		return false # sueño y energia al tope: queda sentado (donde recupera vida)
+	b.erase("_sleep_veto")
 	b["sleeping"] = true
 	b["sitting"] = false
 	b["crouching"] = false
 	b["prone"] = false
 	b["anim"] = "sleep"
+	# Ya durmio esta noche: la velada cumplio — si despierta de guardia o
+	# por una necesidad puede volver a la cama sin nueva sobremesa.
+	if is_night:
+		b["_velada_done"] = true
 	# Las buenas noches a quienes hay cerca — un superviviente se despide al
 	# acostarse. El colapso letal no charla: el cuerpo se apaga, no se despide.
 	if is_night and not collapse:
@@ -12473,6 +12500,11 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 			b["_night_emergency_origin"] = proxy.global_position
 		return false
 	b.erase("_night_emergency_origin")
+	# Un helado sin luz no se conforma con dormir a la intemperie ni con la
+	# caminata a casa: primero el rescate — fogata encendida al alcance,
+	# fuego de emergencia con su material o la salida por lena/piedras.
+	if _bot_try_cold_rescue(b, delta):
+		return true
 	# Sin luz ni material para hacerla: la unica caminata a oscuras
 	# permitida es volver a casa — el refugio propio o la fogata encendida
 	# mas cercana. Peor que estar sin luz es estar sin luz en mitad del
@@ -17238,7 +17270,44 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 			return true
 	return false
 
-func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
+# Rescate por frio — el helado se salva con lo que tiene a mano, igual que
+# el jugador que enciende una fogata de emergencia en vez de morir caminando
+# a casa. Cadena: fuego ya encendido al alcance -> correr a su anillo;
+# material en la mochila -> montar la fogata aqui mismo (no en el campamento
+# a medio mapa); sin material -> salida acotada por los 2 palos/2 piedras.
+# Devuelve false cuando nada de eso sirve y entonces el bloque de refugio
+# manda la marcha al calor/refugio mas cercano del mapa.
+func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not _bot_is_freezing(b) or bool(b.get("sleeping", false)):
+		return false
+	# Calor real al alcance: correr al anillo caliente, no inventar otro fuego.
+	var lit_pos := _nearest_lit_campfire_pos(proxy.global_position, 40.0, b)
+	if lit_pos != Vector3.INF:
+		var spot := _bot_fire_safe_spot(lit_pos, lit_pos.y, b)
+		b["sitting"] = false
+		b["crouching"] = false
+		_move_bot_towards(b, spot, 5.8, delta, "run")
+		b["_act"] = "fire_rescue"
+		return true
+	# Material a mano: la fogata se monta donde esta — ni en el agua ni donde
+	# ya arde otra (eso lo cubre la rama de arriba).
+	if _bot_item_count(proxy, "Palo") >= 2 and _bot_item_count(proxy, "Piedra") >= 2:
+		var depth := 0.0
+		if world != null and world.has_method("get_river_depth_at"):
+			depth = float(world.get_river_depth_at(proxy.global_position))
+		if depth <= 0.05:
+			_bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9))
+			b["_act"] = "fire_rescue"
+			return true
+	# Sin material: recoger la lena y las piedras del fuego ES el rescate —
+	# el veto a recoger helandose queda para expediciones, no para salvarse.
+	if _bot_try_gather_mats(b, delta, true):
+		b["_act"] = "fire_rescue"
+		return true
+	return false
+
+func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var palo_need := 0
 	if str(b["shelter_id"]).is_empty():
@@ -17277,15 +17346,24 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 		palo_need = 1 + (2 if str(b["campfire_id"]).is_empty() else 0)
 		piedra_need = 2 if str(b["campfire_id"]).is_empty() else 0
 		seeds_need = false
+	# Rescate por frio: el helado SOLO sale por lo que falta para la fogata
+	# de emergencia — ni los 11 palos del refugio ni el huerto. Recoger la
+	# lena del fuego que le salva la vida ES el rescate, no una expedicion.
+	var freezing_rescue := fire_rescue and _bot_is_freezing(b)
+	if freezing_rescue:
+		palo_need = 2
+		piedra_need = 2
+		seeds_need = false
 	var palo_short := _bot_palo_supply(proxy, tool) < palo_need
 	var piedra_short := _bot_item_count(proxy, "Piedra") < piedra_need
 	# Escondido, agotado, helandose o reclutado no sale a recoger: descansar,
 	# calentarse, las ordenes del lider y la amenaza van primero. El seguidor
-	# solo se exime cuando su salida es el punado de palos/piedras del fuego.
+	# solo se exime cuando su salida es el punado de palos/piedras del fuego —
+	# y el helado solo cuando esa salida es su fogata de rescate.
 	var allowed := (((palo_short or seeds_need) and not tool.is_empty()) or piedra_short) \
 			and float(b.get("hide_timer", 0.0)) <= 0.0 \
 			and not _bot_is_exhausted(b) \
-			and not _bot_is_freezing(b) \
+			and (not _bot_is_freezing(b) or freezing_rescue) \
 			and (_sensed_node(b, "_s_leader") == null or (palo_need <= 3 and piedra_need <= 2))
 	var st0: Dictionary = b.get("_gather", {})
 	if not allowed:
@@ -17342,7 +17420,10 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 	if float(b["_gather_scan"]) > 0.0:
 		return false
 	b["_gather_scan"] = 1.4 + fmod(float(int(b["bot_id"])) * 0.29, 0.6)
-	var target := _find_mat_target(b, 24.0 if night_no_light else 80.0, tool, palo_short, piedra_short, seeds_need)
+	var scan_radius := 24.0 if night_no_light else 80.0
+	if freezing_rescue:
+		scan_radius = 120.0
+	var target := _find_mat_target(b, scan_radius, tool, palo_short, piedra_short, seeds_need)
 	if target.is_empty():
 		return false
 	if world != null and "_pickup_claims" in world:
@@ -17356,7 +17437,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float) -> bool:
 		record_bot_event(int(b["bot_id"]), "night_prep", "self", _poi_kind_near(proxy.global_position), proxy.global_position,
 			"junta fuego/luz: " + str(target.get("kind", "fell_bush")))
 	b["_gather"] = target
-	return _bot_try_gather_mats(b, 0.0)
+	return _bot_try_gather_mats(b, 0.0, fire_rescue)
 
 # Nodo de recoleccion mas conveniente segun lo que falta: arbustos a talar
 # (filo, 5 s, 3 palos + semillas), troncos aprovechables (filo para luego

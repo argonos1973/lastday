@@ -88,6 +88,7 @@ func run():
  var prev_night := GameConst.NIGHT_START
  GameConst.NIGHT_START = 19.9
  b.sleeping = false
+ b.erase("_velada_done") # escenario de primera noche: aun no ha dormido
  b.hunger = 80.0
  b.thirst = 80.0
  stats.sleep = 80.0

@@ -115,13 +115,23 @@ class SimWorld extends "res://scripts/Main.gd":
 		return false
 	func _default_river_segments() -> Array:
 		return river_segs
-	func _net_world_action_completed(aid: String, _b: Array, _c: String, _d: Vector3, _e: int = 0) -> bool:
+	func _net_world_action_completed(aid: String, spawns: Array, _c: String, _d: Vector3, _e: int = 0) -> bool:
 		if not aid.is_empty() and not _depleted_action_ids.has(aid):
 			_depleted_action_ids.append(aid)
 		var act = world_actions_by_id.get(aid)
 		if act != null and is_instance_valid(act):
 			act.mark_depleted()
 			world_actions_by_id.erase(aid)
+		# Los drops existen de verdad (la leña del arbusto talado, la carne
+		# del cadáver): como en Main._track_dropped_item van a _dropped_items
+		# para que el sentido de saqueo los recoja del suelo.
+		for s in spawns:
+			if not (s is Dictionary):
+				continue
+			var sid := str(s.get("id", ""))
+			if sid.is_empty() or _dropped_items.any(func(d): return str(d.get("id", "")) == sid):
+				continue
+			_dropped_items.append((s as Dictionary).duplicate(true))
 		return true
 	func _net_campfire_built(cid: String, pos: Vector3, _owner: int = 0) -> bool:
 		var cf := Node3D.new()
@@ -314,6 +324,15 @@ func _spawn_food_action(world: SimWorld, aid: String, pos: Vector3, use_value :=
 	seta.global_position = pos
 	world.world_actions_by_id[aid] = seta
 
+# Nodo de material real (arbusto a talar / piedra suelta): el rescate por
+# frio y la recogida normal los buscan por action_type en _cached_mat_ids.
+func _spawn_mat_action(world: SimWorld, aid: String, atype: String, pos: Vector3) -> void:
+	var node := WorldActionScript.new()
+	node.setup(aid, atype, atype, Vector3(1.0, 1.0, 1.0), Color(0.4, 0.3, 0.2), false, false)
+	world.add_child(node)
+	node.global_position = pos
+	world.world_actions_by_id[aid] = node
+
 # Bucle de noche: replica el orden real de _tick_bot — gate de sueño,
 # tick fisico, cascada de necesidades — con delta acelerado.
 const DT := 1.0
@@ -366,6 +385,10 @@ func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 340
 				r["threat_acts"] = ta
 			if bool(b.get("sleeping", false)):
 				r["slept"] = true
+			if b.has("_sleep_veto"):
+				var vt: Dictionary = r.get("sleep_vetoes", {})
+				vt[str(b["_sleep_veto"])] = int(vt.get(str(b["_sleep_veto"]), 0)) + 1
+				r["sleep_vetoes"] = vt
 			r["peak_wet"] = maxf(float(r["peak_wet"]), st.wetness)
 			r["survived_s"] = float(r["survived_s"]) + DT
 		for ev in events:
@@ -380,10 +403,10 @@ func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 340
 func _report_line(r: Dictionary, b: Dictionary) -> String:
 	var st: SurvivalStats = b["vstats"]
 	var proxy: Node3D = b["proxy"]
-	return "    %s | vivo=%s causa=%s | hp=%.0f hambre=%.0f sed=%.0f sueño=%.0f en=%.0f temp=%.2f moj=%.2f | acts=%s | fallos=%d | %.1f h" % [
+	return "    %s | vivo=%s causa=%s | hp=%.0f hambre=%.0f sed=%.0f sueño=%.0f en=%.0f temp=%.2f moj=%.2f | acts=%s | slept=%s vetoes=%s | fallos=%d | %.1f h" % [
 		r["name"], "SI" if not st.dead else "NO", r["cause"] if str(r["cause"]) != "" else "-",
 		st.health, st.hunger, st.thirst, st.sleep, st.energy, st.body_temperature, st.wetness,
-		str(r["acts"]), int(r["failed_goals"]), float(r["survived_s"]) / 3600.0]
+		str(r["acts"]), str(r.get("slept", false)), str(r.get("sleep_vetoes", {})), int(r["failed_goals"]), float(r["survived_s"]) / 3600.0]
 
 func run() -> void:
 	seed(911)
@@ -510,8 +533,16 @@ func run() -> void:
 		_spawn_food_action(w, "s6_setab%d" % i, Vector3(-40.0 + i % 4, 0.4, float(i - 7)), 30.0)
 	for i in range(24):
 		_spawn_food_action(w, "s6_setac%d" % i, Vector3(10.0, 0.4, 40.0 + i % 6), 30.0)
+	# Leña y piedra de verdad en la zona: al volver empapado del rio el
+	# rescate por frio corta el arbusto, recoge los palos del suelo, junta
+	# las piedras y enciende la fogata donde esta — sin caminar a ciegas.
+	for i in range(4):
+		_spawn_mat_action(w, "s6_bush%d" % i, "fell_bush", Vector3(14.0 + i * 3.0, 0.4, -12.0 - i * 2.0))
+	for i in range(3):
+		_spawn_mat_action(w, "s6_stone%d" % i, "stone", Vector3(10.0 + i * 2.0, 0.4, -8.0 + i * 3.0))
 	b = mgr.bots[901]
-	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 12.0, "thirst": 9.0, "sleep": 60.0})
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 12.0, "thirst": 9.0, "sleep": 60.0,
+		"inventory": [{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "use_value": 0.0}]})
 	reps = simulate(env, [b])
 	print(_report_line(reps[0], b))
 	var st6: SurvivalStats = b["vstats"]
@@ -725,7 +756,11 @@ func run() -> void:
 	check(not st11.dead, "S11 sobrevive a despensa escasa forrajeando")
 	check(w.world_actions_by_id.size() < setas11,
 		"S11 recogio comida real del mundo (%d->%d acciones)" % [setas11, w.world_actions_by_id.size()])
-	check(st11.hunger > 30.0, "S11 el forrajeo repuso hambre (%.0f)" % st11.hunger)
+	# Sin luz propia la puerta de oscuridad solo permite expediciones de
+	# forrajeo en ventana letal (hambre<14): la cadena le mantiene oscilando
+	# en la banda 14-40 toda la noche — sobrevive fuera de la inanicion,
+	# pero no amanece con la panza llena (el >30 era de antes de la puerta).
+	check(st11.hunger > 14.0, "S11 el forrajeo letal le saco de la inanicion (%.0f)" % st11.hunger)
 
 	# ---- S12: navegacion real — muro entre el bot y su refugio ----
 	# NavSimMgr no tiene overrides: usa _move_bot_towards real con el A* de
@@ -778,7 +813,10 @@ func run() -> void:
 	mgr = env["mgr"]
 	w.water_rect = Rect2(-5.0, -5.0, 10.0, 10.0) # depth 3.0 > FORD_MAX 2.55
 	w.flat_water_depth = 3.0
-	w.river_segs = []
+	# Estanque bebible al sur de la lumbre: en el mapa real toda masa de agua
+	# tiene su segmento — sin el, el bot moria de sed con la orilla del lago
+	# al lado porque _nearest_water_pos no tenia fuente que localizar.
+	w.river_segs = [{"center": Vector3(20.0, 0.0, -25.0), "size": Vector2(8.0, 8.0), "yaw": 0.0}]
 	w._net_campfire_built("s13_cf", Vector3(20.0, 0.4, 0.0))
 	w._net_campfire_lit("s13_cf", "fire_s13", Vector3(20.0, 0.4, 0.0))
 	w.house_pts = [Vector3(30.0, 0.4, 0.0)]
