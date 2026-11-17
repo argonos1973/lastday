@@ -59,20 +59,24 @@ static func travel_cost(dist_m: float, energy: float, hunger: float, thirst: flo
 	return c * minf(frail, 2.2)
 
 # Probabilidad de amenaza en la zona combinando evidencias legítimas sin
-# omnisciencia. Dos fuentes independientes se fusionan con noisy-OR
+# omnisciencia. Tres fuentes independientes se fusionan con noisy-OR
 # (1−∏(1−p)) — evita contar dos veces pistas correlacionadas:
 #   · _foe_mem: la última posición conocida del enemigo, con conf por fuente
 #     (seen 1.0 / heard 0.3-0.65 / told 0.15-0.8) y decaimiento exponencial
 #     por antigüedad — información vieja pierde influencia.
-#   · combat_risk de la zona (memoria known_locations): prior de antecedentes.
-static func threat_posterior(foe_mem: Dictionary, now_ms: int, zone_combat_risk: float) -> float:
+#   · combat_risk de la zona (memoria known_locations): prior de antecedentes
+#     de peleas contra supervivientes.
+#   · risk ambiental de la zona (depredadores/terreno): prior más débil —
+#     una zona de lobos no es un tirador, pero tampoco es paseo.
+static func threat_posterior(foe_mem: Dictionary, now_ms: int, zone_combat_risk: float, zone_env_risk: float = 0.0) -> float:
 	var p_obs := 0.0
 	if not foe_mem.is_empty():
 		var age_ms := float(maxi(0, now_ms - int(foe_mem.get("t", now_ms))))
 		var decay := pow(0.5, age_ms / FOE_HALF_LIFE_MS)
 		p_obs = clampf(float(foe_mem.get("conf", 0.0)) * decay, 0.0, 1.0)
 	var p_zone := clampf(zone_combat_risk / 3.0 * 0.6, 0.0, ZONE_RISK_CAP)
-	return clampf(1.0 - (1.0 - p_obs) * (1.0 - p_zone), 0.0, 1.0)
+	var p_env := clampf(zone_env_risk / 3.0 * 0.35, 0.0, 0.30)
+	return clampf(1.0 - (1.0 - p_obs) * (1.0 - p_zone) * (1.0 - p_env), 0.0, 1.0)
 
 # Riesgo de combate estimado de una presa según el arma elegida: con arma de
 # fuego municionada la presa muere lejos; arco lo intenta; solo cuerpo a

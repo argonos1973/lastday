@@ -112,6 +112,18 @@ func run():
  manager.test_weapon = "bow"
  var d6 := manager.decide_situational_action(b6, {})
  check(not str(d6.get("action","")).is_empty(), "EU: decides with world==null (no remote dependency)")
+ # --- 13. Coste de desplazamiento: el cuerpo agotado paga mas por viajar ---
+ var b8 := _mk_b()
+ manager.decide_situational_action(b8, {})
+ var c_fresh := float(((b8.get("_utility_last",{}) as Dictionary).get("explore",{}) as Dictionary).get("c", 0.0))
+ b8["energy"] = 8.0; b8["hunger"] = 25.0; b8["thirst"] = 20.0
+ manager.decide_situational_action(b8, {})
+ var c_tired := float(((b8.get("_utility_last",{}) as Dictionary).get("explore",{}) as Dictionary).get("c", 0.0))
+ check(c_tired > c_fresh, "EU: exhausted+empty pack pays more for travel (%.2f vs %.2f)" % [c_tired, c_fresh])
+ # --- 14. Tercera evidencia: zona con antecedentes de fauna suma amenaza ---
+ var p_base := BotUtilityAI.threat_posterior({}, now_ms, 0.0)
+ var p_env := BotUtilityAI.threat_posterior({}, now_ms, 0.0, 3.0)
+ check(p_env > p_base and p_env < 0.35, "EU: predator history adds a weak env prior (%.2f)" % p_env)
  # --- Comparativa de motores: misma situacion, ambos caminos validos ---
  var b7 := _mk_b(); b7["hunger"] = 12.0
  var eu_d := manager.decide_situational_action(b7, {})

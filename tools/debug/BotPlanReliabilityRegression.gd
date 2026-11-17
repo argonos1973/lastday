@@ -113,7 +113,7 @@ func run() -> void:
 	mgr.memory_path = mem_path
 	mgr.setup(world)
 
-	check(mgr.bots.size() == 3, "Se crean los 3 bots")
+	check(mgr.bots.size() == mgr.BOT_CONFIGS.size(), "Se crean los %d bots (hay %d)" % [mgr.BOT_CONFIGS.size(), mgr.bots.size()])
 	var carlos: Dictionary = mgr.bots[902]
 	var cmem: Dictionary = mgr._ensure_bot_memory(902)
 
@@ -201,7 +201,11 @@ func run() -> void:
 	carlos["hunger"] = 100.0
 	carlos["health"] = 90.0
 	carlos["ai_directive"] = {"goal": "eat", "action": "forage", "mode": "food", "until": Time.get_ticks_msec() + 60000}
-	_poll_until(mgr, 902)
+	# Una sola pasada exacta sobre Carlos (ids ordenados, rr+1 -> ids[1]=902):
+	# con mas polls el plan de respaldo completaria otro paso y el marcador
+	# cambiaria legitimo a step_completed.
+	mgr._ai_rr = 0
+	mgr._ai_sig_poll(Time.get_ticks_msec())
 	var strats1: Dictionary = cmem.get("strategies", {})
 	check(strats1.has("forage") and int((strats1["forage"] as Dictionary).get("success", 0)) >= 1,
 		"Plan 'forage' completado suma exito a su estrategia")
@@ -389,8 +393,10 @@ func run() -> void:
 		"El paso 1 quedo registrado como iniciado")
 	# Paso 1 cumple de verdad (botin recogido) -> avanza al paso 2
 	mgr._ai_note_loot(carlos, "Chaleco", "gear")
-	mgr._ai_sig_poll(Time.get_ticks_msec())
-	mgr._ai_sig_poll(Time.get_ticks_msec())
+	# Una sola pasada exacta sobre Carlos (rr=0 -> ids[1]=902): el avance del
+	# plan ocurre en su primer sondeo; mas pasadas podrian completar el
+	# siguiente subobjetivo y mover el marcador legitimo.
+	mgr._ai_rr = 0
 	mgr._ai_sig_poll(Time.get_ticks_msec())
 	var strats_sc: Dictionary = cmem.get("strategies", {})
 	check(strats_sc.has("scavenge") and int((strats_sc["scavenge"] as Dictionary).get("success", 0)) >= 1,

@@ -14450,10 +14450,11 @@ func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_pr
 	var strats: Dictionary = mem.get("strategies", {})
 	var aversion := BotUtilityAI.risk_aversion(pers)
 	var energy := float(b.get("energy", 80.0))
-	var hp := float(b.get("health", 100.0))
 	# Amenaza estimada con evidencias legítimas: ultima posicion conocida del
-	# enemigo (decae con el tiempo) + antecedentes de combate de la zona.
-	var threat_p := BotUtilityAI.threat_posterior(b.get("_foe_mem", {}), Time.get_ticks_msec(), _eu_zone_combat_risk(b))
+	# enemigo (decae con el tiempo) + antecedentes de la zona (combate y fauna).
+	var zr := _eu_zone_risks(b)
+	var threat_p := BotUtilityAI.threat_posterior(b.get("_foe_mem", {}), Time.get_ticks_msec(),
+		float(zr.get("combat", 0.0)), float(zr.get("env", 0.0)))
 	# Perfil de caza segun el arma REAL utilizable (los secos no cuentan): sin
 	# municion ni arco cazar es casi siempre perdida — baja p, sube riesgo.
 	var hunt_prof := {"p": 0.35, "risk": 0.45}
@@ -14463,12 +14464,29 @@ func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_pr
 		var kind := str(pick.get("kind", "melee"))
 		# thrown/bola: armas arrojadizas de caza — perfil de arco (alcance, no fuego)
 		hunt_prof = BotUtilityAI.hunt_weapon_profile("bow" if kind in ["bow", "thrown", "bola"] else kind)
-	# Coste por esfuerzo + recargo si el cuerpo ya no acompaña: un bot agotado
-	# o herido paga mas por las acciones que exigen moverse.
-	var travel_acts := ["forage", "hunt", "scavenge", "explore", "seek_ally"]
-	var frail := 0.25 if energy < 30.0 or hp < 45.0 else 0.0
-	var act_cost := {"forage": 0.20, "hunt": 0.45, "fortify_camp": 0.30, "scavenge": 0.55,
-		"explore": 0.50, "rest": 0.10, "seek_ally": 0.40}
+	# Coste = esfuerzo base + desplazamiento real estimado al destino de cada
+	# accion (POIs conocidos, hogar, aliado), encarecido si el cuerpo no puede
+	# o la mochila va vacia — un destino lejano sin provisiones no se paga.
+	var hunger := float(b.get("hunger", 90.0))
+	var thirst := float(b.get("thirst", 90.0))
+	var has_sup := proxy != null and is_instance_valid(proxy) \
+		and (_bot_has_drink(proxy) or _bot_has_edible_food(proxy, false))
+	var ally_pos := _nearest_friendly_bot_pos(int(b.get("bot_id", 0)))
+	var home: Vector3 = b.get("shelter_pos", Vector3.INF)
+	if home == Vector3.INF:
+		home = b.get("camp_spot", Vector3.INF)
+	var kd := _eu_kind_dists(b)
+	var act_dist := {
+		"forage": float(kd.get("wild", 60.0)),
+		"hunt": float(kd.get("wild", 80.0)) + 30.0,
+		"fortify_camp": _eu_home_dist(proxy, home),
+		"scavenge": minf(float(kd.get("military", 1e9)), minf(float(kd.get("city", 1e9)), float(kd.get("house", 1e9)))) if kd.has("military") or kd.has("city") or kd.has("house") else 120.0,
+		"explore": float(kd.get("_unvisited", 150.0)),
+		"rest": _eu_home_dist(proxy, home),
+		"seek_ally": (proxy as Node3D).global_position.distance_to(ally_pos) if ally_pos != Vector3.INF and proxy != null and is_instance_valid(proxy) else 0.0,
+	}
+	var act_effort := {"forage": 0.10, "hunt": 0.15, "fortify_camp": 0.15, "scavenge": 0.10,
+		"explore": 0.10, "rest": 0.05, "seek_ally": 0.10}
 	var act_risk := {"forage": 0.12 + threat_p * 0.20, "hunt": float(hunt_prof["risk"]),
 		"fortify_camp": 0.05, "scavenge": 0.30 + threat_p * 0.30,
 		"explore": 0.20 + threat_p * 0.35, "rest": 0.35 if threat_present else 0.05,
@@ -14492,8 +14510,8 @@ func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_pr
 	# compite. Descansar/fortificar necesita refugio o campamento; buscar
 	# aliado necesita un aliado real al que ir — la directiva iria a ninguna
 	# parte y el rescate la convertiria en explore de todos modos.
-	var has_home: bool = b.get("shelter_pos", Vector3.INF) != Vector3.INF or b.get("camp_spot", Vector3.INF) != Vector3.INF
-	var has_ally: bool = _nearest_friendly_bot_pos(int(b.get("bot_id", 0))) != Vector3.INF
+	var has_home: bool = home != Vector3.INF
+	var has_ally: bool = ally_pos != Vector3.INF
 	var scores := {}
 	var detail := {}
 	for act in benefits.keys():
@@ -14506,7 +14524,8 @@ func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_pr
 			int(st.get("fail", 0)) + int(fail_n.get(act, 0)))
 		if act == "hunt":
 			p = minf(p, float(hunt_prof["p"]))
-		var c := float(act_cost.get(act, 0.3)) + (frail if travel_acts.has(act) else 0.0)
+		var c := float(act_effort.get(act, 0.10)) + BotUtilityAI.travel_cost(
+			float(act_dist.get(act, 80.0)), energy, hunger, thirst, has_sup)
 		var r := float(act_risk.get(act, 0.1))
 		var u := BotUtilityAI.expected_utility(float(benefits[act]), p, c, r, aversion)
 		scores[act] = u
@@ -14515,16 +14534,17 @@ func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_pr
 	b["_utility_last"] = detail
 	return scores
 
-# Antecedentes de combate en la zona actual del bot (known_locations): prior
-# para el posterior de amenaza — memoria propia, no omnisciencia.
-func _eu_zone_combat_risk(b: Dictionary) -> float:
+# Antecedentes en la zona actual del bot (known_locations): combate contra
+# supervivientes + riesgo ambiental (depredadores/terreno) — priors del
+# posterior de amenaza. Memoria propia, no omnisciencia.
+func _eu_zone_risks(b: Dictionary) -> Dictionary:
+	var out := {"combat": 0.0, "env": 0.0}
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
-		return 0.0
+		return out
 	var mem: Dictionary = b.get("_mem", {})
 	var known: Dictionary = mem.get("known_locations", {})
 	var pos := proxy.global_position
-	var best_cr := 0.0
 	var best_d := 65.0
 	for pid in known.keys():
 		var loc: Dictionary = known[pid]
@@ -14536,8 +14556,35 @@ func _eu_zone_combat_risk(b: Dictionary) -> float:
 		var d := Vector2(float((lp as Array)[0]) - pos.x, float((lp as Array)[2]) - pos.z).length()
 		if d < best_d:
 			best_d = d
-			best_cr = float(loc.get("combat_risk", 0.0))
-	return best_cr
+			out["combat"] = float(loc.get("combat_risk", 0.0))
+			out["env"] = float(loc.get("risk", 0.0))
+	return out
+
+# Distancia al hogar del bot (refugio o campamento) para costear descansar/
+# fortificar: 0 si esta ahi, INF si no tiene — la mascara lo filtra antes.
+func _eu_home_dist(proxy: Node3D, home: Vector3) -> float:
+	if home == Vector3.INF or proxy == null or not is_instance_valid(proxy):
+		return 0.0
+	return (proxy as Node3D).global_position.distance_to(home)
+
+# Una pasada sobre los POIs: distancia minima por tipo y al no-visitado mas
+# cercano — estimaciones de desplazamiento por accion para travel_cost.
+func _eu_kind_dists(b: Dictionary) -> Dictionary:
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return {}
+	var pos := proxy.global_position
+	var visited: Array = (b.get("_mem", {}) as Dictionary).get("visited", [])
+	var out := {}
+	for p in _explore_pois():
+		var pp: Vector3 = p["pos"]
+		var d := Vector2(pp.x - pos.x, pp.z - pos.z).length()
+		var kind := str(p.get("kind", "wild"))
+		if d < float(out.get(kind, 1e9)):
+			out[kind] = d
+		if not visited.has(_poi_id(p)) and d < float(out.get("_unvisited", 1e9)):
+			out["_unvisited"] = d
+	return out
 
 # Autoridad exclusiva del servidor: un cliente conectado jamás consulta Groq.
 func _ai_can_query_remote() -> bool:
