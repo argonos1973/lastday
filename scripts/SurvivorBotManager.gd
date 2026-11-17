@@ -254,6 +254,15 @@ const AI_MEMORY_MAX_SPOTS := 10
 const AI_MEMORY_MAX_EVENTS := 28
 const AI_OBSERVE_RADIUS := 72.0
 const AI_SHARE_RADIUS := 14.0
+# El intercambio de mapa entre aliados es gradual, como hablar de verdad:
+# hace falta un rato de convivencia para la primera tanda, cada encuentro
+# traspasa unas pocas ubicaciones (las que el compañero recomendaria: lo
+# visitado y lo peligroso) y hay pausa entre transmisiones. Un recien
+# llegado NO hereda el mapa entero — empieza de cero y aprende viviendo.
+const SHARE_MIN_CONTACT_SEC := 45.0
+const SHARE_COOLDOWN_SEC := 150.0
+const SHARE_MAX_LOCS := 4
+const SHARE_MAX_RELS := 3
 # Minimo de compromiso con un objetivo vivo: una revalidacion remota de igual
 # o menor prioridad no desbanca una directiva mas joven que esta ventana.
 const AI_DIRECTIVE_MIN_COMMIT_SEC := 300.0
@@ -1734,7 +1743,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["_s_raid_shelter"] = st_sh
 		_observe_nearby_world(b)
 		_tick_fauna_hearing(b)
-		_try_share_allied_knowledge(b)
+		_try_share_allied_knowledge(b, delta)
 		_bot_social_update(b)
 		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
 		if bool(b.get("equip_mission", false)) and (b["_s_loot"] as Dictionary).is_empty():
@@ -13802,7 +13811,7 @@ func _ai_prune_and_summarize_memories(mem: Dictionary) -> void:
 
 # Comunicación entre bots aliados cercanos (<=14 m): comparten ubicaciones
 # conocidas y avisos de peligro. Un bot hostil o lejano jamás recibe estos datos.
-func _try_share_allied_knowledge(b: Dictionary) -> void:
+func _try_share_allied_knowledge(b: Dictionary, dt: float) -> void:
 	var my_faction := str(b.get("faction", ""))
 	var proxy = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
@@ -13823,10 +13832,25 @@ func _try_share_allied_knowledge(b: Dictionary) -> void:
 		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
 			continue
 		if pos.distance_to((op as Node3D).global_position) <= AI_SHARE_RADIUS:
-			share_bot_knowledge(bid, oid)
+			# Compartir mapa exige convivencia real: el contacto cercano se
+			# acumula y la primera transmision tarda SHARE_MIN_CONTACT_SEC —
+			# un recien llegado no recibe nada por saludar.
+			var seen: Dictionary = b.get("_ally_seen", {})
+			var ct := float(seen.get(oid, 0.0)) + dt
+			seen[oid] = ct
+			b["_ally_seen"] = seen
+			if ct >= SHARE_MIN_CONTACT_SEC:
+				share_bot_knowledge(bid, oid)
 
 func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 	if bot_id_a == bot_id_b:
+		return 0
+	# Pausa por pareja: aunque sigan juntos, la conversacion es lenta —
+	# cada transmision (SHARE_MAX_LOCS sitios) separada SHARE_COOLDOWN_SEC.
+	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var ba_rt: Dictionary = bots.get(bot_id_a, {})
+	var cd_key := "_share_cd_%d" % bot_id_b
+	if float(ba_rt.get(cd_key, 0.0)) > now_s:
 		return 0
 	var mem_a := _ensure_bot_memory(bot_id_a)
 	var mem_b := _ensure_bot_memory(bot_id_b)
@@ -13835,45 +13859,20 @@ func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 	var in_same_team := bots.has(bot_id_a) and (bot_id_b in _bot_team_ids(bots[bot_id_a]))
 	if (fa != "friendly" or fb != "friendly") and not in_same_team:
 		return 0
+	ba_rt[cd_key] = now_s + SHARE_COOLDOWN_SEC
+	var bb_rt: Dictionary = bots.get(bot_id_b, {})
+	bb_rt["_share_cd_%d" % bot_id_a] = now_s + SHARE_COOLDOWN_SEC
 	var shared_count := 0
 	var ka: Dictionary = mem_a.get("known_locations", {})
 	var kb: Dictionary = mem_b.get("known_locations", {})
-	for loc_id in ka.keys():
-		var entry: Dictionary = ka[loc_id]
-		var merged_id := ""
-		if not kb.has(loc_id):
-			var ep = entry.get("pos", null)
-			if ep is Array and (ep as Array).size() >= 3:
-				merged_id = _loc_merge_into(kb, str(loc_id), Vector3(float(ep[0]), float(ep[1]), float(ep[2])))
-		if merged_id.is_empty() and not kb.has(loc_id):
-			var copy := entry.duplicate(true)
-			copy["source"] = "shared"
-			kb[loc_id] = copy
-			shared_count += 1
-		else:
-			var tid: String = merged_id if not merged_id.is_empty() else loc_id
-			kb[tid]["risk"] = maxf(float(kb[tid].get("risk", 0.0)), float(entry.get("risk", 0.0)))
-			kb[tid]["combat_risk"] = maxf(float(kb[tid].get("combat_risk", 0.0)), float(entry.get("combat_risk", 0.0)))
-			kb[tid]["visits"] = maxf(float(kb[tid].get("visits", 0)), float(entry.get("visits", 0)))
-			shared_count += 1
-	for loc_id2 in kb.keys():
-		var entry2: Dictionary = kb[loc_id2]
-		var merged2 := ""
-		if not ka.has(loc_id2):
-			var ep2 = entry2.get("pos", null)
-			if ep2 is Array and (ep2 as Array).size() >= 3:
-				merged2 = _loc_merge_into(ka, str(loc_id2), Vector3(float(ep2[0]), float(ep2[1]), float(ep2[2])))
-		if merged2.is_empty() and not ka.has(loc_id2):
-			var copy2 := entry2.duplicate(true)
-			copy2["source"] = "shared"
-			ka[loc_id2] = copy2
-			shared_count += 1
-		else:
-			var tid2: String = merged2 if not merged2.is_empty() else loc_id2
-			ka[tid2]["risk"] = maxf(float(ka[tid2].get("risk", 0.0)), float(entry2.get("risk", 0.0)))
-			ka[tid2]["combat_risk"] = maxf(float(ka[tid2].get("combat_risk", 0.0)), float(entry2.get("combat_risk", 0.0)))
-			ka[tid2]["visits"] = maxf(float(ka[tid2].get("visits", 0)), float(entry2.get("visits", 0)))
-			shared_count += 1
+	# Lo ya compartido solo se afina (riesgo/visitas de la interseccion);
+	# las ubicaciones nuevas traspasan SHARE_MAX_LOCS por transmision,
+	# elegidas por utilidad real: lo que el compañero piso, lo peligroso
+	# y lo cercano al receptor.
+	shared_count += _share_refine_intersection(ka, kb)
+	shared_count += _share_refine_intersection(kb, ka)
+	shared_count += _share_new_locations(ka, kb, _bot_pos_v(bot_id_b))
+	shared_count += _share_new_locations(kb, ka, _bot_pos_v(bot_id_a))
 	mem_a["known_locations"] = ka
 	mem_b["known_locations"] = kb
 	# Las advertencias tambien viajan: los aliados comparten quien mato a
@@ -13882,6 +13881,62 @@ func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 	_share_enemy_knowledge(mem_a, mem_b, _actor_persist_key(bot_id_b), _actor_persist_key(bot_id_a))
 	_share_enemy_knowledge(mem_b, mem_a, _actor_persist_key(bot_id_a), _actor_persist_key(bot_id_b))
 	return shared_count
+
+func _bot_pos_v(bot_id: int) -> Vector3:
+	var b: Dictionary = bots.get(bot_id, {})
+	var proxy = b.get("proxy")
+	if proxy != null and is_instance_valid(proxy):
+		return (proxy as Node3D).global_position
+	return b.get("pos", Vector3.INF)
+
+func _share_refine_intersection(ka: Dictionary, kb: Dictionary) -> int:
+	var n := 0
+	for loc_id in ka.keys():
+		if not kb.has(loc_id):
+			continue
+		var entry: Dictionary = ka[loc_id]
+		kb[loc_id]["risk"] = maxf(float(kb[loc_id].get("risk", 0.0)), float(entry.get("risk", 0.0)))
+		kb[loc_id]["combat_risk"] = maxf(float(kb[loc_id].get("combat_risk", 0.0)), float(entry.get("combat_risk", 0.0)))
+		kb[loc_id]["visits"] = maxf(float(kb[loc_id].get("visits", 0)), float(entry.get("visits", 0)))
+		n += 1
+	return n
+
+# Traspasa como mucho SHARE_MAX_LOCS ubicaciones nuevas por llamada, elegidas
+# por lo que el compañero contaria primero: sitios que el mismo piso (visits),
+# avisos de peligro (risk/combat_risk) y lo cercano al receptor.
+func _share_new_locations(ka: Dictionary, kb: Dictionary, recv_pos: Vector3) -> int:
+	var cands: Array = []
+	for loc_id in ka.keys():
+		if kb.has(loc_id):
+			continue
+		var entry: Dictionary = ka[loc_id]
+		var s := float(entry.get("visits", 0)) * 3.0 + (float(entry.get("risk", 0.0)) + float(entry.get("combat_risk", 0.0))) * 2.0
+		var ep = entry.get("pos", null)
+		if ep is Array and (ep as Array).size() >= 3 and recv_pos != Vector3.INF:
+			s -= Vector2(float(ep[0]) - recv_pos.x, float(ep[2]) - recv_pos.z).length() * 0.01
+		cands.append({"id": loc_id, "e": entry, "s": s})
+	cands.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["s"]) > float(b["s"]))
+	var moved := 0
+	for c in cands:
+		if moved >= SHARE_MAX_LOCS:
+			break
+		var loc_id := str(c["id"])
+		var entry: Dictionary = c["e"]
+		var merged_id := ""
+		var ep2 = entry.get("pos", null)
+		if ep2 is Array and (ep2 as Array).size() >= 3:
+			merged_id = _loc_merge_into(kb, loc_id, Vector3(float(ep2[0]), float(ep2[1]), float(ep2[2])))
+		if merged_id.is_empty() and not kb.has(loc_id):
+			var copy := entry.duplicate(true)
+			copy["source"] = "shared"
+			kb[loc_id] = copy
+			moved += 1
+		elif not merged_id.is_empty():
+			kb[merged_id]["risk"] = maxf(float(kb[merged_id].get("risk", 0.0)), float(entry.get("risk", 0.0)))
+			kb[merged_id]["combat_risk"] = maxf(float(kb[merged_id].get("combat_risk", 0.0)), float(entry.get("combat_risk", 0.0)))
+			kb[merged_id]["visits"] = maxf(float(kb[merged_id].get("visits", 0)), float(entry.get("visits", 0)))
+			moved += 1
+	return moved
 
 func _share_enemy_knowledge(mem_from: Dictionary, mem_to: Dictionary, to_key: String, from_key: String) -> void:
 	var killers_from: Dictionary = mem_from.get("killers", {})
@@ -13895,6 +13950,7 @@ func _share_enemy_knowledge(mem_from: Dictionary, mem_to: Dictionary, to_key: St
 	mem_to["killers"] = killers_to
 	var rels_from: Dictionary = mem_from.get("relationships", {})
 	var rels_to: Dictionary = mem_to.get("relationships", {})
+	var warns: Array = []
 	for k2 in rels_from.keys():
 		# Solo advertencias de TERCEROS: ni uno mismo ni el interlocutor —
 		# "temo a bot_903" no se le cuenta a bot_903 como rumor.
@@ -13905,6 +13961,13 @@ func _share_enemy_knowledge(mem_from: Dictionary, mem_to: Dictionary, to_key: St
 		var warn := int(rf.get("attacked", 0)) > 0 or float(rf.get("hostility", 0.0)) >= 0.4 or float(rf.get("fear", 0.0)) >= 0.5
 		if not warn:
 			continue
+		warns.append({"k": k2, "rf": rf, "s": int(rf.get("attacked", 0)) * 10.0 + float(rf.get("hostility", 0.0)) + float(rf.get("fear", 0.0))})
+	# Las advertencias tambien salen cuentagotas: SHARE_MAX_RELS por
+	# transmision, las mas graves primero.
+	warns.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["s"]) > float(b["s"]))
+	for c in warns.slice(0, SHARE_MAX_RELS):
+		var k2: String = str(c["k"])
+		var rf: Dictionary = c["rf"]
 		var rt: Dictionary = rels_to.get(k2, {})
 		# El rumor levanta desconfianza sin inventar la agresion: nunca supera
 		# la hostilidad que el receptor ya sufrio en carne propia. Y la propia

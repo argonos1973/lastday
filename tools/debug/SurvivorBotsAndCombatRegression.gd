@@ -3067,9 +3067,40 @@ func run() -> void:
 	check(mgr.bot_knows_event(901, "private_discovery", "Elena") and not mgr.bot_knows_event(902, "private_discovery", "Elena"),
 		"Aceptación 5b: Los recuerdos privados de Elena no existen en la memoria de Carlos")
 	# Cuando dos aliados (Elena 901 y Carlos 902) se comunican, comparten ubicaciones conocidas; Kael (hostil 903) sigue sin saberlo
+	# Aislamiento: la transmision es gradual (SHARE_MAX_LOCS por llamada), así que
+	# se reduce el mapa de Elena al búnker para probar el traspaso en sí.
+	var mem_901l := mgr._ensure_bot_memory(901)
+	var saved_locs: Dictionary = (mem_901l.get("known_locations", {}) as Dictionary).duplicate(true)
+	mem_901l["known_locations"] = {"secret_bunker:410:-390": (mem_901l["known_locations"] as Dictionary)["secret_bunker:410:-390"]}
+	elena["_share_cd_902"] = 0.0
+	carlos["_share_cd_901"] = 0.0
 	var shared_n := mgr.share_bot_knowledge(901, 902)
+	mem_901l["known_locations"] = saved_locs
 	check(shared_n > 0 and mgr.bot_knows_location(902, "secret_bunker:410:-390") and not mgr.bot_knows_location(903, "secret_bunker:410:-390"),
 		"Aceptación 5c: Tras comunicarse con su aliado, Carlos conoce la ubicación compartida pero el hostil Kael no")
+	# La misma pareja no vuelve a compartir hasta pasado el cooldown.
+	check(mgr.share_bot_knowledge(901, 902) == 0,
+		"Aceptación 5d: El cooldown por pareja frena un segundo volcado inmediato")
+	# Y aun con cooldown libre, una tanda nunca supera SHARE_MAX_LOCS sitios nuevos.
+	var mem_902l := mgr._ensure_bot_memory(902)
+	var saved_902: Dictionary = (mem_902l.get("known_locations", {}) as Dictionary).duplicate(true)
+	mem_902l["known_locations"] = {}
+	for i2 in 8:
+		mgr.observe_location(902, "bulk_%d" % i2, "camp", Vector3(300.0 + i2 * 200.0, 0.0, 300.0), "observed", true)
+	elena["_share_cd_902"] = 0.0
+	carlos["_share_cd_901"] = 0.0
+	mgr.share_bot_knowledge(902, 901)
+	var gained := 0
+	for i3 in 8:
+		if mgr.bot_knows_location(901, "bulk_%d" % i3):
+			gained += 1
+	check(gained > 0 and gained <= 4, "Aceptación 5e: Una transmisión traspasa como mucho %d ubicaciones nuevas (%d)" % [int(mgr.SHARE_MAX_LOCS), gained])
+	mem_902l["known_locations"] = saved_902
+	# Los bulk_* quedaron en el mapa de Elena: restaurar para no contaminar tests.
+	var cur_901: Dictionary = (mem_901l.get("known_locations", {}) as Dictionary).duplicate(true)
+	for i4 in 8:
+		cur_901.erase("bulk_%d" % i4)
+	mem_901l["known_locations"] = cur_901
 
 	# Aceptación 6: Las decisiones de Qwen no pueden ejecutar acciones fuera de las permitidas ni ir a ubicaciones desconocidas
 	var bad_action := mgr._ai_parse_decision("{\"goal\":\"hack\",\"action\":\"teleport\",\"target\":\"city\",\"priority\":5,\"reason\":\"cheat\"}", elena)
