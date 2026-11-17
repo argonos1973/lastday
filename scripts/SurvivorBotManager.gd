@@ -9257,9 +9257,12 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 	# La hostilidad manda sobre la confianza: un estado contradictorio
 	# (confianza alta + hostilidad alta, p.ej. por un rumor) se describe como
 	# enemigo, igual que las puertas de cooperacion ya bloquean por hostilidad.
+	var refused_n := int(rel.get("refused", 0))
 	var rel_desc := "un desconocido"
 	if ho > 0.5:
 		rel_desc = "tu enemigo"
+	elif refused_n >= 2:
+		rel_desc = "alguien que te ha fallado"
 	elif ho > 0.2:
 		rel_desc = "alguien que te cae mal"
 	elif tr > 0.5:
@@ -9269,6 +9272,8 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 	var rel_rule := ""
 	if ho > 0.5:
 		rel_rule = " Es tu enemigo: responde hostil o cortante, nada de cordialidad."
+	elif refused_n >= 2:
+		rel_rule = " Te ha negado ayuda %d veces cuando la necesitabas: estas resentido, tratalo con frialdad, nada de alegria." % refused_n
 	elif tr > 0.5:
 		rel_rule = " Es tu aliado: se cordial con el; nunca lo amenaces salvo que te ataque."
 	elif tr > 0.15:
@@ -13817,10 +13822,14 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 			# Le nego ayuda que el bot pedia de verdad: confianza abajo, rencor
 			# arriba. El contador alimenta la reevaluacion (negociar/robar/
 			# atacar/forrajear) y la expulsion del equipo por negarse a ayudar.
+			# Es daño social: harm_t sella el momento para que convivir despues
+			# no siga sumando vinculo (credito "ally" en pausa) ni el olvido
+			# enfrie el agravio recien hecho.
 			rel["refused"] = int(rel.get("refused", 0)) + 1
+			rel["harm_t"] = Time.get_ticks_msec()
 			var dist_mul2 := 0.8 + float(pers.get("distrust", 0.4)) * 0.6
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) - step * 0.55 * dist_mul2, -1.0, 1.0), 0.001)
-			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) + step * 0.40, 0.0, 1.0), 0.001)
+			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) + step * 0.55, 0.0, 1.0), 0.001)
 			# Y quien niega (o elude) la ayuda tambien cambia: cada negativa
 			# erosiona su sociabilidad — a la larga se queda solo.
 			if actor_key.begins_with("bot_"):

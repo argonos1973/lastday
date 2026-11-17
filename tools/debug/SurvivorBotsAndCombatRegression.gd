@@ -2790,6 +2790,24 @@ func run() -> void:
 	mgr.record_social_event(903, "bot_997", "Npc3", "ally", 0.05, "shared_time")
 	check(ho_h0 - float(rel_hearsay["hostility"]) > (ho_e0 - float(rel_earned["hostility"])) * 1.5,
 		"La hostilidad de rumor decae mucho mas rapido que la ganada (%.3f vs %.3f)" % [ho_h0 - float(rel_hearsay["hostility"]), ho_e0 - float(rel_earned["hostility"])])
+	# Negar ayuda es daño social: sella harm_t, de modo que convivir despues NO
+	# sigue sumando vinculo (credito "ally" en pausa) ni el olvido lo enfria.
+	var rel_ref: Dictionary = mgr._chat_touch_rel(901, "bot_996", "Npc4")
+	rel_ref["trust"] = 0.8
+	mgr.record_social_event(901, "bot_996", "Npc4", "refused", 0.3, "ignored_help")
+	check(float(rel_ref["trust"]) < 0.8 and int(rel_ref.get("harm_t", 0)) > 0,
+		"Refused: negar ayuda baja la confianza y sella harm_t")
+	var se_before := int(rel_ref.get("shared_experiences", 0))
+	var tr_before := float(rel_ref["trust"])
+	mgr.record_social_event(901, "bot_996", "Npc4", "ally", 0.05, "shared_time")
+	check(int(rel_ref.get("shared_experiences", 0)) == se_before and float(rel_ref["trust"]) == tr_before,
+		"Refused: tras negar ayuda, convivir no sigue sumando vinculo (ally en pausa)")
+	rel_ek["refused"] = 3
+	rel_ek["hostility"] = 0.0 # aislar la rama refused: sin hostilidad previa
+	var p_ref := mgr._chat_build_prompt(chat_b, "reply", 903, "Kael", "Buenos dias, Elena.", "goodmorning")
+	check(p_ref.contains("te ha fallado") and p_ref.contains("frialdad"),
+		"Chat: quien nego ayuda 2+ veces recibe trato frio, no alegria")
+	rel_ek.erase("refused")
 	# Frescura: una respuesta que llega con mas de BOT_CHAT_STALE_MSEC se cae.
 	mgr._chat_pending = {"bot_id": 901, "to_id": 777, "to_name": "Sami", "kind": "greet", "intent": "", "t": Time.get_ticks_msec() - SurvivorBotManagerScript.BOT_CHAT_STALE_MSEC - 1000}
 	var log_stale := mgr.chat_log.size()
