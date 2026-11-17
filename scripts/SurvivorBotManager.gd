@@ -11350,6 +11350,20 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["prone"] = false
+	# El sprint no es gratis: agotada la energia el bot no corre, trota
+	# (histeresis _tired 16->45 para no aletear walk/run cada segundo).
+	if anim_name == "run":
+		var en := _bot_energy(b)
+		if bool(b.get("_tired", false)):
+			if en >= 45.0:
+				b["_tired"] = false
+			else:
+				anim_name = "walk"
+				speed *= 0.75
+		elif en < 16.0:
+			b["_tired"] = true
+			anim_name = "walk"
+			speed *= 0.75
 	var cur := proxy.global_position
 	var road_goal := _resolve_mountain_road_waypoint(cur, raw_goal)
 	var goal := _resolve_building_interior_waypoint(b, cur, road_goal)
