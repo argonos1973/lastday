@@ -151,6 +151,14 @@
     gap: 8px;
   }
   .bot-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .drag-grip { cursor: grab; color: var(--muted); font-size: 13px; padding: 0 2px; user-select: none; }
+  .drag-grip:active { cursor: grabbing; }
+  .fold-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 7px; margin-top: 5px; transition: transform .15s; }
+  .fold-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .bot-card.dragging { opacity: .4; }
+  .bot-card.collapsed .bot-body { display: none; }
+  .bot-card.collapsed .bot-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .bot-card.collapsed .fold-btn { transform: rotate(-90deg); }
   .section-label {
     font-size: 11px;
     text-transform: uppercase;
@@ -747,7 +755,12 @@ function renderChat(data) {
 
 function renderBots(data) {
   const container = document.getElementById("botsContainer");
-  const bots = data.bots || [];
+  const savedOrder = loadCardUI().order;
+  const bots = (data.bots || []).slice().sort((a, c) => {
+    const ia = savedOrder.indexOf(String(a.bot_id));
+    const ib = savedOrder.indexOf(String(c.bot_id));
+    return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib);
+  });
   let html = "";
 
   for (const b of bots) {
@@ -865,10 +878,11 @@ function renderBots(data) {
     const tempC = bt < 35.4 ? "#4aa3df" : (bt > 38.2 ? "#e25555" : "#52d18a");
     const tempTxt = bt.toFixed(1) + "°C";
 
-    html += `<div class="card">
+    html += `<div class="card bot-card" data-bot="${b.bot_id}">
       <div class="bot-header">
         <div>
           <div class="bot-name">
+            <span class="drag-grip" draggable="true" title="Arrastrar para mover la tarjeta">⠿</span>
             <span class="dot" style="background:${col};width:12px;height:12px"></span>
             <span>${esc(b.name)}</span>
             <span class="badge ${b.faction === "hostile" ? "err" : "ok"}">${esc(b.faction)}</span>
@@ -883,8 +897,10 @@ function renderBots(data) {
           <div style="font-size:11px;margin-top:6px">Vivo: <b>${fmtDur(b.alive_seconds)}</b> · ⌀ vida: <b>${fmtDur(b.avg_life_seconds)}</b></div>
           <div style="font-size:10px;color:var(--muted)">Total acumulado: ${fmtDur(b.alive_total_seconds)} · ${b.deaths || 0} muertes</div>
           <span class="badge info" style="margin-top:5px">${esc(b.anim || "idle")} · ${esc(b.act || "?")}</span>
+          <br/><button class="fold-btn" title="Plegar / desplegar la tarjeta">▾</button>
         </div>
       </div>
+      <div class="bot-body">
 
       ${(() => {
         const st = b.stats || {};
@@ -1107,11 +1123,70 @@ function renderBots(data) {
             <div class="kv-item"><b>Hambre</b>${wl.hunger != null ? wl.hunger + "%" : "—"}</div>
           </div></details>`;
       })()}
+      </div>
     </div>`;
   }
 
   container.innerHTML = html;
+  for (const id of loadCardUI().collapsed) {
+    const c = container.querySelector(`.bot-card[data-bot="${id}"]`);
+    if (c) c.classList.add("collapsed");
+  }
 }
+
+// Estado de las tarjetas (orden y plegado) persistido en localStorage —
+// el poll re-renderiza cada 2 s, así que se reaplica tras cada reconstrucción.
+function loadCardUI() {
+  try {
+    return {
+      order: JSON.parse(localStorage.getItem("botCardOrder") || "[]"),
+      collapsed: JSON.parse(localStorage.getItem("botCardCollapsed") || "[]"),
+    };
+  } catch (e) { return { order: [], collapsed: [] }; }
+}
+
+const _botsGrid = document.getElementById("botsContainer");
+let _dragCard = null;
+_botsGrid.addEventListener("click", e => {
+  const btn = e.target.closest(".fold-btn");
+  if (!btn) return;
+  e.preventDefault();
+  const card = btn.closest(".bot-card");
+  if (!card) return;
+  card.classList.toggle("collapsed");
+  const ui = loadCardUI();
+  const id = card.dataset.bot;
+  const i = ui.collapsed.indexOf(id);
+  if (card.classList.contains("collapsed")) { if (i < 0) ui.collapsed.push(id); }
+  else if (i >= 0) ui.collapsed.splice(i, 1);
+  localStorage.setItem("botCardCollapsed", JSON.stringify(ui.collapsed));
+});
+_botsGrid.addEventListener("dragstart", e => {
+  if (!e.target.closest(".drag-grip")) return;
+  _dragCard = e.target.closest(".bot-card");
+  if (_dragCard) {
+    _dragCard.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", "");
+  }
+});
+_botsGrid.addEventListener("dragover", e => {
+  if (!_dragCard) return;
+  e.preventDefault();
+  const over = e.target.closest(".bot-card");
+  if (!over || over === _dragCard) return;
+  const r = over.getBoundingClientRect();
+  const after = e.clientY > r.top + r.height / 2 || e.clientX > r.left + r.width / 2;
+  over.parentNode.insertBefore(_dragCard, after ? over.nextSibling : over);
+});
+_botsGrid.addEventListener("drop", e => e.preventDefault());
+_botsGrid.addEventListener("dragend", () => {
+  if (!_dragCard) return;
+  _dragCard.classList.remove("dragging");
+  const order = [..._botsGrid.querySelectorAll(".bot-card")].map(c => c.dataset.bot);
+  localStorage.setItem("botCardOrder", JSON.stringify(order));
+  _dragCard = null;
+});
 
 let pollInFlight = false;
 let lastStatusText = null;
