@@ -4421,10 +4421,22 @@ func run() -> void:
 	elena_y["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
 	elena_y["hunger"] = 15.0
 	elena_y["ai_directive"] = {}
+	# Sin anti-cluster: apartar a los demas bots para que el pick mida solo
+	# apetito vs ruinas (con 4 bots alguno quedaba a <110 m del wild).
+	var cl_bak := {}
+	for obid in [902, 903, 904]:
+		var ob: Dictionary = mgr.bots[obid]
+		cl_bak[obid] = {"pos": ob.get("pos"), "et": ob.get("explore_target")}
+		ob["pos"] = Vector3(9000.0, 0.4, 9000.0)
+		ob["explore_target"] = Vector3.INF
 	var wild_hits_z := 0
 	for i in range(6):
 		if mgr._choose_explore_target(elena_y).distance_to(wild_poi_z) < 1.0:
 			wild_hits_z += 1
+	for obid in cl_bak.keys():
+		var ob: Dictionary = mgr.bots[obid]
+		ob["pos"] = (cl_bak[obid] as Dictionary)["pos"]
+		ob["explore_target"] = (cl_bak[obid] as Dictionary)["et"]
 	check(wild_hits_z >= 5,
 		"10z8: hambriento -> el bosque (wild) es el destino (hits=%d/6)" % wild_hits_z)
 	elena_y["hunger"] = 80.0
