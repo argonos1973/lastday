@@ -9236,15 +9236,25 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 	var rel := get_bot_relationship(my_id, to_key)
 	var tr := float(rel.get("trust", 0.0))
 	var ho := float(rel.get("hostility", 0.0))
+	# La hostilidad manda sobre la confianza: un estado contradictorio
+	# (confianza alta + hostilidad alta, p.ej. por un rumor) se describe como
+	# enemigo, igual que las puertas de cooperacion ya bloquean por hostilidad.
 	var rel_desc := "un desconocido"
-	if tr > 0.5:
-		rel_desc = "aliado de confianza"
-	elif tr > 0.15:
-		rel_desc = "conocido amistoso"
-	elif ho > 0.5:
+	if ho > 0.5:
 		rel_desc = "tu enemigo"
 	elif ho > 0.2:
 		rel_desc = "alguien que te cae mal"
+	elif tr > 0.5:
+		rel_desc = "aliado de confianza"
+	elif tr > 0.15:
+		rel_desc = "conocido amistoso"
+	var rel_rule := ""
+	if ho > 0.5:
+		rel_rule = " Es tu enemigo: responde hostil o cortante, nada de cordialidad."
+	elif tr > 0.5:
+		rel_rule = " Es tu aliado: se cordial con el; nunca lo amenaces salvo que te ataque."
+	elif tr > 0.15:
+		rel_rule = " Te cae bien: se cordial."
 	var sit := ""
 	match kind:
 		"greet":
@@ -9273,13 +9283,13 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 	var past: Array = _chat_recent.get(int(b["bot_id"]), [])
 	if not past.is_empty():
 		anti_repeat = "\nYa dijiste recientemente (no lo repitas ni uses las mismas palabras): " + " | ".join(past.slice(-2))
-	return "Eres %s, %s en Last Day. Caracter: valentia %.2f, agresividad %.2f, sociable %.2f, desconfianza %.2f.\nEstado: vida %d, hambre %d, sed %d. Zona: %s. Llevas: %s.\n%s es %s (confianza %.2f, hostilidad %.2f).\n%s%s" % [
+	return "Eres %s, %s en Last Day. Caracter: valentia %.2f, agresividad %.2f, sociable %.2f, desconfianza %.2f.\nEstado: vida %d, hambre %d, sed %d. Zona: %s. Llevas: %s.\n%s es %s (confianza %.2f, hostilidad %.2f).%s\n%s%s" % [
 		str(b.get("name", "Bot")), faction_desc,
 		float(pers.get("bravery", 0.5)), float(pers.get("aggression", 0.5)),
 		float(pers.get("sociability", 0.5)), float(pers.get("distrust", 0.3)),
 		int(float(b.get("health", 100))), int(float(b.get("hunger", 80))), int(float(b.get("thirst", 80))),
 		_chat_zone_name(proxy.global_position), str(b.get("held_item", "las manos")),
-		to_name, rel_desc, tr, ho, sit, anti_repeat]
+		to_name, rel_desc, tr, ho, rel_rule, sit, anti_repeat]
 
 func _chat_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var req := _chat_pending
@@ -13635,9 +13645,14 @@ func _share_enemy_knowledge(mem_from: Dictionary, mem_to: Dictionary, to_key: St
 			continue
 		var rt: Dictionary = rels_to.get(k2, {})
 		# El rumor levanta desconfianza sin inventar la agresion: nunca supera
-		# la hostilidad que el receptor ya sufrio en carne propia.
-		rt["hostility"] = snappedf(maxf(float(rt.get("hostility", 0.0)), float(rf.get("hostility", 0.0)) * 0.8), 0.01)
-		rt["fear"] = snappedf(maxf(float(rt.get("fear", 0.0)), float(rf.get("fear", 0.0)) * 0.8), 0.01)
+		# la hostilidad que el receptor ya sufrio en carne propia. Y la propia
+		# experiencia pesa mas que el chisme: si el receptor confia en ese
+		# tercero, la advertencia entra atenuada (un amigo de toda la vida no se
+		# convierte en enemigo porque el compañero de equipo lo odie).
+		var trust_rt := clampf(float(rt.get("trust", 0.0)), 0.0, 1.0)
+		var warn_mul := 0.8 * (1.0 - trust_rt * 0.7)
+		rt["hostility"] = snappedf(maxf(float(rt.get("hostility", 0.0)), float(rf.get("hostility", 0.0)) * warn_mul), 0.01)
+		rt["fear"] = snappedf(maxf(float(rt.get("fear", 0.0)), float(rf.get("fear", 0.0)) * warn_mul), 0.01)
 		rt["heard_about"] = true
 		rels_to[k2] = rt
 	mem_to["relationships"] = rels_to
@@ -13730,7 +13745,15 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 				rel["helped"] = int(rel.get("helped", 0)) + 1
 			var coop_mul := 0.75 + float(pers.get("cooperation", 0.6)) * 0.6
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + step * 0.75 * coop_mul, -1.0, 1.0), 0.001)
-			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) - step * 0.55, 0.0, 1.0), 0.001)
+			var host_decay := step * 0.55
+			if bool(rel.get("heard_about", false)) and int(rel.get("attacked", 0)) == 0:
+				# La hostilidad de oidas (rumor de un aliado) se desgasta mas
+				# rapido que la ganada en carne propia: convivir en paz desmiente
+				# el chisme. Cuando queda residual, la marca se limpia.
+				host_decay += step * 0.5
+			rel["hostility"] = snappedf(clampf(float(rel.get("hostility", 0.0)) - host_decay, 0.0, 1.0), 0.001)
+			if float(rel.get("hostility", 0.0)) <= 0.05 and int(rel.get("attacked", 0)) == 0:
+				rel.erase("heard_about")
 			rel["fear"] = snappedf(clampf(float(rel.get("fear", 0.0)) - step * 0.45, 0.0, 1.0), 0.001)
 			if not b.is_empty():
 				_evolve_personality(b, "player_helped", step)

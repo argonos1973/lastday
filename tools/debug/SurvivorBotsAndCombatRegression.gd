@@ -2739,6 +2739,57 @@ func run() -> void:
 	var prompt_rep := mgr._chat_build_prompt(chat_b, "greet", 777, "Sami", "", "")
 	check(prompt_rep.contains("no lo repitas"),
 		"Chat: el prompt avisa al modelo de sus frases recientes")
+	# Relacion contradictoria (confianza 1.0 + hostilidad 0.74, p.ej. rumor
+	# heredado): la hostilidad manda — el prompt dice "tu enemigo" y prohibe
+	# la cordialidad, no "aliado de confianza".
+	var rel_ek: Dictionary = mgr._chat_touch_rel(901, "bot_903", "Kael")
+	var ek_tr: float = rel_ek["trust"]
+	var ek_ho: float = rel_ek["hostility"]
+	rel_ek["trust"] = 1.0
+	rel_ek["hostility"] = 0.74
+	var p_enemy := mgr._chat_build_prompt(chat_b, "reply", 903, "Kael", "Buenos dias, Elena.", "goodmorning")
+	check(p_enemy.contains("tu enemigo") and not p_enemy.contains("aliado de confianza"),
+		"Chat: confianza+hostilidad altas se describen como enemigo, no como aliado")
+	check(p_enemy.contains("nada de cordialidad"),
+		"Chat: el prompt prohibe la cordialidad con un enemigo")
+	rel_ek["hostility"] = 0.0
+	var p_ally := mgr._chat_build_prompt(chat_b, "reply", 903, "Kael", "Buenos dias, Elena.", "goodmorning")
+	check(p_ally.contains("aliado de confianza") and p_ally.contains("nunca lo amenaces"),
+		"Chat: un aliado de confianza recibe regla explicita de cordialidad")
+	rel_ek["trust"] = ek_tr
+	rel_ek["hostility"] = ek_ho
+	# El rumor de un aliado no tumba una amistad vivida: Carlos odia a Elena
+	# (0.93) pero Kael confia en ella (1.0) — la advertencia entra atenuada.
+	var mem_c2: Dictionary = mgr._ensure_bot_memory(902)
+	var mem_k2: Dictionary = mgr._ensure_bot_memory(903)
+	var rel_ck: Dictionary = mgr._chat_touch_rel(902, "bot_901", "Elena")
+	rel_ck["hostility"] = 0.93
+	rel_ck["attacked"] = 3
+	var rel_ke: Dictionary = mgr._chat_touch_rel(903, "bot_901", "Elena")
+	rel_ke["trust"] = 1.0
+	rel_ke["hostility"] = 0.0
+	var rel_cx: Dictionary = mgr._chat_touch_rel(902, "bot_999", "Npc")
+	rel_cx["hostility"] = 0.9
+	rel_cx["attacked"] = 1
+	mgr._share_enemy_knowledge(mem_c2, mem_k2, "bot_903", "bot_902")
+	check(float(rel_ke.get("hostility", 0.0)) < 0.4,
+		"Rumor de enemistad no convierte a un amigo de confianza en enemigo (ho=%.2f < 0.4)" % float(rel_ke.get("hostility", 0.0)))
+	check(float((mem_k2["relationships"] as Dictionary).get("bot_999", {}).get("hostility", 0.0)) >= 0.7,
+		"Rumor sobre un desconocido si levanta desconfianza real (ho=%.2f >= 0.7)" % float((mem_k2["relationships"] as Dictionary).get("bot_999", {}).get("hostility", 0.0)))
+	# La hostilidad de oidas se desgasta conviviendo en paz: cada evento de
+	# vinculo decae el doble que una hostilidad ganada en carne propia.
+	var rel_hearsay: Dictionary = mgr._chat_touch_rel(903, "bot_998", "Npc2")
+	rel_hearsay["hostility"] = 0.6
+	rel_hearsay["heard_about"] = true
+	var rel_earned: Dictionary = mgr._chat_touch_rel(903, "bot_997", "Npc3")
+	rel_earned["hostility"] = 0.6
+	rel_earned["attacked"] = 2
+	var ho_h0: float = rel_hearsay["hostility"]
+	var ho_e0: float = rel_earned["hostility"]
+	mgr.record_social_event(903, "bot_998", "Npc2", "ally", 0.05, "shared_time")
+	mgr.record_social_event(903, "bot_997", "Npc3", "ally", 0.05, "shared_time")
+	check(ho_h0 - float(rel_hearsay["hostility"]) > (ho_e0 - float(rel_earned["hostility"])) * 1.5,
+		"La hostilidad de rumor decae mucho mas rapido que la ganada (%.3f vs %.3f)" % [ho_h0 - float(rel_hearsay["hostility"]), ho_e0 - float(rel_earned["hostility"])])
 	# Frescura: una respuesta que llega con mas de BOT_CHAT_STALE_MSEC se cae.
 	mgr._chat_pending = {"bot_id": 901, "to_id": 777, "to_name": "Sami", "kind": "greet", "intent": "", "t": Time.get_ticks_msec() - SurvivorBotManagerScript.BOT_CHAT_STALE_MSEC - 1000}
 	var log_stale := mgr.chat_log.size()
