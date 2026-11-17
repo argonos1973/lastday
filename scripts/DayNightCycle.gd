@@ -21,8 +21,9 @@ var moon_illumination := 1.0
 
 var _real_time_initialized := false
 var _lighting_update_accum := 999.0
-# Sol estacional: amanecer/atardecer de la fecha real del sistema. En
-# noviembre (~40 N) sale ~8:10 y se pone ~17:55; en junio ~6:40/~21:20.
+# Sol estacional: amanecer/atardecer de la fecha real del sistema, con suelo
+# de 12.5 h de luz para jugabilidad. En noviembre sale ~6:45 y se pone ~19:15
+# (el real ~8:10/~17:55 quedaria demasiado pronto); en junio ~6:40/~21:20.
 var _sunrise := 6.0
 var _sunset := 21.0
 var _solar_noon := 13.5
@@ -51,7 +52,12 @@ func _apply_seasonal_sun() -> void:
 	var n := _day_of_year(int(date.year), int(date.month), int(date.day))
 	var decl := deg_to_rad(-23.44) * cos(TAU * float(n + 10) / 365.0)
 	var cos_h := clampf(-tan(deg_to_rad(GameConst.WORLD_LATITUDE)) * tan(decl), -0.98, 0.98)
-	var daylight := 2.0 * rad_to_deg(acos(cos_h)) / 15.0
+	# Suelo de jornada jugable: la astronomia real daria ~9.7 h de luz en
+	# noviembre (anochecer ~17:55, noche cerrada a las 18:30 — demasiado
+	# pronto para jugar). Minimo 12.5 h: el invierno oscurece ~19:15 y los
+	# bots no se acuestan a la hora de la merienda. El verano (~14.9 h)
+	# sigue siendo el real.
+	var daylight := maxf(2.0 * rad_to_deg(acos(cos_h)) / 15.0, 12.5)
 	var b_ang := TAU * float(n - 81) / 364.0
 	var eot := 9.87 * sin(2.0 * b_ang) - 7.53 * cos(b_ang) - 1.5 * sin(b_ang)
 	var tz_bias := float(Time.get_time_zone_from_system().get("bias", 60)) / 60.0

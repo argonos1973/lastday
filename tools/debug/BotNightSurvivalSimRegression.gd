@@ -61,6 +61,7 @@ class FakeNet extends Node:
 
 class SimWorld extends "res://scripts/Main.gd":
 	var water_rect := Rect2(100000.0, 100000.0, 8.0, 8.0)
+	var flat_water_depth := 1.0
 	var house_pts: Array = []
 	var river_segs: Array = []
 	func _ready() -> void:
@@ -94,7 +95,7 @@ class SimWorld extends "res://scripts/Main.gd":
 				var sd := 1.0 - absf(ls) / maxf(0.01, hw2)
 				var ld := 1.0 - absf(lf) / maxf(0.01, hl)
 				return clampf(minf(sd, ld) * 3.0, 0.18, 2.5)
-		return 1.0 if water_rect.has_point(Vector2(pos.x, pos.z)) else 0.0
+		return flat_water_depth if water_rect.has_point(Vector2(pos.x, pos.z)) else 0.0
 	func _is_near_river(pos: Vector3, margin: float = 0.5) -> bool:
 		return water_rect.grow(margin).has_point(Vector2(pos.x, pos.z))
 	func _is_player_in_house(pos: Vector3) -> bool:
@@ -775,8 +776,9 @@ func run() -> void:
 	env = _new_world(8.0)
 	w = env["world"]
 	mgr = env["mgr"]
-	w.water_rect = Rect2(-5.0, -5.0, 10.0, 10.0) # depth 1.0 > WADE 0.55
-	w.river_segs = [{"center": Vector3(0.0, 0.0, 0.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	w.water_rect = Rect2(-5.0, -5.0, 10.0, 10.0) # depth 3.0 > FORD_MAX 2.55
+	w.flat_water_depth = 3.0
+	w.river_segs = []
 	w._net_campfire_built("s13_cf", Vector3(20.0, 0.4, 0.0))
 	w._net_campfire_lit("s13_cf", "fire_s13", Vector3(20.0, 0.4, 0.0))
 	w.house_pts = [Vector3(30.0, 0.4, 0.0)]
