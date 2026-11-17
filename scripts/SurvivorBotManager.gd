@@ -234,6 +234,12 @@ var _ai_calls_day_by_model := {}
 var _ai_tokens_day_by_model := {}
 var _ai_pending_model := "" # modelo de la peticion en vuelo (atribuye sus tokens)
 var _ai_cache_hits := 0
+# Caché de decisiones por firma de situación: si la misma situación vuelve
+# (el bot ya vio "tengo hambre, sin refugio, de día" hace 10 min), la última
+# respuesta válida se reaplica sin quemar una llamada del presupuesto diario.
+const AI_DECISION_CACHE_TTL_SEC := 900.0
+const AI_DECISION_CACHE_MAX := 48
+var _ai_decision_cache: Dictionary = {} # "bot_id|sig" -> {t: msec, content: String}
 var _ai_429_count := 0
 var _ai_latency_ms_last := 0
 var _ai_latency_ms_avg := 0
@@ -13898,6 +13904,27 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	if not risky_zone.is_empty():
 		scores["avoid_zone"] = survival * 1.1 + distrust * 0.5 + need_heal * 0.6
 
+	# El cerebro local también aprende de planes imposibles: cada fallo
+	# reciente de una acción (stuck_timeout, nav_blocked, plan_broken — no
+	# "precondition", que solo registra un requisito perdido ya resuelto por
+	# el parse) multiplica su score por 0.4 — con tres fracasos queda casi
+	# vetada y el bot propone otra cosa en vez de encadenar el mismo plan.
+	var now_u := Time.get_unix_time_from_system()
+	var fail_n := {}
+	for k in (mem.get("failed_goals", {}) as Dictionary).keys():
+		var e: Dictionary = (mem["failed_goals"] as Dictionary)[k]
+		if not (e is Dictionary):
+			continue
+		if now_u - float(e.get("t", 0.0)) >= float(e.get("ttl", 10800.0)):
+			continue
+		if str(e.get("cause", "")) == "precondition":
+			continue
+		var fact := str(e.get("act", "")).split(":")[0]
+		fail_n[fact] = int(fail_n.get(fact, 0)) + 1
+	for act in fail_n.keys():
+		if scores.has(act):
+			scores[act] = float(scores[act]) * pow(0.4, float(fail_n[act]))
+
 	var best_act := "explore"
 	var best_sc := -999.0
 	for act in scores.keys():
@@ -14177,12 +14204,41 @@ func _ai_tick(delta: float) -> void:
 	var target_bot := int(req["bot_id"])
 	var tb: Dictionary = bots[target_bot]
 	var sig := _ai_situation_signature(tb)
+	tb["_ai_req_sig"] = sig
+	if _ai_try_decision_cache(target_bot, sig, str(req.get("reason", ""))):
+		return
 	if not bool(req.get("force", false)) and _ai_last_sig.get(target_bot, "") == sig and not _ai_active_directive(tb).is_empty():
 		_ai_cache_hits += 1
 		_ai_next_at[target_bot] = now + int(AI_REVIEW_MAX_SEC * 1000.0)
 		return
 	_ai_last_sig[target_bot] = sig
 	_ai_request_decision(target_bot, tb)
+
+# Las revalidaciones de planes rotos/ataques jamás pasan por el caché:
+# reaplicar la directiva que acaba de atascarse sería el bucle exacto que
+# el sondeo rompe pidiendo una decisión fresca al modelo.
+func _ai_try_decision_cache(bot_id: int, sig: String, reason: String) -> bool:
+	if not reason in ["sig_change", "scheduled", "periodic", "plan_done"]:
+		return false
+	var ck := str(bot_id) + "|" + sig
+	var cent: Dictionary = _ai_decision_cache.get(ck, {})
+	if cent.is_empty() or Time.get_ticks_msec() - int(cent.get("t", 0)) >= int(AI_DECISION_CACHE_TTL_SEC * 1000.0):
+		return false
+	if _ai_apply_decision(bot_id, str(cent.get("content", ""))):
+		_ai_cache_hits += 1
+		if bots.has(bot_id):
+			_ai_stat_inc(bots[bot_id], "cache_hits")
+		return true
+	_ai_decision_cache.erase(ck)
+	return false
+
+func _ai_note_decision_cache(bot_id: int, content: String) -> void:
+	var lb: Dictionary = bots.get(bot_id, {})
+	var req_sig := str(lb.get("_ai_req_sig", ""))
+	if req_sig.is_empty():
+		return
+	_ai_decision_cache[str(bot_id) + "|" + req_sig] = {"t": Time.get_ticks_msec(), "content": content}
+	_ai_prune_decision_cache()
 
 # Sondeo por turnos de un bot por ciclo: encola una peticion a la cola
 # compartida solo cuando hay motivo — plan cumplido, plan atascado, firma de
@@ -14870,6 +14926,27 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		_ai_apply_local_fallback_decision(bot_id, "invalid_or_impossible_decision")
 	else:
 		_ai_stat_inc(lb, "qwen_ok")
+		_ai_note_decision_cache(bot_id, content)
+
+func _ai_prune_decision_cache() -> void:
+	if _ai_decision_cache.size() <= AI_DECISION_CACHE_MAX:
+		return
+	var now := Time.get_ticks_msec()
+	for k in _ai_decision_cache.keys():
+		var e = _ai_decision_cache[k]
+		if not (e is Dictionary) or now - int((e as Dictionary).get("t", 0)) >= int(AI_DECISION_CACHE_TTL_SEC * 1000.0):
+			_ai_decision_cache.erase(k)
+	while _ai_decision_cache.size() > AI_DECISION_CACHE_MAX:
+		var oldest_k := ""
+		var oldest_t := INF
+		for k in _ai_decision_cache.keys():
+			var t := int((_ai_decision_cache[k] as Dictionary).get("t", 0))
+			if t < oldest_t:
+				oldest_t = t
+				oldest_k = str(k)
+		if oldest_k.is_empty():
+			break
+		_ai_decision_cache.erase(oldest_k)
 
 # Valida la respuesta del modelo contra el catálogo cerrado y contra las
 # ubicaciones conocidas del bot (anti-omnisciencia). Devuelve {} si no es válida.

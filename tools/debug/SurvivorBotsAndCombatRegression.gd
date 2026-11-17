@@ -2062,6 +2062,52 @@ func run() -> void:
 	mgr._ai_last_any_call_msec = 0
 	mgr._ai_queue.clear()
 	mgr._ai_last_call_msec.clear()
+	# Cache de decisiones: una respuesta valida se reaplica gratis para la
+	# misma firma, y los planes rotos jamas la consultan (causan el bucle).
+	mgr._ai_decision_cache.clear()
+	mgr._ai_cache_hits = 0
+	elena["ai_directive"] = {}
+	elena["_ai_req_sig"] = "test_sig"
+	mgr._ai_note_decision_cache(901, "{\"action\":\"explore\",\"target\":\"wild\",\"reason\":\"cached\"}")
+	check((mgr._ai_decision_cache.get("901|test_sig", {}) as Dictionary).has("content"),
+		"Asesor: la respuesta valida se guarda en el cache por firma")
+	check(mgr._ai_try_decision_cache(901, "test_sig", "sig_change"),
+		"Asesor: misma situacion reaplica la decision sin llamada")
+	check(mgr._ai_cache_hits == 1 and not (elena["ai_directive"] as Dictionary).is_empty()
+			and str((elena["ai_directive"] as Dictionary).get("action", "")) == "explore",
+		"Asesor: el cache aplica la directiva y cuenta el ahorro")
+	check(not mgr._ai_try_decision_cache(901, "test_sig", "plan_stuck"),
+		"Asesor: un plan atascado nunca lee el cache (romperia el bucle)")
+	(mgr._ai_decision_cache["901|test_sig"] as Dictionary)["t"] = \
+		Time.get_ticks_msec() - int(mgr.AI_DECISION_CACHE_TTL_SEC * 1000.0) - 1000
+	elena["ai_directive"] = {}
+	check(not mgr._ai_try_decision_cache(901, "test_sig", "sig_change"),
+		"Asesor: una entrada caducada no sirve")
+	# El cache se poda: entradas viejas fuera primero, luego el mas antiguo.
+	mgr._ai_decision_cache.clear()
+	for ci in range(60):
+		mgr._ai_decision_cache["x|%d" % ci] = {"t": Time.get_ticks_msec() - ci * 1000, "content": "{}"}
+	mgr._ai_prune_decision_cache()
+	check(mgr._ai_decision_cache.size() <= mgr.AI_DECISION_CACHE_MAX,
+		"Asesor: el cache no crece sin limite (size=%d)" % mgr._ai_decision_cache.size())
+	mgr._ai_decision_cache.clear()
+	# El cerebro local aprende de planes imposibles: tres fracasos seguidos de
+	# forrajeo casi vetan la accion y el fallback propone otra cosa.
+	elena["hunger"] = 10.0
+	elena["thirst"] = 90.0
+	elena["health"] = 95.0
+	elena["_mem"]["failed_goals"] = {}
+	var base_act := str(mgr.decide_situational_action(elena).get("action", ""))
+	check(base_act == "forage", "Asesor: con hambre el fallback base propone forraje (act=%s)" % base_act)
+	elena["_mem"]["failed_goals"] = {
+		"g1": {"t": Time.get_unix_time_from_system(), "ttl": 10800.0, "cause": "stuck_timeout", "act": "forage:wild"},
+		"g2": {"t": Time.get_unix_time_from_system(), "ttl": 10800.0, "cause": "nav_blocked", "act": "forage:wild"},
+		"g3": {"t": Time.get_unix_time_from_system(), "ttl": 10800.0, "cause": "plan_broken", "act": "forage:wild"},
+	}
+	var learned_act := str(mgr.decide_situational_action(elena).get("action", ""))
+	check(learned_act != "forage",
+		"Asesor: tres planes de forrajeo imposibles ensenan al fallback otra via (act=%s)" % learned_act)
+	elena["_mem"]["failed_goals"] = {}
 	mgr.set_physics_process(true)
 	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
 	# Elegibilidad: con ordenes de equipo el asesor no interfiere; sin API key no llama
