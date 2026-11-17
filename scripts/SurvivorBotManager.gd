@@ -152,23 +152,23 @@ const BOT_CONFIGS := [
 		"camp_spot": Vector3(-60.0, 0.0, -26.0),
 		"patrol": [
 			Vector3(-52.0, 0.0, -18.0),
-			Vector3(-70.0, 0.0, 20.0),
-			Vector3(-30.0, 0.0, 55.0),
-			Vector3(10.0, 0.0, 70.0),
-			Vector3(-45.0, 0.0, -55.0),
+			Vector3(-120.0, 0.0, 80.0),
+			Vector3(30.0, 0.0, 140.0),
+			Vector3(140.0, 0.0, -40.0),
+			Vector3(-90.0, 0.0, -110.0),
 		],
 		"starting_clothing": ["Camiseta", "Pantalones", "Zapatillas"],
 		"starting_backpack": "",
 		"starting_weapon": "Cuchillo",
 		"starting_items": [],
 		"personality": {
-			"bravery": 0.55,
-			"aggression": 0.40,
-			"curiosity": 0.70,
-			"sociability": 0.55,
-			"distrust": 0.50,
-			"cooperation": 0.60,
-			"survival_instinct": 0.75,
+			"bravery": 0.72,
+			"aggression": 0.35,
+			"curiosity": 0.97,
+			"sociability": 0.35,
+			"distrust": 0.55,
+			"cooperation": 0.50,
+			"survival_instinct": 0.80,
 		},
 	},
 ]
@@ -267,7 +267,7 @@ const SHARE_MAX_RELS := 3
 # o menor prioridad no desbanca una directiva mas joven que esta ventana.
 const AI_DIRECTIVE_MIN_COMMIT_SEC := 300.0
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
+const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. There is no combat action: aggression or self-defense is expressed only through movement goals — hunt targets wild game, explore/scavenge/avoid_zone position the bot. Never output attack, ambush, raid, steal, kill, chase or similar verbs. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
@@ -15305,6 +15305,9 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 		_ai_apply_local_fallback_decision(bot_id, "empty_content")
 	elif not _ai_apply_decision(bot_id, content):
 		_ai_stat_inc(lb, "qwen_invalid")
+		# Muestra que propuso el modelo: depura por que un bot invalida
+		# (acciones fuera de catalogo, sitios inventados, requisitos rotos).
+		print("[AI-ADV] %s rechazada: %s" % [str(bots.get(bot_id, {}).get("name", bot_id)), (content as String).strip_edges().substr(0, 120)])
 		_ai_apply_local_fallback_decision(bot_id, "invalid_or_impossible_decision")
 	else:
 		_ai_stat_inc(lb, "qwen_ok")
