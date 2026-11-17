@@ -2712,12 +2712,18 @@ func _is_goal_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 	if bl.is_empty():
 		return false
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var hit := false
+	var kept: Array = []
 	for entry in bl:
-		if entry is Dictionary and float(entry.get("until", 0.0)) > now_s:
-			var bp = entry.get("pos")
-			if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < 18.0:
-				return true
-	return false
+		if not (entry is Dictionary) or float(entry.get("until", 0.0)) <= now_s:
+			continue # caducado: se borra del registro, no solo se ignora
+		kept.append(entry)
+		var bp = entry.get("pos")
+		if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < 18.0:
+			hit = true
+	if kept.size() != bl.size():
+		b["_unreachable"] = kept
+	return hit
 
 # Un destino al que no se pudo llegar NO es una visita: no marca _visit_done
 # ni exito de exploracion. Se recuerda como INALCANZABLE (lista negra corta en
@@ -2729,6 +2735,14 @@ func _mark_poi_unreachable(b: Dictionary, pos: Vector3, cause: String) -> void:
 	# Ultimo bloqueo de ruta para el monitor: donde y por que murio el viaje.
 	b["_last_nav_block"] = {"pos": pos, "cause": cause, "t": Time.get_unix_time_from_system()}
 	var un: Dictionary = mem.get("unreachable_pois", {})
+	# Borrado de vetos caducados: un POI marcado hace mas de una hora sale del
+	# registro — su contador de fallos vuelve a cero y necesita fallos NUEVOS
+	# para revetar (un tropiezo no puede revivir un veto muerto).
+	var now_u := Time.get_unix_time_from_system()
+	for uk in un.keys():
+		var ue: Dictionary = un[uk]
+		if now_u - float(ue.get("t", 0.0)) >= UNREACHABLE_VETO_TTL:
+			un.erase(uk)
 	for p in _explore_pois():
 		var pp: Vector3 = p["pos"]
 		if Vector2(pos.x - pp.x, pos.z - pp.z).length() < 14.0 and (pp.y < 2.2 or absf(pos.y - pp.y) < 2.6):
@@ -2826,14 +2840,18 @@ func _bot_route_leg(b: Dictionary, far_pos: Vector3) -> Vector3:
 # El veto dura ~6 h reales: el terreno no cambia pero el punto de partida si —
 # inalcanzable desde aqui puede serlo alcanzable desde otro angulo.
 func _is_poi_unreachable(b: Dictionary, poi_id: String) -> bool:
-	var e = b.get("_mem", {}).get("unreachable_pois", {}).get(poi_id)
+	var un: Dictionary = b.get("_mem", {}).get("unreachable_pois", {})
+	var e = un.get(poi_id)
 	if not (e is Dictionary):
+		return false
+	# Caduco: se BORRA — no solo se ignora. El contador n no sobrevive a la
+	# caducidad: un veto viejo no puede revetar con un solo fallo nuevo.
+	if Time.get_unix_time_from_system() - float((e as Dictionary).get("t", 0.0)) >= UNREACHABLE_VETO_TTL:
+		un.erase(poi_id)
 		return false
 	# Un solo nav_blocked no prueba que el destino sea inalcanzable — lo
 	# habitual es que el ATASCADO sea el bot (origen), no el lugar.
-	if int((e as Dictionary).get("n", 1)) < UNREACHABLE_VETO_MIN_FAILS:
-		return false
-	return Time.get_unix_time_from_system() - float((e as Dictionary).get("t", 0.0)) < UNREACHABLE_VETO_TTL
+	return int((e as Dictionary).get("n", 1)) >= UNREACHABLE_VETO_MIN_FAILS
 
 func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	var now_s := float(Time.get_ticks_msec()) / 1000.0

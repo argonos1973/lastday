@@ -3107,6 +3107,22 @@ func run() -> void:
 		"SpawnReal 10f: un gather en curso ajeno al objetivo fallido se conserva")
 	fresh_b["_gather"] = {}
 
+	# 10f2: los vetos CADUCADOS se borran del registro — no solo se ignoran.
+	# Asi un veto viejo necesita 3 fallos NUEVOS para revetar (n no acumula
+	# de por vida entre sesiones del mundo).
+	var un_mem: Dictionary = mgr._ensure_bot_memory(int(fresh_b["bot_id"]), fresh_b.get("cfg", {}))
+	var un_id := "house:-1:-1"
+	(un_mem["unreachable_pois"] as Dictionary)[un_id] = {"n": 5, "t": Time.get_unix_time_from_system() - SurvivorBotManagerScript.UNREACHABLE_VETO_TTL - 10.0, "cause": "nav_blocked"}
+	check(not mgr._is_poi_unreachable(fresh_b, un_id) and not (un_mem["unreachable_pois"] as Dictionary).has(un_id),
+		"Vetos: entrada caducada devuelve no-vetada Y se borra del registro (n reseteado)")
+	(un_mem["unreachable_pois"] as Dictionary)["house:-2:-2"] = {"n": 5, "t": Time.get_unix_time_from_system() - 60.0, "cause": "nav_blocked"}
+	check(mgr._is_poi_unreachable(fresh_b, "house:-2:-2"),
+		"Vetos: entrada vigente con n>=3 sigue vetada")
+	var stale_spot := Vector3(-777.0, 0.4, -777.0)
+	fresh_b["_unreachable"] = [{"pos": stale_spot, "until": (Time.get_ticks_msec() / 1000.0) - 5.0}]
+	check(not mgr._is_goal_blacklisted(fresh_b, stale_spot) and (fresh_b["_unreachable"] as Array).is_empty(),
+		"Vetos: lista negra en caliente purga entradas caducadas al leerla")
+
 	# 10g: bot situado DETRAS de una casa cerrada con bot_nav activa rodea el
 	# edificio hasta la puerta frontal, la abre y entra a recoger el loot
 	world._server_door_states["Casa prueba Door"] = false
