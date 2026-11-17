@@ -1740,13 +1740,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			proxy.set_meta("crouching", false)
 			return
 
-	# 0a) Agua demasiado profunda: un superviviente no nada — si por lo que sea
-	# quedo dentro (empujon, reaparicion, hueco entre nodos del nav), sale a lo
-	# somero antes de cualquier otra decision. Va ANTES del termostato: un
-	# helado dentro del rio no puede "acercarse a la lumbre" — calentarse
-	# empieza por no ahogarse (y el agua fria drena temp mas rapido que el
-	# fuego la sube).
-	if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(proxy.global_position)) > WADE_DEPTH:
+	# 0a) Agua por encima del pecho: un superviviente vadearia hasta ~1.4 m —
+	# solo lo intransitable dispara el escape. Si quedo dentro (empujon,
+	# reaparicion, hueco entre nodos del nav), sale a lo somero antes de
+	# cualquier otra decision. Va ANTES del termostato: un helado dentro del
+	# rio no puede "acercarse a la lumbre" — calentarse empieza por no
+	# ahogarse (y el agua fria drena temp mas rapido que el fuego la sube).
+	if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(proxy.global_position)) > FORD_MAX_DEPTH:
 		b["drink_at"] = Vector3.INF
 		b["drinking_timer"] = 0.0
 		b["crouching"] = false
@@ -10834,6 +10834,10 @@ func _bot_try_fish(b: Dictionary, delta: float) -> bool:
 # Agua vadeable: un humano cruza rios someros (~hasta la cintura); solo el agua
 # profunda bloquea el paso.
 const WADE_DEPTH := 0.55
+# Cruce como el jugador: el bot vadearia hasta el pecho (~1.4 m) — mas lento,
+# mojandose, hundiendose. Pasada esa profundidad tendria que nadar: se mantiene
+# como limite de bloqueo (rodeo o veto de destino, como antes).
+const FORD_MAX_DEPTH := 1.4
 
 # Punto cercano con agua vadeable o seca para salir de una zona profunda donde
 # _is_pos_blocked no dejaria dar ni un paso. Sondea en anillos y devuelve la
@@ -10859,7 +10863,7 @@ func _bot_shoreward_goal(pos: Vector3) -> Vector3:
 func _is_pos_blocked(pos: Vector3, margin: float = 0.45, allow_deep: bool = false) -> bool:
 	if world == null:
 		return false
-	if not allow_deep and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > WADE_DEPTH:
+	if not allow_deep and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > FORD_MAX_DEPTH:
 		return true
 	if world.has_method("is_bot_blocked_at"):
 		return world.is_bot_blocked_at(pos, margin)
@@ -11450,8 +11454,8 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 			depth_ahead = float(world.get_river_depth_at(probe))
 			if depth_ahead > depth_next:
 				ahead_xz = probe
-	var deep_now: bool = depth_cur > WADE_DEPTH
-	if not in_building_3d and (depth_next > WADE_DEPTH or (not nav_guided and depth_ahead > WADE_DEPTH)) and depth_cur <= WADE_DEPTH:
+	var deep_now: bool = depth_cur > FORD_MAX_DEPTH
+	if not in_building_3d and (depth_next > FORD_MAX_DEPTH or (not nav_guided and depth_ahead > FORD_MAX_DEPTH)) and depth_cur <= FORD_MAX_DEPTH:
 		var surf_y := _ground_y(ahead_xz.x, ahead_xz.z, cur.y)
 		var ty := 0.375
 		if world.has_method("_get_exact_ground_y"):
@@ -11534,7 +11538,10 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		cur_spd = minf(cur_spd, eff_speed)
 	if anim_name == "run" and not on_stair_segment and cur_spd < 3.8:
 		cur_spd = 3.8
-	var spd := move_toward(cur_spd, eff_speed * (0.45 if depth_cur > 0.12 else 1.0), delta * 15.0)
+	# Vadear frena como al jugador (speed *= lerp(0.72,0.48,profundidad)): a la
+	# orilla casi nada, con agua al pecho es un tercio de la marcha normal.
+	var water_factor := lerpf(0.72, 0.38, clampf(depth_cur / FORD_MAX_DEPTH, 0.0, 1.0)) if depth_cur > 0.02 else 1.0
+	var spd := move_toward(cur_spd, eff_speed * water_factor, delta * 15.0)
 	b["_speed"] = spd
 	var step := minf(spd * delta, d)
 	var chosen_dir := dir if in_building_3d else (sm if sm.length_squared() > 0.001 else dir)
@@ -11933,8 +11940,15 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 			if rain_amt <= 0.1:
 				wet_gain = delta * 0.05 * clampf(snow_amt, 0.1, 1.0)
 			st.wetness = minf(1.0, st.wetness + wet_gain * _bot_skin_wet_factor(b))
-	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > 0.30:
-		st.wetness = minf(1.0, st.wetness + delta * 0.9)
+	# Contato com agua = mesmo preco do jogador: empapa proporcional a
+	# profundidade, gasta energia vadeando e rouba calor do corpo.
+	var w_depth := 0.0
+	if world.has_method("get_river_depth_at"):
+		w_depth = float(world.get_river_depth_at(pos))
+	if w_depth > 0.02:
+		st.wetness = minf(1.0, st.wetness + delta * (0.38 + w_depth * 0.55))
+		st.energy = maxf(0.0, st.energy - delta * 0.018 * (0.8 + w_depth))
+		st.body_temperature = maxf(32.0, st.body_temperature - delta * 0.013 * (0.5 + st.wetness + w_depth))
 
 	# Calor de fogatas y antorchas igual que _apply_campfire_effect /
 	# _apply_torch_fire_effect del jugador: calienta, seca y quema al pisar
