@@ -245,6 +245,11 @@ const AI_MAX_TOKENS_PER_DAY := 120000
 const AI_MAX_CALLS_PER_DAY_2 := 600
 const AI_MAX_TOKENS_PER_DAY_2 := 900000
 const AI_POI_KINDS := ["house", "military", "city", "wild", "tower"]
+# Motor de utilidad esperada (BotUtilityAI.gd): la decision local puntua con
+# U = p×beneficio − coste − aversion×riesgo. false = heuristica heredada.
+# Anulable por llamada con situation["engine"]="legacy" para comparar motores.
+const BOT_UTILITY_ENGINE := true
+const BotUtilityAI = preload("res://scripts/BotUtilityAI.gd")
 const AI_ALLOWED_ACTIONS := ["explore", "scavenge", "hunt", "return_home", "rest", "avoid_zone", "forage", "fortify_camp", "seek_ally"]
 const AI_PERSONALITY_TRAITS := ["bravery", "aggression", "curiosity", "sociability", "distrust", "cooperation", "survival_instinct"]
 const AI_MEMORY_PATH := "user://survivor_bot_memory.json"
@@ -3112,6 +3117,10 @@ func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: 
 				if (ot != Vector3.INF and Vector2(ot.x - pp.x, ot.z - pp.z).length() < 110.0) or (op != Vector3.INF and Vector2(op.x - pp.x, op.z - pp.z).length() < 110.0):
 					score -= 180.0
 			score *= _ai_poi_memory_factor(b, pp, kind)
+			# Estado actual vs destino: el historial lo pesa memory_factor;
+			# esto penaliza lo que el cuerpo no puede pagar ahora (lejos sin
+			# energia/reservas) y el historial de combate de ESA zona.
+			score *= _ai_poi_state_factor(b, pid, d)
 			if score > best_score:
 				best_score = score
 				best = pp
@@ -14294,6 +14303,7 @@ func _ai_stat_reason(b: Dictionary, reason: String) -> void:
 # (valentía/cooperación/fortificación) y Kael (agresividad/desconfianza/saqueo)
 # producen decisiones distintas y sirven también como fallback cuando Groq no está.
 func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dictionary:
+	var use_eu := BOT_UTILITY_ENGINE and str(situation.get("engine", "")) != "legacy"
 	var pers := _get_bot_personality(b)
 	var mem: Dictionary = b.get("_mem", {})
 	var strats: Dictionary = mem.get("strategies", {})
@@ -14316,28 +14326,44 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	var need_heal := clampf((80.0 - hp) / 60.0, 0.0, 1.4)
 	var need_water := clampf((65.0 - thirst) / 50.0, 0.0, 1.4)
 
-	var scores := {
-		"forage": (need_food * 1.35 + need_water * 0.4 + survival * 1.15 + curiosity * 0.55 - bravery * 0.25 - aggression * 0.35) * float((strats.get("forage", {}) as Dictionary).get("preference", 1.0)),
-		"hunt": (need_food * 1.25 + bravery * 0.55 + aggression * 0.45 - distrust * 0.25) * float((strats.get("hunt", {}) as Dictionary).get("preference", 1.0)),
-		"fortify_camp": ((0.45 if not has_shelter else 0.15) + bravery * 1.05 + cooperation * 0.85 - curiosity * 0.55 - aggression * 0.35) * float((strats.get("fortify_camp", {}) as Dictionary).get("preference", 1.0)),
-		"scavenge": (aggression * 1.25 + distrust * 1.05 + bravery * 0.40 - cooperation * 0.55) * float((strats.get("scavenge", {}) as Dictionary).get("preference", 1.0)),
-		"explore": (curiosity * 1.10 + sociability * 0.35 - need_heal * 0.6 - distrust * 0.25) * float((strats.get("explore", {}) as Dictionary).get("preference", 1.0)),
-		"rest": (need_heal * 1.55 + survival * 0.70 - bravery * 0.35) * float((strats.get("rest", {}) as Dictionary).get("preference", 1.0)),
+	# Beneficios brutos (sin preference): el modo legacy los multiplica por la
+	# preferencia aprendida; el modo EU los multiplica por P(éxito) beta-binomial
+	# — nunca los dos a la vez, seria doble penalizacion del mismo aprendizaje.
+	var benefits := {
+		"forage": need_food * 1.35 + need_water * 0.4 + survival * 1.15 + curiosity * 0.55 - bravery * 0.25 - aggression * 0.35,
+		"hunt": need_food * 1.25 + bravery * 0.55 + aggression * 0.45 - distrust * 0.25,
+		"fortify_camp": (0.45 if not has_shelter else 0.15) + bravery * 1.05 + cooperation * 0.85 - curiosity * 0.55 - aggression * 0.35,
+		"scavenge": aggression * 1.25 + distrust * 1.05 + bravery * 0.40 - cooperation * 0.55,
+		"explore": curiosity * 1.10 + sociability * 0.35 - need_heal * 0.6 - distrust * 0.25,
+		"rest": need_heal * 1.55 + survival * 0.70 - bravery * 0.35,
 		# El cooperativo busca compañia incluso en paz; y quien ya trabajo con
 		# otro bot (vinculo previo) lo busca activamente para reagruparse.
 		"seek_ally": (sociability * 0.95 + cooperation * 0.95 - distrust * 0.85 - aggression * 0.50) * (1.15 if threat_present else 0.75 + cooperation * 0.35),
 	}
+	var scores := {}
+	if use_eu:
+		scores = _eu_scores(b, pers, benefits, threat_present)
+	else:
+		for act in benefits.keys():
+			scores[act] = float(benefits[act]) * float((strats.get(act, {}) as Dictionary).get("preference", 1.0))
 	var bond_bonus := 0.0
 	for rk in (mem.get("relationships", {}) as Dictionary).keys():
 		var rv: Dictionary = mem["relationships"][rk]
 		if str(rk).begins_with("bot_") and (float(rv.get("trust", 0.0)) >= BOT_TEAM_FORM_TRUST or int(rv.get("helped", 0)) >= 2):
 			bond_bonus = 0.35
 			break
-	scores["seek_ally"] = float(scores["seek_ally"]) + bond_bonus
-	if threat_present and hp < 55.0 and survival > bravery:
+	if scores.has("seek_ally"):
+		scores["seek_ally"] = float(scores["seek_ally"]) + bond_bonus
+	if scores.has("rest") and threat_present and hp < 55.0 and survival > bravery:
 		scores["rest"] = float(scores["rest"]) + 0.9
 	if not risky_zone.is_empty():
-		scores["avoid_zone"] = survival * 1.1 + distrust * 0.5 + need_heal * 0.6
+		if use_eu:
+			var aversion := BotUtilityAI.risk_aversion(pers)
+			scores["avoid_zone"] = BotUtilityAI.expected_utility(
+				survival * 1.1 + distrust * 0.5 + need_heal * 0.6,
+				BotUtilityAI.strat_prob(strats.get("avoid_zone", {})), 0.30, 0.05, aversion)
+		else:
+			scores["avoid_zone"] = survival * 1.1 + distrust * 0.5 + need_heal * 0.6
 
 	# El cerebro local también aprende de planes imposibles: cada fallo
 	# reciente de una acción (stuck_timeout, nav_blocked, plan_broken — no
@@ -14346,7 +14372,7 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	# vetada y el bot propone otra cosa en vez de encadenar el mismo plan.
 	var now_u := Time.get_unix_time_from_system()
 	var fail_n := {}
-	for k in (mem.get("failed_goals", {}) as Dictionary).keys():
+	for k in ([] if use_eu else (mem.get("failed_goals", {}) as Dictionary).keys()):
 		var e: Dictionary = (mem["failed_goals"] as Dictionary)[k]
 		if not (e is Dictionary):
 			continue
@@ -14371,6 +14397,16 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	var target := "wild"
 	var goal := "adapt_and_survive"
 	var prio := clampi(int(round(best_sc * 2.0)), 1, 5)
+	var reason := "personality:%s(%.2f)" % [best_act, best_sc]
+	if use_eu:
+		var det: Dictionary = (b.get("_utility_last", {}) as Dictionary).get(best_act, {})
+		# La prioridad mide la urgencia del beneficio ganador (misma escala que
+		# el score legacy), no U — U ya descuenta el riesgo segun personalidad
+		# y bajaria la prioridad de decisiones urgentes en bots prudentes.
+		prio = clampi(int(round(float(det.get("b", 0.5)) * 2.0)), 1, 5)
+		reason = "eu:%s B%.2f p%.2f c%.2f r%.2f U%.2f" % [best_act,
+			float(det.get("b", 0.0)), float(det.get("p", 0.0)),
+			float(det.get("c", 0.0)), float(det.get("r", 0.0)), best_sc]
 	match best_act:
 		"forage":
 			target = "wild"
@@ -14403,8 +14439,105 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 		"target": target,
 		"poi_kind": target if AI_POI_KINDS.has(target) else "",
 		"priority": prio,
-		"reason": "personality:%s(%.2f)" % [best_act, best_sc],
+		"reason": reason,
 	}
+
+# Motor de utilidad esperada local (BotUtilityAI.gd): U = p×beneficio − coste
+# − aversión×riesgo. Corre solo en los ciclos de decisión — nunca por tick —
+# y deja en b["_utility_last"] el desglose por acción para diagnóstico.
+func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_present: bool) -> Dictionary:
+	var mem: Dictionary = b.get("_mem", {})
+	var strats: Dictionary = mem.get("strategies", {})
+	var aversion := BotUtilityAI.risk_aversion(pers)
+	var energy := float(b.get("energy", 80.0))
+	var hp := float(b.get("health", 100.0))
+	# Amenaza estimada con evidencias legítimas: ultima posicion conocida del
+	# enemigo (decae con el tiempo) + antecedentes de combate de la zona.
+	var threat_p := BotUtilityAI.threat_posterior(b.get("_foe_mem", {}), Time.get_ticks_msec(), _eu_zone_combat_risk(b))
+	# Perfil de caza segun el arma REAL utilizable (los secos no cuentan): sin
+	# municion ni arco cazar es casi siempre perdida — baja p, sube riesgo.
+	var hunt_prof := {"p": 0.35, "risk": 0.45}
+	var proxy: Node3D = b.get("proxy")
+	if proxy != null and is_instance_valid(proxy):
+		var pick := _pick_fight_weapon(b, 16.0)
+		var kind := str(pick.get("kind", "melee"))
+		# thrown/bola: armas arrojadizas de caza — perfil de arco (alcance, no fuego)
+		hunt_prof = BotUtilityAI.hunt_weapon_profile("bow" if kind in ["bow", "thrown", "bola"] else kind)
+	# Coste por esfuerzo + recargo si el cuerpo ya no acompaña: un bot agotado
+	# o herido paga mas por las acciones que exigen moverse.
+	var travel_acts := ["forage", "hunt", "scavenge", "explore", "seek_ally"]
+	var frail := 0.25 if energy < 30.0 or hp < 45.0 else 0.0
+	var act_cost := {"forage": 0.20, "hunt": 0.45, "fortify_camp": 0.30, "scavenge": 0.55,
+		"explore": 0.50, "rest": 0.10, "seek_ally": 0.40}
+	var act_risk := {"forage": 0.12 + threat_p * 0.20, "hunt": float(hunt_prof["risk"]),
+		"fortify_camp": 0.05, "scavenge": 0.30 + threat_p * 0.30,
+		"explore": 0.20 + threat_p * 0.35, "rest": 0.35 if threat_present else 0.05,
+		"seek_ally": 0.12 + threat_p * 0.15}
+	# Los fracasos recientes de objetivo (nav_blocked/stuck — no precondition)
+	# entran como fracasos extra en la beta de ESA accion: misma estimacion,
+	# mas evidencia — nunca un segundo multiplicador como en el legacy.
+	var now_u := Time.get_unix_time_from_system()
+	var fail_n := {}
+	for k in (mem.get("failed_goals", {}) as Dictionary).keys():
+		var e: Dictionary = (mem["failed_goals"] as Dictionary)[k]
+		if not (e is Dictionary):
+			continue
+		if now_u - float(e.get("t", 0.0)) >= float(e.get("ttl", 10800.0)):
+			continue
+		if str(e.get("cause", "")) == "precondition":
+			continue
+		var fact := str(e.get("act", "")).split(":")[0]
+		fail_n[fact] = int(fail_n.get(fact, 0)) + 1
+	# Requisitos antes de la utilidad: una accion sin destino ejecutable no
+	# compite. Descansar/fortificar necesita refugio o campamento; buscar
+	# aliado necesita un aliado real al que ir — la directiva iria a ninguna
+	# parte y el rescate la convertiria en explore de todos modos.
+	var has_home: bool = b.get("shelter_pos", Vector3.INF) != Vector3.INF or b.get("camp_spot", Vector3.INF) != Vector3.INF
+	var has_ally: bool = _nearest_friendly_bot_pos(int(b.get("bot_id", 0))) != Vector3.INF
+	var scores := {}
+	var detail := {}
+	for act in benefits.keys():
+		if act in ["rest", "fortify_camp"] and not has_home:
+			continue
+		if act == "seek_ally" and not has_ally:
+			continue
+		var st: Dictionary = strats.get(act, {})
+		var p := BotUtilityAI.success_prob(int(st.get("success", 0)),
+			int(st.get("fail", 0)) + int(fail_n.get(act, 0)))
+		if act == "hunt":
+			p = minf(p, float(hunt_prof["p"]))
+		var c := float(act_cost.get(act, 0.3)) + (frail if travel_acts.has(act) else 0.0)
+		var r := float(act_risk.get(act, 0.1))
+		var u := BotUtilityAI.expected_utility(float(benefits[act]), p, c, r, aversion)
+		scores[act] = u
+		detail[act] = {"b": snappedf(float(benefits[act]), 0.01), "p": snappedf(p, 0.01),
+			"c": snappedf(c, 0.01), "r": snappedf(r, 0.01), "u": snappedf(u, 0.01)}
+	b["_utility_last"] = detail
+	return scores
+
+# Antecedentes de combate en la zona actual del bot (known_locations): prior
+# para el posterior de amenaza — memoria propia, no omnisciencia.
+func _eu_zone_combat_risk(b: Dictionary) -> float:
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return 0.0
+	var mem: Dictionary = b.get("_mem", {})
+	var known: Dictionary = mem.get("known_locations", {})
+	var pos := proxy.global_position
+	var best_cr := 0.0
+	var best_d := 65.0
+	for pid in known.keys():
+		var loc: Dictionary = known[pid]
+		if not (loc is Dictionary):
+			continue
+		var lp = loc.get("pos")
+		if not (lp is Array) or (lp as Array).size() < 3:
+			continue
+		var d := Vector2(float((lp as Array)[0]) - pos.x, float((lp as Array)[2]) - pos.z).length()
+		if d < best_d:
+			best_d = d
+			best_cr = float(loc.get("combat_risk", 0.0))
+	return best_cr
 
 # Autoridad exclusiva del servidor: un cliente conectado jamás consulta Groq.
 func _ai_can_query_remote() -> bool:
@@ -16097,6 +16230,30 @@ func _ai_poi_memory_factor(b: Dictionary, pos: Vector3, kind: String) -> float:
 	if strats.has(st_key) and strats[st_key] is Dictionary:
 		factor *= clampf(float((strats[st_key] as Dictionary).get("preference", 1.0)), 0.4, 1.45)
 	return clampf(factor, 0.2, 1.7)
+
+# Factor 0.35-1.15 por estado ACTUAL del bot contra este destino concreto:
+# complementa (no duplica) a memory_factor, que solo mira al pasado.
+# · Un bot sin energia/comida/agua no se puede permitir una expedicion lejana.
+# · combat_risk de known_locations (combates contra supervivientes, que
+#   memory_factor no cubre) pesa segun la aversion al riesgo de cada uno —
+#   Kael tolera lo que Elena evita.
+func _ai_poi_state_factor(b: Dictionary, pid: String, dist: float) -> float:
+	if not BOT_UTILITY_ENGINE:
+		return 1.0
+	var f := 1.0
+	var energy := float(b.get("energy", 80.0))
+	var hunger := float(b.get("hunger", 90.0))
+	var thirst := float(b.get("thirst", 90.0))
+	var weak := energy < 30.0 or hunger < 30.0 or thirst < 25.0
+	if weak and dist > 220.0:
+		f -= minf((dist - 220.0) / 220.0, 1.0) * 0.45
+	var mem: Dictionary = b.get("_mem", {})
+	var loc: Dictionary = (mem.get("known_locations", {}) as Dictionary).get(pid, {})
+	var cr := float(loc.get("combat_risk", 0.0)) if loc is Dictionary else 0.0
+	if cr > 0.0:
+		var aversion := BotUtilityAI.risk_aversion(_get_bot_personality(b))
+		f -= minf(cr / 3.0, 1.0) * aversion * 0.30
+	return clampf(f, 0.35, 1.15)
 
 func _ai_memory_summary(mem: Dictionary) -> Dictionary:
 	var out := {"deaths": int(mem.get("deaths", 0))}
