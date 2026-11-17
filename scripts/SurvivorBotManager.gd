@@ -13535,10 +13535,18 @@ func _observe_players(b: Dictionary) -> void:
 	var obs: Array = mem.get("observed_players", [])
 	var now_u := Time.get_unix_time_from_system()
 	for pid in net.players.keys():
-		if pid == net.get_my_id() or is_bot_peer_id(int(pid)):
+		if pid == net.get_my_id() or int(pid) == bid:
 			continue
 		var pdata: Dictionary = net.players[pid]
-		if pdata.get("offline", false) or not net.peer_alive(pid):
+		if pdata.get("offline", false):
+			continue
+		if is_bot_peer_id(int(pid)):
+			# Los bots tambien ensenan: otro superviviente a la vista vale tanto
+			# como un humano (vivo solo si esta en la simulacion y no ha caido).
+			var ob: Dictionary = bots.get(int(pid), {})
+			if ob.is_empty() or float(ob.get("health", 0.0)) <= 0.0:
+				continue
+		elif not net.peer_alive(pid):
 			continue
 		if str(pdata.get("anim", "")).begins_with("dead"):
 			continue

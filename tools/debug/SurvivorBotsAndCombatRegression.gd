@@ -775,8 +775,24 @@ func run() -> void:
 	mgr._observe_players(carlos)
 	check((cmem_obs["observed_players"] as Array).size() == 1,
 		"Reobservar la misma pesca refresca sin duplicar (n=%d)" % (cmem_obs["observed_players"] as Array).size())
+	# Y de bot a bot: Kael pescando a la vista ensenia el mismo tipo de sitio
+	# aunque no sean aliados — la observacion no exige equipo.
+	mgr.bots[903]["health"] = 100.0
+	fnet.players[903]["pos"] = carlos_proxy.global_position + Vector3(8.0, 0.0, 8.0)
+	fnet.players[903]["anim"] = "fishing"
+	fnet.players[903]["held_item"] = "Caña de pescar"
+	fnet.players[903]["sleeping"] = false
+	cmem_obs["observed_players"] = []
+	carlos["_obs_pt"] = 0
+	mgr._observe_players(carlos)
+	var obs_bot: Array = cmem_obs["observed_players"]
+	check(obs_bot.size() >= 1 and str(obs_bot[0].get("player", "")) == "Kael" and
+		str(obs_bot[0].get("what", "")) == "fish",
+		"El bot tambien aprende viendo pescar a otro bot (%s)" % str(obs_bot))
 	fnet.players.erase(42)
 	fnet.alive_pids = []
+	fnet.players[903]["anim"] = "idle"
+	fnet.players[903]["held_item"] = ""
 	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
 	mgr._tick_bot(carlos, 0.1)
 	check(str(carlos.get("_act", "")) == "warm_up",
