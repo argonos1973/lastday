@@ -86,6 +86,11 @@ func run() -> void:
 	puppet._play_shot_received_sound()
 	puppet._play_fall_damage_sound()
 	puppet._play_unwell_sound()
+	puppet._play_pain_sound()
+	await create_timer(1.6).timeout
+	check(puppet._pain_sound_timer <= 0.0, "puppet pain cooldown expires for subsequent hits")
+	puppet._play_pain_sound()
+	check(puppet._pain_sound_timer > 0.0, "a second remote hit plays pain again")
 	puppet._play_shoot_sound()
 	for pl in [puppet._shot_audio_player, puppet._fall_audio_player, puppet._unwell_audio_player]:
 		check(pl is AudioStreamPlayer3D, "puppet damage sound '%s' is positional" % (str(pl.name) if pl != null else "null"))

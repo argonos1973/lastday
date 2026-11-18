@@ -1243,16 +1243,11 @@ var _puppet_hair_color := Color(0.2, 0.15, 0.1)
 var _puppet_skin_color := Color(0.8, 0.7, 0.6)
 var _puppet_top_camo := false
 var _puppet_bottom_camo := false
-var _puppet_step_timer := 0.0
-var _puppet_step_player: AudioStreamPlayer3D = null
-var _puppet_step_streams: Array = []
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	if is_instance_valid(rowing_boat) and not bool(rowing_boat.get("occupant_standing")) and not anim.to_lower().contains("dead"):
 		return
 	if is_dead:
-		if _puppet_step_player != null and _puppet_step_player.playing:
-			_puppet_step_player.stop()
 		# Still update position for dead puppets (corpse sync)
 		global_position = pos
 		rotation.y = rot
@@ -1264,11 +1259,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	global_position = pos
 	rotation.y = rot
 	_puppet_anim = anim
+	_sync_puppet_action_audio(anim)
 	if anim.to_lower().find("dead") >= 0:
 		is_dead = true
-		_puppet_step_timer = 0.0
-		if _puppet_step_player != null and _puppet_step_player.playing:
-			_puppet_step_player.stop()
 		death_pose_time = 0.0
 		_puppet_death_remove_timer = 0.0
 		third_person_action_timer = 0.0
@@ -1374,15 +1367,28 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 			# sounds still follow the attacker's synced action clip.
 			if target == third_person_punch_animation or target == third_person_attack_animation:
 				_schedule_melee_swing_sound(MELEE_PUNCH_IMPACT_DELAY if target == third_person_punch_animation else MELEE_SWING_IMPACT_DELAY)
-			elif anim.to_lower().find("drink") >= 0:
-				_play_consumption_audio(true, 1.8, _mark_action_started())
-			elif anim.to_lower().find("eat") >= 0:
-				_play_consumption_audio(false, 1.6, _mark_action_started())
-			elif anim.to_lower().find("chop") >= 0 or (anim.to_lower().find("forage") >= 0 and _puppet_held in ["Hacha", "Hacha de piedra", "Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada"]):
-				_play_puppet_chop_sound()
-			elif target == _rifle_reload_animation or anim.find("RifleReload") >= 0:
-				# Recarga vista de lejos: mismo clip que el emisor, mismo sonido.
-				_play_reload_sound()
+
+var _puppet_action_audio_kind := ""
+
+func _sync_puppet_action_audio(anim: String) -> void:
+	var lower := anim.to_lower()
+	var kind := ""
+	if not is_dead and not lower.contains("dead"):
+		if lower.contains("drink"): kind = "drink"
+		elif lower.contains("eat"): kind = "eat"
+		elif lower.contains("reload"): kind = "reload"
+		elif lower.contains("chop") or (lower.contains("forage") and _puppet_held in ["Hacha", "Hacha de piedra"]): kind = "chop"
+	if kind == _puppet_action_audio_kind: return
+	_puppet_action_audio_kind = kind
+	# Audio follows the action even while the model is loading or a hit clip
+	# temporarily overrides it. Repeated snapshots must not restart the sample.
+	_stop_consumption_audio()
+	var serial := _mark_action_started()
+	match kind:
+		"drink": _play_consumption_audio(true, 1.8, serial)
+		"eat": _play_consumption_audio(false, 1.6, serial)
+		"reload": _play_reload_sound()
+		"chop": _play_puppet_chop_sound()
 
 func puppet_apply_visuals(clothing: String, held_item: String, backpack: String, clothing_colors: Array = []) -> void:
 	if not is_puppet:
@@ -1741,6 +1747,7 @@ func _update_puppet_held_item_impl(item_name: String) -> void:
 #region PROCESO PRINCIPAL (_process + input)
 func _process(delta: float) -> void:
 	if is_puppet:
+		_pain_sound_timer = maxf(0.0,_pain_sound_timer-delta)
 		# One-shot action clips (fire, punch, ...) must expire on puppets too —
 		# otherwise _is_firing pins want_direct_aim forever and the rifle stays
 		# glued to the aim pose after a remote shot.
@@ -1775,15 +1782,12 @@ func _process(delta: float) -> void:
 					third_person_animation_player.speed_scale = 0.65 if is_crouching else (1.24 if is_p_run else (1.08 if is_p_walk else 1.0))
 			_update_puppet_ground_alignment(delta)
 			_update_rifle_visuals(delta)
-			_update_puppet_locomotion_audio(delta)
 		_update_hand_socket()
 		_update_torch_hand_socket()
 		_update_drink_hand_socket()
 		_update_backpack_socket()
 		_update_head_worn_items()
 		if is_dead:
-			if _puppet_step_player != null and _puppet_step_player.playing:
-				_puppet_step_player.stop()
 			_update_death_pose(delta)
 			if _puppet_naked_pending:
 				_puppet_naked_timer += delta
@@ -5302,7 +5306,7 @@ func _update_water_state(delta: float) -> void:
 					var spray_strength := strength * lerpf(1.0, 0.45, clampf(_water_depth / 1.2, 0.0, 1.0))
 					_spawn_water_splash(splash_pos, spray_strength, motion)
 					_spawn_water_ripples(splash_pos, strength, motion)
-					_play_water_step_sound(splash_pos)
+					# Footstep audio is owned by AudioSystem, for every actor.
 			_water_step_timer = clampf(0.95 / water_speed, 0.28, 0.65)
 		wetness = min(1.0, wetness + delta * (0.38 + _water_depth * 0.55))
 		_soaked_each_equipped(delta * (0.38 + _water_depth * 0.55))
@@ -7687,6 +7691,8 @@ func _stop_consumption_audio() -> void:
 		_consumption_audio.stop()
 
 func _is_consumption_audio_active() -> bool:
+	if is_puppet:
+		return not is_dead and _puppet_action_audio_kind in ["eat","drink"]
 	if _consumption_pending or _interact_busy:
 		return true
 	var main := get_tree().current_scene if get_tree() != null else null
@@ -15279,7 +15285,12 @@ func _play_shoot_sound(is_m4 := false) -> void:
 	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
 
+var _last_reload_audio_msec := -10000
+
 func _play_reload_sound() -> void:
+	var now := Time.get_ticks_msec()
+	if is_puppet and now-_last_reload_audio_msec < 1700: return
+	_last_reload_audio_msec = now
 	if _reload_audio_player == null:
 		# Cerrojo/cargador: se oye cerca, nada que ver con el alcance de un tiro.
 		_reload_audio_player = _make_action_sound_player("ReloadSound", 8.0, 60.0)
@@ -15314,59 +15325,6 @@ func _play_puppet_chop_sound() -> void:
 	_consumption_audio.stream = st
 	_consumption_audio.pitch_scale = randf_range(0.94, 1.05)
 	_consumption_audio.play()
-
-func _update_puppet_locomotion_audio(delta: float) -> void:
-	if DisplayServer.get_name() == "headless" or is_dead or is_sleeping or is_sitting or is_prone:
-		if _puppet_step_player != null and _puppet_step_player.playing:
-			_puppet_step_player.stop()
-		return
-	var anim_l := _puppet_anim.to_lower()
-	var is_run := anim_l.find("run") >= 0 or anim_l.find("sprint") >= 0
-	var is_walk := not is_run and (anim_l.find("walk") >= 0 or anim_l.find("stair") >= 0) and anim_l.find("sneak") < 0 and not is_crouching
-	if not is_run and not is_walk:
-		_puppet_step_timer = 0.0
-		if _puppet_step_player != null and _puppet_step_player.playing:
-			_puppet_step_player.stop()
-		return
-	var sc := get_tree().current_scene if get_tree() != null else null
-	if sc != null and sc.get("player") is Node3D and is_instance_valid(sc.player):
-		if global_position.distance_to((sc.player as Node3D).global_position) > 42.0:
-			if _puppet_step_player != null and _puppet_step_player.playing:
-				_puppet_step_player.stop()
-			return
-	if sc != null and sc.has_method("get_river_depth_at") and float(sc.get_river_depth_at(global_position)) > 0.05:
-		if _puppet_step_player != null and _puppet_step_player.playing:
-			_puppet_step_player.stop()
-		_puppet_step_timer -= delta
-		if _puppet_step_timer <= 0.0:
-			_puppet_step_timer = 0.34 if is_run else 0.56
-			_play_water_step_sound(global_position)
-		return
-	# Mismos sonidos de andar (andar.mp3) y correr (correr.mp3) que reproduce
-	# AudioSystem para el personaje humano, pero en 3D posicional sobre el puppet.
-	if _puppet_step_player == null:
-		_puppet_step_player = AudioStreamPlayer3D.new()
-		_puppet_step_player.name = "PuppetStepAudio"
-		_puppet_step_player.unit_size = 5.5
-		_puppet_step_player.max_distance = 38.0
-		_puppet_step_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
-		add_child(_puppet_step_player)
-	if _puppet_step_streams.size() < 2:
-		_puppet_step_streams = [
-			_load_audio_stream("res://assets/audio/andar.mp3"),
-			_load_audio_stream("res://assets/audio/correr.mp3"),
-		]
-		for s in _puppet_step_streams:
-			if s is AudioStreamMP3:
-				(s as AudioStreamMP3).loop = true
-	var desired_stream: AudioStream = _puppet_step_streams[1] if is_run else _puppet_step_streams[0]
-	if desired_stream == null:
-		return
-	if _puppet_step_player.stream != desired_stream or not _puppet_step_player.playing:
-		_puppet_step_player.stream = desired_stream
-		_puppet_step_player.volume_db = 3.0 if is_run else 0.0
-		_puppet_step_player.pitch_scale = 1.0
-		_puppet_step_player.play()
 
 func play_rifle_shot_remote(_origin: Vector3, _dir: Vector3, wind: Vector3 = Vector3.ZERO) -> void:
 	var _cpt := Time.get_ticks_usec()

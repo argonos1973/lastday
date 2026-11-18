@@ -1466,7 +1466,11 @@ func tick(delta: float) -> void:
 	_pt = Time.get_ticks_usec()
 	for bot_id in bots.keys():
 		var bot_started := Time.get_ticks_usec()
-		_tick_bot(bots[bot_id], delta)
+		var b: Dictionary = bots[bot_id]
+		var proxy: Node3D = b.get("proxy")
+		var before := proxy.global_position if is_instance_valid(proxy) else Vector3.ZERO
+		_tick_bot(b, delta)
+		_finish_bot_motion_tick(b,before,delta)
 		_pbm("actor_%s" % bot_id, bot_started)
 	_pbm("tick_bot", _pt)
 	_pt = Time.get_ticks_usec()
@@ -1488,6 +1492,20 @@ func tick(delta: float) -> void:
 		_sync_accum = fmod(_sync_accum, 0.05)
 		_broadcast_bots()
 	_pbm("bcast_bots", _pt)
+
+func _finish_bot_motion_tick(b: Dictionary, before: Vector3, delta: float) -> void:
+	var proxy: Node3D = b.get("proxy")
+	if not is_instance_valid(proxy): return
+	var displacement := proxy.global_position-before
+	var moving := displacement.length_squared() > .000001
+	proxy.set_meta("moving",moving)
+	proxy.set_meta("sprinting",moving and str(b.get("anim","")) == "run")
+	if not moving:
+		b["_speed"] = 0.0
+		b["_mdir"] = Vector3.ZERO
+		if str(b.get("anim","")) in ["walk","run","stairs"]: b["anim"] = "idle"
+	else:
+		b["_speed"] = Vector2(displacement.x,displacement.z).length()/maxf(delta,.001)
 
 func _refresh_client_bot_avatars() -> void:
 	if world == null or world.get("net") == null or not ("remote_players" in world):
@@ -1608,6 +1626,25 @@ func _broadcast_bots() -> void:
 	if (net == null or not net.is_connected) and world.has_method("_update_remote_players"):
 		world._update_remote_players()
 
+func _tick_bot_condition_audio(b: Dictionary, delta: float) -> void:
+	var sick := float(b.get("sick_timer",0.0)) > 0.0
+	var critical := float(b.get("health",100.0)) > 0.0 and float(b.get("health",100.0)) <= 20.0
+	var condition := "sick" if sick and not bool(b.get("_audio_was_sick",false)) else ""
+	b["_audio_was_sick"] = sick
+	b["_critical_audio_t"] = maxf(0.0,float(b.get("_critical_audio_t",0.0))-delta) if critical else 0.0
+	if critical and float(b["_critical_audio_t"]) <= 0.0:
+		condition = "critical"
+		b["_critical_audio_t"] = 14.0
+	if not condition.is_empty(): _emit_bot_condition_audio(b,condition)
+
+func _emit_bot_condition_audio(b: Dictionary, condition: String) -> void:
+	if world == null: return
+	var net = world.get("net")
+	if net != null and net.has_method("_broadcast_player_condition_audio"):
+		net._broadcast_player_condition_audio(int(b["bot_id"]),condition)
+	if DisplayServer.get_name() != "headless" and world.has_method("_net_player_condition_audio"):
+		world._net_player_condition_audio(int(b["bot_id"]),condition)
+
 func _tick_bot(b: Dictionary, delta: float) -> void:
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
@@ -1632,6 +1669,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["sleeping"] = false
 		b["hide_timer"] = 0.0
 	b["health"] = live_hp
+	_tick_bot_condition_audio(b, delta)
 
 	b["attack_cooldown"] = maxf(0.0, float(b["attack_cooldown"]) - delta)
 	b["shoot_cooldown"] = maxf(0.0, float(b["shoot_cooldown"]) - delta)
@@ -2057,6 +2095,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# 4) Sed critica sin botellas: ir al rio/lago a beber (solo si no esta
 	# siguiendo ordenes de equipo o la sed es critica de verdad)
+	if bool(b.get("_consume_from_inventory",false)) and float(b.get("consume_anim_t",0.0)) > 0.0:
+		_stop_bot_motion(b)
+		b["_act"] = str(b.get("consume_anim","eat"))
+		return
 	var leader := _sensed_node(b, "_s_leader")
 	b["drink_giveup"] = maxf(0.0, float(b.get("drink_giveup", 0.0)) - delta)
 	var thirst_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
@@ -2237,8 +2279,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var roof_wary := _bot_roof_wary(b)
 		b["crouching"] = roof_wary
 		var lpos := _loot_entry_pos(loot_action)
-		var d_loot := Vector2(proxy.global_position.x - lpos.x, proxy.global_position.z - lpos.z).length()
-		if d_loot <= 2.1 and absf(proxy.global_position.y - lpos.y) <= 1.8:
+		if _bot_can_reach_loot(proxy.global_position, lpos):
+			_stop_bot_motion(b)
 			_collect_loot_entry(b, loot_action)
 		else:
 			_move_bot_towards(b, lpos, 4.6 if roof_wary else 6.2, delta, "walk" if roof_wary else "run")
@@ -3195,6 +3237,7 @@ func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: 
 
 func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 	b["consume_anim_t"] = maxf(0.0, float(b.get("consume_anim_t", 0.0)) - delta)
+	if float(b["consume_anim_t"]) <= 0.0: b["_consume_from_inventory"] = false
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	# Vendarse si tiene poca salud o sangrado (si aprendio de muertes en combate, se venda antes)
@@ -3364,6 +3407,7 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 			b["eat_cooldown"] = 10.0
 			b["consume_anim"] = "eat"
 			b["consume_anim_t"] = 1.6
+			b["_consume_from_inventory"] = true
 			_bot_log_eaten_food(b, nm)
 		else:
 			# Hambre con solo latas cerradas encima: abrir una YA con el
@@ -3405,6 +3449,7 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 			b["eat_cooldown"] = 6.0
 			b["consume_anim"] = "drink"
 			b["consume_anim_t"] = 1.6
+			b["_consume_from_inventory"] = true
 			break
 	# Auto-equipar mejor ropa o mochila que haya saqueado
 	_auto_equip_best_gear(b)
@@ -6480,8 +6525,9 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 		if not nearby_loot.is_empty():
 			var lp := _loot_entry_pos(nearby_loot)
 			var d_nl := Vector2(cur.x - lp.x, cur.z - lp.z).length()
-			var loot_reach: bool = d_nl <= 2.1 and absf(cur.y - lp.y) <= 1.8
+			var loot_reach := _bot_can_reach_loot(cur, lp)
 			if loot_reach:
+				_stop_bot_motion(b)
 				_collect_loot_entry(b, nearby_loot)
 				return
 			# Botin de camino o de la zona de escolta: desvio corto (<=4 m) si
@@ -10245,6 +10291,8 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	var id := str(entry.get("id", ""))
 	if id.is_empty() or world == null:
 		return
+	if not _bot_can_reach_loot((b["proxy"] as Node3D).global_position, _loot_entry_pos(entry)):
+		return
 	# La entrada viene de la cache de sentidos: otro bot pudo recogerla
 	# hace 0.2 s. Revalidar que sigue en el mundo antes de duplicar el item.
 	var still_there := false
@@ -10303,6 +10351,18 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 
 # Mismo coste que el refugio del jugador (ShelterPlacement): 11 palos —
 # nada de atajo con cuerda. Con el material en la mano construye igual.
+func _bot_can_reach_loot(from: Vector3, pos: Vector3) -> bool:
+	if Vector2(from.x-pos.x,from.z-pos.z).length() > 2.1 or absf(from.y-pos.y) > 1.8:
+		return false
+	if _wall_between(from,pos):
+		return false
+	# Check the hand-to-item segment too: a closed door or a floor between
+	# actor and item is not an interaction, even at less than two metres.
+	if world is Node3D and (world as Node3D).get_world_3d() != null:
+		var q := PhysicsRayQueryParameters3D.create(from+Vector3.UP*1.2,pos+Vector3.UP*.15,5)
+		return (world as Node3D).get_world_3d().direct_space_state.intersect_ray(q).is_empty()
+	return true
+
 func _can_bot_build_shelter(proxy: Node3D) -> bool:
 	return _bot_item_count(proxy, "Palo") >= 11
 
@@ -11275,8 +11335,31 @@ func _is_pos_blocked(pos: Vector3, margin: float = 0.45, allow_deep: bool = fals
 		return true
 	return false
 
+func _can_leave_building_margin(from_pos: Vector3, to_pos: Vector3) -> bool:
+	if world == null or not ("wildlife_blockers" in world) or not world.has_method("is_bot_blocked_at"):
+		return false
+	# A bot may already be in the conservative nav halo after a door closes
+	# or after fleeing. Permit parallel/outward movement, never deeper into
+	# the building. Real collision rays still run below.
+	if world.is_bot_blocked_at(to_pos,-.45): return false
+	var a := Vector2(from_pos.x,from_pos.z)
+	var z := Vector2(to_pos.x,to_pos.z)
+	for blk in world.wildlife_blockers:
+		if not (blk is Dictionary) or not blk.has("house_bounds"): continue
+		var wall: Rect2 = blk.house_bounds
+		if wall.has_point(a) or not wall.grow(.9).has_point(a): continue
+		var near_a := Vector2(clampf(a.x,wall.position.x,wall.end.x),clampf(a.y,wall.position.y,wall.end.y))
+		var near_z := Vector2(clampf(z.x,wall.position.x,wall.end.x),clampf(z.y,wall.position.y,wall.end.y))
+		if z.distance_to(near_z) >= a.distance_to(near_a)-.001: return true
+	return false
+
 func _is_step_blocked(from_pos: Vector3, to_pos: Vector3, allow_deep: bool = false) -> bool:
 	if _is_pos_blocked(to_pos, 0.42, allow_deep):
+		if _is_pos_blocked(to_pos,-.45,allow_deep) or not _can_leave_building_margin(from_pos,to_pos):
+			return true
+	elif _is_pos_blocked(from_pos,0.42,allow_deep) and _wall_between(from_pos,to_pos):
+		# A free interior must not turn a step out of the facade margin into
+		# a shortcut through a window (the chest ray can see through one).
 		return true
 	if world != null and (world is Node3D) and (world as Node3D).get_world_3d() != null:
 		var space: PhysicsDirectSpaceState3D = (world as Node3D).get_world_3d().direct_space_state
@@ -11347,7 +11430,9 @@ func _try_open_building_door(b: Dictionary, cur: Vector3, door_world: Vector3) -
 		return false
 	if Vector2(cur.x - door_world.x, cur.z - door_world.z).length() > 4.8:
 		return false
-	if world.bot_try_open_door_at(door_world) or world.bot_try_open_door_at(cur):
+	if _wall_between(cur,door_world):
+		return false
+	if world.bot_try_open_door_at(cur):
 		b["path"] = []
 		b["path_timer"] = 0.0
 		return true
@@ -11672,14 +11757,26 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		if not (blk is Dictionary) or not (blk as Dictionary).has("house_bounds"):
 			continue
 		var dblk: Dictionary = blk
-		if bool(dblk.get("barn_door_always_open", false)):
-			continue
 		var hb: Rect2 = dblk["house_bounds"]
 		var cur_in := hb.grow(-0.25).has_point(p_cur)
 		var goal_in := hb.grow(0.8).has_point(p_goal)
 		if cur_in == goal_in:
 			continue
 		var bpos: Vector3 = dblk.get("pos", Vector3.ZERO)
+		if bool(dblk.get("barn_door_always_open", false)):
+			# Both barn gates are open. Choose the entrance on the actor's side
+			# (or the exit nearest the destination) rather than aiming at a wall.
+			var side_z := cur.z if goal_in else goal.z
+			var north := side_z < hb.get_center().y
+			var gate := Vector3(float(dblk.get("front_door_x" if north else "back_door_x",bpos.x)),cur.y,hb.position.y if north else hb.end.y)
+			var out := Vector3(0,0,-1 if north else 1)
+			var along_gate := (cur-gate).dot(out)
+			if goal_in:
+				return gate+out*3.0 if absf(cur.x-gate.x)>.65 or along_gate>3.5 or along_gate<-.25 else gate-out*1.5
+			if absf(cur.x-gate.x)>.65 or along_gate < -1.8: return gate-out*1.5
+			b["_building_exit_wp"] = gate+out*4.2
+			b["_building_exit_until"] = Time.get_ticks_msec()+8000
+			return gate+out*4.2
 		var dc: Vector3 = world._blocker_door_center(dblk, bpos, hb) if world.has_method("_blocker_door_center") else dblk.get("door_center", dblk.get("door_pos", Vector3.INF))
 		var dpos: Vector3 = dblk.get("door_pos", dc)
 		var door_obj = dblk.get("door", null)
@@ -11697,8 +11794,8 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		var across := absf(rel.dot(side_dir))
 		var is_open: bool = bool(world._check_door_open(door_obj, dblk)) if world.has_method("_check_door_open") else bool(dblk.get("door_open", false))
 		var d_door := minf(p_cur.distance_to(Vector2(dc.x, dc.z)), p_cur.distance_to(Vector2(dpos.x, dpos.z)))
-		if not is_open and d_door <= 4.8:
-			if world.bot_try_open_door_at(dpos) or world.bot_try_open_door_at(dc) or world.bot_try_open_door_at(cur):
+		if not is_open and d_door <= 4.8 and not _wall_between(cur,dc):
+			if world.bot_try_open_door_at(cur):
 				b["path"] = []
 				b["path_timer"] = 0.0
 				is_open = true
@@ -11715,11 +11812,88 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		# y cruzar recto hacia fuera.
 		if not is_open or across > 0.65 or along < -1.8:
 			return Vector3(dc.x - out_dir.x * 1.2, cur.y, dc.z - out_dir.y * 1.2)
-		var exit_point := Vector3(dc.x + out_dir.x * 2.4, cur.y, dc.z + out_dir.y * 2.4)
+		# Clear the coarse outdoor nav cell as well as the physical jamb.
+		var exit_point := Vector3(dc.x + out_dir.x * 4.2, cur.y, dc.z + out_dir.y * 4.2)
 		b["_building_exit_wp"] = exit_point
 		b["_building_exit_until"] = Time.get_ticks_msec() + 8000
 		return exit_point
 	return goal
+
+# Short visibility graph around a facade. Outdoor navigation uses 2 m cells;
+# its nearest-free-cell fallback can point back inside an open doorway. Keep
+# the doorway and the first facade corners precise, then hand off to the map.
+func _building_exterior_waypoint(b: Dictionary, cur: Vector3, goal: Vector3) -> Vector3:
+	var cached: Array = b.get("_facade_path",[])
+	if b.get("_facade_goal") == goal:
+		while not cached.is_empty() and Vector2(cur.x-cached[0].x,cur.z-cached[0].z).length() < .35:
+			cached.pop_front()
+		if not cached.is_empty() and cur.distance_to(cached[0]) < 35.0:
+			return cached[0]
+	b["_facade_path"] = []
+	if not _wall_between(cur,goal): return goal
+	var shapes: Array = []
+	if world != null and "wildlife_blockers" in world:
+		for blk in world.wildlife_blockers:
+			if blk is Dictionary and blk.has("house_bounds") and int(blk.get("city_building_index",-1)) < 0:
+				shapes.append({"origin":Vector3.ZERO,"yaw":0.0,"bounds":blk.house_bounds})
+	for def in CityBlock.BUILDINGS:
+		var fp: Vector2 = def.get("footprint",Vector2(6,6))
+		shapes.append({"origin":CityExpansion.CENTER+def.position,"yaw":float(def.get("yaw",0.0)),"bounds":Rect2(-fp,fp*2.0)})
+	shapes.append({"origin":CT_ORIGIN,"yaw":0.0,"bounds":Rect2(-9,-8,18,16)})
+	var nearby: Array = []
+	var nodes: Array[Vector3] = [cur,goal]
+	var blocked := false
+	for shape in shapes:
+		var origin: Vector3 = shape.origin
+		var yaw: float = shape.yaw
+		var lc := (cur-origin).rotated(Vector3.UP,-yaw)
+		var lg := (goal-origin).rotated(Vector3.UP,-yaw)
+		var a := Vector2(lc.x,lc.z)
+		var z := Vector2(lg.x,lg.z)
+		var wall: Rect2 = shape.bounds
+		if wall.has_point(a) or wall.has_point(z) or not wall.grow(25.0).has_point(a): continue
+		nearby.append(shape)
+		blocked = blocked or _seg2d_crosses_rect_wall(a,z,wall,[])
+		var r := wall.grow(1.5)
+		for corner in [r.position,Vector2(r.end.x,r.position.y),r.end,Vector2(r.position.x,r.end.y)]:
+			nodes.append(origin+Vector3(corner.x,lc.y,corner.y).rotated(Vector3.UP,yaw))
+	if not blocked: return goal
+	var cost: Array[float] = []
+	var prev: Array[int] = []
+	cost.resize(nodes.size()); cost.fill(INF); cost[0] = 0.0
+	prev.resize(nodes.size()); prev.fill(-1)
+	var used := {}
+	for _iteration in nodes.size():
+		var at := -1
+		for j in nodes.size():
+			if not used.has(j) and (at < 0 or cost[j] < cost[at]): at = j
+		if at < 0 or is_inf(cost[at]) or at == 1: break
+		used[at] = true
+		for j in range(1,nodes.size()):
+			if used.has(j): continue
+			var clear := true
+			for shape in nearby:
+				var la := (nodes[at]-(shape.origin as Vector3)).rotated(Vector3.UP,-float(shape.yaw))
+				var lb := (nodes[j]-(shape.origin as Vector3)).rotated(Vector3.UP,-float(shape.yaw))
+				var wall: Rect2 = (shape.bounds as Rect2).grow(.8)
+				# The first point can already overlap the safety margin. It may
+				# leave it, but the physical footprint stays solid.
+				if at == 0 and wall.has_point(Vector2(la.x,la.z)): wall = shape.bounds
+				if wall.has_point(Vector2(lb.x,lb.z)) or _seg2d_crosses_rect_wall(Vector2(la.x,la.z),Vector2(lb.x,lb.z),wall,[]):
+					clear = false
+					break
+			if not clear: continue
+			var c: float = cost[at]+nodes[at].distance_to(nodes[j])
+			if c < cost[j]: cost[j] = c; prev[j] = at
+	if prev[1] < 0: return goal
+	var route: Array = []
+	var at := 1
+	while prev[at] >= 0:
+		route.push_front(nodes[at])
+		at = prev[at]
+	b["_facade_path"] = route
+	b["_facade_goal"] = goal
+	return route[0]
 
 # La aproximacion a puerta solo justifica soltar la malla nav (in_building_3d)
 # cuando la linea recta al waypoint NO atraviesa ningun muro: desde el muro
@@ -11911,6 +12085,9 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var cur := proxy.global_position
 	var road_goal := raw_goal if not _bot_tower_at(cur, true).is_empty() else _resolve_mountain_road_waypoint(cur, raw_goal)
 	var goal := _resolve_building_interior_waypoint(b, cur, road_goal)
+	var exterior_goal := _building_exterior_waypoint(b,cur,goal)
+	var facade_route := exterior_goal != goal
+	goal = exterior_goal
 	var previous_waypoint: Vector3 = b.get("_interior_last_waypoint", Vector3.INF)
 	if goal != previous_waypoint and previous_waypoint.is_finite() and cur.distance_to(previous_waypoint) < .45:
 		b["macro_timer"] = 0.0
@@ -11937,7 +12114,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var bot_nav_ref = world.get("bot_nav") if world != null else null
 	if bot_nav_ref == null and world != null:
 		bot_nav_ref = world.get("wolf_nav")
-	if in_building_3d or (on_mountain_3d and (cur.x < -235.0 and cur.z < -235.0)):
+	if facade_route or in_building_3d or (on_mountain_3d and (cur.x < -235.0 and cur.z < -235.0)):
 		nav_guided = true
 	elif (flat_dist > 3.5 or direct_blocked) and bot_nav_ref != null:
 		var path: Array = b["path"]
@@ -12056,7 +12233,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var dir := to_next / d
 	# Sumar repulsion suave de bloqueadores cercanos solo en exterior libre:
 	# dentro de edificios, escaleras o umbrales de puerta empujaria contra el marco.
-	if not in_building_3d and world != null and world.has_method("get_wildlife_avoidance_vector_at"):
+	if not in_building_3d and not facade_route and world != null and world.has_method("get_wildlife_avoidance_vector_at"):
 		b["avoid_t"] = float(b.get("avoid_t", 0.0)) - delta
 		if float(b["avoid_t"]) <= 0.0:
 			b["avoid_t"] = 0.15
@@ -12116,7 +12293,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var front_blocked := false if on_stair_segment else _is_step_blocked(cur, new_pos, deep_now)
 	# Una puerta cerrada no es un muro: si el paso choca y hay una puerta
 	# cerrada al alcance, el bot la abre como un jugador y repatha ya libre.
-	if front_blocked and world != null and world.has_method("bot_try_open_door_at") and (world.bot_try_open_door_at(cur) or world.bot_try_open_door_at(next_goal)):
+	if front_blocked and world != null and world.has_method("bot_try_open_door_at") and world.bot_try_open_door_at(cur):
 		b["path"] = []
 		b["path_timer"] = 0.0
 		_stop_bot_motion(b)
@@ -13337,6 +13514,9 @@ func _bot_gun_prepare_shot(b: Dictionary, weapon: String) -> bool:
 	_bot_gun_ammo_save(proxy, ammo)
 	b["shoot_cooldown"] = BOT_GUN_RELOAD_TIME
 	b["gun_reloading"] = true
+	# Reloading also makes noise while crouched/prone, where no standing
+	# reload clip is sent to clients. The receiver deduplicates clip + event.
+	_emit_bot_condition_audio(b,"reload")
 	return false
 
 func _bot_best_thrown_weapon(proxy: Node3D) -> String:

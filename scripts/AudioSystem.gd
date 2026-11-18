@@ -63,18 +63,8 @@ const WATER_FOOTSTEP_START_SECONDS := 4.0
 const WATER_OBJECT_START_SECONDS := 2.0
 const WATER_OBJECT_END_SECONDS := 5.0
 
-const WALK_SOUND_PATH := "res://assets/audio/andar.mp3"
-const RUN_SOUND_PATH := "res://assets/audio/correr.mp3"
-
 var player
 var day_cycle
-var walk_stream: AudioStream = null
-var run_stream: AudioStream = null
-var walk_loop_player: AudioStreamPlayer3D = null
-var run_loop_player: AudioStreamPlayer3D = null
-var _walk_active := false
-var _run_active := false
-
 # Pasos de actores remotos: metronomo propio por actor (pid/aid), fase de
 # variacion de sample y pool round-robin de players 3D.
 const REMOTE_STEP_POOL := 10
@@ -83,6 +73,8 @@ var _remote_step_players: Array = []
 var _remote_step_index := 0
 var _remote_step_t: Dictionary = {}     # "p:3"/"a:wolf_4" -> s al proximo paso
 var _remote_step_phase: Dictionary = {} # misma clave -> indice de variacion
+var _remote_step_pos: Dictionary = {}
+var water_step_shots: Array = []
 var ambient_day_player: AudioStreamPlayer
 var ambient_night_player: AudioStreamPlayer
 var wind_player: AudioStreamPlayer
@@ -229,19 +221,7 @@ func _create_players() -> void:
 		add_child(rsp)
 		_remote_step_players.append(rsp)
 
-	walk_loop_player = AudioStreamPlayer3D.new()
-	walk_loop_player.name = "WalkLoop"
-	walk_loop_player.unit_size = 6.0
-	walk_loop_player.max_distance = 40.0
-	walk_loop_player.volume_db = 8.0
-	add_child(walk_loop_player)
 
-	run_loop_player = AudioStreamPlayer3D.new()
-	run_loop_player.name = "RunLoop"
-	run_loop_player.unit_size = 6.0
-	run_loop_player.max_distance = 40.0
-	run_loop_player.volume_db = 8.0
-	add_child(run_loop_player)
 
 	action_player = AudioStreamPlayer3D.new()
 	action_player.name = "ActionSounds"
@@ -269,21 +249,14 @@ func _load_audio() -> void:
 	_assign_loop(wind_player, _load_first_stream(WIND_PATHS))
 	_assign_loop_3d(river_player, _load_first_stream(RIVER_WATER_PATHS))
 	campfire_player.stream = _generate_campfire_stream()
-	walk_stream = _load_stream_from_path(WALK_SOUND_PATH)
-	run_stream = _load_stream_from_path(RUN_SOUND_PATH)
-	if walk_stream is AudioStreamMP3:
-		(walk_stream as AudioStreamMP3).loop = true
-	if run_stream is AudioStreamMP3:
-		(run_stream as AudioStreamMP3).loop = true
-	if walk_loop_player != null and walk_stream != null:
-		walk_loop_player.stream = walk_stream
-	if run_loop_player != null and run_stream != null:
-		run_loop_player.stream = run_stream
 	grass_steps = _load_streams(FOOTSTEP_GRASS_PATHS)
 	road_steps = _load_streams(FOOTSTEP_ROAD_PATHS)
 	wood_steps = _load_streams(FOOTSTEP_WOOD_PATHS)
 	water_object_splashes = _load_streams(WATER_OBJECT_SPLASH_PATHS)
 	water_footstep_splashes = _load_streams(WATER_FOOTSTEP_SPLASH_PATHS)
+	# This recording is a single splash. The MP3 above is a long loop and
+	# must never be assigned to the shared remote one-shot pool.
+	water_step_shots = _load_streams(["res://assets/external/audio/water/water_footstep_splash.wav"])
 	door_open_sounds = _load_streams(DOOR_OPEN_PATHS)
 	door_close_sounds = _load_streams(DOOR_CLOSE_PATHS)
 	for stream in water_footstep_splashes:
@@ -723,81 +696,23 @@ func _play_one_shot_at(player_node: AudioStreamPlayer3D, streams: Array, pos: Ve
 	player_node.play(start_seconds)
 
 func _update_footsteps(delta: float) -> void:
-	# Water footsteps use input timing instead of the previous frame's velocity.
-	# This also works while wading deeply, where CharacterBody3D may not report
-	# itself as being on the floor.
-	if is_instance_valid(player.get("rowing_boat")):
-		_stop_walk_run()
-		stop_water_step()
-		step_timer = 0.0
-		return
-	if player.is_in_water:
-		_stop_walk_run()
-		var water_input: Vector2 = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-		if water_input.length() < 0.1:
-			stop_water_step()
-			step_timer = 0.0
-			return
-		var water_pos: Vector3 = player.global_position
-		var water_scene := get_tree().current_scene
-		if water_scene != null and water_scene.has_method("get_river_surface_y_at"):
-			water_pos.y = float(water_scene.call("get_river_surface_y_at", water_pos))
-		play_water_step(water_pos, player.is_sprinting)
-		return
+	# One surface/cadence system for the local survivor and remote survivors.
+	# Input and an animation can remain active while a wall stops the body.
 	stop_water_step()
-	if not player.is_on_floor():
-		_stop_walk_run()
+	if not is_instance_valid(player): return
+	var moving := Vector2(player.velocity.x, player.velocity.z).length()
+	if is_instance_valid(player.get("rowing_boat")) or player.is_dead or player.is_sleeping or player.is_sitting or player.is_prone or (not player.is_on_floor() and not player.is_in_water):
+		moving = 0.0
+	if moving < .15:
 		step_timer = 0.0
 		return
-	var input_dir: Vector2 = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	if input_dir.length() < 0.1:
-		_stop_walk_run()
-		step_timer = 0.0
-		return
-	# Use continuous loop players for walk/run mp3 sounds
-	if player.is_sprinting and run_stream != null and run_loop_player != null:
-		_stop_walk()
-		if not _run_active:
-			run_loop_player.global_position = player.global_position
-			run_loop_player.play()
-			_run_active = true
-		else:
-			run_loop_player.global_position = player.global_position
-		return
-	if not player.is_sprinting and walk_stream != null and walk_loop_player != null:
-		_stop_run()
-		if not _walk_active:
-			walk_loop_player.global_position = player.global_position
-			walk_loop_player.play()
-			_walk_active = true
-		else:
-			walk_loop_player.global_position = player.global_position
-		return
-	# Fall back to surface-based footsteps only
-	_stop_walk_run()
-	var interval: float = 0.58
-	if player.is_sprinting:
-		interval = 0.34
-	elif player.is_crouching:
-		interval = 0.82
 	step_timer -= delta
 	if step_timer <= 0.0:
-		step_timer = interval
+		step_timer = _step_interval(moving, player.is_crouching)
 		_play_surface_step()
 
-func _stop_walk() -> void:
-	if _walk_active and walk_loop_player != null:
-		walk_loop_player.stop()
-	_walk_active = false
-
-func _stop_run() -> void:
-	if _run_active and run_loop_player != null:
-		run_loop_player.stop()
-	_run_active = false
-
-func _stop_walk_run() -> void:
-	_stop_walk()
-	_stop_run()
+static func _step_interval(speed: float, crouched: bool) -> float:
+	return clampf(1.05 / maxf(speed,.1), .62, .95) if crouched else clampf(1.65 / maxf(speed,.1), .29, .65)
 
 func _play_surface_step() -> void:
 	var pool: Array = _get_surface_steps()
@@ -808,34 +723,22 @@ func _play_surface_step() -> void:
 	if stream is AudioStream:
 		footstep_player.global_position = player.global_position
 		footstep_player.pitch_scale = randf_range(0.92, 1.08)
+		footstep_player.volume_db = -9.0 if player.is_crouching else (2.5 if player.is_sprinting else 0.0)
 		footstep_player.stream = stream
 		footstep_player.play()
 
 func _get_surface_steps() -> Array:
-	if _is_inside_building():
+	return _surface_steps_at(player.global_position)
+
+func _surface_steps_at(pos: Vector3) -> Array:
+	var scene := get_tree().current_scene
+	if scene != null and scene.has_method("get_river_depth_at") and float(scene.get_river_depth_at(pos)) > .05:
+		return water_step_shots if not water_step_shots.is_empty() else grass_steps
+	if _pos_inside_building(pos):
 		return wood_steps if not wood_steps.is_empty() else grass_steps
-	if abs(player.global_position.x - 8.0) < 4.6:
+	if scene != null and scene.has_method("_is_on_road") and scene._is_on_road(pos):
 		return road_steps if not road_steps.is_empty() else grass_steps
 	return grass_steps
-
-func _is_inside_building() -> bool:
-	var p: Vector3 = player.global_position
-	if p.distance_to(Vector3.ZERO) < 7.5:
-		return true
-	var building_positions := [
-		Vector3(-25, 0, -18),
-		Vector3(-38, 0, 18),
-		Vector3(23, 0, 18),
-		Vector3(42, 0, 26),
-		Vector3(-12, 0, 42),
-		Vector3(33, 0, -30),
-		Vector3(45, 0, 0),
-		Vector3(-42, 0, -42)
-	]
-	for pos in building_positions:
-		if Vector2(p.x - pos.x, p.z - pos.z).length() < 5.5:
-			return true
-	return false
 
 # --- Pasos de actores remotos -------------------------------------------------
 # El cliente ya recibe posicion+anim de jugadores remotos (humanos y bots) y de
@@ -860,27 +763,38 @@ func _update_remote_footsteps(delta: float) -> void:
 			var a = (pa as Dictionary)[aid]
 			if a != null and is_instance_valid(a) and not bool(a.get("_is_dead")):
 				_remote_actor_steps(seen, "a:%s" % str(aid), a, str(a.get("current_anim_keyword")), delta, ear, true)
-	for k in _remote_step_t.keys():
+	for k in _remote_step_pos.keys():
 		if not seen.has(k):
 			_remote_step_t.erase(k)
 			_remote_step_phase.erase(k)
+			_remote_step_pos.erase(k)
 
 func _remote_actor_steps(seen: Dictionary, key: String, node: Node3D, anim: String, delta: float, ear: Vector3, is_animal: bool) -> void:
+	seen[key] = true
+	var pos := node.global_position
+	var previous: Vector3 = _remote_step_pos.get(key,pos)
+	_remote_step_pos[key] = pos
+	var displacement := pos-previous
+	var speed := Vector2(displacement.x,displacement.z).length()/maxf(delta,.001)
 	var anim_l := anim.to_lower()
 	var kind := ""
 	if anim_l.find("run") >= 0 or anim_l.find("chase") >= 0 or anim_l.find("trot") >= 0 or anim_l.find("gallop") >= 0 or anim_l.find("charge") >= 0:
 		kind = "run"
-	elif anim_l.find("walk") >= 0 or anim_l.find("strafe") >= 0:
-		kind = "walk"
-	elif anim_l.find("sneak") >= 0:
+	elif anim_l.find("sneak") >= 0 or node.get("is_crouching") == true:
 		kind = "sneak"
+	elif anim_l.find("walk") >= 0 or anim_l.find("strafe") >= 0 or anim_l.contains("stair"):
+		kind = "walk"
+	elif anim_l.contains("ladder") or anim_l.contains("climbing"):
+		kind = "walk"
+		speed = displacement.length()/maxf(delta,.001)
+	if node.get("is_dead") == true or node.get("is_sleeping") == true or node.get("is_sitting") == true or node.get("is_prone") == true:
+		kind = ""
 	var d: float = Vector3(node.global_position.x - ear.x, 0.0, node.global_position.z - ear.z).length()
-	if kind.is_empty() or d > REMOTE_STEP_MAX_DIST:
+	if kind.is_empty() or d > REMOTE_STEP_MAX_DIST or speed < .15 or displacement.length() > maxf(1.0,delta*18.0):
 		_remote_step_t.erase(key)
 		_remote_step_phase.erase(key)
 		return
-	seen[key] = true
-	var interval := 0.34 if kind == "run" else (0.80 if kind == "sneak" else 0.55)
+	var interval := _step_interval(speed,kind == "sneak")
 	if is_animal:
 		interval *= 0.85 # cuatro patas: pasos algo mas frecuentes
 	_remote_step_t[key] = float(_remote_step_t.get(key, interval)) - delta
@@ -891,18 +805,8 @@ func _remote_actor_steps(seen: Dictionary, key: String, node: Node3D, anim: Stri
 
 func _play_remote_step(key: String, pos: Vector3, kind: String, is_animal: bool) -> void:
 	var scene := get_tree().current_scene
-	var in_water := false
-	var pool: Array = []
-	if scene != null and scene.has_method("get_river_depth_at") and float(scene.call("get_river_depth_at", pos)) > 0.05:
-		in_water = true
-		pool = water_footstep_splashes
-	if pool.is_empty():
-		if _pos_inside_building(pos):
-			pool = wood_steps
-		elif absf(pos.x - 8.0) < 4.6:
-			pool = road_steps
-		else:
-			pool = grass_steps
+	var in_water: bool = scene != null and scene.has_method("get_river_depth_at") and float(scene.get_river_depth_at(pos)) > .05
+	var pool := _surface_steps_at(pos)
 	if pool.is_empty() or _remote_step_players.is_empty():
 		return
 	var idx := int(_remote_step_phase.get(key, 0))
@@ -911,7 +815,7 @@ func _play_remote_step(key: String, pos: Vector3, kind: String, is_animal: bool)
 	_remote_step_index = (_remote_step_index + 1) % _remote_step_players.size()
 	ap.global_position = pos
 	ap.pitch_scale = randf_range(0.92, 1.08) * (0.85 if is_animal else 1.0)
-	var db := 5.0
+	var db := 0.0
 	if kind == "run":
 		db += 2.5
 	elif kind == "sneak":
@@ -923,11 +827,5 @@ func _play_remote_step(key: String, pos: Vector3, kind: String, is_animal: bool)
 	ap.play()
 
 func _pos_inside_building(p: Vector3) -> bool:
-	if p.distance_to(Vector3.ZERO) < 7.5:
-		return true
-	for pos in [Vector3(-25, 0, -18), Vector3(-38, 0, 18), Vector3(23, 0, 18),
-			Vector3(42, 0, 26), Vector3(-12, 0, 42), Vector3(33, 0, -30),
-			Vector3(45, 0, 0), Vector3(-42, 0, -42)]:
-		if Vector2(p.x - pos.x, p.z - pos.z).length() < 5.5:
-			return true
-	return false
+	var scene := get_tree().current_scene
+	return scene != null and scene.has_method("_is_player_in_house") and scene._is_player_in_house(p)

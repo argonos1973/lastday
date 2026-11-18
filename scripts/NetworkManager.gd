@@ -1151,7 +1151,7 @@ func _broadcast_player_condition_audio(peer_id: int, condition: String) -> void:
 
 @rpc("authority", "reliable")
 func player_condition_audio_event(peer_id: int, condition: String) -> void:
-	if condition not in ["sick", "critical", "whistle"]:
+	if condition not in ["sick", "critical", "whistle", "reload"]:
 		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_condition_audio"):

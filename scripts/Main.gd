@@ -3366,13 +3366,15 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 			rp._play_pain_sound()
 
 func _net_player_condition_audio(peer_id: int, condition: String) -> void:
-	var target: Node = player if peer_id == net.get_my_id() else remote_players.get(peer_id)
+	var target: Node = player if net != null and peer_id == net.get_my_id() else remote_players.get(peer_id)
 	if target == null or not is_instance_valid(target):
 		return
-	if condition == "sick" or condition == "critical":
+	if condition in ["sick", "critical"] and target.has_method("_play_unwell_sound"):
 		target._play_unwell_sound()
 	elif condition == "whistle" and target.has_method("_play_whistle_sound"):
 		target._play_whistle_sound()
+	elif condition == "reload" and target.has_method("_play_reload_sound"):
+		target._play_reload_sound()
 
 # Atribución de muerte recibida del servidor (RPC death_attribution): quién
 # te mató y con qué arma — se consume en _death_notice_text.
@@ -17913,6 +17915,11 @@ func is_bot_blocked_at(pos: Vector3, extra_margin := 0.0) -> bool:
 			# para que el bot pueda acercarse hasta la puerta cerrada (~2 m) y
 			# abrirla sin quedar frenado a 4 m por el halo de lobos (grow(3.5)).
 			if bounds.grow(0.45 + extra_margin).has_point(p):
+				# Closing a door must not freeze a bot already inside the room.
+				# Only the doorway requires it to be open; wall/door bodies are
+				# still checked by the bot's swept movement probes.
+				if bounds.grow(-0.45).has_point(p):
+					continue
 				if door_is_open and _bot_house_pos_ok(p, bounds, blocker_pos, blocker):
 					continue
 				return true

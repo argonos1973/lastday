@@ -4678,6 +4678,11 @@ func run() -> void:
 	carlos_y["proxy"].global_position = Vector3(4.0, 0.4, 0.0)
 	elena_y["proxy"].global_position = Vector3(0.0, 0.4, 0.0)
 	elena_y["sense_t"] = 0.0
+	elena_y["consume_anim_t"] = 0.5
+	elena_y["_consume_from_inventory"] = true
+	mgr._tick_bot(elena_y, 0.25)
+	check(str(elena_y["_act"]) == "eat" and str(elena_y["anim"]) == "idle",
+		"10z9a0: termina de comer quieta antes de seguir al lider")
 	mgr._tick_bot(elena_y, 0.25)
 	check(str(elena_y["_act"]) == "team",
 		"10z9a: saciada sigue al lider (act=%s)" % str(elena_y["_act"]))
@@ -5433,11 +5438,10 @@ func run() -> void:
 	# 10I1: puppet_apply con anim "dead" detiene inmediatamente el audio de pasos en bucle
 	var test_pup := TestPlayer.new()
 	test_pup.is_puppet = true
-	test_pup._puppet_step_player = AudioStreamPlayer3D.new()
+	test_pup._puppet_action_audio_kind = "eat"
 	test_pup.puppet_apply(Vector3.ZERO, 0.0, "dead")
-	check(test_pup.is_dead and not test_pup._puppet_step_player.playing,
-		"10I1: puppet_apply('dead') marca is_dead y para _puppet_step_player")
-	test_pup._puppet_step_player.free()
+	check(test_pup.is_dead and test_pup._puppet_action_audio_kind.is_empty(),
+		"10I1: puppet_apply('dead') marca is_dead y cancela sonidos de acciones; pasos centralizados en AudioSystem")
 	test_pup.free()
 
 	# 10I2: el menu de ordenes [Z] ya no existe — la interaccion con bots es
