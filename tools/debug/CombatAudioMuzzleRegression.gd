@@ -25,10 +25,10 @@ func run():
 		world.add_child(flash)
 		flashes.append(flash)
 		flash.warm_up()
-		check(flash.light.light_energy == 0 and flash.particles.amount_ratio == 0,"warmup is invisible")
+		check(flash.light.light_energy == 0,"warmup is invisible")
 	var nodes := root.get_child_count()+world.get_child_count()
 	var ids := []
-	for flash in flashes: ids.append(flash.particles.get_instance_id())
+	for flash in flashes: ids.append(flash.light.get_instance_id())
 	for wave in 100:
 		for flash in flashes:
 			flash.burst(Vector3.ZERO,Vector3.FORWARD)
@@ -38,9 +38,9 @@ func run():
 			check(flash.light.light_energy > 0,"new round extends light lifetime")
 	for i in flashes.size():
 		var flash = flashes[i]
-		check(flash.particles.get_instance_id() == ids[i] and flash.get_child_count() == 2,"stable light and particles across bursts")
+		check(flash.light.get_instance_id() == ids[i] and flash.get_child_count() == 1,"stable light across bursts without per-shot allocation")
 		flash._process(.1)
-		check(flash.light.light_energy == 0 and not flash.is_processing(),"idle flash stops CPU updates")
+		check(flash.light.light_energy == 0 and flash.marker == null,"expired flash is invisible and releases the muzzle reference")
 	check(nodes == root.get_child_count()+world.get_child_count(),"no per-shot nodes accumulate")
 	var muzzle := Node3D.new()
 	world.add_child(muzzle)

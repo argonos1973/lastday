@@ -1035,6 +1035,7 @@ var _rain_wetting := false
 var flashlight_charge := 0.0
 var held_index := 0
 var _consumption_pending := false
+var _consumption_is_drink := false
 signal action_cancelled
 var _action_serial := 0
 var _action_started_frame := -1
@@ -1248,6 +1249,7 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	if is_instance_valid(rowing_boat) and not bool(rowing_boat.get("occupant_standing")) and not anim.to_lower().contains("dead"):
 		return
 	if is_dead:
+		_sync_puppet_action_audio("dead")
 		# Still update position for dead puppets (corpse sync)
 		global_position = pos
 		rotation.y = rot
@@ -1338,6 +1340,8 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				target = third_person_sit_animation
 			elif lower.find("sleep") >= 0:
 				target = third_person_sleep_animation
+			elif lower == "plant_eat":
+				target = third_person_plant_animation
 			elif lower.find("drink") >= 0 or lower.find("eat") >= 0:
 				target = third_person_drink_animation
 			elif lower.find("plant") >= 0:
@@ -1373,12 +1377,17 @@ var _puppet_action_audio_kind := ""
 func _sync_puppet_action_audio(anim: String) -> void:
 	var lower := anim.to_lower()
 	var kind := ""
-	if not is_dead and not lower.contains("dead"):
+	if is_dead or lower.contains("dead") or lower.contains("death") or lower.contains("dying"):
+		_stop_consumption_audio()
+		if is_instance_valid(_reload_audio_player): _reload_audio_player.stop()
+	else:
 		if lower.contains("drink"): kind = "drink"
-		elif lower.contains("eat"): kind = "eat"
+		elif lower in ["eat", "plant_eat"]: kind = "eat"
 		elif lower.contains("reload"): kind = "reload"
-		elif lower.contains("chop") or (lower.contains("forage") and _puppet_held in ["Hacha", "Hacha de piedra"]): kind = "chop"
+		elif lower.contains("chop"): kind = "chop"
 	if kind == _puppet_action_audio_kind: return
+	if _puppet_action_audio_kind == "reload" and is_instance_valid(_reload_audio_player):
+		_reload_audio_player.stop()
 	_puppet_action_audio_kind = kind
 	# Audio follows the action even while the model is loading or a hit clip
 	# temporarily overrides it. Repeated snapshots must not restart the sample.
@@ -1788,6 +1797,7 @@ func _process(delta: float) -> void:
 		_update_backpack_socket()
 		_update_head_worn_items()
 		if is_dead:
+			_sync_puppet_action_audio("dead")
 			_update_death_pose(delta)
 			if _puppet_naked_pending:
 				_puppet_naked_timer += delta
@@ -6851,6 +6861,7 @@ func cancel_active_action(show_cancel_notice: bool = false) -> bool:
 	_stop_consumption_audio()
 	if not is_performing_interruptible_action():
 		return false
+	if is_instance_valid(_reload_audio_player): _reload_audio_player.stop()
 	var was_fishing := _is_fishing or _is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation)
 	var was_sleeping := is_sleeping
 	_action_serial += 1
@@ -7011,6 +7022,7 @@ func _third_person_clip_start_offset(anim: String) -> float:
 
 func die(cause: String = "") -> void:
 	_stop_consumption_audio()
+	if is_instance_valid(_reload_audio_player): _reload_audio_player.stop()
 	if is_dead:
 		# Already down (e.g. a local death raced the server's order): still honor a
 		# melee-death order so the corpse matches what the server broadcast.
@@ -7756,6 +7768,7 @@ func _start_consumption(item, animation: String, duration: float) -> void:
 		return
 	var start_serial := _mark_action_started()
 	_consumption_pending = true
+	_consumption_is_drink = animation == "drink"
 	play_action_animation(animation, duration)
 	_play_consumption_audio(animation == "drink", duration, start_serial)
 	notice.emit("Bebiendo..." if animation == "drink" else "Comiendo...")
@@ -12166,6 +12179,10 @@ func end_rowing(pos: Vector3) -> void:
 func _get_current_anim() -> String:
 	if is_dead:
 		return "dead_melee" if _beaten_death else "dead"
+	# Eating reuses the planting clip locally. Send its intent as well so
+	# listeners hear food only when eating, never when planting a garden.
+	if _consumption_pending:
+		return "drink" if _consumption_is_drink else "plant_eat"
 	if third_person_animation_player != null:
 		return third_person_animation_player.current_animation
 	return "idle"
@@ -15289,7 +15306,7 @@ var _last_reload_audio_msec := -10000
 
 func _play_reload_sound() -> void:
 	var now := Time.get_ticks_msec()
-	if is_puppet and now-_last_reload_audio_msec < 1700: return
+	if is_puppet and now-_last_reload_audio_msec < 1700 and is_instance_valid(_reload_audio_player) and _reload_audio_player.playing: return
 	_last_reload_audio_msec = now
 	if _reload_audio_player == null:
 		# Cerrojo/cargador: se oye cerca, nada que ver con el alcance de un tiro.
