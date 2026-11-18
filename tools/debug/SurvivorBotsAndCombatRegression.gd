@@ -2734,8 +2734,22 @@ func run() -> void:
 		{"name": "Antorcha", "type": "tool_torch", "quantity": 1, "durability": 100.0, "max_durability": 100.0},
 	])
 	mgr._handle_predator_encounter(elena, wolf6, 0.2)
+	check(not bool(elena["torch_lit"]),
+		"Al huir de un lobo con antorcha pero SIN yesca (cerillas/2 palos/fogata) no puede encenderla")
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "quantity": 1, "durability": 80.0, "max_durability": 80.0},
+		{"name": "Antorcha", "type": "tool_torch", "quantity": 1, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Cerillas", "type": "tool_matches", "quantity": 1, "durability": 10.0, "max_durability": 10.0},
+	])
+	mgr._handle_predator_encounter(elena, wolf6, 0.2)
 	check(bool(elena["torch_lit"]) and str(elena["held_item"]) == "Antorcha" and bool(elena_proxy.get_meta("torch_lit", false)),
-		"Al huir de un lobo con antorcha en mochila la enciende y empuña (wary_torch)")
+		"Al huir de un lobo con antorcha+cerillas la enciende y empuña (wary_torch)")
+	var cer_inv: Array = elena_proxy.get_meta("saved_inventory", [])
+	var cer_d := 0.0
+	for it_c in cer_inv:
+		if str(it_c.get("name", "")) == "Cerillas":
+			cer_d = float(it_c.get("durability", 0.0))
+	check(cer_d == 9.0, "Encender con cerillas consume 1 carga (durability=%.0f)" % cer_d)
 
 	# Dentro de una casa o refugio construido no sale corriendo a las fauces del lobo
 	elena_proxy.global_position = Vector3(60.0, 0.4, 60.0) # interior de Casa prueba (Rect2(55,55,10,10))
@@ -7126,6 +7140,124 @@ func run() -> void:
 	vst_med.body_temperature = 36.6
 	check(not mgr._bot_try_start_sleep(b_med, false),
 		"10W4: sueño 6 (no letal) + hambre sin comida -> no colapsa, busca comida")
+
+	# --- 10X: Auditoria de durabilidad, armas, antorcha, peso y huerto ---
+	# 10X1: Loot del suelo preserva durability/max_durability/spoilage sin reparar al 100 %
+	var ld_dmg := mgr._loot_entry_item_dict({"name": "Cuchillo", "type": "weapon", "weight": 0.35, "qty": 1, "durability": 14.0, "max_durability": 80.0, "spoilage": 0.35})
+	check(is_equal_approx(float(ld_dmg.get("durability", -1.0)), 14.0) and is_equal_approx(float(ld_dmg.get("max_durability", -1.0)), 80.0) and is_equal_approx(float(ld_dmg.get("spoilage", -1.0)), 0.35),
+		"10X1: _loot_entry_item_dict conserva durability/max_durability/spoilage del suelo (%s)" % [ld_dmg])
+	# 10X2: Herramienta legacy sin metadatos recibe max_durability por defecto (no eterna al llegar a 0)
+	var ld_leg := mgr._loot_entry_item_dict({"name": "Hacha", "type": "tool_axe", "weight": 1.2, "qty": 1})
+	check(float(ld_leg.get("max_durability", 0.0)) > 0.0 and float(ld_leg.get("durability", 0.0)) == float(ld_leg.get("max_durability", -1.0)),
+		"10X2: Herramienta recogida sin metadatos normaliza durabilidad (%s)" % [ld_leg])
+	# 10X3: _best_weapon_name salta arma rota y arco sin flechas; limpieza elimina la herramienta a 0
+	mgr._respawn_bot(mgr.bots[903])
+	var bx: Dictionary = mgr.bots[903]
+	var px: Node3D = bx["proxy"]
+	px.set_meta("saved_inventory", [
+		{"name": "Lanza de hueso", "type": "tool_spear", "weight": 1.4, "quantity": 1, "durability": 0.0},
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 0.9, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 4.0},
+	])
+	check(mgr._best_weapon_name(px) == "Cuchillo",
+		"10X3a: _best_weapon_name salta lanza rota y arco sin flechas -> elige Cuchillo (got %s)" % mgr._best_weapon_name(px))
+	check(mgr._bot_item_count(px, "Lanza de hueso") == 0 and mgr._is_loot_desirable(bx, "Lanza de hueso", "tool_spear"),
+		"10X3b: Arma rota sin max_durability no bloquea recoger reemplazo")
+	mgr._reduce_bot_item_durability(px, "Cuchillo", 5.0)
+	check(mgr._bot_item_count(px, "Cuchillo") == 0 and mgr._best_weapon_name(px) == "",
+		"10X3c: _reduce_bot_item_durability retira del inventario la herramienta agotada")
+	px.set_meta("saved_inventory", [
+		{"name": "Arco de madera", "type": "weapon_bow", "weight": 0.9, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
+		{"name": "Flecha de madera", "type": "ammo_arrow", "weight": 0.05, "quantity": 3},
+	])
+	check(mgr._best_weapon_name(px) == "Arco de madera",
+		"10X3d: Arco con flechas si se elige como arma principal")
+	# 10X4: Antorcha: consume durabilidad ardiendo y al romperse devuelve el Palo base
+	px.set_meta("saved_inventory", [
+		{"name": "Antorcha", "type": "tool_torch", "weight": 0.3, "quantity": 1, "durability": 3.0, "max_durability": 600.0},
+	])
+	var t_pct1 := mgr._burn_bot_torch(px, 2.0)
+	check(t_pct1 > 0.0 and mgr._bot_item_count(px, "Antorcha") == 1,
+		"10X4a: Quemar antorcha reduce durabilidad progresivamente (pct=%.4f)" % t_pct1)
+	var t_pct2 := mgr._burn_bot_torch(px, 2.0)
+	check(t_pct2 == 0.0 and mgr._bot_item_count(px, "Antorcha") == 0 and mgr._bot_item_count(px, "Palo") == 1,
+		"10X4b: Antorcha agotada desaparece y deja 1 Palo como al jugador")
+	# 10X5: _bot_carry_ratio usa peso real y capacidad (no inv.size()/30)
+	bx["clothing"] = ""
+	bx["backpack"] = ""
+	px.set_meta("saved_inventory", [
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 4}, # 4.8 kg en 1 sola pila sobre 5 kg base
+	])
+	var r_heavy := mgr._bot_carry_ratio(bx)
+	px.set_meta("saved_inventory", [
+		{"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 1},
+		{"name": "Pluma", "type": "resource", "weight": 0.02, "quantity": 1},
+		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1},
+	])
+	var r_light := mgr._bot_carry_ratio(bx)
+	check(r_heavy > 0.9 and r_light < 0.05,
+		"10X5: _bot_carry_ratio mide peso real (4.8kg->%.2f vs 3 ligeros->%.2f)" % [r_heavy, r_light])
+	# 10X6: Alijo propio conserva y retira 1 herramienta de huerto + hasta 3 semillas
+	world._planted_crops = []
+	(bx["_mem"] as Dictionary)["farm_plots"] = []
+	bx["shelter_id"] = "bot_shelter_903_x6"
+	bx["shelter_pos"] = Vector3(210.0, 0.4, 210.0)
+	bx["clothing"] = "Chaqueta militar,Pantalones militares"
+	bx["backpack"] = "Mochila militar"
+	var sh_x6 := {"id": "bot_shelter_903_x6", "pos": bx["shelter_pos"], "yaw": 0.0, "contents": [
+		{"name": "Azada", "type": "tool_hoe", "weight": 0.9, "quantity": 1, "durability": 80.0, "max_durability": 100.0},
+		{"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 5},
+	]}
+	world._built_shelters.append(sh_x6)
+	px.set_meta("saved_inventory", [
+		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 90.0, "max_durability": 100.0},
+	])
+	check(mgr._own_shelter_has_needed_item(bx), "10X6a: _own_shelter_has_needed_item detecta kit de huerto en el cofre")
+	mgr._bot_sync_own_shelter_stash(bx)
+	check(mgr._bot_has_farm_tool(px) and mgr._bot_item_count(px, "Semillas") == 3,
+		"10X6b: Sincronizar alijo retira 1 azada + 3 semillas y las conserva encima (hoe=%s seeds=%d)" % [str(mgr._bot_has_farm_tool(px)), mgr._bot_item_count(px, "Semillas")])
+	mgr._bot_sync_own_shelter_stash(bx)
+	check(mgr._bot_has_farm_tool(px) and mgr._bot_item_count(px, "Semillas") == 3,
+		"10X6c: Segundo sync no reguarda el kit de huerto (sin ping-pong)")
+	world._built_shelters.erase(sh_x6)
+	bx["shelter_id"] = ""
+	bx["shelter_pos"] = Vector3.INF
+	# 10X7: _bot_wear_farm_tool salta azada rota previa, gasta la sana; plant revalida herramienta; sediento guarda su ultima botella
+	px.set_meta("saved_inventory", [
+		{"name": "Azada de piedra", "type": "tool_hoe", "weight": 1.0, "quantity": 1, "durability": 0.0, "max_durability": 8.0},
+		{"name": "Azada de piedra", "type": "tool_hoe", "weight": 1.0, "quantity": 1, "durability": 4.0, "max_durability": 8.0},
+	])
+	mgr._bot_wear_farm_tool(px)
+	check(not mgr._bot_has_farm_tool(px),
+		"10X7a: _bot_wear_farm_tool ignora azada a 0 y agota la sana restante")
+	world._planted_crops = []
+	px.global_position = Vector3(220.0, 0.4, 220.0)
+	bx["pos"] = px.global_position
+	bx["hide_timer"] = 0.0
+	bx["sleeping"] = false
+	bx["hunger"] = 85.0
+	bx["thirst"] = 30.0 # sediento con 1 sola botella
+	(bx["vstats"] as SurvivalStats).sleep = 80.0
+	(bx["vstats"] as SurvivalStats).body_temperature = 36.6
+	px.set_meta("saved_inventory", [{"name": "Semillas", "type": "resource", "weight": 0.05, "quantity": 1}])
+	bx["_farm"] = {"phase": "plant", "pos": px.global_position, "t": 4.0, "t_need": 4.0, "tool": "Azada"}
+	mgr._bot_try_farm(bx, 0.1)
+	check(world._planted_crops.is_empty() and mgr._bot_item_count(px, "Semillas") == 1,
+		"10X7b: Al terminar plant sin azada sana no siembra ni gasta semilla")
+	var cid_w := world._plant_crop(px.global_position + Vector3(1.0, 0.0, 0.0), "planted")
+	(bx["_mem"] as Dictionary)["farm_plots"] = [{"id": cid_w, "pos": [221.0, 0.4, 220.0]}]
+	px.set_meta("saved_inventory", [
+		{"name": "Botella de agua llena", "type": "water", "weight": 0.6, "quantity": 1, "use_value": 45.0},
+	])
+	bx["_farm"] = {}
+	check(not mgr._bot_try_farm(bx, 0.1) and mgr._bot_item_count(px, "Botella de agua llena") == 1,
+		"10X7c: Con sed (30) y 1 sola botella llena NO la malgasta regando el huerto")
+	bx["thirst"] = 80.0
+	check(mgr._bot_try_farm(bx, 0.1) and str((bx.get("_farm", {}) as Dictionary).get("phase", "")) == "water",
+		"10X7d: Hidratado (80) si riega el bancal con su botella")
+	bx["_farm"] = {}
+	(bx["_mem"] as Dictionary)["farm_plots"] = []
+	world._planted_crops = []
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")

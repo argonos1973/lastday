@@ -272,7 +272,7 @@ const SHARE_MAX_RELS := 3
 # o menor prioridad no desbanca una directiva mas joven que esta ventana.
 const AI_DIRECTIVE_MIN_COMMIT_SEC := 300.0
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. There is no combat action: aggression or self-defense is expressed only through movement goals — hunt targets wild game, explore/scavenge/avoid_zone position the bot. Never output attack, ambush, raid, steal, kill, chase or similar verbs. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
+const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. State scales (0..100 reserves, HIGHER IS BETTER): hp=100 healthy/0 dead, hunger=100 full/0 starving, thirst=100 hydrated/0 dehydrated, sleep=100 rested/0 exhausted (<35 urgent, >75 satisfied — NEVER treat 75+ hunger/thirst as hungry or thirsty). Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. There is no combat action: aggression or self-defense is expressed only through movement goals — hunt targets wild game, explore/scavenge/avoid_zone position the bot. Never output attack, ambush, raid, steal, kill, chase or similar verbs. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
@@ -1765,7 +1765,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var hiding_in_shelter: bool = float(b["hide_timer"]) > 0.0 and sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 2.6
 	# Luz nocturna con antorcha — o antorcha de rescate cuando se esta
 	# helando: de dia tambien da calor real (ver _bot_survival_tick).
+	var was_torch_lit := bool(b.get("torch_lit", false))
 	b["torch_lit"] = (is_night or _bot_is_freezing(b)) and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
+	if bool(b["torch_lit"]) and not was_torch_lit and not _bot_ignite_torch(b):
+		b["torch_lit"] = false
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
 	proxy.set_meta("in_built_shelter", _bot_at_own_built_shelter(b, proxy.global_position))
 	proxy.set_meta("crouching", bool(b.get("crouching", false)))
@@ -2285,9 +2288,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "cook"
 		return
 
-	# 6a-bis) Huerto: cosecha madura que se pudre, limpia bancales, replanta,
-	# riega de paso y siembra bancales nuevos con azada/pala + semillas —
-	# la fuente de comida renovable de un superviviente asentado.
+	# 6a-bis) Huerto: si ya lleva semillas pero aun no tiene azada/pala, talla
+	# primero su Azada de piedra (Palo+Piedra+Cuerda; la Cuerda previa sale
+	# de Trapos x2 cuando no hay tendon que la sustituya).
+	if _bot_wants_farm_tool(b) and _bot_item_count(proxy, "Semillas") >= 1 \
+			and float(b.get("hide_timer", 0.0)) <= 0.0 and not bool(b.get("sleeping", false)) \
+			and not _bot_is_exhausted(b) and not _bot_is_freezing(b):
+		var can_make_cord_for_hoe := _bot_item_count(proxy, "Cuerda") == 0 \
+				and _bot_item_count(proxy, "Tendón") == 0 and _bot_item_count(proxy, "Trapos") >= 2
+		if _bot_try_craft_named(b, delta, ["Azada de piedra"], true) \
+				or (can_make_cord_for_hoe and _bot_try_craft_named(b, delta, ["Cuerda"], false)):
+			b["_act"] = "craft"
+			return
 	if _bot_try_farm(b, delta):
 		b["_act"] = "farm"
 		return
@@ -3605,7 +3617,8 @@ func _flee_predator(b: Dictionary, predator: Node3D, delta: float) -> void:
 	if cur_mdir.dot(away_dir) < 0.15:
 		b["_mdir"] = away_dir
 	# Antorcha encendida: mantiene a los lobos a raya (wary_torch en WildlifeController)
-	if str(predator.get("animal_type")) == "wolf" and _bot_has_item(proxy, "Antorcha"):
+	if str(predator.get("animal_type")) == "wolf" and _bot_has_item(proxy, "Antorcha") \
+			and (bool(b.get("torch_lit", false)) or _bot_ignite_torch(b)):
 		b["torch_lit"] = true
 		b["held_item"] = "Antorcha"
 		b["has_rifle"] = false
@@ -10318,6 +10331,7 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	var need_water: bool = float(b["thirst"]) < 60.0 + minf(16.0, float(int(dl_need.get("dehydrated", 0))) * 8.0) and not _bot_has_drink(proxy)
 	var need_weapon: bool = _best_weapon_name(proxy).is_empty()
 	var need_med: bool = float(b["health"]) < 78.0 and _bot_item_count(proxy, "Venda") == 0
+	var need_farm_kit: bool = _bot_needs_farm_kit_now(b)
 	for cd in contents:
 		if not (cd is Dictionary):
 			continue
@@ -10330,6 +10344,8 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 		if need_weapon and tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"]:
 			return true
 		if need_med and nm == "Venda":
+			return true
+		if need_farm_kit and ((tp in ["tool_hoe", "tool_shovel"] and not _bot_has_farm_tool(proxy)) or (nm == "Semillas" and _bot_item_count(proxy, "Semillas") < 3)):
 			return true
 	return false
 
@@ -10356,6 +10372,9 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 	var kept_bola := false
 	var kept_torch := false
 	var kept_matches := false
+	var want_farm_kit := _bot_needs_farm_kit_now(b)
+	var kept_farm_tool := false
+	var seeds_kept := 0
 	var food_kept := 0
 	var drink_kept := 0
 	var container_kept := 0
@@ -10431,6 +10450,23 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 		if tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear", "tool_hoe", "tool_shovel"]:
 			if nm == "Palo afilado" and _bot_has_raw_meat(proxy):
 				keep.append(it)
+			elif want_farm_kit and not kept_farm_tool and (tp in ["tool_hoe", "tool_shovel"] or nm in ["Azada", "Pala", "Azada de piedra"]) and float(it.get("durability", 100.0)) > 0.0:
+				kept_farm_tool = true
+				if qty > 1:
+					var kh := it.duplicate(true); kh["quantity"] = 1; keep.append(kh)
+					var sh_e := it.duplicate(true); sh_e["quantity"] = qty - 1; store.append(sh_e)
+				else:
+					keep.append(it)
+			else:
+				store.append(it)
+			continue
+		if nm == "Semillas":
+			if want_farm_kit and seeds_kept < 3:
+				var take_sd := mini(3 - seeds_kept, qty)
+				seeds_kept += take_sd
+				var ksd := it.duplicate(true); ksd["quantity"] = take_sd; keep.append(ksd)
+				if qty - take_sd > 0:
+					var ssd := it.duplicate(true); ssd["quantity"] = qty - take_sd; store.append(ssd)
 			else:
 				store.append(it)
 			continue
@@ -10570,19 +10606,26 @@ func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 			want_withdraw = true
 		elif nm == "Venda" and _bot_item_count(proxy, "Venda") == 0:
 			want_withdraw = true
+		elif _bot_needs_farm_kit_now(b) and (tp in ["tool_hoe", "tool_shovel"] or nm in ["Azada", "Pala", "Azada de piedra"]) and float(cd.get("durability", 100.0)) > 0.0 and not _bot_has_farm_tool(proxy):
+			want_withdraw = true
+		elif _bot_needs_farm_kit_now(b) and nm == "Semillas" and _bot_item_count(proxy, "Semillas") < 3:
+			want_withdraw = true
 		if want_withdraw:
+			var take_qty := 1
+			if nm == "Semillas":
+				take_qty = mini(maxi(1, 3 - _bot_item_count(proxy, "Semillas")), int(cd.get("quantity", 1)))
 			var one: Dictionary = (cd as Dictionary).duplicate(true)
-			one["quantity"] = 1
+			one["quantity"] = take_qty
 			if not _bot_try_add_inventory_item(b, inv, one):
 				continue # no le cabe: se queda guardado en su refugio
 			proxy.set_meta("saved_inventory", inv)
-			var rem := int(cd.get("quantity", 1)) - 1
+			var rem := int(cd.get("quantity", 1)) - take_qty
 			if rem <= 0:
 				contents.remove_at(i)
 			else:
 				contents[i]["quantity"] = rem
 			changed = true
-			moved += 1
+			moved += take_qty
 	# 2) Guardar en el refugio propio todo el botin sobrante (hasta 18 huecos)
 	var part := _bot_partition_inventory_for_shelter(b, inv)
 	var keep_inv: Array = part["keep"]
@@ -12116,15 +12159,19 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	# (PlayerController: delta*1.5 a techo 37.5 y wetness -0.03/s) — para el
 	# bot torch_lit ES la llama; sin esto una antorcha encendida era solo luz.
 	if bool(b.get("torch_lit", false)) and _bot_has_item(proxy, "Antorcha"):
-		st.apply_external_heat(1.5 * delta, 37.5)
-		st.wetness = maxf(0.0, st.wetness - 0.03 * delta)
+		var torch_pct := _burn_bot_torch(proxy, 0.0 if (bool(b.get("sitting", false)) and _is_near_any_lit_campfire(pos, 5.0)) else delta * 2.0)
+		if torch_pct <= 0.0:
+			b["torch_lit"] = false
+			proxy.set_meta("torch_lit", false)
+		else:
+			st.apply_external_heat(1.5 * torch_pct * delta, 37.5)
+			st.wetness = maxf(0.0, st.wetness - 0.03 * torch_pct * delta)
 
 	var sleeping := bool(b.get("sleeping", false))
 	var anim_now := str(b["anim"])
 	var moving: bool = anim_now in ["walk", "run"] and not sleeping
 	var sprinting: bool = anim_now == "run" and not sleeping
-	var inv_n: int = (proxy.get_meta("saved_inventory", []) as Array).size()
-	var carry_ratio := clampf(float(inv_n) / 30.0, 0.0, 1.0)
+	var carry_ratio := _bot_carry_ratio(b)
 	var sun := 1.0 - (float(dc.get("weather_darkness")) if dc != null else 0.0)
 	var wind := float(obs.get("wind_speed", 0.0))
 	var resting := bool(b.get("sitting", false)) or str(b.get("_act", "")) == "rest"
@@ -12514,16 +12561,19 @@ func _bot_supply_goal_allowed(b: Dictionary, goal: Vector3) -> bool:
 # Returns true while preparing light or unable to leave safely.
 func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
-	if _bot_has_item(proxy, "Antorcha"):
+	if _bot_has_item(proxy, "Antorcha") and (bool(b.get("torch_lit", false)) or _bot_ignite_torch(b)):
 		b.erase("_night_emergency_origin")
 		b["torch_lit"] = true
 		b["held_item"] = "Antorcha"
 		proxy.set_meta("torch_lit", true)
 		proxy.set_meta("saved_held_item", "Antorcha")
 		return false
-	if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
+	# Sin antorcha la fabrica; con antorcha pero sin yesca lo que falta es la
+	# ignicion (2 Palos frotados sirven), no otra antorcha.
+	var no_torch := _bot_item_count(proxy, "Antorcha") == 0
+	if (no_torch and _bot_try_craft_named(b, delta, ["Antorcha"], true)) \
 			or (_bot_item_count(proxy, "Trapos") < 1 and _bot_try_craft_named(b, delta, ["Trapos"], false)) \
-			or (_bot_item_count(proxy, "Palo") < 1 and _bot_item_count(proxy, "Tronco") > 0 and _bot_try_craft_named(b, delta, ["Palo"], false)):
+			or (_bot_item_count(proxy, "Palo") < 2 and _bot_item_count(proxy, "Tronco") > 0 and _bot_try_craft_named(b, delta, ["Palo"], false)):
 		b["_act"] = "torch"
 		return true
 	if not _bot_supply_goal_lit(b, proxy.global_position):
@@ -12683,12 +12733,19 @@ func _best_weapon_name(proxy: Node3D) -> String:
 	var order := ["Fusil de asalto", "Rifle francotirador", "Arco reforzado", "Arco de madera",
 		"Lanza de hueso", "Lanza", "Hacha de piedra", "Hacha", "Cuchillo de hueso",
 		"Cuchillo de piedra", "Cuchillo", "Palo afilado"]
+	var arrows := -1
 	for w in order:
 		for it in inv:
 			if it is Dictionary and str(it.get("name", "")) == w and int(it.get("quantity", 1)) > 0:
-				# Un arma de fuego sin balas no es el mejor arma disponible.
+				if it.has("durability") and float(it.get("durability", 100.0)) <= 0.0:
+					continue
 				if (w == "Fusil de asalto" or w == "Rifle francotirador") and not _bot_gun_any_ammo(proxy, w):
 					break
+				if w == "Arco reforzado" or w == "Arco de madera":
+					if arrows < 0:
+						arrows = _bot_arrow_count(proxy)
+					if arrows <= 0:
+						break
 				return w
 	return ""
 
@@ -12873,10 +12930,82 @@ func _pick_fight_weapon(b: Dictionary, dist: float) -> Dictionary:
 
 func _reduce_bot_item_durability(proxy: Node3D, item_name: String, amount: float) -> void:
 	var inv: Array = proxy.get_meta("saved_inventory", [])
-	for it in inv:
-		if it is Dictionary and str(it.get("name", "")) == item_name:
-			it["durability"] = maxf(0.0, float(it.get("durability", 100.0)) - amount)
+	for i in range(inv.size() - 1, -1, -1):
+		var it = inv[i]
+		if it is Dictionary and str(it.get("name", "")) == item_name and float(it.get("durability", 100.0)) > 0.0:
+			var cur_d := float(it.get("durability", _default_item_max_durability(item_name, str(it.get("type", "")))))
+			if not it.has("max_durability"):
+				it["max_durability"] = maxf(cur_d, _default_item_max_durability(item_name, str(it.get("type", ""))))
+			var new_d := maxf(0.0, cur_d - amount)
+			it["durability"] = new_d
+			if new_d <= 0.0:
+				var qty := int(it.get("quantity", 1)) - 1
+				if qty <= 0:
+					inv.remove_at(i)
+				else:
+					it["quantity"] = qty
+					it["durability"] = float(it.get("max_durability", 100.0))
+			break
 	proxy.set_meta("saved_inventory", inv)
+
+# Encendido con la misma regla del jugador (PlayerController._toggle_flashlight):
+# una carga de Cerillas, 2 Palos frotados — o gratis junto a una fogata viva.
+# Devuelve false si no tiene con que prenderla.
+func _bot_ignite_torch(b: Dictionary) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not _bot_has_item(proxy, "Antorcha"):
+		return false
+	if _is_near_any_lit_campfire(proxy.global_position, 5.0):
+		return true
+	if _bot_item_count(proxy, "Cerillas") >= 1:
+		_reduce_bot_item_durability(proxy, "Cerillas", 1.0)
+		return true
+	if _bot_item_count(proxy, "Palo") >= 2:
+		_bot_consume_one_item(proxy, "Palo")
+		_bot_consume_one_item(proxy, "Palo")
+		return true
+	return false
+
+# Quema la Antorcha igual que PlayerController (2.0/s) y al agotarse devuelve
+# el Palo base para no evaporar madera. Retorna el porcentaje restante (0..1).
+func _burn_bot_torch(proxy: Node3D, amount: float) -> float:
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for i in range(inv.size()):
+		var it = inv[i]
+		if it is Dictionary and str(it.get("name", "")) == "Antorcha" and float(it.get("durability", 600.0)) > 0.0:
+			var dmax := float(it.get("max_durability", 600.0))
+			if dmax <= 0.0:
+				dmax = 600.0
+			var dcur := maxf(0.0, float(it.get("durability", dmax)) - amount)
+			if dcur <= 0.0:
+				var qty := int(it.get("quantity", 1)) - 1
+				if qty <= 0:
+					inv.remove_at(i)
+				else:
+					it["quantity"] = qty
+					it["durability"] = dmax
+				_bot_add_inventory_item(inv, {"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0})
+				proxy.set_meta("saved_inventory", inv)
+				return 0.0
+			it["durability"] = dcur
+			it["max_durability"] = dmax
+			proxy.set_meta("saved_inventory", inv)
+			return clampf(dcur / dmax, 0.0, 1.0)
+	return 0.0
+
+func _default_item_max_durability(nm: String, tp: String) -> float:
+	if nm == "Cerillas" or tp == "tool_matches":
+		return 10.0
+	if nm == "Antorcha" or tp == "tool_torch":
+		return 600.0
+	for r in CraftingSystem.RECIPES:
+		var out: Dictionary = r.get("output", {})
+		if str(out.get("name", "")) == nm and out.has("max_durability"):
+			return float(out["max_durability"])
+	if tp in ["weapon", "weapon_bow", "weapon_bola", "tool_axe", "tool_spear", "tool_hoe", "tool_shovel", "tool_fishing", "tool_hammer", "tool_pickaxe"] \
+			or nm in BUSH_TOOLS or nm in ["Azada", "Pala", "Pico", "Martillo"]:
+		return 100.0
+	return 0.0
 
 func _weapon_melee_damage(weapon: String) -> float:
 	match weapon:
@@ -12901,9 +13030,7 @@ func _bot_item_count(proxy: Node3D, item_name: String) -> int:
 	var total := 0
 	for it in proxy.get_meta("saved_inventory", []):
 		if it is Dictionary and str(it.get("name", "")) == item_name:
-			# Herramientas/armas rotas ya no cuentan (max_durability distingue
-			# la durabilidad de arma de la "carga" de una botella de agua)
-			if it.has("max_durability") and float(it.get("durability", 100.0)) <= 0.0:
+			if it.has("durability") and float(it.get("durability", 100.0)) <= 0.0:
 				continue
 			total += int(it.get("quantity", 1))
 	return total
@@ -13137,13 +13264,26 @@ func _bot_try_add_inventory_item(b: Dictionary, inv: Array, item_dict: Dictionar
 	return true
 
 func _loot_entry_item_dict(entry: Dictionary) -> Dictionary:
-	return {
-		"name": str(entry.get("name", "")),
-		"type": str(entry.get("type", "resource")),
+	var nm := str(entry.get("name", ""))
+	var tp := str(entry.get("type", "resource"))
+	var out := {
+		"name": nm,
+		"type": tp,
 		"weight": float(entry.get("weight", 0.2)),
 		"quantity": maxi(1, int(entry.get("quantity", entry.get("qty", 1)))),
 		"use_value": float(entry.get("use_value", entry.get("use", 0.0))),
 	}
+	var def_max := _default_item_max_durability(nm, tp)
+	if entry.has("max_durability") or entry.has("durability") or def_max > 0.0:
+		var dmax := float(entry.get("max_durability", def_max if def_max > 0.0 else 100.0))
+		if dmax <= 0.0:
+			dmax = def_max if def_max > 0.0 else 100.0
+		var dcur := float(entry.get("durability", dmax))
+		out["durability"] = clampf(dcur, 0.0, maxf(dmax, dcur))
+		out["max_durability"] = maxf(dmax, dcur)
+	if entry.has("spoilage"):
+		out["spoilage"] = float(entry["spoilage"])
+	return out
 
 # Lo que no le cabe cae al suelo a sus pies, igual que al jugador: queda
 # saqueable por cualquiera como pickup real sincronizado.
@@ -13152,10 +13292,26 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary) -> void:
 		return
 	var p: Vector3 = (b["proxy"] as Node3D).global_position + Vector3(randf_range(-0.7, 0.7), 0.0, randf_range(-0.7, 0.7))
 	if world.has_method("_spawn_ground_pickup"):
+		var pre_n: int = (world._dropped_items as Array).size() if "_dropped_items" in world else -1
 		world._spawn_ground_pickup(str(item_dict.get("name", "")), str(item_dict.get("type", "resource")), p, float(item_dict.get("weight", 0.2)), int(item_dict.get("quantity", 1)), float(item_dict.get("use_value", 0.0)))
+		if pre_n >= 0 and (world._dropped_items as Array).size() > pre_n:
+			var dropped: Dictionary = (world._dropped_items as Array)[-1]
+			if item_dict.has("durability"):
+				dropped["durability"] = float(item_dict["durability"])
+			if item_dict.has("max_durability"):
+				dropped["max_durability"] = float(item_dict["max_durability"])
+			if item_dict.has("spoilage"):
+				dropped["spoilage"] = float(item_dict["spoilage"])
 	elif "_dropped_items" in world:
 		var did := "bot_drop_%d_%d" % [int(b["bot_id"]), int(Time.get_ticks_msec()) % 1000000]
-		world._dropped_items.append({"id": did, "name": str(item_dict.get("name", "")), "type": str(item_dict.get("type", "resource")), "weight": float(item_dict.get("weight", 0.2)), "qty": int(item_dict.get("quantity", 1)), "use": float(item_dict.get("use_value", 0.0)), "pos": [p.x, p.y, p.z], "action_type": "drop"})
+		var rec := {"id": did, "name": str(item_dict.get("name", "")), "type": str(item_dict.get("type", "resource")), "weight": float(item_dict.get("weight", 0.2)), "qty": int(item_dict.get("quantity", 1)), "use": float(item_dict.get("use_value", 0.0)), "pos": [p.x, p.y, p.z], "action_type": "drop"}
+		if item_dict.has("durability"):
+			rec["durability"] = float(item_dict["durability"])
+		if item_dict.has("max_durability"):
+			rec["max_durability"] = float(item_dict["max_durability"])
+		if item_dict.has("spoilage"):
+			rec["spoilage"] = float(item_dict["spoilage"])
+		world._dropped_items.append(rec)
 
 # La entrada de "keep" mas prescindible (para recortar lo que se queda encima
 # a la capacidad real): prioridad de loot menor; a empate, la mas pesada.
@@ -13218,8 +13374,19 @@ func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 			if not (it is Dictionary) or not _bot_matches_input(input_name, it):
 				continue
 			if CraftingSystem._is_tool(input_name):
-				it["durability"] = maxf(0.0, float(it.get("durability", 100.0)) - 3.0)
+				var cur_td := float(it.get("durability", _default_item_max_durability(str(it.get("name", "")), str(it.get("type", "")))))
+				if cur_td <= 0.0:
+					cur_td = 100.0
+				var next_td := maxf(0.0, cur_td - 3.0)
+				it["durability"] = next_td
 				needed -= int(it.get("quantity", 1))
+				if next_td <= 0.0:
+					var q_left := int(it.get("quantity", 1)) - 1
+					if q_left <= 0:
+						inv.erase(it)
+					else:
+						it["quantity"] = q_left
+						it["durability"] = float(it.get("max_durability", 100.0))
 			else:
 				var take := mini(needed, int(it.get("quantity", 1)))
 				it["quantity"] = int(it.get("quantity", 1)) - take
@@ -13329,8 +13496,10 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	# palo afilado sin carne) para que no le roben los 11 del refugio.
 	var r_inputs: Dictionary = recipe.get("inputs", {})
 	if str(b.get("shelter_id", "")).is_empty() and (r_inputs.has("Palo") or r_inputs.has("Palo afilado")):
-		var essential_stick := oname in ["Antorcha", "Carne ensartada", "Pez ensartado"] or (oname == "Palo afilado" and _bot_has_raw_meat(proxy) and _bot_item_count(proxy, "Palo afilado") == 0)
 		var supply_now := _bot_palo_supply(proxy)
+		var essential_stick := oname in ["Antorcha", "Carne ensartada", "Pez ensartado"] \
+				or (oname == "Palo afilado" and _bot_has_raw_meat(proxy) and _bot_item_count(proxy, "Palo afilado") == 0) \
+				or (oname == "Azada de piedra" and _bot_wants_farm_tool(b) and _bot_item_count(proxy, "Semillas") >= 1 and supply_now != 11)
 		if not essential_stick and supply_now >= 6 and supply_now < 13:
 			return -1.0
 	# Armas y herramienta: solo si mejoran lo que ya tiene en la mano
@@ -13348,7 +13517,9 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	# Azada de piedra crafteable: puerta barata al huerto cuando no ha
 	# encontrado una azada/pala de verdad (solo ~2 plantados).
 	if oname == "Azada de piedra":
-		return 6.1 if _bot_wants_farm_tool(b) else -1.0
+		if not _bot_wants_farm_tool(b):
+			return -1.0
+		return 6.75 if _bot_item_count(proxy, "Semillas") >= 1 else 6.1
 	if oname == "Cuerda":
 		# Si aun no tiene antorcha, no gastar los primeros Trapos en cuerda
 		# (la cuerda de Tendon sigue puntuando 6.8).
@@ -13451,7 +13622,7 @@ func _bot_try_craft_named(b: Dictionary, delta: float, wanted: Array, protect_st
 		var oname := str(out.get("name", ""))
 		if not wanted.has(oname) or not _bot_can_craft(recipe, inv):
 			continue
-		if protect_sticks and oname == "Antorcha" and not _bot_can_spare_torch_stick(b, proxy):
+		if protect_sticks and (oname == "Antorcha" or oname == "Azada de piedra") and not _bot_can_spare_torch_stick(b, proxy):
 			continue
 		b["_craft_state"] = {"recipe": recipe, "t": 2.4, "at": Time.get_ticks_msec()}
 		b["anim"] = "idle"
@@ -14366,8 +14537,12 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	# Beneficios brutos (sin preference): el modo legacy los multiplica por la
 	# preferencia aprendida; el modo EU los multiplica por P(éxito) beta-binomial
 	# — nunca los dos a la vez, seria doble penalizacion del mismo aprendizaje.
+	var proxy_d: Node3D = b.get("proxy")
+	var forage_base := need_food * 1.35 + need_water * 0.4 + survival * 1.15 + curiosity * 0.55 - bravery * 0.25 - aggression * 0.35
+	if need_food <= 0.01 and need_water <= 0.01 and proxy_d != null and is_instance_valid(proxy_d) and _bot_has_edible_food(proxy_d, false):
+		forage_base *= 0.45
 	var benefits := {
-		"forage": need_food * 1.35 + need_water * 0.4 + survival * 1.15 + curiosity * 0.55 - bravery * 0.25 - aggression * 0.35,
+		"forage": forage_base,
 		"hunt": need_food * 1.25 + bravery * 0.55 + aggression * 0.45 - distrust * 0.25,
 		"fortify_camp": (0.45 if not has_shelter else 0.15) + bravery * 1.05 + cooperation * 0.85 - curiosity * 0.55 - aggression * 0.35,
 		"scavenge": aggression * 1.25 + distrust * 1.05 + bravery * 0.40 - cooperation * 0.55,
@@ -14425,14 +14600,22 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 
 	var best_act := "explore"
 	var best_sc := -999.0
+	var has_unvetoed := false
 	for act in scores.keys():
+		if not _ai_goal_recently_failed(b, _situational_action_spec(str(act), aggression, survival, bravery, risky_zone)):
+			has_unvetoed = true
+			break
+	for act in scores.keys():
+		if has_unvetoed and _ai_goal_recently_failed(b, _situational_action_spec(str(act), aggression, survival, bravery, risky_zone)):
+			continue
 		var sc := float(scores[act])
 		if sc > best_sc:
 			best_sc = sc
 			best_act = str(act)
 
-	var target := "wild"
-	var goal := "adapt_and_survive"
+	var spec := _situational_action_spec(best_act, aggression, survival, bravery, risky_zone)
+	var target := str(spec["target"])
+	var goal := str(spec["goal"])
 	var prio := clampi(int(round(best_sc * 2.0)), 1, 5)
 	var reason := "personality:%s(%.2f)" % [best_act, best_sc]
 	if use_eu:
@@ -14444,31 +14627,6 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 		reason = "eu:%s B%.2f p%.2f c%.2f r%.2f U%.2f" % [best_act,
 			float(det.get("b", 0.0)), float(det.get("p", 0.0)),
 			float(det.get("c", 0.0)), float(det.get("r", 0.0)), best_sc]
-	match best_act:
-		"forage":
-			target = "wild"
-			goal = "secure_food_safely"
-		"hunt":
-			target = "wild"
-			goal = "hunt_prey_for_meat_and_pelts"
-		"fortify_camp":
-			target = "camp"
-			goal = "build_and_defend_camp"
-		"scavenge":
-			target = "military" if aggression >= 0.6 else "house"
-			goal = "dominate_high_tier_loot"
-		"rest":
-			target = "camp"
-			goal = "recover_health_in_refuge"
-		"seek_ally":
-			target = "ally"
-			goal = "regroup_with_trusted_ally"
-		"avoid_zone":
-			target = risky_zone if AI_POI_KINDS.has(risky_zone) else "city"
-			goal = "evade_known_danger_zone"
-		_:
-			target = "house" if survival >= bravery else "city"
-			goal = "explore_new_locations"
 
 	return {
 		"goal": goal,
@@ -14478,6 +14636,28 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 		"priority": prio,
 		"reason": reason,
 	}
+
+func _situational_action_spec(act: String, aggression: float, survival: float, bravery: float, risky_zone: String) -> Dictionary:
+	match act:
+		"forage":
+			return {"action": "forage", "target": "wild", "goal": "secure_food_safely", "mode": "food"}
+		"hunt":
+			return {"action": "hunt", "target": "wild", "goal": "hunt_prey_for_meat_and_pelts", "mode": "poi", "only_kinds": ["wild"]}
+		"fortify_camp":
+			return {"action": "fortify_camp", "target": "camp", "goal": "build_and_defend_camp", "mode": "pos"}
+		"scavenge":
+			var tk := "military" if aggression >= 0.6 else "house"
+			return {"action": "scavenge", "target": tk, "goal": "dominate_high_tier_loot", "mode": "poi", "only_kinds": [tk]}
+		"rest":
+			return {"action": "rest", "target": "camp", "goal": "recover_health_in_refuge", "mode": "pos"}
+		"seek_ally":
+			return {"action": "seek_ally", "target": "ally", "goal": "regroup_with_trusted_ally", "mode": "ally"}
+		"avoid_zone":
+			var az := risky_zone if AI_POI_KINDS.has(risky_zone) else "city"
+			return {"action": "avoid_zone", "target": az, "goal": "evade_known_danger_zone", "mode": "avoid", "avoid_kinds": [az]}
+		_:
+			var ek := "house" if survival >= bravery else "city"
+			return {"action": "explore", "target": ek, "goal": "explore_new_locations", "mode": "poi", "only_kinds": [ek]}
 
 # Motor de utilidad esperada local (BotUtilityAI.gd): U = p×beneficio − coste
 # − aversión×riesgo. Corre solo en los ciclos de decisión — nunca por tick —
@@ -15008,7 +15188,10 @@ func _ai_directive_completed(b: Dictionary, d: Dictionary) -> bool:
 			var rested := st != null and st.sleep > 78.0 and float(b.get("health", 100.0)) > 85.0
 			return rested and near.call(d.get("pos"), 10.0) if (d.get("pos") is Vector3 and (d["pos"] as Vector3) != Vector3.INF) else rested
 		"forage":
-			return float(b.get("hunger", 100.0)) >= 75.0 or int(b.get("_loot_food_n", 0)) > int(ev0.get("food", int(b.get("_loot_food_n", 0))))
+			var got_food := int(b.get("_loot_food_n", 0)) > int(ev0.get("food", int(b.get("_loot_food_n", 0))))
+			if legacy or float(ev0.get("hunger", 0.0)) < 72.0:
+				return float(b.get("hunger", 100.0)) >= 75.0 or got_food
+			return got_food
 		"avoid_zone":
 			# Cumplida al dejar atras la zona peligrosa: ningun POI del tipo
 			# vetado queda cerca (o no queda ninguno al alcance).
@@ -15808,7 +15991,7 @@ func _ai_failed_goal_sig(d: Dictionary, b: Dictionary = {}) -> String:
 # cerca de donde fracaso.
 func _ai_note_failed_goal(b: Dictionary, d: Dictionary, cause: String) -> void:
 	var mem: Dictionary = b.get("_mem", {})
-	if mem.is_empty() or d.is_empty():
+	if mem.is_empty() or d.is_empty() or str(d.get("action", "")).is_empty():
 		return
 	var fg: Dictionary = mem.get("failed_goals", {})
 	var zp := _ai_goal_intended_pos(b, d)
@@ -15995,6 +16178,7 @@ func _ai_apply_decision(bot_id: int, content: String) -> bool:
 	d["_ev0"] = {
 		"loot": int(b.get("_loot_n", 0)),
 		"food": int(b.get("_loot_food_n", 0)),
+		"hunger": float(b.get("hunger", 100.0)),
 		"kills": int(stats0.get("kills_prey", 0)) + int(stats0.get("kills_predator", 0)),
 		"shelter": not str(b.get("shelter_id", "")).is_empty(),
 		"fire": not str(b.get("campfire_id", "")).is_empty(),
@@ -16022,7 +16206,9 @@ func _ai_apply_local_fallback_decision(bot_id: int, reason: String = "local_fall
 	var local_steps: Array = [local_d]
 	# A supply expedition has a return leg even without a remote advisor.
 	if str(local_d.get("action", "")) in ["forage", "scavenge", "hunt"] and (b.get("shelter_pos", Vector3.INF) != Vector3.INF or b.get("camp_spot", Vector3.INF) != Vector3.INF):
-		local_steps.append({"action": "return_home", "goal": "return_after_supplies", "reason": "supplies_trip_complete"})
+		var ret_probe := {"action": "return_home", "target": "camp", "mode": "pos"}
+		if not _ai_goal_recently_failed(b, ret_probe):
+			local_steps.append({"action": "return_home", "target": "camp", "goal": "return_after_supplies", "reason": "supplies_trip_complete"})
 	var json_str := JSON.stringify({"steps": local_steps})
 	if not _ai_apply_decision(bot_id, json_str):
 		# A local rest/home proposal may also lack a usable destination.
@@ -17345,11 +17531,33 @@ func _bot_consume_one_item(proxy: Node3D, item_name: String) -> bool:
 			return true
 	return false
 
+func _bot_needs_farm_kit_now(b: Dictionary) -> bool:
+	var plots := _bot_farm_plots(b)
+	var active_n := 0
+	for p in plots:
+		var rec := _bot_crop_record(str((p as Dictionary).get("id", ""))) if p is Dictionary else {}
+		if rec.is_empty():
+			continue
+		active_n += 1
+		if str(_crop_effective_state(rec).get("state", "")) == "empty":
+			return true
+	return active_n < 3
+
 func _bot_wear_farm_tool(proxy: Node3D) -> void:
-	for it in proxy.get_meta("saved_inventory", []):
-		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala", "Azada de piedra"]:
-			it["durability"] = float(it.get("durability", 100.0)) - 4.0
-			proxy.set_meta("saved_inventory", proxy.get_meta("saved_inventory", []))
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for i in range(inv.size() - 1, -1, -1):
+		var it = inv[i]
+		if it is Dictionary and str(it.get("name", "")) in ["Azada", "Pala", "Azada de piedra"] and float(it.get("durability", 100.0)) > 0.0:
+			var next_d := maxf(0.0, float(it.get("durability", 100.0)) - 4.0)
+			it["durability"] = next_d
+			if next_d <= 0.0:
+				var q_left := int(it.get("quantity", 1)) - 1
+				if q_left <= 0:
+					inv.remove_at(i)
+				else:
+					it["quantity"] = q_left
+					it["durability"] = float(it.get("max_durability", 100.0))
+			proxy.set_meta("saved_inventory", inv)
 			return
 
 func _bot_try_farm(b: Dictionary, delta: float) -> bool:
@@ -17392,7 +17600,7 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 		b["_farm"] = {}
 		match phase:
 			"plant", "replant":
-				if _bot_item_count(proxy, "Semillas") <= 0:
+				if _bot_item_count(proxy, "Semillas") <= 0 or not _bot_has_farm_tool(proxy):
 					return true
 				if phase == "replant":
 					var rec := _bot_crop_record(str(st.get("crop_id", "")))
@@ -17465,7 +17673,11 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 			"water":
 				var rec := _bot_crop_record(str(st.get("crop_id", "")))
 				if not rec.is_empty() and _bot_consume_one_item(proxy, "Botella de agua llena"):
-					_bot_add_inventory_item(proxy.get_meta("saved_inventory", []), {"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0})
+					var inv_w: Array = proxy.get_meta("saved_inventory", [])
+					var empty_b := {"name": "Botella de plastico", "type": "misc", "weight": 0.1, "quantity": 1, "use_value": 0.0}
+					if not _bot_try_add_inventory_item(b, inv_w, empty_b):
+						_bot_drop_to_ground(b, empty_b)
+					proxy.set_meta("saved_inventory", inv_w)
 					rec["watered_until"] = now + GameConst.CROP_WATER_SECONDS
 					_bot_crop_broadcast("crop_watered", fpos)
 					if world.has_method("_save_world_change_silent"):
@@ -17518,7 +17730,9 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 		var pp: Vector3 = rec.get("pos", _bot_plot_pos(p)) if rec.get("pos") is Vector3 else _bot_plot_pos(p)
 		if pp == Vector3.INF:
 			continue
-		if Vector2(cur.x - pp.x, cur.z - pp.z).length() < 25.0 and _bot_item_count(proxy, "Botella de agua llena") >= 1:
+		var bottles_n := _bot_item_count(proxy, "Botella de agua llena")
+		var can_spare_water := bottles_n >= 2 or (bottles_n == 1 and float(b.get("thirst", 100.0)) >= 45.0)
+		if Vector2(cur.x - pp.x, cur.z - pp.z).length() < 25.0 and can_spare_water:
 			b["_farm"] = {"phase": "water", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 2.0, "tool": ""}
 			return true
 	# 4) Sembrar un bancal nuevo: herramienta + semillas + un sitio valido.
@@ -17592,6 +17806,8 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	elif _is_pre_night() and not _bot_night_fire_ready(b, proxy):
 		piedra_need = 2
 		palo_need = maxi(palo_need, 2)
+	elif _bot_wants_farm_tool(b) and _bot_item_count(proxy, "Semillas") >= 1:
+		piedra_need = 1
 	var tool := _bot_bush_tool(proxy)
 	# Arbustos tambien dan Semillas: quien quiere huerto tala aunque no le
 	# falten palos (2 paquetes de semillas bastan para un bancal).

@@ -142,5 +142,56 @@ func run():
  var lg_d := manager.decide_situational_action(b7, {"engine":"legacy"})
  check(str(eu_d.get("reason","")).begins_with("eu:"), "EU reason explains breakdown")
  check(str(lg_d.get("reason","")).begins_with("personality:"), "legacy engine still reachable via override")
+ # --- 16. El prompt documenta la escala de las reservas (100=saciado, 0=critico) ---
+ check(String(manager.AI_SYSTEM_PROMPT).contains("hunger=100 full/0 starving") \
+  and String(manager.AI_SYSTEM_PROMPT).contains("thirst=100 hydrated/0 dehydrated"),
+  "EU: AI prompt documents reserve scale so remote reads 88 as satisfied")
+ # --- 17. Objetivo que acaba de fallar = veto duro en la eleccion EU ---
+ var vb := _mk_b()
+ vb["hunger"] = 10.0
+ (vb["proxy"] as Node3D).global_position = Vector3(120.0, 0.4, 120.0)
+ var for_spec := manager._situational_action_spec("forage", 0.3, 0.75, 0.5, "")
+ manager._ai_note_failed_goal(vb, for_spec, "nav_blocked")
+ check(manager._ai_goal_recently_failed(vb, for_spec), "EU veto: nav_blocked registers as recently failed")
+ var dv := manager.decide_situational_action(vb, {})
+ check(str(dv.get("action","")) != "forage",
+  "EU: recently failed action skipped in situational decision (got %s)" % str(dv.get("action","")))
+ (vb["_mem"] as Dictionary)["failed_goals"] = {}
+ var dv2 := manager.decide_situational_action(vb, {})
+ check(str(dv2.get("action","")) == "forage",
+  "EU: veto lifts once failed_goals is cleared (got %s)" % str(dv2.get("action","")))
+ # --- 18. forage con la panza llena no cuenta como exito sin botin real ---
+ var fb := _mk_b()
+ fb["hunger"] = 90.0
+ var d_for := {"action": "forage", "_ev0": {"food": 0, "hunger": 88.0}}
+ check(not manager._ai_directive_completed(fb, d_for),
+  "forage: starting already fed demands real loot to complete (no free plan_done)")
+ fb["_loot_food_n"] = 2
+ check(manager._ai_directive_completed(fb, d_for),
+  "forage: looting food completes even when already fed")
+ var fb2 := _mk_b()
+ fb2["hunger"] = 90.0
+ var d_for2 := {"action": "forage", "_ev0": {"food": 0, "hunger": 30.0}}
+ check(manager._ai_directive_completed(fb2, d_for2),
+  "forage: started hungry, eating to 75 still completes")
+ # --- 19. Fallback local: no adjunta la pierna return_home si esta vetada ---
+ var hb := _mk_b()
+ hb["hunger"] = 10.0
+ hb["shelter_pos"] = Vector3(50.0, 0.4, 50.0)
+ hb["shelter_id"] = "sh_test"
+ manager.bots[901] = hb
+ manager._ai_apply_local_fallback_decision(901, "t_norm")
+ var dir1: Dictionary = hb.get("ai_directive", {})
+ var st1: Array = dir1.get("_remaining_steps", [])
+ if ["forage","scavenge","hunt"].has(str(dir1.get("action",""))):
+  check(st1.size() == 1 and str((st1[0] as Dictionary).get("action","")) == "return_home",
+   "fallback: supply trip appends return_home leg (steps=%s)" % [st1])
+ hb["ai_directive"] = {}
+ manager._ai_note_failed_goal(hb, {"action":"return_home","target":"camp","mode":"pos"}, "stuck_timeout")
+ manager._ai_apply_local_fallback_decision(901, "t_veto")
+ var dir2: Dictionary = hb.get("ai_directive", {})
+ var st2: Array = dir2.get("_remaining_steps", [])
+ check(st2.is_empty(), "fallback: vetoed return_home is NOT appended (steps=%s)" % [st2])
+ manager.bots.erase(901)
  print("BotUtilityRegression errors=%d" % errors)
  quit(errors)

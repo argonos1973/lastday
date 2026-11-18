@@ -12767,7 +12767,7 @@ func _await_actor_action(actor, duration: float) -> bool:
 		await timer.timeout
 	if _scene_quitting or not is_instance_valid(actor):
 		return false
-	if bool(actor.get("is_dead")):
+	if actor.get("is_dead") == true:
 		return false
 	if "_action_serial" in actor and int(actor.get("_action_serial")) != start_serial:
 		return false
