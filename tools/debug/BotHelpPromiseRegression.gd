@@ -100,7 +100,7 @@ func run() -> void:
 	world.survivor_bot_mgr = mgr
 	mgr.memory_path = mem_path
 	mgr.setup(world)
-	check(mgr.bots.size() == 3, "Se crean los 3 bots")
+	check(mgr.bots.size() == SurvivorBotManagerScript.BOT_CONFIGS.size(), "Se crean todos los bots configurados")
 
 	var carlos: Dictionary = mgr.bots[902]
 	var kael: Dictionary = mgr.bots[903]
@@ -150,6 +150,9 @@ func run() -> void:
 	check((carlos.get("_meet_promise", {}) as Dictionary).is_empty(), "La promesa consumida se limpia")
 
 	# --- 4) Llegar a tiempo NO cuenta ---
+	# La promesa anterior dejó un agravio reciente: no simular reconciliación
+	# inmediata. Pasar la ventana de paz antes de probar otro rescate aceptado.
+	rel_kc2["harm_t"] = Time.get_ticks_msec() - mgr.REL_PEACE_MS - 1
 	mgr.on_chat_received(902, 903, "Kael", "ayuda, sigo aqui")
 	check(int((carlos.get("_meet_promise", {}) as Dictionary).get("id", 0)) == 903, "Nueva promesa tras el grito")
 	cproxy.global_position = kproxy.global_position + Vector3(12.0, 0.0, 0.0) # llego a <26 m
@@ -198,6 +201,12 @@ func run() -> void:
 		"El 'no' explicito por chat tambien baja la sociabilidad")
 
 	# --- 9) Una propuesta de alianza no crea promesa de rescate ---
+	# Caso independiente de las negativas acumuladas: relación reconciliada.
+	for pair in [[902, 903], [903, 902]]:
+		var peace := mgr._chat_touch_rel(pair[0], "bot_%d" % pair[1], str(pair[1]))
+		peace["harm_t"] = Time.get_ticks_msec() - mgr.REL_PEACE_MS - 1
+		peace["trust"] = 0.9
+		peace["hostility"] = 0.0
 	carlos["_meet_id"] = 0
 	carlos["_meet_promise"] = {}
 	var refused3 := int(mgr.get_bot_relationship(903, "bot_902").get("refused", 0))

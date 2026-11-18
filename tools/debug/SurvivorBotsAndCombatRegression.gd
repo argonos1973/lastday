@@ -239,6 +239,11 @@ func run() -> void:
 	var kael_proxy: Node3D = kael["proxy"]
 	kael_proxy.global_position = kael["camp_spot"]
 	kael["pos"] = kael["camp_spot"]
+	# Construcción en calma: las posiciones de spawn no deben introducir un
+	# combate con otro participante en esta batería de supervivencia.
+	kael["sense_t"] = 10000.0
+	kael["_s_foe"] = null
+	kael["_s_predator"] = null
 	# Nace sin inventario: estos materiales simulan lo saqueado/cazado para
 	# probar que sigue construyendo campamento cuando los consigue.
 	var k_inv: Array = kael_proxy.get_meta("saved_inventory", [])
@@ -557,6 +562,7 @@ func run() -> void:
 	dc.time_of_day = 14.0
 
 	# --- 4) Doma de lobos por parte de un Superviviente IA ---
+	kael["sense_t"] = 0.0
 	var wild_w := WildlifeControllerScript.new()
 	wild_w.name = "Wildlife_wolf_tame_bot"
 	world.add_child(wild_w)
@@ -670,6 +676,11 @@ func run() -> void:
 	world.water_depth = 1.0
 
 	# --- 9) Sed: sin botellas va al rio a beber y recupera la sed ---
+	var drink_sense_before := float(carlos.get("sense_t", 0.0))
+	carlos["sense_t"] = 10000.0
+	carlos["_s_foe"] = null
+	carlos["_s_predator"] = null
+	carlos["_s_leader"] = null
 	carlos["aggro_target"] = null
 	carlos["aggro_timer"] = 0.0
 	carlos["thirst"] = 20.0
@@ -695,6 +706,9 @@ func run() -> void:
 	carlos["drink_at"] = carlos_proxy.global_position
 	carlos["drinking_timer"] = 0.0
 	carlos["consume_anim_t"] = 0.0
+	# El primer trago puede haber rellenado botellas vacías: este caso también
+	# debe beber de la orilla, sin una reserva que intercepte la acción.
+	carlos_proxy.set_meta("saved_inventory", (carlos_proxy.get_meta("saved_inventory", []) as Array).filter(func(it): return str(it.get("name", "")) != "Botella de agua llena"))
 	world.water_rect = Rect2(carlos_proxy.global_position.x - 2.0, carlos_proxy.global_position.z - 2.0, 4.0, 4.0)
 	world.water_depth = 0.3
 	mgr._tick_bot(carlos, 0.1)
@@ -703,6 +717,7 @@ func run() -> void:
 
 	# 9c) Agua intransitable (>FORD_MAX_DEPTH=2.55): el bot no se queda plantado
 	# dentro — escapa hacia agua vadeable/seca aunque todo lo demas este hondo.
+	carlos["sense_t"] = drink_sense_before
 	carlos["thirst"] = 20.0
 	carlos["drink_at"] = Vector3.INF
 	carlos["drinking_timer"] = 0.0
@@ -1649,12 +1664,15 @@ func run() -> void:
 		mgr._move_bot_towards(elena, Vector3(12.0, 0.375, 0.0), 3.4, 0.1, "walk")
 	check(elena_proxy.global_position.x > x0 + 4.0,
 		"El bot vadea el rio somero y avanza (x=%.1f desde %.1f)" % [elena_proxy.global_position.x, x0])
-	# Rio profundo (1.0 m): sigue bloqueando y cuenta como atasco
-	elena_proxy.global_position = Vector3(0.0, 0.375, 0.0)
+	# 1 m es vadeable; probar profundidad mayor que FORD_MAX_DEPTH y partir
+	# junto a la orilla para alcanzarla durante la ventana de la prueba.
+	elena_proxy.global_position = Vector3(2.0, 0.375, 0.0)
 	elena["path"] = []
 	elena["stuck_count"] = 0
+	elena["_speed"] = 0.0
+	elena["_mdir"] = Vector3.ZERO
 	world.water_rect = Rect2(4.0, -5.0, 3.0, 10.0)
-	world.water_depth = 1.0
+	world.water_depth = 3.0
 	for i in range(8):
 		mgr._move_bot_towards(elena, Vector3(12.0, 0.375, 0.0), 3.4, 0.1, "walk")
 	check(int(elena["stuck_count"]) > 0 or elena_proxy.global_position.x < 4.0,
@@ -2303,6 +2321,9 @@ func run() -> void:
 	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
 
 	# --- 24) Forrajeo: setas, fruta y latas ---
+	# La orilla intransitable del caso 18 estaba en estas mismas coordenadas;
+	# este escenario tiene suelo seco y no debe heredar aquel veto de ruta.
+	elena["_unreachable"] = []
 	world.world_actions_by_id.clear()
 	var seta := WorldActionScript.new()
 	seta.setup("test_seta_1", "eat_food", "Seta amanita", Vector3(0.2, 0.2, 0.2), Color(0.8, 0.15, 0.1), false, false)
@@ -3091,6 +3112,14 @@ func run() -> void:
 	# Aislamiento: la transmision es gradual (SHARE_MAX_LOCS por llamada), así que
 	# se reduce el mapa de Elena al búnker para probar el traspaso en sí.
 	var mem_901l := mgr._ensure_bot_memory(901)
+	# Los escenarios anteriores incluyen ataques y muertes entre estos bots.
+	# Este caso prueba transmisión entre aliados: aislar y restaurar su historia.
+	var share_mem_902 := mgr._ensure_bot_memory(902)
+	var share_social_backup := [mem_901l["relationships"], mem_901l["killers"], share_mem_902["relationships"], share_mem_902["killers"]]
+	mem_901l["relationships"] = {}
+	mem_901l["killers"] = {}
+	share_mem_902["relationships"] = {}
+	share_mem_902["killers"] = {}
 	var saved_locs: Dictionary = (mem_901l.get("known_locations", {}) as Dictionary).duplicate(true)
 	mem_901l["known_locations"] = {"secret_bunker:410:-390": (mem_901l["known_locations"] as Dictionary)["secret_bunker:410:-390"]}
 	elena["_share_cd_902"] = 0.0
@@ -3122,6 +3151,10 @@ func run() -> void:
 	for i4 in 8:
 		cur_901.erase("bulk_%d" % i4)
 	mem_901l["known_locations"] = cur_901
+	mem_901l["relationships"] = share_social_backup[0]
+	mem_901l["killers"] = share_social_backup[1]
+	share_mem_902["relationships"] = share_social_backup[2]
+	share_mem_902["killers"] = share_social_backup[3]
 
 	# Aceptación 6: Las decisiones de Qwen no pueden ejecutar acciones fuera de las permitidas ni ir a ubicaciones desconocidas
 	var bad_action := mgr._ai_parse_decision("{\"goal\":\"hack\",\"action\":\"teleport\",\"target\":\"city\",\"priority\":5,\"reason\":\"cheat\"}", elena)
@@ -5270,6 +5303,9 @@ func run() -> void:
 	world.server_proxies[8] = h8
 	var pre_teacher := mgr._chat_touch_rel(902, "player_8", "Profe")
 	pre_teacher["trust"] = 0.5; pre_teacher["hostility"] = 0.0; pre_teacher["attacked"] = 0
+	# El historial tiene un límite: una respuesta válida no aumenta size()
+	# si otras pruebas ya han llenado el buffer circular.
+	mgr.chat_log.clear()
 	var pre_log := mgr.chat_log.size()
 	mgr.on_chat_received(902, 8, "Profe", "aqui hay agua, bebe de esta fuente")
 	var vkl: Dictionary = vb["_mem"]["known_locations"]

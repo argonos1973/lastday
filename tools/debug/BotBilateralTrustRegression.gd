@@ -30,6 +30,8 @@ func run() -> void:
 	check(rel.trust == before, "Greetings cannot repair murder history")
 	mgr.on_chat_received(902,901,"Elena","ayuda")
 	check(int(mgr.bots[902].get("_meet_id",0)) == 0, "Victim makes no rescue promise to killer")
+	check(mgr.get_bot_relationship(901,"bot_902").get("refused",0) == 0,
+		"Rejecting a killer does not punish the victim with a new refusal debt")
 	rel.helped = 5
 	check(not mgr._bot_pair_can_cooperate(901,902), "Two killings require more than five reparations")
 	rel.helped = 6

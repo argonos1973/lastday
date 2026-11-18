@@ -134,7 +134,7 @@ func run() -> void:
 	mgr.setup(world)
 
 	# --- 1) Los 3 bots nacen hostiles ---
-	check(mgr.bots.size() == 3, "Se crean los 3 bots")
+	check(mgr.bots.size() == SurvivorBotManagerScript.BOT_CONFIGS.size(), "Se crean todos los bots configurados")
 	var all_hostile := true
 	for bid in [901, 902, 903]:
 		if str(mgr.bots[bid]["faction"]) != "hostile":

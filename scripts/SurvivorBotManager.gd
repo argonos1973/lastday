@@ -1520,6 +1520,7 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	# Recarga de fusil: clip propio de la libreria rifle_motion. De pie se ve;
 	# arrodillado/tumbado mantiene la postura (no hay clip de recarga bajo).
 	if bool(b.get("gun_reloading", false)) and bool(b.get("has_rifle", false)) \
+			and raw == "idle" and not bool(b.get("crouching", false)) \
 			and not bool(b.get("sitting", false)) and not bool(b.get("prone", false)):
 		return "rifle_motion/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION
 	if bool(b.get("sleeping", false)):
@@ -1546,10 +1547,10 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	# puppet — el nombre exacto resuelve directo en el cliente. Sin esto el
 	# arquero parecía quieto y la flecha salía de la nada. Va tras los estados
 	# de cuerpo completo (dormir/sentarse/agacharse): esos ganan si coinciden.
-	if Time.get_ticks_msec() < int(b.get("_bow_shot_anim_until", 0)):
+	if raw == "idle" and Time.get_ticks_msec() < int(b.get("_bow_shot_anim_until", 0)):
 		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION
-	if bool(b.get("_bow_drawing", false)):
-		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION
+	if bool(b.get("_bow_drawing", false)) and raw in ["idle", "walk"]:
+		return "bow/" + (PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_WALK_ANIMATION if raw == "walk" else PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION)
 	if bool(b.get("has_rifle", false)):
 		# Paso lateral real (strafe): el clip se elige por la direccion de
 		# desplazamiento respecto a donde mira el bot — vale apuntando o no.
@@ -4684,9 +4685,14 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 	b["sleeping"] = false
 	b["is_aiming"] = false
 	var goal: Vector3 = b.get("_cover_goal", Vector3.INF)
+	if int(b.get("_cover_foe", 0)) != foe.get_instance_id() or (goal != Vector3.INF and _is_goal_blacklisted(b, goal)):
+		goal = Vector3.INF
+		b["_cover_goal"] = goal
+		b["_cover_scan_t"] = 0.0
+	b["_cover_foe"] = foe.get_instance_id()
 	if float(b["_cover_scan_t"]) <= 0.0:
 		b["_cover_scan_t"] = 1.5
-		if goal == Vector3.INF or _has_clear_shot(foe.global_position, goal):
+		if goal == Vector3.INF or _has_clear_shot(foe.global_position, goal) or _is_step_blocked(proxy.global_position, goal):
 			goal = _find_ballistic_cover(b, foe)
 			b["_cover_goal"] = goal
 	if goal != Vector3.INF:
@@ -4701,7 +4707,7 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 			_cover_learning_tick(b, delta, true)
 			b["crouching"] = true
 			proxy.set_meta("crouching", true)
-			b["anim"] = "idle"
+			_stop_bot_motion(b)
 			return true
 		b["_cover_goal"] = Vector3.INF
 	_cover_learning_tick(b, delta, false)
@@ -5182,6 +5188,67 @@ func _has_combat_edge(b: Dictionary, foe: Node3D) -> bool:
 			return true
 	return false
 
+# Pasos con destino fijo y pausa de tiro: evita orbitar eternamente a la
+# víctima o invertir el flanco cada frame cuando hay una pared al lado.
+func _bot_combat_step(b: Dictionary, foe: Node3D, delta: float) -> void:
+	var proxy: Node3D = b["proxy"]
+	var st: Dictionary = b.get("_combat_step", {})
+	var now := Time.get_ticks_msec()
+	if int(st.get("target", 0)) != foe.get_instance_id() or now - int(st.get("last", now)) > 1200:
+		st = {"target": foe.get_instance_id(), "t": 0.0, "phase": "hold", "side": 1.0 if int(b["bot_id"]) % 2 == 0 else -1.0}
+	st["last"] = now
+	st["t"] = maxf(0.0, float(st.get("t", 0.0)) - delta)
+	if float(st["t"]) <= 0.0:
+		if str(st.get("phase", "")) == "move":
+			st["phase"] = "hold"
+			st["t"] = 0.9 + float(int(b["bot_id"]) % 4) * 0.15
+			st["side"] = -float(st["side"])
+		else:
+			var forward := foe.global_position - proxy.global_position
+			forward.y = 0.0
+			var distance := forward.length()
+			forward = forward.normalized() if distance > 0.01 else Vector3.FORWARD
+			var side := Vector3(-forward.z, 0.0, forward.x)
+			var goal := Vector3.INF
+			for sign_side in [float(st["side"]), -float(st["side"])]:
+				var offset: Vector3 = side * float(sign_side) * 2.4
+				if distance < 8.0:
+					offset = (-forward + side * sign_side * 0.45).normalized() * 2.4
+				var point: Vector3 = proxy.global_position + offset
+				point.y = _ground_y(point.x, point.z, proxy.global_position.y)
+				if absf(point.y - proxy.global_position.y) <= 0.65 and not _is_goal_blacklisted(b, point) and not _is_step_blocked(proxy.global_position, point):
+					goal = point
+					break
+			st["goal"] = goal
+			st["phase"] = "move" if goal != Vector3.INF else "hold"
+			st["t"] = 0.85 if goal != Vector3.INF else 0.6
+	b["_combat_step"] = st
+	if str(st["phase"]) == "move" and proxy.global_position.distance_to(st["goal"]) > 0.3:
+		var facing := float(b.get("rot", proxy.rotation.y))
+		_move_bot_towards(b, st["goal"], 2.6, delta, "walk")
+		b["rot"] = facing # el torso sigue al rival, no al paso lateral
+	else:
+		_stop_bot_motion(b)
+	_bot_face_combat_point(b, foe.global_position, delta)
+
+func _bot_face_combat_point(b: Dictionary, point: Vector3, delta: float) -> void:
+	var proxy: Node3D = b["proxy"]
+	var direction := point - proxy.global_position
+	direction.y = 0.0
+	if direction.length_squared() <= 0.001:
+		return
+	var yaw := float(b.get("rot", proxy.rotation.y))
+	var turn := angle_difference(yaw, atan2(-direction.x, -direction.z))
+	b["rot"] = yaw + clampf(turn, -deg_to_rad(220.0) * delta, deg_to_rad(220.0) * delta)
+	proxy.rotation.y = float(b["rot"])
+
+func _bot_has_firing_heading(b: Dictionary, point: Vector3) -> bool:
+	var direction: Vector3 = point - (b["proxy"] as Node3D).global_position
+	direction.y = 0.0
+	if direction.length_squared() <= 0.001:
+		return true # objetivo vertical: la inclinación la resuelve la mira 3D
+	return absf(angle_difference(float(b.get("rot", 0.0)), atan2(-direction.x, -direction.z))) <= deg_to_rad(10.0)
+
 func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	b["sitting"] = false
@@ -5190,6 +5257,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	# Sale de la postura prona del puesto de overwatch si el combate sigue por
 	# la via normal; volvera a tumbarse solo si retoma el puesto.
 	b["prone"] = false
+	b["is_aiming"] = false
 
 	# Ordenar a su lobo domesticado que ataque también al objetivo
 	_command_bot_wolf_against(b, foe)
@@ -5217,12 +5285,12 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	# Limitar a |dy|<3.2 impedia responder a un francotirador en un tejado y a
 	# una vigia disparar desde su puesto elevado.
 	var clear_los := _has_clear_shot(proxy.global_position, fpos)
+	if wkind == "rifle" and bool(b.get("gun_reloading", false)):
+		_bot_seek_ballistic_cover(b, foe, delta)
+		return
 
 	if wkind == "rifle" and dist > 3.5 and dist <= 48.0:
 		b["is_aiming"] = clear_los
-		# La mira sigue al objetivo todo el rato (con sus limites fisicos),
-		# tambien cuando aun no se puede disparar.
-		var aim_err := _bot_aim_tick(b, foe, dist, clear_los, delta, "m4" if _bot_gun_is_m4(weapon) else "sniper")
 		# Si el objetivo está lejos o tras un muro/puerta/planta sin línea de
 		# tiro limpia, avanzar hacia él (abriendo puertas/subiendo escaleras) en
 		# lugar de quedarse strafeando enganchado contra la pared exterior.
@@ -5231,28 +5299,22 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			# correr a quemarropa — la postura sentada estabiliza la mira
 			# (0.28 vs 1.0 de dispersion) como hace un jugador humano.
 			if clear_los:
+				_stop_bot_motion(b)
 				b["sitting"] = true
-				b["anim"] = "idle"
+				_bot_face_combat_point(b, fpos, delta)
 			else:
 				_move_bot_towards(b, fpos, 6.4, delta, "run")
 		else:
-			b["strafe_timer"] = float(b["strafe_timer"]) + delta
-			var side := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
-			if float(b["strafe_timer"]) > 1.4 or _is_step_blocked(proxy.global_position, proxy.global_position + side * float(b["strafe_dir"]) * 1.4):
-				b["strafe_dir"] = -float(b["strafe_dir"])
-				b["strafe_timer"] = 0.0
-			_move_bot_towards(b, proxy.global_position + side * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
-			b["rot"] = atan2(-to_foe.x, -to_foe.z)
-			proxy.rotation.y = float(b["rot"])
+			_bot_combat_step(b, foe, delta)
+		# Evaluar la mira después del movimiento y la postura de este tick.
+		var aim_err := _bot_aim_tick(b, foe, dist, clear_los, delta, "m4" if _bot_gun_is_m4(weapon) else "sniper")
 		# El gatillo pide mira asentada (tiempo de adquisicion) y alineada
 		# dentro de la tolerancia de su personalidad — el agresivo suelta
 		# antes, el prudente espera la mira.
-		if float(b["shoot_cooldown"]) <= 0.0 and clear_los \
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los and not _bot_is_moving(b) \
+				and _bot_has_firing_heading(b, fpos) \
 				and aim_err <= _bot_trigger_tolerance_deg(b, dist) \
 				and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b):
-			if to_foe.length_squared() > 0.001:
-				b["rot"] = atan2(-to_foe.x, -to_foe.z)
-				proxy.rotation.y = float(b["rot"])
 			# Cadencia humana, no metronomo: +-0.45 s entre rafagas rompe el
 			# ritmo perfecto que volvia los intercambios tan opresivos.
 			b["shoot_cooldown"] = (1.15 if weapon == "Fusil de asalto" else 1.85) + randf_range(0.0, 0.45)
@@ -5277,6 +5339,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		b["is_aiming"] = clear_los
 		var sideb := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
 		if dist > 30.0 or not clear_los:
+			b["is_aiming"] = false
 			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		elif dist < 9.5 and to_foe.length_squared() > 0.01 and float(b["shoot_cooldown"]) > 0.15:
 			b["is_aiming"] = false
@@ -5284,21 +5347,16 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			if _is_step_blocked(proxy.global_position, proxy.global_position + back_dir * 1.6):
 				back_dir = (back_dir + sideb * float(b["strafe_dir"]) * 1.2).normalized()
 			_move_bot_towards(b, proxy.global_position + back_dir * 5.0, 6.2, delta, "run")
+		elif bool(b.get("_bow_drawing", false)) or Time.get_ticks_msec() < int(b.get("_bow_shot_anim_until", 0)):
+			_stop_bot_motion(b)
+			_bot_face_combat_point(b, fpos, delta)
 		else:
-			b["strafe_timer"] = float(b["strafe_timer"]) + delta
-			if float(b["strafe_timer"]) > 1.5 or _is_step_blocked(proxy.global_position, proxy.global_position + sideb * float(b["strafe_dir"]) * 1.4):
-				b["strafe_dir"] = -float(b["strafe_dir"])
-				b["strafe_timer"] = 0.0
-			_move_bot_towards(b, proxy.global_position + sideb * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
-			b["rot"] = atan2(-to_foe.x, -to_foe.z)
-			proxy.rotation.y = float(b["rot"])
+			_bot_combat_step(b, foe, delta)
 		var aim_err_b := _bot_aim_tick(b, foe, dist, clear_los, delta, "bow")
-		if float(b["shoot_cooldown"]) <= 0.0 and clear_los \
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los and bool(b["is_aiming"]) \
+				and not _bot_is_moving(b) and _bot_has_firing_heading(b, fpos) \
 				and aim_err_b <= _bot_trigger_tolerance_deg(b, dist) \
 				and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b):
-			if to_foe.length_squared() > 0.001:
-				b["rot"] = atan2(-to_foe.x, -to_foe.z)
-				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 1.55 if weapon == "Arco reforzado" else 1.9
 			_bot_fire_bow(b, foe, weapon)
 		return
@@ -5312,6 +5370,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		b["is_aiming"] = clear_los
 		var sidet := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
 		if dist > 26.0 or not clear_los:
+			b["is_aiming"] = false
 			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		elif dist < 8.5 and to_foe.length_squared() > 0.01 and float(b["shoot_cooldown"]) > 0.15:
 			b["is_aiming"] = false
@@ -5320,18 +5379,12 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 				back_t = (back_t + sidet * float(b["strafe_dir"]) * 1.2).normalized()
 			_move_bot_towards(b, proxy.global_position + back_t * 4.5, 6.2, delta, "run")
 		else:
-			b["strafe_timer"] = float(b["strafe_timer"]) + delta
-			if float(b["strafe_timer"]) > 1.6 or _is_step_blocked(proxy.global_position, proxy.global_position + sidet * float(b["strafe_dir"]) * 1.4):
-				b["strafe_dir"] = -float(b["strafe_dir"])
-				b["strafe_timer"] = 0.0
-			_move_bot_towards(b, proxy.global_position + sidet * float(b["strafe_dir"]) * 3.0, 3.6, delta, "walk")
+			_bot_combat_step(b, foe, delta)
 		var aim_err_t := _bot_aim_tick(b, foe, dist, clear_los, delta, "throw")
-		if float(b["shoot_cooldown"]) <= 0.0 and clear_los \
+		if float(b["shoot_cooldown"]) <= 0.0 and clear_los and bool(b["is_aiming"]) \
+				and not _bot_is_moving(b) and _bot_has_firing_heading(b, fpos) \
 				and aim_err_t <= _bot_trigger_tolerance_deg(b, dist) \
 				and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b):
-			if to_foe.length_squared() > 0.001:
-				b["rot"] = atan2(-to_foe.x, -to_foe.z)
-				proxy.rotation.y = float(b["rot"])
 			b["shoot_cooldown"] = 2.6 if wkind == "bola" else 2.1
 			_bot_fire_thrown(b, foe, weapon, wkind == "bola")
 		return
@@ -5366,10 +5419,8 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	else:
 		_move_bot_towards(b, fpos, 6.5, delta, "run")
 
-# Velocidad reciente del objetivo medida entre disparos del bot: un blanco que
-# corre/esprinta es mucho mas dificil de conectar — nada de aimbot que nunca
-# falla. Al cambiar de objetivo la primera estimacion sale disparada (salto de
-# posicion), lo cual da el efecto deseado: apuntar a alguien nuevo es peor.
+# Velocidad reciente del objetivo: cambiar de blanco reinicia la muestra;
+# la adquisición de la mira sigue pagando su propio tiempo de asentamiento.
 func _bot_target_speed(b: Dictionary, target: Node3D) -> float:
 	return _bot_target_velocity(b, target).length()
 
@@ -5383,8 +5434,14 @@ func _bot_target_velocity(b: Dictionary, target: Node3D) -> Vector3:
 	var vel := Vector3.ZERO
 	var pt = prev.get("tpos", null)
 	if pt is Vector3 and int(prev.get("id", 0)) == key:
-		var dt := maxf(0.2, float(now - int(prev.get("msec", 0))) / 1000.0)
-		vel = (target.global_position - pt) / dt
+		var elapsed := now - int(prev.get("msec", 0))
+		# No renovar el ancla a cada tick y dividir por 0.2: a 60 Hz eso
+		# subestimaba la carrera por un factor de doce. Reutilizar la última
+		# muestra hasta reunir un intervalo medible, también dentro de ráfagas.
+		if elapsed >= 0 and elapsed < 120:
+			return prev.get("vel", Vector3.ZERO)
+		if elapsed > 0 and elapsed <= 5000:
+			vel = (target.global_position - pt) / (float(elapsed) / 1000.0)
 		if vel.length() > 14.0:
 			vel = Vector3.ZERO  # salto de objetivo/teleport: no es velocidad real
 	b["_foe_track"] = {"id": key, "tpos": target.global_position, "msec": now, "vel": vel}
@@ -6168,32 +6225,32 @@ func _record_death_lesson(b: Dictionary, mem: Dictionary, death_kind: String) ->
 			cat = "dehydrated"
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
 			_adjust_trait(p, "curiosity", 0.03, float(base_p["curiosity"]))
-			record_strategy_outcome(bid, "forage", true, 0.14)
+			_reinforce_survival_strategy(bid, "forage", 0.14)
 			_record_milestone(bid, "learned_hydration")
 		"starved":
 			cat = "starved"
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
 			_adjust_trait(p, "curiosity", 0.03, float(base_p["curiosity"]))
-			record_strategy_outcome(bid, "forage", true, 0.16)
-			record_strategy_outcome(bid, "hunt", true, 0.12)
+			_reinforce_survival_strategy(bid, "forage", 0.16)
+			_reinforce_survival_strategy(bid, "hunt", 0.12)
 			_record_milestone(bid, "learned_foraging")
 		"wolf_bite", "bear_bite":
 			cat = "predator"
 			_adjust_trait(p, "survival_instinct", 0.05, float(base_p["survival_instinct"]))
 			_adjust_trait(p, "bravery", -0.03, float(base_p["bravery"]))
-			record_strategy_outcome(bid, "fortify_camp", true, 0.14)
+			_reinforce_survival_strategy(bid, "fortify_camp", 0.14)
 			_record_milestone(bid, "learned_predator_evasion")
 		"hypothermia", "exhausted":
 			cat = "cold"
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
-			record_strategy_outcome(bid, "fortify_camp", true, 0.15)
+			_reinforce_survival_strategy(bid, "fortify_camp", 0.15)
 			_record_milestone(bid, "learned_shelter_warmth")
 		"bled", "sick":
 			# Desangrado/enfermo: aprende a tratar sus heridas a tiempo —
 			# el umbral de vendaje sube con lecciones "medical".
 			cat = "medical"
 			_adjust_trait(p, "survival_instinct", 0.05, float(base_p["survival_instinct"]))
-			record_strategy_outcome(bid, "fortify_camp", true, 0.10)
+			_reinforce_survival_strategy(bid, "fortify_camp", 0.10)
 			_record_milestone(bid, "learned_first_aid")
 		"rifle", "bola", "arco", "arco_head", "arco_madera", "arrow", "lanza":
 			# Muerte a distancia: aprende a desconfiar, a no cruzar campo
@@ -6202,14 +6259,14 @@ func _record_death_lesson(b: Dictionary, mem: Dictionary, death_kind: String) ->
 			_adjust_trait(p, "distrust", 0.06, float(base_p["distrust"]))
 			_adjust_trait(p, "bravery", -0.03, float(base_p["bravery"]))
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
-			record_strategy_outcome(bid, "avoid_zone", true, 0.12)
-			record_strategy_outcome(bid, "fortify_camp", true, 0.10)
+			_reinforce_survival_strategy(bid, "avoid_zone", 0.12)
+			_reinforce_survival_strategy(bid, "fortify_camp", 0.10)
 			_record_milestone(bid, "learned_ranged_threat")
 		_:
 			cat = "combat"
 			_adjust_trait(p, "survival_instinct", 0.04, float(base_p["survival_instinct"]))
 			_adjust_trait(p, "distrust", 0.04, float(base_p["distrust"]))
-			record_strategy_outcome(bid, "explore_military", true, 0.12)
+			_reinforce_survival_strategy(bid, "explore_military", 0.12)
 			_record_milestone(bid, "learned_combat_tactics")
 	lessons[cat] = int(lessons.get(cat, 0)) + 1
 	mem["death_lessons"] = lessons
@@ -7532,6 +7589,10 @@ func _find_ambush_target(b: Dictionary) -> Dictionary:
 		if _actor_holds_ranged(p3) and not has_ranged and not desperate:
 			continue
 		var d := proxy.global_position.distance_to(p3.global_position)
+		# Un ruido puede advertir de una escolta, pero no permite valorar
+		# mochila/arma ni escoger una víctima invisible a través de una pared.
+		if d > _effective_human_sight(p3, sight) or not _has_clear_shot(proxy.global_position, p3.global_position):
+			continue
 		var loot_val := _bot_observed_loot_value(b, p3, pid)
 		# Escoltas: solo cuentan los acompañantes que el bot ha detectado.
 		var allies := 0
@@ -7581,6 +7642,38 @@ func note_actor_wounded(victim_id: int) -> void:
 			sw[victim_id] = Time.get_ticks_msec()
 			wb["_seen_wounded"] = sw
 
+# Aproximación estable por flancos alternos. Cada miembro mantiene su propio
+# punto aunque comparta el plan del líder; nunca rodea con la posición oculta
+# del rival. Si el terreno no permite el flanco, sigue la ruta normal.
+func _bot_ambush_approach(b: Dictionary, known: Vector3, strike: float) -> Vector3:
+	var proxy: Node3D = b["proxy"]
+	var amb: Dictionary = b.get("_ambush", {})
+	var route: Dictionary = b.get("_ambush_route", {})
+	var anchor: Vector3 = route.get("anchor", Vector3.INF)
+	if int(route.get("target", 0)) != int(amb.get("target_id", 0)) or anchor == Vector3.INF or anchor.distance_to(known) > 4.0:
+		route = {"target": int(amb.get("target_id", 0)), "anchor": known, "goal": known}
+		var forward := known - proxy.global_position
+		forward.y = 0.0
+		if forward.length() > strike + 2.0 and absf(known.y - proxy.global_position.y) < 1.0:
+			var ids := _bot_team_ids(b)
+			ids.sort()
+			var rank := ids.find(int(b["bot_id"]))
+			var flank := 1.0 if (rank if rank >= 0 else int(b["bot_id"])) % 2 == 0 else -1.0
+			forward = forward.normalized()
+			var side := Vector3(-forward.z, 0.0, forward.x)
+			for lane in [flank, -flank]:
+				var candidate: Vector3 = known - forward * strike * 0.65 + side * float(lane) * strike * 0.55
+				candidate.y = _ground_y(candidate.x, candidate.z, proxy.global_position.y)
+				if absf(candidate.y - proxy.global_position.y) <= 0.65 and not _is_goal_blacklisted(b, candidate) and not _is_step_blocked(proxy.global_position, candidate):
+					route["goal"] = candidate
+					break
+		b["_ambush_route"] = route
+	var goal: Vector3 = route["goal"]
+	if proxy.global_position.distance_to(goal) < 1.0 or _is_goal_blacklisted(b, goal):
+		route["goal"] = known
+		return known
+	return goal
+
 # Ejecuta la emboscada cada tick: acecho agachado hasta el borde del asalto y
 # golpe conjunto (el equipo entero recibe aggro sobre la victima a la vez).
 func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
@@ -7591,6 +7684,7 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	var now_s := Time.get_ticks_msec() / 1000.0
 	var abort := func(cd: float) -> bool:
 		b["_ambush"] = {}
+		b.erase("_ambush_route")
 		b["_ambush_cd_until"] = now_s + cd
 		b["crouching"] = false
 		proxy.set_meta("crouching", false)
@@ -7611,8 +7705,8 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	# solo mientras este bot la percibe (o su lider se la transmite al
 	# copiar el plan). Si desaparece tras una pared no hay radar: se camina
 	# a donde se la vio y, sin volver a dar con ella, se abandona.
-	var perceived := _bot_perceives_actor(b, target, 52.0)
-	if perceived:
+	var visible := proxy.global_position.distance_to(target.global_position) <= _effective_human_sight(target, 52.0) and _has_clear_shot(proxy.global_position, target.global_position)
+	if visible:
 		amb["pos"] = target.global_position
 		amb["seen_msec"] = Time.get_ticks_msec()
 	var known: Vector3 = amb.get("pos", Vector3.INF)
@@ -7623,13 +7717,14 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	if d > BOT_AMBUSH_ABORT_DIST:
 		return abort.call(50.0)
 	var strike := BOT_AMBUSH_STRIKE_RANGED if _bot_has_ranged_weapon(proxy) else BOT_AMBUSH_STRIKE_MELEE
-	if perceived and (d <= strike or (float(amb["t"]) > BOT_AMBUSH_MAX_SECONDS and d <= strike + 8.0)):
+	if visible and (d <= strike or (float(amb["t"]) > BOT_AMBUSH_MAX_SECONDS and d <= strike + 8.0)):
 		# GOLPE: todo el equipo ataca a la vez
 		b["_ambush"] = {}
+		b.erase("_ambush_route")
 		b["_ambush_cd_until"] = now_s + 75.0
 		b["aggro_target"] = target
 		b["aggro_timer"] = 30.0
-		_ai_note_foe_intel(b, target, target.global_position, "seen" if _has_clear_shot(proxy.global_position, target.global_position) else "heard")
+		_ai_note_foe_intel(b, target, target.global_position, "seen")
 		b["sleeping"] = false
 		b["crouching"] = false
 		b["sense_t"] = 0.0
@@ -7642,10 +7737,16 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["crouching"] = true
+	b["is_aiming"] = false
+	var pick := _pick_fight_weapon(b, d)
+	b["held_item"] = str(pick.get("name", ""))
+	b["has_rifle"] = str(pick.get("kind", "")) == "rifle"
+	proxy.set_meta("saved_held_item", b["held_item"])
+	proxy.set_meta("crouching", true)
 	if d > 1.5:
-		_move_bot_towards(b, known, 2.9, delta, "walk")
+		_move_bot_towards(b, _bot_ambush_approach(b, known, strike) if visible else known, 2.0, delta, "walk")
 	else:
-		b["anim"] = "idle" # en el ultimo punto conocido: escucha y espera
+		_stop_bot_motion(b) # en el ultimo punto conocido: escucha y espera
 	return true
 
 # --- Chat entre bots y con humanos ------------------------------------------
@@ -8353,8 +8454,9 @@ func _chat_handle_request(b: Dictionary, sender_id: int, sname: String, skey: St
 		_bot_chat_send(b, sender_id, sname, line, "request")
 	# Negarse pudiendo (desconfianza/hostilidad/guardarse el arma) queda en la
 	# memoria del que pidio — las negativas constantes de ayuda a compañeros
-	# de equipo acaban en expulsion. "No me queda nada" no es una negativa.
-	if not ok and sender_is_bot and why in ["distrust", "hostile", "betrayed", "keep_weapon", "scared"]:
+	# de equipo acaban en expulsion. No poder ayudar, o rechazar a un agresor
+	# recordado, no enseña egoísmo a la víctima ni genera otra deuda social.
+	if not ok and sender_is_bot and why in ["distrust", "hostile", "keep_weapon", "scared"]:
 		record_social_event(sender_id, "bot_%d" % bot_id, str(b.get("name", "")), "refused", 0.16, "denied_" + cmd + "_" + why)
 		if bots.has(sender_id):
 			_bot_evaluate_after_refusal(bots[sender_id], bot_id, cmd)
@@ -9010,7 +9112,10 @@ func _bot_chat_send(b: Dictionary, to_id: int, to_name: String, text: String, ki
 	# Anti-repeticion: el mismo bot no encadena dos veces la misma frase. Las
 	# respuestas salen igual (el jugador espera contestacion); el resto se cae.
 	var recent: Array = _chat_recent.get(my_id, [])
-	if kind != "reply" and not recent.is_empty() and String(recent.back()) == clean:
+	# Confirmar otra enseñanza humana también es una respuesta solicitada,
+	# aunque coincida la plantilla (p. ej. dos fuentes de agua distintas).
+	var requested_reply := kind == "reply" or (kind == "teach" and to_id > 0 and not bots.has(to_id))
+	if not requested_reply and not recent.is_empty() and String(recent.back()) == clean:
 		return
 	var sname := str(b.get("name", "Bot"))
 	if to_name.is_empty():
@@ -11639,6 +11744,15 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 		return goal
 	return pts[maxi(foot_idx, best_i2 - 3)]
 
+func _stop_bot_motion(b: Dictionary) -> void:
+	b["_speed"] = 0.0
+	b["_mdir"] = Vector3.ZERO
+	b["anim"] = "idle"
+	var proxy: Node3D = b.get("proxy")
+	if is_instance_valid(proxy):
+		proxy.set_meta("moving", false)
+		proxy.set_meta("sprinting", false)
+
 func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
 	# Moverse implica estar de pie: si una rama de decision pone a correr a un
@@ -11716,6 +11830,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 						path = b["path"]
 				if path.is_empty():
 					_abandon_unreachable_goal(b, raw_goal)
+					_stop_bot_motion(b)
 					return
 		var pidx := int(b["path_idx"])
 		# Si find_path devuelve un unico punto (_nearest_free_cell) que queda
@@ -11755,7 +11870,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		if world.has_method("_get_exact_ground_y"):
 			ty = world._get_exact_ground_y(ahead_xz.x, ahead_xz.z) - 0.025
 		if surf_y - ty < 0.5:
-			b["anim"] = "idle"
+			_stop_bot_motion(b)
 			b["path"] = []
 			b["stuck_count"] = int(b["stuck_count"]) + 1
 			if int(b["stuck_count"]) >= 2:
@@ -11778,7 +11893,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var to_next := Vector3(next_goal.x - cur.x, 0.0, next_goal.z - cur.z)
 	var d := to_next.length()
 	if d < 0.05:
-		b["anim"] = "idle"
+		_stop_bot_motion(b)
 		return
 	var dir := to_next / d
 	# Sumar repulsion suave de bloqueadores cercanos solo en exterior libre:
@@ -11846,7 +11961,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	if front_blocked and world != null and world.has_method("bot_try_open_door_at") and (world.bot_try_open_door_at(cur) or world.bot_try_open_door_at(next_goal)):
 		b["path"] = []
 		b["path_timer"] = 0.0
-		b["anim"] = "idle"
+		_stop_bot_motion(b)
 		return
 	# Si el paso frontal choca contra un obstaculo/agua, tantear angulos libres
 	if front_blocked and not _is_pos_blocked(cur, 0.25, deep_now):
@@ -11860,14 +11975,21 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 				chosen_dir = cand_dir
 				new_pos = cand_pos
 				steered = true
+				front_blocked = false
 				break
 		if not steered:
 			# Bloqueado en todas direcciones: invertir sentido de rodeo y recalcular ruta tras enfriamiento
 			b["avoid_sign"] = -sign_pref
 			b["path"] = []
 			b["path_timer"] = maxf(float(b["path_timer"]), 0.8)
+	# Si todos los tanteos fallan, no aplicar el paso frontal que ya sabemos
+	# bloqueado. Conservar el detector de atasco para que busque otra ruta.
+	if front_blocked:
+		new_pos = cur
 	var gy := _ground_y(new_pos.x, new_pos.z, cur.y)
-	if on_stair_segment or (in_building_3d and absf(next_goal.y - cur.y) > 0.01):
+	if front_blocked:
+		new_pos.y = cur.y
+	elif on_stair_segment or (in_building_3d and absf(next_goal.y - cur.y) > 0.01):
 		var t_ramp := clampf(step / maxf(d, 0.01), 0.0, 1.0)
 		var ramp_y := lerpf(cur.y, next_goal.y, t_ramp)
 		new_pos.y = ramp_y if absf(gy - ramp_y) > 0.4 else (maxf(gy, ramp_y) if next_goal.y > cur.y else minf(gy, ramp_y))
@@ -11878,7 +12000,18 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	proxy.global_position = new_pos
 	proxy.set_meta("saved_pos", new_pos)
 	b["pos"] = new_pos
+	# La animación lateral y la velocidad reflejan el paso REAL, incluyendo
+	# desvíos por obstáculos y la frenada al llegar al objetivo.
+	var displacement := new_pos - cur
+	var moved := displacement.length_squared() > 0.000001
+	var flat_displacement := Vector3(displacement.x, 0.0, displacement.z)
+	# La aceleración controla X/Z: un ajuste vertical al suelo o una escalera
+	# no puede convertirse en velocidad horizontal extra en el siguiente tick.
+	b["_speed"] = flat_displacement.length() / maxf(delta, 0.001)
+	b["_mdir"] = flat_displacement.normalized()
 	var target_yaw := atan2(-chosen_dir.x, -chosen_dir.z)
+	if not moved:
+		target_yaw = float(b["rot"])
 	if absf(angle_difference(float(b["rot"]), target_yaw)) > 1.2:
 		b["rot"] = target_yaw
 	else:
@@ -11886,10 +12019,12 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	proxy.rotation.y = float(b["rot"])
 	var climbing_stairs_now: bool = on_stair_segment or (in_building_3d and absf(new_pos.y - cur.y) > delta * 0.16)
 	b["anim"] = ("stairs" if not bool(b.get("has_rifle", false)) else "walk") if climbing_stairs_now else anim_name
+	if not moved:
+		_stop_bot_motion(b)
 	proxy.set_meta("crouching", bool(b.get("crouching", false)))
 	proxy.set_meta("prone", bool(b.get("prone", false)))
-	proxy.set_meta("sprinting", anim_name == "run" and not climbing_stairs_now)
-	proxy.set_meta("moving", anim_name == "walk" or anim_name == "run" or climbing_stairs_now)
+	proxy.set_meta("sprinting", moved and anim_name == "run" and not climbing_stairs_now)
+	proxy.set_meta("moving", moved)
 	# Ledger de acercamiento por objetivo: "best" es la menor distancia lograda
 	# y "grace" cuenta ventanas seguidas sin mejorarla. Un tropiezo de 2-6 s en
 	# un viaje de 500 m no prueba que el destino sea inalcanzable — el veto solo
@@ -11907,10 +12042,10 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	b["stuck_timer"] = float(b["stuck_timer"]) + delta
 	if float(b["stuck_timer"]) >= 2.0:
 		var last_pos: Vector3 = b.get("last_move_pos", cur)
-		var moved: float = new_pos.distance_to(last_pos)
+		var window_moved: float = new_pos.distance_to(last_pos)
 		b["last_move_pos"] = new_pos
 		b["stuck_timer"] = 0.0
-		if moved < 0.75:
+		if window_moved < 0.75:
 			b["stuck_count"] = int(b["stuck_count"]) + 1
 			var level := int(b["stuck_count"])
 			if level == 1:
@@ -13898,6 +14033,7 @@ func _ensure_bot_memory(bot_id: int, cfg: Dictionary = {}) -> Dictionary:
 		mem["unreachable_pois"] = {}
 	if not mem.has("sessions"):
 		mem["sessions"] = 1
+	_migrate_strategy_evidence(mem)
 	return mem
 
 func _get_bot_personality(b: Dictionary) -> Dictionary:
@@ -14147,9 +14283,9 @@ func _loc_merge_into(known: Dictionary, loc_id: String, pos: Vector3) -> String:
 			best_id = o
 	return best_id
 
-func observe_location(bot_id: int, loc_id: String, kind: String, pos: Vector3, source: String = "observed", mark_visit: bool = false) -> void:
+func observe_location(bot_id: int, loc_id: String, kind: String, pos: Vector3, source: String = "observed", mark_visit: bool = false) -> String:
 	if loc_id.is_empty():
-		return
+		return ""
 	var mem := _ensure_bot_memory(bot_id)
 	var known: Dictionary = mem["known_locations"]
 	var is_new := not known.has(loc_id)
@@ -14174,6 +14310,7 @@ func observe_location(bot_id: int, loc_id: String, kind: String, pos: Vector3, s
 	mem["known_locations"] = known
 	if is_new and bots.has(bot_id):
 		_evolve_personality(bots[bot_id], "poi_discovered", 0.18)
+	return loc_id
 
 func bot_knows_location(bot_id_or_dict, target: String) -> bool:
 	var t := target.strip_edges()
@@ -14264,7 +14401,7 @@ func _try_share_allied_knowledge(b: Dictionary, dt: float) -> void:
 				share_bot_knowledge(bid, oid)
 
 func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
-	if bot_id_a == bot_id_b:
+	if bot_id_a == bot_id_b or not _bot_pair_can_cooperate(bot_id_a, bot_id_b):
 		return 0
 	# Pausa por pareja: aunque sigan juntos, la conversacion es lenta —
 	# cada transmision (SHARE_MAX_LOCS sitios) separada SHARE_COOLDOWN_SEC.
@@ -14363,6 +14500,8 @@ func _share_enemy_knowledge(mem_from: Dictionary, mem_to: Dictionary, to_key: St
 	var killers_from: Dictionary = mem_from.get("killers", {})
 	var killers_to: Dictionary = mem_to.get("killers", {})
 	for k in killers_from.keys():
+		if str(k) == to_key or str(k) == from_key:
+			continue
 		var src: Dictionary = killers_from[k]
 		var dst: Dictionary = killers_to.get(k, {"name": "", "count": 0})
 		dst["name"] = str(src.get("name", dst.get("name", "")))
@@ -14555,6 +14694,7 @@ func record_zone_hazard(bot_id: int, pos: Vector3, kind: String, severity: float
 	var known: Dictionary = mem["known_locations"]
 	var best_id := ""
 	var best_d := 65.0
+	var anchor := pos
 	for p in _explore_pois():
 		var pp: Vector3 = p["pos"]
 		var d := Vector2(pos.x - pp.x, pos.z - pp.z).length()
@@ -14562,9 +14702,13 @@ func record_zone_hazard(bot_id: int, pos: Vector3, kind: String, severity: float
 			best_d = d
 			best_id = _poi_id(p)
 			kind = str(p.get("kind", kind))
+			anchor = pp
 	if best_id.is_empty():
 		best_id = "%s:%d:%d" % [kind if not kind.is_empty() else "wild", int(pos.x), int(pos.z)]
-	observe_location(bot_id, best_id, kind if not kind.is_empty() else "wild", pos, "observed")
+	# observe_location puede fusionar el aviso con una zona cercana: actualizar
+	# su ID real, no crear una segunda entrada sin coordenadas. Un POI conserva
+	# su posición canónica aunque la agresión ocurriera junto al edificio.
+	best_id = observe_location(bot_id, best_id, kind if not kind.is_empty() else "wild", anchor, "observed")
 	var loc: Dictionary = known.get(best_id, {})
 	loc["risk"] = snappedf(clampf(float(loc.get("risk", 0.0)) + clampf(severity, 0.05, 1.0), 0.0, 3.0), 0.01)
 	if survivor_combat:
@@ -14585,6 +14729,40 @@ func _record_milestone(bot_id: int, key: String) -> void:
 	if not ms.has(key):
 		ms[key] = int(Time.get_unix_time_from_system())
 		mem["milestones"] = ms
+
+# Una lección indica qué conviene intentar en la próxima vida; no demuestra
+# que esa acción haya funcionado. Mantenerla fuera de los éxitos que estima EU.
+func _migrate_strategy_evidence(mem: Dictionary) -> void:
+	if int(mem.get("strategy_evidence_v", 0)) >= 1:
+		return
+	# La versión anterior sumaba un éxito ficticio por cada una de estas
+	# lecciones. Sus contadores permiten retirarlo sin borrar éxitos reales,
+	# preferencias, relaciones ni adaptaciones. Migrar una sola vez.
+	var dl: Dictionary = mem.get("death_lessons", {})
+	var inferred := {
+		"forage": int(dl.get("dehydrated", 0)) + int(dl.get("starved", 0)),
+		"hunt": int(dl.get("starved", 0)),
+		"fortify_camp": int(dl.get("predator", 0)) + int(dl.get("cold", 0)) + int(dl.get("medical", 0)) + int(dl.get("ranged", 0)),
+		"avoid_zone": int(dl.get("ranged", 0)),
+		"explore_military": int(dl.get("combat", 0)),
+	}
+	var strats: Dictionary = mem.get("strategies", {})
+	for strategy in inferred:
+		if not (strats.get(strategy) is Dictionary):
+			continue
+		var st: Dictionary = strats[strategy]
+		var old_credit := mini(maxi(0, int(inferred[strategy])), maxi(0, int(st.get("success", 0))))
+		st["success"] = maxi(0, int(st.get("success", 0)) - old_credit)
+		st["lessons"] = int(st.get("lessons", 0)) + old_credit
+	mem["strategy_evidence_v"] = 1
+
+func _reinforce_survival_strategy(bot_id: int, strategy: String, weight_delta: float) -> void:
+	var mem := _ensure_bot_memory(bot_id)
+	var strats: Dictionary = mem["strategies"]
+	var st: Dictionary = strats.get(strategy, {"success": 0, "fail": 0, "preference": 1.0})
+	st["lessons"] = int(st.get("lessons", 0)) + 1
+	st["preference"] = snappedf(clampf(float(st.get("preference", 1.0)) + clampf(weight_delta, 0.03, 0.5), 0.15, 2.0), 0.01)
+	strats[strategy] = st
 
 func record_strategy_outcome(bot_id: int, strategy: String, success: bool, weight_delta: float = 0.12, cause: String = "") -> void:
 	if strategy.is_empty():
@@ -15268,8 +15446,7 @@ func _ai_sig_poll(now: int) -> void:
 				b["_plan_last_result"] = "plan_impossible"
 				record_strategy_outcome(bot_id, str(d.get("action", "")), false, 0.15, "stuck_timeout")
 				var root_st := str(d.get("_plan_root", d.get("action", "")))
-				if root_st != str(d.get("action", "")):
-					record_strategy_outcome(bot_id, root_st, false, 0.08, "plan_broken")
+				record_plan_outcome(bot_id, root_st, false, 0.08, "plan_broken")
 				_ai_note_failed_goal(b, d, "stuck_timeout")
 				_ensure_bot_memory(bot_id, b.get("cfg", {}))["pending_goals"] = []
 				_ai_stat_inc(b, "steps_failed")
@@ -16411,7 +16588,7 @@ func _nearest_friendly_bot_pos(bot_id: int) -> Vector3:
 	var best := Vector3.INF
 	var best_d := INF
 	for oid in bots.keys():
-		if int(oid) == bot_id:
+		if int(oid) == bot_id or not _bot_pair_can_cooperate(bot_id, int(oid)):
 			continue
 		var ob: Dictionary = bots[oid]
 		if str(ob.get("faction", "")) != my_faction:
@@ -16487,6 +16664,8 @@ func _ai_load_memory() -> void:
 		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
 			if sd.has(field):
 				mem[field] = sd[field]
+		mem["strategy_evidence_v"] = int(sd.get("strategy_evidence_v", 0))
+		_migrate_strategy_evidence(mem)
 		_ai_prune_expired_memory(mem)
 		_restore_relationship_clocks(mem.get("relationships", {}), parsed, Time.get_ticks_msec(), Time.get_unix_time_from_system())
 		# Migracion: las relaciones bot<->bot creadas sin agresion arrastran la
@@ -16546,6 +16725,7 @@ func _compact_known_locations(mem: Dictionary) -> void:
 				var tgt: Dictionary = out[merged]
 				tgt["visits"] = int(tgt.get("visits", 0)) + int(e.get("visits", 0))
 				tgt["risk"] = maxf(float(tgt.get("risk", 0.0)), float(e.get("risk", 0.0)))
+				tgt["combat_risk"] = maxf(float(tgt.get("combat_risk", 0.0)), float(e.get("combat_risk", 0.0)))
 				tgt["loot_score"] = maxf(float(tgt.get("loot_score", 0.0)), float(e.get("loot_score", 0.0)))
 				out[merged] = tgt
 				continue
@@ -16565,6 +16745,7 @@ func _ai_save_memory() -> void:
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
+		sd["strategy_evidence_v"] = int(mem.get("strategy_evidence_v", 1))
 		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
 			if mem.has(field):
 				sd[field] = mem[field]
@@ -16658,7 +16839,9 @@ func _ai_poi_memory_factor(b: Dictionary, pos: Vector3, kind: String) -> float:
 				factor *= pow(0.55, float(dcnt))
 				break
 	var known: Dictionary = mem.get("known_locations", {})
-	var pid := "%s:%d:%d" % [kind, int(pos.x), int(pos.z)]
+	var pid := _poi_id({"kind": kind, "pos": pos})
+	if not known.has(pid):
+		pid = _loc_merge_into(known, pid, pos)
 	if known.has(pid) and known[pid] is Dictionary:
 		var risk := float((known[pid] as Dictionary).get("risk", 0.0))
 		if risk > 0.0:
