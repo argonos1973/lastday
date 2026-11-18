@@ -815,6 +815,13 @@ func _ready() -> void:
 	SaveGameHooks.preload_saved_world_state(self)
 	await _create_map()
 	_create_player()
+	# Cull before the first frame with a camera. Otherwise every forest/grass
+	# batch starts visible and uploads/compiles before the distance pass runs.
+	player.set_physics_process(false)
+	player.set_process_input(false)
+	_update_forest_visibility()
+	_update_grass_visibility()
+	_update_shadow_proximity()
 	if net != null and net.is_connected and not net.is_dedicated_server:
 		_send_character_appearance()
 	if net == null or not net.is_dedicated_server:
@@ -859,8 +866,8 @@ func _ready() -> void:
 		_update_forest_collision(true)
 		await get_tree().process_frame
 		if _scene_quitting: return
-		if net != null and net.is_connected and not net.is_host:
-			_update_puppet_animals(true)
+		await _prepare_world_entry_details()
+		if _scene_quitting: return
 		await get_tree().process_frame
 		if _scene_quitting: return
 		await get_tree().process_frame
@@ -883,7 +890,15 @@ func _ready() -> void:
 			await get_tree().process_frame
 			await get_tree().process_frame
 			if _scene_quitting: return
-	# Remove loading overlay immediately — everything is loaded
+	# Wait for an actual rendered frame, including the last near-detail batch,
+	# before exposing the scene. process_frame resumes BEFORE rendering.
+	if DisplayServer.get_name() != "headless":
+		await RenderingServer.frame_post_draw
+		if _scene_quitting: return
+	if is_instance_valid(player):
+		player.set_physics_process(true)
+		player.set_process_input(true)
+	# Remove loading overlay only after the initial view is ready.
 	if _loading_overlay != null:
 		_loading_overlay.queue_free()
 		_loading_overlay = null
@@ -906,6 +921,24 @@ func _ready() -> void:
 	if user_args.has("--cinematic"):
 		call_deferred("_setup_cinematic")
 
+func _prepare_world_entry_details() -> void:
+	_set_loading_phase("Preparando entorno cercano...")
+	var initial_animals: Array = []
+	if net != null and net.is_connected and not net.is_host:
+		initial_animals = net.animals.keys()
+	while not _scene_quitting and is_instance_valid(player):
+		_update_near_ground_cover()
+		_process_pending_puppets()
+		if not initial_animals.is_empty(): _update_puppet_animals()
+		var pending: bool = is_instance_valid(_near_ground_cover) and not _near_ground_cover.pending.is_empty()
+		pending = pending or (player.third_person_model != null and not _pending_puppets.is_empty())
+		for aid in initial_animals:
+			if net.animals.has(aid) and not _collected_animal_tombstones.has(aid) and not is_instance_valid(puppet_animals.get(aid)):
+				pending = true
+				break
+		if not pending: break
+		await get_tree().process_frame
+
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
 	_loading_bar_target = 1.0
@@ -924,6 +957,7 @@ const _LOADING_PHASE_TARGET := {
 	"Esculpindo la montaña...": 0.88,
 	"Plantando la hojarasca...": 0.96,
 	"Generando fauna...": 0.99,
+	"Preparando entorno cercano...": 0.99,
 }
 
 func _set_loading_phase(text: String) -> void:
@@ -3299,10 +3333,6 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 	_last_hit_weapon = weapon
 	_last_hit_msec = Time.get_ticks_msec()
 	if player != null and player.has_method("apply_damage"):
-		if weapon in ["rifle", "m4"]:
-			# _play_shot_reaction plays recibirdisparo.mp3; suppress the generic
-			# pain grunt inside apply_damage so two voices do not overlap.
-			player._pain_sound_timer = 1.5
 		player.apply_damage(amount, weapon)
 		if weapon == "bola":
 			player.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
@@ -3329,7 +3359,8 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 	if peer_id == net.get_my_id():
 		if player == null or not is_instance_valid(player):
 			return
-		if kind == "rifle":
+		player._play_damage_audio(kind)
+		if kind in ["rifle", "m4"]:
 			player._spawn_blood_splatter(pos, 0.8)
 			player._play_shot_reaction()
 		elif kind == "bola":
@@ -3340,16 +3371,14 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 			var is_bite_local := kind.ends_with("_bite")
 			player._spawn_blood_splatter(pos, 0.8)
 			player._play_hit_reaction(kind == "melee", is_bite_local)
-			if is_bite_local:
-				player._play_animal_bite_sound(kind)
-				player._play_pain_sound()
 		return
 	if not remote_players.has(peer_id):
 		return
 	var rp: Node3D = remote_players[peer_id]
 	if not is_instance_valid(rp):
 		return
-	if kind == "rifle":
+	rp._play_damage_audio(kind)
+	if kind in ["rifle", "m4"]:
 		rp._spawn_blood_splatter(pos, 0.8)
 		rp._play_shot_reaction()
 	elif kind == "bola":
@@ -3363,10 +3392,6 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		var is_bite_rp := kind.ends_with("_bite")
 		rp._spawn_blood_splatter(pos, 0.8)
 		rp._play_hit_reaction(kind == "melee", is_bite_rp)
-		if is_bite_rp:
-			rp._play_animal_bite_sound(kind)
-		if is_bite_rp or kind in ["arco", "arco_head", "lanza"]:
-			rp._play_pain_sound()
 
 func _net_player_condition_audio(peer_id: int, condition: String) -> void:
 	var target: Node = player if net != null and peer_id == net.get_my_id() else remote_players.get(peer_id)
@@ -5489,11 +5514,10 @@ func _process_pending_puppets() -> void:
 			continue
 		# Check if local player model is cached
 		if player != null and player.third_person_model != null:
-			# Model/wardrobe setup can be expensive even when resources are
-			# cached. During play admit one per rendered frame, including when
-			# this method is reached twice; the queue survives to the next frame.
+			# Admit one model/wardrobe per frame, including behind the loading
+			# screen. Entry drains this queue before handing control to the player.
 			var frame := Engine.get_process_frames()
-			if _loading_overlay == null and _puppet_setup_frame == frame:
+			if _puppet_setup_frame == frame:
 				break
 			_puppet_setup_frame = frame
 			avatar.setup_as_puppet()
@@ -5877,6 +5901,8 @@ func _broadcast_animals() -> void:
 			net.sync_animals.rpc_id(pid, chunk)
 
 # Client: spawn/update visual-only puppet animals from server data
+var _animal_setup_frame := -1
+
 func _update_puppet_animals(unlimited: bool = false) -> void:
 	if net == null:
 		return
@@ -5888,8 +5914,7 @@ func _update_puppet_animals(unlimited: bool = false) -> void:
 	for aid in _collected_animal_tombstones.keys():
 		if not net.animals.has(aid):
 			_collected_animal_tombstones.erase(aid)
-	var spawned_this_frame := 0
-	var throttle_spawns := not unlimited and DisplayServer.get_name() != "headless" and _loading_overlay == null
+	var throttle_spawns := not unlimited and DisplayServer.get_name() != "headless"
 	for aid in net.animals.keys():
 		var d: Dictionary = net.animals[aid]
 		var kind := str(d.get("t", "deer"))
@@ -5900,9 +5925,9 @@ func _update_puppet_animals(unlimited: bool = false) -> void:
 		if _collected_animal_tombstones.has(aid):
 			continue
 		if not puppet_animals.has(aid):
-			if throttle_spawns and spawned_this_frame >= 6:
+			if throttle_spawns and _animal_setup_frame == Engine.get_process_frames():
 				continue
-			spawned_this_frame += 1
+			_animal_setup_frame = Engine.get_process_frames()
 			if kind == "bird":
 				var bird_puppet = BirdControllerScript.new()
 				bird_puppet.is_puppet = true

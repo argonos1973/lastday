@@ -1161,6 +1161,9 @@ func _broadcast_player_hit(peer_id: int, kind: String, pos: Vector3, include_vic
 	if not is_host or peer == null:
 		return
 	var scene := get_tree().current_scene
+	# A listen host is an observer too; call_remote RPCs never reach itself.
+	if not is_dedicated_server and peer_id != multiplayer.get_unique_id() and scene != null and scene.has_method("_net_player_hit_event"):
+		scene._net_player_hit_event(peer_id, kind, pos)
 	if include_victim and peer_alive(peer_id) and peer_id != multiplayer.get_unique_id():
 		player_hit_event.rpc_id(peer_id, peer_id, kind, pos)
 	elif include_victim and peer_id == multiplayer.get_unique_id() and scene != null and scene.has_method("_net_player_hit_event"):

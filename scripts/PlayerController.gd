@@ -663,6 +663,7 @@ var _reload_audio_player = null
 var _swing_audio_player = null
 var _impact_audio_player = null
 var _shot_audio_player = null
+var _last_shot_received_audio_msec := -10000
 var _fall_audio_player = null
 var _unwell_audio_player = null
 var _whistle_audio_player = null
@@ -7124,17 +7125,19 @@ func _play_hit_reaction(play_impact_sound: bool = true, force: bool = false) -> 
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
 
 func _play_shot_reaction() -> void:
+	# Audio must survive missing/unfinished rigs and lethal hits. A visual
+	# fallback cannot silence the confirmed hit (or substitute a punch).
+	_play_shot_received_sound()
 	if is_dead or third_person_animation_player == null:
 		return
 	if third_person_shot_animation.is_empty() or not third_person_animation_player.has_animation(third_person_shot_animation):
-		_play_hit_reaction()
+		_play_hit_reaction(false)
 		return
 	# Route through the action-anim slot so the clip also travels in
 	# sync_player_state — remote puppets see the victim flinch too.
 	third_person_action_animation = third_person_shot_animation
 	third_person_action_timer = 0.5
 	third_person_animation_player.play(third_person_shot_animation, 0.06)
-	_play_shot_received_sound()
 
 func _update_death_pose(delta: float) -> void:
 	if _beaten_death:
@@ -13907,11 +13910,9 @@ func apply_damage(amount: float, cause: String = "") -> void:
 	if stats.has_method("apply_bleeding") and (cause == "melee" or cause.ends_with("_bite")):
 		stats.apply_bleeding(1.5 if cause == "bear_bite" else 1.0)
 		notice.emit("¡Estás sangrando! Usa una venda antes de desangrarte.")
+	_play_damage_audio(cause)
 	stats.changed.emit()
 	notice.emit("Has recibido dano.")
-	if cause.ends_with("_bite"):
-		_play_animal_bite_sound(cause)
-	_play_pain_sound()
 	_spawn_blood_splatter()
 	if CombatProf.enabled: CombatProf.mark("pc.apply_damage", _cpt)
 
@@ -14981,6 +14982,8 @@ func prepare_combat_effects() -> void:
 			_sling_root_pool.append(_sling)
 	if not is_instance_valid(_pain_audio_player):
 		_pain_audio_player = _make_action_sound_player("PainSound")
+	if not is_instance_valid(_shot_audio_player):
+		_shot_audio_player = _make_action_sound_player("ShotReceivedSound")
 	if not is_instance_valid(_bite_audio_player):
 		_bite_audio_player = _make_action_sound_player("AnimalBiteImpact", 7.0, 32.0)
 	preload("res://scripts/WildlifeAudio.gd").prepare()
@@ -16094,6 +16097,12 @@ static func _load_audio_stream(path: String) -> AudioStream:
 	return stream
 
 func _play_shot_received_sound() -> void:
+	var now := Time.get_ticks_msec()
+	# A burst or a duplicate presentation event must not keep restarting the
+	# first syllable. Damage itself is still applied separately for every hit.
+	if now - _last_shot_received_audio_msec < 250: return
+	_last_shot_received_audio_msec = now
+	_pain_sound_timer = 1.5
 	if _shot_audio_player == null:
 		_shot_audio_player = _make_action_sound_player("ShotReceivedSound")
 	var stream := _load_audio_stream("res://assets/audio/recibirdisparo.mp3")
@@ -16191,6 +16200,14 @@ func _play_punch_impact_sound() -> void:
 	_impact_audio_player.volume_db = 3.0
 	_impact_audio_player.pitch_scale = randf_range(0.85, 1.1)
 	_impact_audio_player.play()
+
+func _play_damage_audio(cause: String) -> void:
+	if cause in ["rifle", "m4"]:
+		_play_shot_received_sound()
+		return
+	if cause.ends_with("_bite"):
+		_play_animal_bite_sound(cause)
+	_play_pain_sound()
 
 func _play_animal_bite_sound(cause: String = "wolf_bite") -> void:
 	var now := Time.get_ticks_msec()
