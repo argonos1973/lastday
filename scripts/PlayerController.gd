@@ -1766,6 +1766,8 @@ func _process(delta: float) -> void:
 				if is_p_sneak_move:
 					var sneak_spd := float(get_meta("puppet_move_speed", 0.0))
 					third_person_animation_player.speed_scale = clampf(sneak_spd / 3.1, 0.4, 1.7) if sneak_spd > 0.4 else 0.65
+				elif cur_p_anim == third_person_ladder_animation:
+					third_person_animation_player.speed_scale = 1.15
 				elif cur_p_anim == _rifle_reload_animation:
 					# Mismo truco que el emisor: 3.33 s de clip sobre 2.2 s reales.
 					third_person_animation_player.speed_scale = 1.5

@@ -22,6 +22,21 @@ func run():
  check(player.has_animation("stairs/ascending"),"stair clip installed on real game character")
  if not player.has_animation("stairs/ascending"):
   world.free();quit(1);return
+ # Bots transmit the same installed clips that the human controller selects.
+ var manager := SurvivorBotManager.new()
+ var bot_state := {"anim":"stairs", "has_rifle":false}
+ actor.puppet_apply(Vector3.ZERO,0.0,manager._bot_effective_net_anim(bot_state))
+ check(player.current_animation==actor.third_person_stairs_animation,"bot ascent resolves to the human stair clip")
+ bot_state.anim=preload("res://scripts/LadderClimbAnimation.gd").NAME
+ actor.puppet_apply(Vector3.ZERO,0.0,manager._bot_effective_net_anim(bot_state))
+ check(player.current_animation==actor.third_person_ladder_animation,"bot ladder ascent/descent resolves to the human ladder clip")
+ bot_state.anim="walk"
+ actor.puppet_apply(Vector3.ZERO,0.0,manager._bot_effective_net_anim(bot_state))
+ check(player.current_animation==actor.third_person_walk_animation,"bot stair descent uses human walking, not the ascending clip")
+ bot_state.has_rifle=true
+ actor.puppet_apply(Vector3.ZERO,0.0,manager._bot_effective_net_anim(bot_state))
+ check(player.current_animation==actor._rifle_walk_animation,"armed bot uses the same rifle locomotion as the human")
+ manager.free()
  var animation:=player.get_animation("stairs/ascending")
  check(animation.length>1.0 and animation.length<1.5,"original 1.2 second cycle retained")
  check(animation.get_track_count()>40,"body and finger rotation tracks retargeted")

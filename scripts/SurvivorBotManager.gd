@@ -3,6 +3,7 @@ class_name SurvivorBotManager
 
 const CityExpansion = preload("res://scripts/CityExpansion.gd")
 const CityBlock = preload("res://scripts/CityBlock.gd")
+const ElevationRoutes = preload("res://scripts/BotElevationRoutes.gd")
 
 # Gestor de Supervivientes IA (bots con modelo, ropa, inventario y acciones reales):
 # - Todos los supervivientes IA nacen HOSTILES hacia los jugadores: los cazan a
@@ -1884,7 +1885,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 2b) Emboscada: hostiles (solos o en equipo) acechan agachados a una
 	#     victima con recursos y golpean a la vez. Cede ante depredadores.
 	if _bot_try_ambush(b, delta):
-		b["_act"] = "ambush"
+		b["_act"] = "ambush_height" if b.get("_ambush", {}).has("post") else "ambush"
 		return
 
 	# 3) Combate contra enemigos humanos / otros bots de facción opuesta
@@ -2678,7 +2679,8 @@ func _explore_pois() -> Array:
 		var t = world.get(k)
 		if t is Vector3 and (t as Vector3) != Vector3.ZERO:
 			_poi_cache.append({"pos": t, "kind": "military"})
-	for definition in CityBlock.BUILDINGS:
+	for b_idx in range(CityBlock.BUILDINGS.size()):
+		var definition: Dictionary = CityBlock.BUILDINGS[b_idx]
 		if definition.get("position") is Vector3:
 			var b_pos: Vector3 = CityExpansion.CENTER + (definition["position"] as Vector3)
 			var b_yaw: float = float(definition.get("yaw", 0.0))
@@ -2691,6 +2693,8 @@ func _explore_pois() -> Array:
 			else:
 				# Viviendas de 2 plantas: planta superior (3.92 m) subiendo escaleras
 				_poi_cache.append({"pos": b_pos + Vector3(-1.2, 3.92, -2.6).rotated(Vector3.UP, b_yaw), "kind": "city"})
+				if b_idx % 4 in [1, 2]:
+					_poi_cache.append({"pos": b_pos + Vector3(1.6, 7.86, 4.8).rotated(Vector3.UP, b_yaw), "kind": "tower"})
 	# Torre del Reloj de la ciudad (41, 0, 750): vestíbulo, plantas intermedias y azotea (29.46 m)
 	_poi_cache.append({"pos": Vector3(41.0, 0.06, 745.0), "kind": "city"})
 	_poi_cache.append({"pos": Vector3(39.0, 12.66, 750.0), "kind": "tower"})
@@ -2729,6 +2733,13 @@ func _explore_pois() -> Array:
 	var wtc = world.get("_watchtower_climb")
 	if wtc is Array and wtc.size() >= 2:
 		_poi_cache.append({"pos": (wtc as Array).back(), "kind": "tower", "route": wtc})
+	for route in ElevationRoutes.summit_routes():
+		_poi_cache.append({"pos": route["points"].back(), "kind": "tower"})
+	# Southern expansion and outer forest: cover the full playable rectangle.
+	for p in [Vector3(-400,0,420), Vector3(-240,0,580), Vector3(-300,0,840), Vector3(260,0,840), Vector3(340,0,570), Vector3(420,0,-100), Vector3(360,0,-440), Vector3(-80,0,-440)]:
+		p.y = _ground_y(p.x, p.z)
+		if not _is_pos_blocked(p):
+			_poi_cache.append({"pos": p, "kind": "wild"})
 	_poi_cache_built = true
 	return _poi_cache
 
@@ -2748,6 +2759,10 @@ func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 			var id := _poi_id(p)
 			if not visited.has(id):
 				visited.append(id)
+				var regions: Dictionary = mem.get("exploration_regions", {})
+				var region := _exploration_region(pp)
+				regions[region] = int(regions.get(region, 0)) + 1
+				mem["exploration_regions"] = regions
 			observe_location(bid, id, str(p.get("kind", "wild")), pp, "observed", true)
 			record_strategy_outcome(bid, "explore_" + str(p.get("kind", "wild")), true, 0.04)
 			# Plan del asesor por tipo de POI: visitarlo marca _visit_done y el
@@ -2769,6 +2784,7 @@ func _mark_poi_visited(b: Dictionary, pos: Vector3) -> void:
 				if matches:
 					dd["_visit_done"] = true
 	mem["visited"] = visited
+	b["_mem"] = mem
 	b["_visited"] = visited
 
 # Direccion preferente de exploracion de cada bot: angulo aureo separa los
@@ -3042,7 +3058,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 		# vetado (lista negra/inalcanzable) se repieza otro y se refija.
 		var dpin = directive.get("_dest_pos")
 		if dpin is Vector3 and (dpin as Vector3) != Vector3.INF:
-			if not _is_goal_blacklisted(b, dpin):
+			if not _is_goal_blacklisted(b, dpin) and not bool(directive.get("_visit_done", false)):
 				return dpin
 			directive.erase("_dest_pos")
 			directive.erase("_dest_id")
@@ -3055,11 +3071,6 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 	if not directive.is_empty() and str(directive.get("mode", "")) == "poi":
 		directive["_dest_pos"] = best
 		directive["_dest_id"] = str(pick.get("id", ""))
-	if str(pick.get("kind", "")) == "tower" and pick.get("route") is Array:
-		b["climb_route"] = pick["route"]
-		b["climb_i"] = -1
-		b["climb_down"] = false
-		b["climb_dwell"] = 0.0
 	return best
 
 # Puntuacion de POIs compartida por la navegacion y el fijado de destino del
@@ -3085,6 +3096,8 @@ func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: 
 	var surv_t := float(pers.get("survival_instinct", 0.7))
 	# El hambre empuja hacia el monte: ahi estan la caza, las setas y la fruta,
 	# no en las ruinas que ya se saquearon.
+	var expedition := _bot_can_expedition(b)
+	var region_counts: Dictionary = mem.get("exploration_regions", {})
 	var need_food := clampf((75.0 - float(b.get("hunger", 80.0))) / 55.0, 0.0, 1.0)
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
@@ -3159,6 +3172,9 @@ func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: 
 				var op: Vector3 = ob.get("pos", Vector3.INF)
 				if (ot != Vector3.INF and Vector2(ot.x - pp.x, ot.z - pp.z).length() < 110.0) or (op != Vector3.INF and Vector2(op.x - pp.x, op.z - pp.z).length() < 110.0):
 					score -= 180.0
+					break # one occupied sector, not a penalty per squad member
+			if expedition:
+				score += 600.0 / (1.0 + float(region_counts.get(_exploration_region(pp), 0)))
 			score *= _ai_poi_memory_factor(b, pp, kind)
 			# Estado actual vs destino: el historial lo pesa memory_factor;
 			# esto penaliza lo que el cuerpo no puede pagar ahora (lejos sin
@@ -4441,6 +4457,17 @@ func _bot_has_own_base(b: Dictionary) -> bool:
 # Motivos legitimos para salir de la base: provisiones bajas, encargos de
 # equipo, directivas tacticas de la IA, reencuentro social pendiente o la
 # necesidad de equipo basico (sin arma ni filo encima ni en el alijo).
+func _exploration_region(pos: Vector3) -> String:
+	return "%d:%d" % [clampi(int(floor((pos.x+480.0)/320.0)),0,2), clampi(int(floor((pos.z+500.0)/280.0)),0,4)]
+
+func _bot_can_expedition(b: Dictionary) -> bool:
+	if _world_day_phase() not in ["dawn", "day"] or _bot_is_freezing(b):
+		return false
+	if float(b.get("health",100.0)) < 65.0 or _bot_energy(b) < 55.0 or float(b.get("hunger",100.0)) < 65.0 or float(b.get("thirst",100.0)) < 65.0:
+		return false
+	var directive := _ai_active_directive(b)
+	return str(directive.get("action", "")) not in ["rest", "return_home", "fortify_camp", "avoid_zone"]
+
 func _bot_needs_outing(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	if float(b["hunger"]) < 55.0 or float(b["thirst"]) < 55.0:
@@ -6739,8 +6766,10 @@ func _bot_member_index(b: Dictionary) -> int:
 # "city" = bloque urbano (azoteas + Torre del Reloj) y "military" = la base
 # de la cima con su torre de vigilancia.
 func _bot_leader_watch_zone(lpos: Vector3) -> String:
-	if Vector2(lpos.x - CityExpansion.CENTER.x, lpos.z - CityExpansion.CENTER.z).length() <= 80.0:
+	if Rect2(CityExpansion.CENTER.x-45.0, CityExpansion.CENTER.z-45.0, 190.0, 190.0).has_point(Vector2(lpos.x,lpos.z)):
 		return "city"
+	if Vector2(lpos.x,lpos.z).distance_to(HighMountainZone.SUMMIT_CENTER) < 48.0 and lpos.y > 50.0:
+		return "summit"
 	if world != null:
 		var wtc = world.get("_watchtower_climb")
 		if wtc is Array and not (wtc as Array).is_empty():
@@ -6753,6 +6782,8 @@ func _bot_leader_watch_zone(lpos: Vector3) -> String:
 # todo el pueblo; en la base militar, la cubierta de su torre de vigilancia.
 func _bot_overwatch_post(zone: String) -> Vector3:
 	match zone:
+		"summit":
+			return ElevationRoutes.summit_routes()[0]["points"].back()
 		"city":
 			return Vector3(39.6, 29.46, 750.8) # azotea de la Torre del Reloj
 		"military":
@@ -7676,6 +7707,40 @@ func _bot_ambush_approach(b: Dictionary, known: Vector3, strike: float) -> Vecto
 
 # Ejecuta la emboscada cada tick: acecho agachado hasta el borde del asalto y
 # golpe conjunto (el equipo entero recibe aggro sobre la victima a la vez).
+func _bot_ambush_height_post(b: Dictionary, known: Vector3) -> Vector3:
+	var proxy: Node3D = b["proxy"]
+	if not _bot_has_ranged_weapon(proxy) or _bot_vital_break(b):
+		return Vector3.INF
+	var best := Vector3.INF
+	var score := -INF
+	var range_limit := 85.0 if not _bot_usable_gun(proxy).is_empty() else 32.0
+	for poi in _explore_pois():
+		if str(poi.get("kind", "")) != "tower":
+			continue
+		var post: Vector3 = poi["pos"]
+		var gain := post.y-known.y
+		var travel := proxy.global_position.distance_to(post)
+		var shot_dist := post.distance_to(known)
+		if gain < 3.0 or travel > 75.0 or shot_dist < 12.0 or shot_dist > range_limit:
+			continue
+		if _is_goal_blacklisted(b,post) or _is_poi_unreachable(b,_poi_id(poi)):
+			continue
+		var occupied := false
+		for other in bots.values():
+			if int(other.get("bot_id",0)) == int(b.get("bot_id",0)):
+				continue
+			var op: Vector3 = other.get("_ambush",{}).get("post",other.get("_overwatch",{}).get("post",Vector3.INF))
+			if op.is_finite() and op.distance_to(post) < 4.0:
+				occupied = true
+				break
+		if occupied or not _has_clear_shot(post, known):
+			continue
+		var merit := minf(gain,15.0)*2.0 - travel - maxf(0.0,post.y-proxy.global_position.y)*1.5
+		if merit > score:
+			score = merit
+			best = post
+	return best
+
 func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	var amb: Dictionary = b.get("_ambush", {})
 	if amb.is_empty():
@@ -7705,20 +7770,55 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	# solo mientras este bot la percibe (o su lider se la transmite al
 	# copiar el plan). Si desaparece tras una pared no hay radar: se camina
 	# a donde se la vio y, sin volver a dar con ella, se abandona.
-	var visible := proxy.global_position.distance_to(target.global_position) <= _effective_human_sight(target, 52.0) and _has_clear_shot(proxy.global_position, target.global_position)
+	var planned_post: Vector3 = amb.get("post", Vector3.INF)
+	var at_height := planned_post.is_finite() and proxy.global_position.distance_to(planned_post) < 1.2
+	var visible := proxy.global_position.distance_to(target.global_position) <= _effective_human_sight(target, 85.0 if at_height else 52.0) and _has_clear_shot(proxy.global_position, target.global_position)
 	if visible:
 		amb["pos"] = target.global_position
 		amb["seen_msec"] = Time.get_ticks_msec()
 	var known: Vector3 = amb.get("pos", Vector3.INF)
 	b["_ambush"] = amb
-	if known == Vector3.INF or Time.get_ticks_msec() - int(amb.get("seen_msec", 0)) > BOT_AMBUSH_LOST_MSEC:
+	# Climbing takes longer than stalking on foot; the plan stays anchored to
+	# the old sighting and expires, even if the unseen actor has moved.
+	var clue_ttl := 150000 if planned_post.is_finite() else BOT_AMBUSH_LOST_MSEC
+	if known == Vector3.INF or Time.get_ticks_msec() - int(amb.get("seen_msec", 0)) > clue_ttl:
 		return abort.call(45.0)
 	var d := proxy.global_position.distance_to(known)
 	if d > BOT_AMBUSH_ABORT_DIST:
 		return abort.call(50.0)
-	var strike := BOT_AMBUSH_STRIKE_RANGED if _bot_has_ranged_weapon(proxy) else BOT_AMBUSH_STRIKE_MELEE
+	if not amb.has("height_checked"):
+		amb["height_checked"] = true
+		planned_post = _bot_ambush_height_post(b, known)
+		if planned_post.is_finite():
+			amb["post"] = planned_post
+			record_bot_event(int(b["bot_id"]), "ambush_height", "peer_%d" % int(amb.get("target_id",0)), _poi_kind_near(planned_post), planned_post, "prepara emboscada desde altura")
+	if planned_post.is_finite():
+		if _is_goal_blacklisted(b,planned_post) or _bot_vital_break(b) or float(amb["t"]) > 150.0:
+			return abort.call(45.0)
+		b["_act"] = "ambush_height"
+		b["crouching"] = false
+		b["is_aiming"] = false
+		var elevated_pick := _pick_fight_weapon(b, d)
+		b["held_item"] = str(elevated_pick.get("name", ""))
+		b["has_rifle"] = str(elevated_pick.get("kind", "")) == "rifle"
+		proxy.set_meta("saved_held_item", b["held_item"])
+		if proxy.global_position.distance_to(planned_post) >= .65:
+			_move_bot_towards(b, planned_post, 3.0, delta, "walk")
+			return true
+		_stop_bot_motion(b)
+		b["crouching"] = true
+		b["is_aiming"] = visible
+		var look := known-proxy.global_position
+		b["rot"] = atan2(-look.x,-look.z)
+		proxy.rotation.y = float(b["rot"])
+		amb["settled"] = float(amb.get("settled",0.0))+delta
+		if not visible or float(amb["settled"]) < 1.4:
+			return true
+	var strike := 85.0 if planned_post.is_finite() else (BOT_AMBUSH_STRIKE_RANGED if _bot_has_ranged_weapon(proxy) else BOT_AMBUSH_STRIKE_MELEE)
 	if visible and (d <= strike or (float(amb["t"]) > BOT_AMBUSH_MAX_SECONDS and d <= strike + 8.0)):
 		# GOLPE: todo el equipo ataca a la vez
+		if planned_post.is_finite():
+			b["_overwatch"] = {"post":planned_post, "zone":_bot_leader_watch_zone(planned_post), "t":Time.get_ticks_msec()}
 		b["_ambush"] = {}
 		b.erase("_ambush_route")
 		b["_ambush_cd_until"] = now_s + 75.0
@@ -10072,7 +10172,7 @@ func _tick_bot_climb(b: Dictionary, delta: float) -> void:
 	if mv.length() > 0.001:
 		b["rot"] = lerp_angle(float(b["rot"]), atan2(-mv.x, -mv.z), minf(1.0, delta * 8.0))
 		proxy.rotation.y = float(b["rot"])
-	b["anim"] = "stairs" if (absf(np.y - pos.y) > delta * 0.14 and not bool(b.get("has_rifle", false))) else "walk"
+	b["anim"] = "stairs" if (np.y - pos.y > delta * 0.04 and not bool(b.get("has_rifle", false))) else "walk"
 	b["_speed"] = 2.2
 	if flat > 0.55 or absf(np.y - wp.y) > 1.2:
 		return
@@ -11163,6 +11263,12 @@ func _is_pos_blocked(pos: Vector3, margin: float = 0.45, allow_deep: bool = fals
 		return false
 	if not allow_deep and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > FORD_MAX_DEPTH:
 		return true
+	# The wildlife exclusion disk is deliberately wider than the real tower.
+	# Only the verified stair/ladder corridor overrides it; physical wall rays
+	# below still apply, and arbitrary shortcuts through the shaft stay blocked.
+	var tower := _bot_tower_at(pos)
+	if not tower.is_empty() and ElevationRoutes.on_corridor(pos,tower["points"]):
+		return false
 	if world.has_method("is_bot_blocked_at"):
 		return world.is_bot_blocked_at(pos, margin)
 	if world.has_method("_is_near_wildlife_blocker") and world._is_near_wildlife_blocker(pos, margin):
@@ -11211,7 +11317,23 @@ func _find_city_building_for_pos(pos: Vector3, margin: float = 0.25) -> int:
 			return i
 	return -1
 
+func _bot_tower_routes() -> Array:
+	var routes: Array = ElevationRoutes.summit_routes().duplicate()
+	if world != null and "_watchtower_climb" in world:
+		var legacy = world.get("_watchtower_climb")
+		if legacy is Array and legacy.size() >= 2:
+			routes.append({"id":"military", "points":legacy, "radius":7.5})
+	return routes
+
+func _bot_tower_at(pos: Vector3, elevated_only: bool = false) -> Dictionary:
+	for route in _bot_tower_routes():
+		if ElevationRoutes.contains(route, pos, elevated_only):
+			return route
+	return {}
+
 func _is_in_any_building_3d(pos: Vector3) -> bool:
+	if not _bot_tower_at(pos).is_empty():
+		return true
 	if _is_in_clock_tower(pos, 0.35):
 		return true
 	if _find_city_building_for_pos(pos, 0.35) >= 0:
@@ -11283,17 +11405,16 @@ func _resolve_building_interior_waypoint_uncached(b: Dictionary, cur: Vector3, g
 		var target_cb := cur_cb if (cur_cb >= 0 and (goal_cb < 0 or cur_cb != goal_cb)) else goal_cb
 		return _resolve_city_building_waypoint(b, cur, goal, target_cb, cur_cb == target_cb, goal_cb == target_cb)
 
-	# 3) Torre de vigilancia militar (_watchtower_climb) cuando el objetivo o el
-	# compañero humano está en la torre (o el bot necesita bajar de ella)
-	if world != null and "_watchtower_climb" in world:
-		var wtc = world.get("_watchtower_climb")
-		if wtc is Array and (wtc as Array).size() >= 2:
-			var wps: Array = wtc
-			var foot_wp: Vector3 = wps[0]
-			var cur_near_wt: bool = Vector2(cur.x - foot_wp.x, cur.z - foot_wp.z).length() <= 7.5 and cur.y >= foot_wp.y - 0.5
-			var goal_on_wt: bool = Vector2(goal.x - foot_wp.x, goal.z - foot_wp.z).length() <= 7.5 and goal.y > foot_wp.y + 0.6
-			if goal_on_wt or (cur_near_wt and cur.y > foot_wp.y + 0.6):
-				return _resolve_watchtower_waypoint(cur, goal, wps, goal_on_wt)
+	# Tower traversal also applies to combat/follow/retreat, not just exploration.
+	var cur_tower := _bot_tower_at(cur, true)
+	var goal_tower := _bot_tower_at(goal, true)
+	if not cur_tower.is_empty() or not goal_tower.is_empty():
+		var route: Dictionary = cur_tower if not cur_tower.is_empty() else goal_tower
+		var points: Array = route["points"]
+		var same_tower := str(goal_tower.get("id", "")) == str(route["id"])
+		if _bot_tower_at(cur).is_empty() and cur.distance_to(points[0]) > .25:
+			return points[0]
+		return ElevationRoutes.waypoint(cur, goal, points, same_tower)
 
 	# 4) Casas del pueblo y resto de bloqueadores con puerta (house_bounds)
 	return _resolve_door_approach_goal(b, cur, goal)
@@ -11398,10 +11519,11 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 	# Bloque de 4 plantas (city_17, b_idx == 16)
 	if int(def.get("floors", 2)) > 2:
 		if lc.x <= -1.85 and absf(lc.z) < 4.3:
-			var fl_h := clampi(int(floor((lc.y - 0.16 + 0.25) / 3.9)), 0, 2)
-			if lg.y >= lc.y - 0.2:
+			var fl_h := clampi(int(floor((lc.y - 0.16 + 0.02) / 3.9)), 0, 2)
+			if lg.y > lc.y + 0.1:
 				return b_origin + Vector3(-3.0, 0.16 + float(fl_h + 1) * 3.9, -5.0).rotated(Vector3.UP, yaw)
-			return b_origin + Vector3(-3.0, 0.16 + float(fl_h) * 3.9, 5.0).rotated(Vector3.UP, yaw)
+			var lower_h := clampi(int(ceil((lc.y - 0.16 - 0.02) / 3.9)) - 1, 0, 2)
+			return b_origin + Vector3(-3.0, 0.16 + float(lower_h) * 3.9, 5.0).rotated(Vector3.UP, yaw)
 		var cur_lvl_h := clampi(int(round((lc.y - 0.16) / 3.9)), 0, 3)
 		var goal_lvl_h := clampi(int(round((lg.y - 0.16) / 3.9)), 0, 3)
 		var y_cur_h := 0.16 + float(cur_lvl_h) * 3.9
@@ -11438,23 +11560,27 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 	# Viviendas de 2 plantas (city_01..city_16)
 	var flat_roof := (b_idx % 4 == 1 or b_idx % 4 == 2)
 	var stair_x := 5.15 if flat_roof else 4.5
-	if lc.x >= 3.5 and lc.z > -2.3 and lc.z < 4.2 and lc.y < 4.5:
+	if lc.x >= (4.58 if flat_roof else 3.5) and lc.z > -3.0 and lc.z < 4.2 and lc.y < 4.1:
 		if lg.y > 2.0:
 			return b_origin + Vector3(stair_x, 3.92, -3.2).rotated(Vector3.UP, yaw)
 		return b_origin + Vector3(stair_x, 0.12, 4.7).rotated(Vector3.UP, yaw)
-	if flat_roof and lc.x >= 3.1 and lc.x <= 4.45 and lc.z > -2.3 and lc.z < 4.3 and lc.y >= 3.6:
+	if flat_roof and lc.x >= 3.1 and lc.x <= 4.45 and lc.z > -3.0 and lc.z < 4.95 and lc.y >= 3.6:
 		if lg.y > 6.0:
-			return b_origin + Vector3(3.85, 7.86, 4.8).rotated(Vector3.UP, yaw)
+			return b_origin + Vector3(3.85, 7.86, 5.2).rotated(Vector3.UP, yaw)
 		return b_origin + Vector3(3.85, 3.92, -3.2).rotated(Vector3.UP, yaw)
 	var cur_lvl_c := 0 if lc.y < 2.2 else (1 if lc.y < 6.0 else 2)
 	var goal_lvl_c := 0 if lg.y < 2.2 else (1 if (lg.y < 6.0 or not flat_roof) else 2)
 	if cur_lvl_c == 0 and goal_lvl_c >= 1:
-		if lc.x < 3.8:
+		if lc.x < stair_x - .12:
 			if lc.z < 3.8:
 				return b_origin + Vector3(-0.2, 0.12, 4.7).rotated(Vector3.UP, yaw)
 			return b_origin + Vector3(stair_x, 0.12, 4.7).rotated(Vector3.UP, yaw)
 		return b_origin + Vector3(stair_x, 3.92, -3.2).rotated(Vector3.UP, yaw)
 	if cur_lvl_c == 1 and goal_lvl_c == 0:
+		if flat_roof and lc.x < 4.9:
+			if lc.z > -3.0:
+				return b_origin + Vector3(3.85 if lc.x > 3.2 else 1.6, 3.92, -3.2).rotated(Vector3.UP,yaw)
+			return b_origin + Vector3(stair_x, 3.92, -3.2).rotated(Vector3.UP,yaw)
 		if lc.x < 3.8:
 			if lc.z > -2.2:
 				return b_origin + Vector3(1.6, 3.92, -3.0).rotated(Vector3.UP, yaw)
@@ -11465,12 +11591,12 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 			if lc.z > -2.2:
 				return b_origin + Vector3(1.6, 3.92, -3.0).rotated(Vector3.UP, yaw)
 			return b_origin + Vector3(3.85, 3.92, -3.2).rotated(Vector3.UP, yaw)
-		if absf(lc.x - 3.85) > 0.45 and lc.z <= -2.2:
+		if absf(lc.x - 3.85) > .12 and lc.z <= -2.2:
 			return b_origin + Vector3(3.85, 3.92, -3.2).rotated(Vector3.UP, yaw)
-		return b_origin + Vector3(3.85, 7.86, 4.8).rotated(Vector3.UP, yaw)
+		return b_origin + Vector3(3.85, 7.86, 5.2).rotated(Vector3.UP, yaw)
 	if cur_lvl_c == 2 and goal_lvl_c < 2:
-		if absf(lc.x - 3.85) > 0.55 or lc.z < 4.2:
-			return b_origin + Vector3(3.85, 7.86, 4.8).rotated(Vector3.UP, yaw)
+		if absf(lc.x - 3.85) > 0.55 or lc.z < 4.95:
+			return b_origin + Vector3(3.85, 7.86, 5.2).rotated(Vector3.UP, yaw)
 		return b_origin + Vector3(3.85, 3.92, -3.2).rotated(Vector3.UP, yaw)
 	if not goal_in:
 		if lc.z < 4.2 or absf(lc.x - 0.15) > 0.65:
@@ -11702,7 +11828,7 @@ func _seg2d_crosses_rect_wall(pa: Vector2, pb: Vector2, r: Rect2, gaps: Array) -
 # puntos de get_road_polyline_3d() desde el pie (-252, 0.8, -268) hasta la
 # entrada sureste de la base (-356, 56, -356).
 func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
-	var on_summit_cur: bool = cur.x < -315.0 and cur.z < -315.0 and cur.y >= 48.0
+	var on_summit_cur: bool = Vector2(cur.x, cur.z).distance_to(HighMountainZone.SUMMIT_CENTER) < 38.0 and cur.y >= 55.0
 	var goal_is_summit: bool = goal.x < -290.0 and goal.z < -290.0 and goal.y >= 20.0
 	var on_road_slope: bool = not on_summit_cur and cur.x < -210.0 and cur.z < -210.0 and ((cur.x < -235.0 and cur.z < -235.0) or cur.y > 4.0)
 	if not goal_is_summit and not on_summit_cur and not on_road_slope:
@@ -11712,7 +11838,13 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 	var pts := HighMountainZone.get_road_polyline_3d()
 	if pts.size() < 70:
 		return goal
-	var foot_idx := 64 # (-252.0, 0.8, -268.0) pie de la montaña
+	var foot_idx := 0
+	var foot_d := INF
+	for i in range(pts.size()):
+		var d := Vector2(pts[i].x, pts[i].z).distance_squared_to(HighMountainZone.ROAD_START)
+		if d < foot_d:
+			foot_d = d
+			foot_idx = i
 	var top_idx := pts.size() - 1 # (-356.0, 56.0, -356.0) puerta sureste de la base
 	if goal_is_summit:
 		# Ascenso: desde el valle ir primero al pie de la carretera (foot_idx)
@@ -11730,8 +11862,6 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 			return goal
 		return pts[mini(best_i + 3, top_idx)]
 	# Descenso: desde la meseta o la ladera hacia el valle
-	if on_summit_cur and Vector2(cur.x - pts[top_idx].x, cur.z - pts[top_idx].z).length() > 8.0:
-		return pts[top_idx]
 	var best_i2 := top_idx
 	var best_d2 := 1e9
 	for i in range(foot_idx, pts.size()):
@@ -11740,6 +11870,8 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 		if d2 < best_d2:
 			best_d2 = d2
 			best_i2 = i
+	if on_summit_cur and best_d2 > 8.0:
+		return pts[top_idx]
 	if best_i2 <= foot_idx + 1 and Vector2(cur.x - pts[foot_idx].x, cur.z - pts[foot_idx].z).length() < 10.0:
 		return goal
 	return pts[maxi(foot_idx, best_i2 - 3)]
@@ -11777,11 +11909,17 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 			anim_name = "walk"
 			speed *= 0.75
 	var cur := proxy.global_position
-	var road_goal := _resolve_mountain_road_waypoint(cur, raw_goal)
+	var road_goal := raw_goal if not _bot_tower_at(cur, true).is_empty() else _resolve_mountain_road_waypoint(cur, raw_goal)
 	var goal := _resolve_building_interior_waypoint(b, cur, road_goal)
+	var previous_waypoint: Vector3 = b.get("_interior_last_waypoint", Vector3.INF)
+	if goal != previous_waypoint and previous_waypoint.is_finite() and cur.distance_to(previous_waypoint) < .45:
+		b["macro_timer"] = 0.0
+		b["macro_pos"] = cur
+		b["stuck_count"] = 0
+	b["_interior_last_waypoint"] = goal
 	var on_mountain_3d: bool = road_goal != raw_goal or (cur.x < -235.0 and cur.z < -235.0 and cur.y > 2.0)
 	var flat_dist := Vector2(goal.x - cur.x, goal.z - cur.z).length()
-	var in_building_3d: bool = not on_mountain_3d and (_is_in_any_building_3d(cur) or (goal != road_goal and flat_dist <= 8.5 and not _wall_between(cur, goal)))
+	var in_building_3d: bool = _is_in_any_building_3d(cur) or (goal != road_goal and flat_dist <= 8.5 and not _wall_between(cur, goal))
 	# Inercia como un jugador: tras una pausa >0.5 s arranca desde parado, sin
 	# saltos bruscos de velocidad ni giros instantaneos.
 	var now := float(Time.get_ticks_msec()) / 1000.0
@@ -11892,8 +12030,28 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 			return
 	var to_next := Vector3(next_goal.x - cur.x, 0.0, next_goal.z - cur.z)
 	var d := to_next.length()
-	if d < 0.05:
+	var vertical_ladder := in_building_3d and d < .25 and absf(next_goal.y-cur.y) > .3 and not _bot_tower_at(cur).is_empty()
+	if d < 0.05 or vertical_ladder:
 		_stop_bot_motion(b)
+		if in_building_3d and absf(next_goal.y-cur.y) > .05 and not _bot_tower_at(cur).is_empty():
+			cur.x = move_toward(cur.x, next_goal.x, delta*3.2)
+			cur.z = move_toward(cur.z, next_goal.z, delta*3.2)
+			cur.y = move_toward(cur.y, next_goal.y, delta*3.2)
+			proxy.global_position = cur
+			proxy.set_meta("saved_pos", cur)
+			proxy.set_meta("moving", true)
+			b["pos"] = cur
+			b["anim"] = preload("res://scripts/LadderClimbAnimation.gd").NAME
+			b["crouching"] = false
+			b["is_aiming"] = false
+			var tower := _bot_tower_at(cur)
+			var center: Vector3 = tower.get("center",cur)
+			var inward := center-cur
+			if Vector2(inward.x,inward.z).length() > .01:
+				b["rot"] = atan2(-inward.x,-inward.z)
+				proxy.rotation.y = float(b["rot"])
+			b["last_move_pos"] = cur
+			b["stuck_timer"] = 0.0
 		return
 	var dir := to_next / d
 	# Sumar repulsion suave de bloqueadores cercanos solo en exterior libre:
@@ -11993,7 +12151,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		var t_ramp := clampf(step / maxf(d, 0.01), 0.0, 1.0)
 		var ramp_y := lerpf(cur.y, next_goal.y, t_ramp)
 		new_pos.y = ramp_y if absf(gy - ramp_y) > 0.4 else (maxf(gy, ramp_y) if next_goal.y > cur.y else minf(gy, ramp_y))
-	elif in_building_3d and cur.y > 1.8 and gy < cur.y - 1.5:
+	elif in_building_3d and cur.y > 1.8 and gy < cur.y - .4:
 		new_pos.y = cur.y
 	else:
 		new_pos.y = gy
@@ -12018,7 +12176,10 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 		b["rot"] = lerp_angle(float(b["rot"]), target_yaw, minf(1.0, delta * 15.0))
 	proxy.rotation.y = float(b["rot"])
 	var climbing_stairs_now: bool = on_stair_segment or (in_building_3d and absf(new_pos.y - cur.y) > delta * 0.16)
-	b["anim"] = ("stairs" if not bool(b.get("has_rifle", false)) else "walk") if climbing_stairs_now else anim_name
+	# Same selection as PlayerController: stairs clip ascending; normal
+	# locomotion descending, with the existing armed/torch/rod walk variants.
+	var stair_clip := new_pos.y-cur.y > delta*.04 and not bool(b.get("has_rifle",false)) and str(b.get("held_item","")) not in ["Antorcha","Caña de pescar"]
+	b["anim"] = ("stairs" if stair_clip else "walk") if climbing_stairs_now else anim_name
 	if not moved:
 		_stop_bot_motion(b)
 	proxy.set_meta("crouching", bool(b.get("crouching", false)))
@@ -16661,7 +16822,7 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois", "exploration_regions"]:
 			if sd.has(field):
 				mem[field] = sd[field]
 		mem["strategy_evidence_v"] = int(sd.get("strategy_evidence_v", 0))
@@ -16746,7 +16907,7 @@ func _ai_save_memory() -> void:
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
 		sd["strategy_evidence_v"] = int(mem.get("strategy_evidence_v", 1))
-		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois"]:
+		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois", "exploration_regions"]:
 			if mem.has(field):
 				sd[field] = mem[field]
 		var lp = mem.get("last_death_pos", Vector3.INF)
