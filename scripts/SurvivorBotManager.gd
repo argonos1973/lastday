@@ -5465,31 +5465,43 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		return
 
 	b["is_aiming"] = false
-	var reach := 3.6
+	var melee_w := _best_melee_weapon(proxy)
+	var reach := _bot_melee_reach(melee_w)
+	b["held_item"] = melee_w
+	b["has_rifle"] = false
+	proxy.set_meta("saved_held_item", melee_w)
 	var can_melee_hit: bool = dist <= reach and absf(fpos.y - proxy.global_position.y) <= 1.8 and _has_clear_shot(proxy.global_position, fpos)
 	if can_melee_hit:
+		_stop_bot_motion(b)
 		var side_m := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
-		# No pegarse a 0 m dentro de la capsula del jugador (enganche): mantener
-		# paso lateral/distancia de golpe (1.3..2.4 m) mientras ataca.
-		if dist < 1.25 and to_foe.length_squared() > 0.01:
+		# Separate overlapping bodies without backing out of short-arm reach.
+		if dist < 0.65 and to_foe.length_squared() > 0.01:
 			_move_bot_towards(b, proxy.global_position - to_foe.normalized() * 1.5 + side_m * float(b["strafe_dir"]) * 1.2, 3.4, delta, "walk")
 		if to_foe.length_squared() > 0.001:
 			b["rot"] = atan2(-to_foe.x, -to_foe.z)
 			proxy.rotation.y = float(b["rot"])
-		b["anim"] = "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
+		b["anim"] = "punch/" + PlayerController.THIRD_PERSON_EXTERNAL_PUNCH_ANIMATION if melee_w.is_empty() else "external/" + PlayerController.THIRD_PERSON_EXTERNAL_ATTACK_ANIMATION
 		if float(b["attack_cooldown"]) <= 0.0:
 			b["attack_cooldown"] = 0.68 + randf_range(0.0, 0.35)
 			# A quemarropa usa su mejor arma cuerpo a cuerpo (o los punos)
-			var melee_w := _best_melee_weapon(proxy)
 			var melee_dmg := _weapon_melee_damage(melee_w) if _bot_item_count(proxy, melee_w) > 0 else 25.0
 			# Un objetivo que se mueve rapido esquiva parte de los tajos: el golpe
 			# no es automatico aunque este dentro del alcance.
 			var mspd := _bot_target_speed(b, foe)
-			if randf() >= _bot_melee_dodge_chance(mspd):
+			if proxy.global_position.distance_to(foe.global_position) <= reach and _has_clear_shot(proxy.global_position, foe.global_position) and randf() >= _bot_melee_dodge_chance(mspd):
 				_apply_bot_damage_to_target(b, foe, melee_dmg * 0.45, "melee")
 				_reduce_bot_item_durability(proxy, melee_w, 1.5)
 	else:
 		_move_bot_towards(b, fpos, 6.5, delta, "run")
+
+# Distances between body origins, including the victim's capsule. The old
+# universal 3.6 m radius let fists/knives hit across a visible gap.
+func _bot_melee_reach(weapon: String) -> float:
+	if weapon in ["Lanza", "Lanza de hueso", "Palo afilado"]:
+		return 2.2
+	if weapon in ["Hacha", "Hacha de piedra", "Pico", "Martillo", "Azada", "Azada de piedra", "Pala"]:
+		return 1.8
+	return 1.4
 
 # Velocidad reciente del objetivo: cambiar de blanco reinicia la muestra;
 # la adquisición de la mira sigue pagando su propio tiempo de asentamiento.

@@ -21,6 +21,7 @@ class WaterWorld extends Node3D:
 class CombatManager extends MotionManager:
 	var clear_los := true
 	var shots := 0
+	var melee_hits := 0
 	var moving_shots := 0
 	var cover_calls := 0
 	var cover_goal := Vector3(4, 0, 0)
@@ -38,6 +39,9 @@ class CombatManager extends MotionManager:
 	func _find_actor_by_peer_id(_id: int) -> Node3D: return target
 	func _bot_ambush_forbidden(_b: Dictionary, _id: int) -> bool: return false
 	func rally_bot_team(_id: int, _target: Node3D) -> void: pass
+	func _bot_melee_dodge_chance(_speed: float) -> float: return 0.0
+	func _apply_bot_damage_to_target(_b: Dictionary, _target: Node3D, _amount: float, _weapon: String) -> void:
+		melee_hits += 1
 
 var errors := 0
 var checks := 0
@@ -241,6 +245,39 @@ func run() -> void:
 	check(manager._bot_target_velocity(b, foe) == Vector3.ZERO, "teleport is rejected as target speed")
 	b._foe_track = {"id": foe.get_instance_id(), "msec": Time.get_ticks_msec() - 6000, "tpos": foe.position - Vector3(24, 0, 0)}
 	check(manager._bot_target_velocity(b, foe) == Vector3.ZERO, "stale observations do not imply that a lost target kept running")
+	# Exercise the actual engage/movement path with a stationary human target.
+	# Disable random dodge only; range, weapon choice and movement stay real.
+	for melee in ["", "Cuchillo", "Hacha", "Lanza"]:
+		proxy.set_meta("saved_inventory", [] if melee.is_empty() else [{"name": melee, "type": "weapon", "quantity": 1}])
+		var close := 1.2 if melee in ["", "Cuchillo"] else (1.6 if melee == "Hacha" else 2.0)
+		for distance in [3.5, 2.5, close + 0.3]:
+			proxy.position = Vector3.ZERO; foe.position = Vector3(0, 0, -distance)
+			b = bot(proxy); manager.clear_los = true; manager.melee_hits = 0
+			manager._engage_foe(b, foe, .05)
+			check(manager.melee_hits == 0, melee + " cannot hit across a visible gap at " + str(distance))
+			check(proxy.position.z < 0 and b.anim == "run", melee + " continues closing the distance")
+		proxy.position = Vector3.ZERO; foe.position = Vector3(0, 0, -close)
+		b = bot(proxy); manager.melee_hits = 0
+		manager._engage_foe(b, foe, .05)
+		check(manager.melee_hits == 1 and b.held_item == melee, melee + " lands a close hit with the weapon it displays")
+		check(not b.has_rifle and not manager._bot_is_moving(b), melee + " stops to strike")
+		manager.clear_los = false; b.attack_cooldown = 0; manager.melee_hits = 0
+		manager._engage_foe(b, foe, .05)
+		check(manager.melee_hits == 0, melee + " cannot hit through cover")
+		manager.clear_los = true; foe.position = Vector3(0, 2.0, -close); b.attack_cooldown = 0
+		manager._engage_foe(b, foe, .05)
+		check(manager.melee_hits == 0, melee + " cannot hit an elevated target")
+	proxy.set_meta("saved_inventory", [])
+	proxy.position = Vector3.ZERO; foe.position = Vector3(0, 0, -.2)
+	b = bot(proxy); manager.melee_hits = 0
+	manager._engage_foe(b, foe, 1.0)
+	check(proxy.position.distance_to(foe.position) > 1.4 and manager.melee_hits == 0, "separation step rechecks reach at the actual strike position")
+	proxy.position = Vector3.ZERO; foe.position = Vector3(0, 0, -3.5)
+	b = bot(proxy)
+	for i in 20:
+		manager._engage_foe(b, foe, .05)
+		if manager.melee_hits > 0: break
+	check(manager.melee_hits == 1 and proxy.position.distance_to(foe.position) <= 1.4, "unarmed bot closes the gap and can still land a nearby punch")
 	manager.bots.clear()
 	for n in [manager, proxy, foe, mate]: n.free()
 	print("BotCombatMovementRegression checks=", checks, " errors=", errors)
