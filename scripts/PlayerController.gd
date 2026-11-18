@@ -7110,11 +7110,14 @@ func _play_hit_reaction(play_impact_sound: bool = true, force: bool = false) -> 
 		_play_punch_impact_sound()
 	# Nunca pisar un ataque cuerpo a cuerpo, disparo de arco o movimiento activo
 	# del jugador: la reaccion de impacto es solo visual en reposo. Un mordisco
-	# (force) si se muestra aunque corras — el zarpazo es el evento que te frena.
-	if _is_aiming or _throw_charging or _throw_aim_hold or third_person_action_timer > 0.0:
-		return
-	if (is_moving or is_sprinting) and not force:
-		return
+	# (force) si se muestra aunque corras — el zarpazo es el evento que te frena
+	# y tambien te quita la mira (apply_damage ya cancelo la postura antes de
+	# llamar aqui; este gate es el seguro para eventos que llegan sin dano).
+	if not force:
+		if _is_aiming or _throw_charging or _throw_aim_hold or third_person_action_timer > 0.0:
+			return
+		if is_moving or is_sprinting:
+			return
 	if third_person_hit_animation.is_empty() or not third_person_animation_player.has_animation(third_person_hit_animation):
 		return
 	# Route through the action-anim slot so the clip also travels in
@@ -13889,6 +13892,16 @@ func apply_damage(amount: float, cause: String = "") -> void:
 			_g_holding = false
 			if third_person_animation_player != null:
 				third_person_animation_player.speed_scale = 1.0
+		# Un zarpazo o golpe te quita la mira como ya quita la comida, la pesca
+		# o la recarga: sin esto, morder a quien apunta al depredador (lo mas
+		# comun en combate) jamas mostraba la reaccion de impacto.
+		if _is_aiming and (cause == "melee" or cause.ends_with("_bite")):
+			_cancel_aim()
+		# En primera persona la animacion 3P propia es invisible: la sacudida
+		# de camara es la "animacion" que el jugador ve al ser mordido.
+		if cause == "melee" or cause.ends_with("_bite"):
+			_recoil_pitch -= deg_to_rad(5.0 if cause == "bear_bite" else 3.5)
+			_recoil_yaw += deg_to_rad(randf_range(-3.5, 3.5))
 		if is_performing_interruptible_action():
 			cancel_active_action(false)
 		var dmg_scene := get_tree().current_scene if is_inside_tree() else null

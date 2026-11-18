@@ -893,7 +893,12 @@ func _remote_actor_steps(seen: Dictionary, key: String, node: Node3D, anim: Stri
 	# stationary or sliding in an attack pose, and no catch-up burst on lag.
 	var phase := int(_remote_step_phase.get(key, 0))
 	var stride := float(profile.run if kind == "run" else profile.walk)
-	if kind == "run": stride *= .7 if phase % 2 == 0 else 1.3
+	if kind == "run":
+		# A gallop bound is a grouped burst plus suspension — the faster the
+		# animal, the longer the bound. Without the speed term a sprinting wolf
+		# (8 m/s) taps ~7.5 times/s: a drum roll, not a chase.
+		stride = maxf(stride, speed * float(profile.get("run_cycle", .32)))
+		stride *= .7 if phase % 2 == 0 else 1.3
 	var distance := float(_animal_step_distance.get(key, 0.0)) + travelled
 	if distance >= stride and travelled > .001:
 		_play_remote_step(key, pos, kind, true)

@@ -53,6 +53,22 @@ func run():
 	actor._play_shot_reaction()
 	check(actor._shot_audio_player.playing,"missing shot animation does not suppress audio")
 	check(actor._impact_audio_player == null or not actor._impact_audio_player.playing,"missing shot animation never substitutes punch sound")
+	# Predator bites interrupt the combat stance: an aiming, sprinting victim
+	# still shows the flinch, loses the scope and feels a camera impulse.
+	var hit_clip := Animation.new(); hit_clip.length = .4
+	var hit_lib := AnimationLibrary.new(); hit_lib.add_animation("h",hit_clip)
+	actor.third_person_animation_player.add_animation_library("hit",hit_lib)
+	actor.third_person_hit_animation = "hit/h"
+	for bite in ["wolf_bite","bear_bite"]:
+		for state in [{"_is_aiming":true,"is_sprinting":true},{"third_person_action_timer":.4},{"is_moving":true,"is_sprinting":true}]:
+			reset(actor)
+			actor._is_aiming = false; actor.is_moving = false; actor.is_sprinting = false; actor.third_person_action_timer = 0.0
+			for k in (state as Dictionary).keys(): actor.set(k,state[k])
+			world._net_apply_damage(12,bite)
+			check(not actor._is_aiming,bite+" cancels the victim's aim")
+			check(actor.third_person_animation_player.current_animation == "hit/h",bite+" forced flinch plays through "+str(state.keys()))
+			check(actor._recoil_pitch != 0.0 or actor._recoil_yaw != 0.0,bite+" gives a first-person camera impulse")
+			actor._recoil_pitch = 0.0; actor._recoil_yaw = 0.0
 	reset(actor)
 	world._net_apply_damage(8,"m4")
 	var stamp: int = actor._last_shot_received_audio_msec

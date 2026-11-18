@@ -8,11 +8,13 @@ const BEAR_GROWL := DIR+"bear_growl.wav"
 const BEAR_ATTACK := DIR+"bear_attack.wav"
 const BITE := "res://assets/audio/wolf_bite.wav"
 # Gain, pitch and distance between contacts; paws are soft, hooves sharper.
+# run_cycle: seconds per gallop bound at full speed — a quadruped sprint is
+# ~3 footfall groups/s with suspension, not a metronome of single taps.
 const SPECIES := {
-	"wolf": {"db": -10.0, "pitch": 1.0, "walk": .62, "run": 1.05, "range": 22.0},
-	"fox": {"db": -17.0, "pitch": 1.18, "walk": .40, "run": .72, "range": 14.0},
-	"deer": {"db": -7.0, "pitch": 1.12, "walk": .65, "run": 1.15, "range": 28.0},
-	"bear": {"db": -5.0, "pitch": .78, "walk": .78, "run": 1.25, "range": 30.0},
+	"wolf": {"db": -10.0, "pitch": 1.0, "walk": .62, "run": 1.05, "range": 22.0, "run_cycle": .30},
+	"fox": {"db": -17.0, "pitch": 1.18, "walk": .40, "run": .72, "range": 14.0, "run_cycle": .28},
+	"deer": {"db": -7.0, "pitch": 1.12, "walk": .65, "run": 1.15, "range": 28.0, "run_cycle": .30},
+	"bear": {"db": -5.0, "pitch": .78, "walk": .78, "run": 1.25, "range": 30.0, "run_cycle": .40},
 }
 static var _cache: Dictionary = {}
 

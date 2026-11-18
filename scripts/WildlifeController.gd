@@ -1396,7 +1396,9 @@ func _wolf_ai(delta: float) -> Dictionary:
 					elif _player.has_method("apply_damage"):
 						_player.apply_damage(_predator_player_damage(), "%s_bite" % animal_type)
 						if _player.has_method("_play_hit_reaction"):
-							_player._play_hit_reaction(false)
+							# force=true: el zarpazo se ve aunque el jugador
+							# este corriendo (el caso natural al ser atacado).
+							_player._play_hit_reaction(false, true)
 						var local_net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
 						if local_net != null and local_net.is_host:
 							local_net._broadcast_player_hit(local_net.get_my_id(), "%s_bite" % animal_type, _player.global_position)

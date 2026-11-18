@@ -68,6 +68,21 @@ func run():
 		animal._play_wolf_sound("growl")
 		check(animal._wolf_audio_player == null or not animal._wolf_audio_player.playing,"dead "+species+" stays silent")
 		animal.free()
+	# Sprint cadence: a quadruped gallop is ~3 footfall groups per second with
+	# suspension — a flat distance-stride would drum ~7+ taps/s at full speed.
+	for sprint_case in [["wolf", 8.0], ["bear", 6.5]]:
+		var species_s: String = sprint_case[0]; var spd_s: float = sprint_case[1]
+		var sprinter := Animal.new(); sprinter.animal_type = species_s; sprinter.is_puppet = true
+		world.add_child(sprinter)
+		var skey := "a:sprint_%s" % species_s
+		var taps := 0
+		for i in 120:
+			sprinter.global_position += Vector3(spd_s / 60.0, 0, 0)
+			var before := int(audio._remote_step_phase.get(skey, 0))
+			audio._remote_actor_steps({}, skey, sprinter, "run", 1.0 / 60, Vector3.ZERO, true)
+			taps += int(audio._remote_step_phase.get(skey, 0)) - before
+		check(taps >= 3 and taps <= 9, species_s+" sprint cadence is a bound, not a drum roll (taps/2s="+str(taps)+")")
+		sprinter.free()
 	# Bite is a reliable victim effect, even without an animal puppet loaded.
 	for cause in ["wolf_bite","bear_bite"]:
 		actor.stats.health = 100
