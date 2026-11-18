@@ -1119,7 +1119,7 @@ func sync_animals(data: Dictionary) -> void:
 
 # Server tells specific client to apply damage
 # Server relays wolf sound events (howl, attack) so client puppets play them.
-@rpc("authority", "unreliable")
+@rpc("authority", "reliable")
 func animal_sound(animal_name: String, sound_type: String) -> void:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_animal_sound"):

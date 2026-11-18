@@ -666,6 +666,8 @@ var _shot_audio_player = null
 var _fall_audio_player = null
 var _unwell_audio_player = null
 var _whistle_audio_player = null
+var _bite_audio_player: Node = null
+var _last_bite_audio_msec := -10000
 var _pain_sound_timer := 0.0
 var _critical_sound_timer := 0.0
 var _was_critical := false
@@ -13845,10 +13847,8 @@ func apply_damage(amount: float, cause: String = "") -> void:
 	if is_sleeping:
 		stop_sleep()
 		notice.emit("Te han despertado!")
-	# Wolf attacks damage equipped clothing. Only emit inventory.changed when a
-	# garment actually breaks: emitting on every bite triggered _sync_held_item()
-	# which destroyed and rebuilt the 3D held weapon, rifle sling, IK and backpack
-	# mid-combat, causing severe frame hitches.
+	# Attacks wear equipped clothing. Notify condition separately so a bite
+	# cannot rebuild the held weapon, rifle sling, IK and backpack mid-combat.
 	if amount >= 10.0:
 		var any_broken := false
 		for item in inventory.items:
@@ -13865,7 +13865,9 @@ func apply_damage(amount: float, cause: String = "") -> void:
 						any_broken = true
 						notice.emit("%s se ha roto por el ataque!" % item.item_name)
 		if any_broken:
-			inventory.changed.emit()
+			# Only condition changed: rebuilding rifle/sling/IK here caused
+			# a hitch on the bite that broke a garment. Contents are unchanged.
+			inventory.condition_changed.emit()
 	# Una flecha solo mata si se clava en la cabeza (cause == "arco_head"):
 	# fuera de la cabeza deja como minimo 1 HP.
 	var nonlethal_arrow := cause in ["arco", "arco_madera", "arrow", "flecha"]
@@ -13907,6 +13909,8 @@ func apply_damage(amount: float, cause: String = "") -> void:
 		notice.emit("¡Estás sangrando! Usa una venda antes de desangrarte.")
 	stats.changed.emit()
 	notice.emit("Has recibido dano.")
+	if cause.ends_with("_bite"):
+		_play_animal_bite_sound(cause)
 	_play_pain_sound()
 	_spawn_blood_splatter()
 	if CombatProf.enabled: CombatProf.mark("pc.apply_damage", _cpt)
@@ -14975,6 +14979,11 @@ func prepare_combat_effects() -> void:
 			_sling.name = "RifleSlingRoot"
 			_sling.visible = false
 			_sling_root_pool.append(_sling)
+	if not is_instance_valid(_pain_audio_player):
+		_pain_audio_player = _make_action_sound_player("PainSound")
+	if not is_instance_valid(_bite_audio_player):
+		_bite_audio_player = _make_action_sound_player("AnimalBiteImpact", 7.0, 32.0)
+	preload("res://scripts/WildlifeAudio.gd").prepare()
 	# Small shared audio assets are decoded during loading, not the first bite.
 	for path in [M4_SHOOT_SOUND, RIFLE_RELOAD_SOUND, "res://assets/audio/disparo.wav", "res://assets/audio/punch_swing.wav", "res://assets/audio/recibirdisparo.mp3", "res://assets/audio/punch_impact.wav",
 		"res://assets/external/audio/downloaded/pain1.wav", "res://assets/external/audio/downloaded/pain2.wav",
@@ -16182,6 +16191,19 @@ func _play_punch_impact_sound() -> void:
 	_impact_audio_player.volume_db = 3.0
 	_impact_audio_player.pitch_scale = randf_range(0.85, 1.1)
 	_impact_audio_player.play()
+
+func _play_animal_bite_sound(cause: String = "wolf_bite") -> void:
+	var now := Time.get_ticks_msec()
+	if now - _last_bite_audio_msec < 100: return
+	_last_bite_audio_msec = now
+	if not is_instance_valid(_bite_audio_player):
+		_bite_audio_player = _make_action_sound_player("AnimalBiteImpact", 7.0, 32.0)
+	var sample := preload("res://scripts/WildlifeAudio.gd").stream(preload("res://scripts/WildlifeAudio.gd").BITE)
+	if sample == null: return
+	_bite_audio_player.stream = sample
+	_bite_audio_player.volume_db = -6.0
+	_bite_audio_player.pitch_scale = .85 if cause == "bear_bite" else 1.0
+	_bite_audio_player.play()
 
 func _play_pain_sound() -> void:
 	if _pain_sound_timer > 0.0:

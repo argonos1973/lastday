@@ -174,6 +174,7 @@ func setup(new_player, new_day_cycle, new_main_node = null) -> void:
 	player.prompt_changed.connect(_set_prompt)
 	player.notice.connect(show_notice)
 	player.inventory.changed.connect(_update_inventory)
+	player.inventory.condition_changed.connect(_update_inventory)
 	player.stats.changed.connect(_on_stats_changed)
 	_update_inventory()
 	_update_stats()

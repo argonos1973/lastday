@@ -1,0 +1,113 @@
+{
+  "license": "CC0-1.0",
+  "sources": {
+    "animal_foley": {
+      "author": "IENBA",
+      "title": "Animal Footsteps",
+      "url": "https://freesound.org/people/IENBA/sounds/658429/",
+      "sha256": "3bfda19af98bc904a97c86d51bb1e0dab3d04799ac19cc09246772d64a0ba657"
+    },
+    "hooves": {
+      "author": "craigsmith",
+      "title": "R13-16-Soft Hoof Sounds.wav",
+      "url": "https://freesound.org/people/craigsmith/sounds/479688/",
+      "sha256": "687af2c15649fb72cb3db1bbfe9010c9bc6a6fe77c9cd5f7bb27b4ac7dc5150c"
+    },
+    "bear_growl": {
+      "author": "celldroid",
+      "title": "Bear Angry Growl",
+      "url": "https://freesound.org/people/celldroid/sounds/763026/",
+      "sha256": "0e4f317fdfa9562e1c9778231ff0f34903c6da501138149a0ae097eeec3ce868"
+    }
+  },
+  "clips": {
+    "paw_soft_1.wav": {
+      "source": "animal_foley",
+      "start": 0.075,
+      "duration": 0.18,
+      "filters": "highpass=f=75,lowpass=f=3400,volume=5dB,afade=t=in:d=0.004,afade=t=out:st=0.145:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 30.848
+    },
+    "paw_hard_1.wav": {
+      "source": "animal_foley",
+      "start": 0.075,
+      "duration": 0.18,
+      "filters": "highpass=f=170,lowpass=f=6500,volume=5dB,afade=t=in:d=0.004,afade=t=out:st=0.145:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 22.886
+    },
+    "paw_soft_2.wav": {
+      "source": "animal_foley",
+      "start": 0.5,
+      "duration": 0.13,
+      "filters": "highpass=f=75,lowpass=f=3400,volume=5dB,afade=t=in:d=0.004,afade=t=out:st=0.095:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 34.398
+    },
+    "paw_hard_2.wav": {
+      "source": "animal_foley",
+      "start": 0.5,
+      "duration": 0.13,
+      "filters": "highpass=f=170,lowpass=f=6500,volume=5dB,afade=t=in:d=0.004,afade=t=out:st=0.095:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 28.118
+    },
+    "paw_soft_3.wav": {
+      "source": "animal_foley",
+      "start": 0.99,
+      "duration": 0.18,
+      "filters": "highpass=f=75,lowpass=f=3400,volume=5dB,afade=t=in:d=0.004,afade=t=out:st=0.145:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 25.731
+    },
+    "paw_hard_3.wav": {
+      "source": "animal_foley",
+      "start": 0.99,
+      "duration": 0.18,
+      "filters": "highpass=f=170,lowpass=f=6500,volume=5dB,afade=t=in:d=0.004,afade=t=out:st=0.145:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 23.844
+    },
+    "hoof_1.wav": {
+      "source": "hooves",
+      "start": 1.29,
+      "duration": 0.19,
+      "filters": "highpass=f=200,lowpass=f=4400,afftdn=nf=-26,volume=0dB,afade=t=in:d=0.004,afade=t=out:st=0.155:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 18.499
+    },
+    "hoof_2.wav": {
+      "source": "hooves",
+      "start": 2.56,
+      "duration": 0.19,
+      "filters": "highpass=f=200,lowpass=f=4400,afftdn=nf=-26,volume=0dB,afade=t=in:d=0.004,afade=t=out:st=0.155:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 15.44
+    },
+    "hoof_3.wav": {
+      "source": "hooves",
+      "start": 3.14,
+      "duration": 0.19,
+      "filters": "highpass=f=200,lowpass=f=4400,afftdn=nf=-26,volume=0dB,afade=t=in:d=0.004,afade=t=out:st=0.155:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 14.138
+    },
+    "bear_growl.wav": {
+      "source": "bear_growl",
+      "start": 1.5,
+      "duration": 3.8,
+      "filters": "highpass=f=65,lowpass=f=7500,volume=0dB,afade=t=in:d=0.004,afade=t=out:st=3.7649999999999997:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 7.118
+    },
+    "bear_attack.wav": {
+      "source": "bear_growl",
+      "start": 2.0,
+      "duration": 1.25,
+      "filters": "highpass=f=65,lowpass=f=7500,volume=0dB,afade=t=in:d=0.004,afade=t=out:st=1.215:d=0.035,alimiter=limit=0.8:level=false",
+      "peak_dbfs": -6,
+      "normalization_db": 8.688
+    }
+  }
+}

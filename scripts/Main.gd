@@ -3341,6 +3341,7 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 			player._spawn_blood_splatter(pos, 0.8)
 			player._play_hit_reaction(kind == "melee", is_bite_local)
 			if is_bite_local:
+				player._play_animal_bite_sound(kind)
 				player._play_pain_sound()
 		return
 	if not remote_players.has(peer_id):
@@ -3362,6 +3363,8 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		var is_bite_rp := kind.ends_with("_bite")
 		rp._spawn_blood_splatter(pos, 0.8)
 		rp._play_hit_reaction(kind == "melee", is_bite_rp)
+		if is_bite_rp:
+			rp._play_animal_bite_sound(kind)
 		if is_bite_rp or kind in ["arco", "arco_head", "lanza"]:
 			rp._play_pain_sound()
 
@@ -4721,8 +4724,9 @@ func _net_animal_hit(animal_name: String) -> void:
 		puppet._spawn_blood_splatter()
 
 func _net_animal_sound(animal_name: String, sound_type: String) -> void:
-	var puppet := get_node_or_null("Puppet_" + animal_name)
-	if puppet != null and puppet.has_method("_play_wolf_sound"):
+	var puppet: Node = puppet_animals.get(animal_name)
+	if not is_instance_valid(puppet): puppet = get_node_or_null("Puppet_" + animal_name)
+	if is_instance_valid(puppet) and puppet.has_method("_play_wolf_sound"):
 		puppet._play_wolf_sound(sound_type)
 
 func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = false) -> void:

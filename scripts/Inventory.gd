@@ -4,6 +4,8 @@ class_name Inventory
 const ItemScript = preload("res://scripts/Item.gd")
 
 signal changed
+# Durability-only update: refresh UI without rebuilding held equipment.
+signal condition_changed
 signal item_used(message: String)
 
 @export var max_slots := 10

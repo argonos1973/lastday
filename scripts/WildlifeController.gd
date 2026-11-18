@@ -1,6 +1,8 @@
 extends Node3D
 class_name WildlifeController
 
+const WildlifeAudio = preload("res://scripts/WildlifeAudio.gd")
+
 const BEAR_ATTACK_DURATION := 37.0 / 30.0
 
 var patrol_points: Array = []
@@ -43,7 +45,7 @@ var _wait_near_pos := Vector3.ZERO
 var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
-var _wolf_pain_player: AudioStreamPlayer = null
+var _wolf_pain_player: AudioStreamPlayer3D = null
 var _wolf_howl_2d_player: AudioStreamPlayer = null
 var _wolf_hunger := 40.0
 var _wolf_hunger_threshold := 70.0
@@ -214,6 +216,8 @@ func setup_puppet(kind: String) -> void:
 			health = 100.0
 			max_health = 100.0
 	_build_animal()
+	if animal_type in ["wolf", "bear"]:
+		_prepare_animal_voice()
 
 func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: bool, rot_left: float = -1.0) -> void:
 	if dead and not _is_dead:
@@ -1397,7 +1401,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 						if local_net != null and local_net.is_host:
 							local_net._broadcast_player_hit(local_net.get_my_id(), "%s_bite" % animal_type, _player.global_position)
 					if animal_type == "wolf" or animal_type == "bear":
-						_play_wolf_sound("bite")
+						_play_wolf_sound("attack")
 				var away_dir := (global_position - _player.global_position).normalized()
 				away_dir.y = 0.0
 				if away_dir.length_squared() < 0.0001:
@@ -3891,6 +3895,7 @@ func _spawn_local_blood_burst(at_pos: Vector3) -> void:
 	drops.finished.connect(drops.queue_free)
 
 static func prepare_combat_audio() -> void:
+	WildlifeAudio.prepare()
 	# Decode shared attack/pain sounds while loading, not on the first bite.
 	for path in ["res://assets/audio/loboherido.wav", "res://assets/audio/animal_herido.wav",
 		"res://assets/audio/wolf_bite.wav", "res://assets/external/audio/downloaded/wolf_growl.wav"]:
@@ -3916,29 +3921,20 @@ static func _get_cached_audio_stream(path: String) -> AudioStream:
 	return stream
 
 func _play_pain_sound() -> void:
-	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-	if _net != null and _net.is_dedicated_server:
-		return
-	var player_node := get_tree().current_scene.get_node_or_null("Player")
-	var dist := 999.0
-	if player_node != null and player_node is Node3D:
-		dist = global_position.distance_to((player_node as Node3D).global_position)
-	var max_pain_dist := 60.0 if animal_type == "bear" else 35.0
-	if dist > max_pain_dist:
-		return
+	var network := get_node_or_null("/root/NetworkManager")
+	if network != null and network.is_dedicated_server: return
 	if _wolf_pain_player == null:
-		_wolf_pain_player = AudioStreamPlayer.new()
+		_wolf_pain_player = AudioStreamPlayer3D.new()
 		_wolf_pain_player.name = "PainSound"
+		_wolf_pain_player.unit_size = 7.0
+		_wolf_pain_player.max_distance = 60.0 if animal_type == "bear" else 35.0
 		add_child(_wolf_pain_player)
-	var path := "res://assets/audio/loboherido.wav" if (animal_type == "wolf" or animal_type == "bear") else "res://assets/audio/animal_herido.wav"
-	var stream := _get_cached_audio_stream(path)
-	if stream == null:
-		return
-	_wolf_pain_player.stop()
-	_wolf_pain_player.stream = stream
-	var base_vol := 0.0 if animal_type == "bear" else -4.0
-	_wolf_pain_player.volume_db = base_vol - (dist / max_pain_dist) * 14.0
-	_wolf_pain_player.pitch_scale = randf_range(0.46, 0.56) if animal_type == "bear" else randf_range(0.85, 1.15)
+	var path := "res://assets/audio/loboherido.wav" if animal_type == "wolf" else "res://assets/audio/animal_herido.wav"
+	var sample := WildlifeAudio.stream(WildlifeAudio.BEAR_ATTACK) if animal_type == "bear" else _get_cached_audio_stream(path)
+	if sample == null: return
+	_wolf_pain_player.stream = sample
+	_wolf_pain_player.volume_db = -2.0 if animal_type == "bear" else -4.0
+	_wolf_pain_player.pitch_scale = randf_range(.96, 1.04) * (1.2 if animal_type == "fox" else 1.0)
 	_wolf_pain_player.play()
 
 func _find_nearest_animal(kind: String) -> Node3D:
@@ -4060,6 +4056,9 @@ func _update_animation_speed(speed: float) -> void:
 		_animation_player.speed_scale = clampf(speed / nominal_speed, 0.5, 2.5)
 
 func _update_wolf_sounds(delta: float) -> void:
+	var network := get_node_or_null("/root/NetworkManager")
+	if is_puppet and network != null and network.get("is_connected") == true:
+		return
 	_howl_timer -= delta
 	_growl_timer -= delta
 	var is_hungry := _wolf_hunger < _wolf_hunger_threshold
@@ -4077,13 +4076,22 @@ func _update_wolf_sounds(delta: float) -> void:
 		else:
 			_growl_timer = randf_range(10.0, 20.0)
 
+func _prepare_animal_voice() -> void:
+	if _wolf_audio_player == null:
+		_wolf_audio_player = AudioStreamPlayer3D.new()
+		_wolf_audio_player.name = "WolfSound"
+		_wolf_audio_player.unit_size = 14.0 if animal_type == "bear" else 8.0
+		_wolf_audio_player.max_distance = 65.0 if animal_type == "bear" else 40.0
+		_wolf_audio_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+		add_child(_wolf_audio_player)
+
 func _play_wolf_sound(sound_type: String) -> void:
-	var _net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
+	if sound_type not in ["howl", "attack", "growl", "growl_low", "bite", "hungry"]: return
+	if _is_dead: return
+	var _net := get_node_or_null("/root/NetworkManager")
+	if _net != null and _net.is_host and not is_puppet and _net.is_connected:
+		_net.animal_sound.rpc(name, sound_type)
 	if _net != null and _net.is_dedicated_server:
-		# Dedicated servers can't play audio: relay events to clients so each
-		# puppet plays the sound locally.
-		if (sound_type == "howl" or sound_type == "attack" or sound_type == "growl" or sound_type == "growl_low" or sound_type == "bite" or sound_type == "hungry") and _net.is_connected:
-			_net.animal_sound.rpc(name, sound_type)
 		return
 	if is_puppet and not _is_dead and (sound_type == "attack" or sound_type == "bite"):
 		var start_strike := _puppet_attack_timer <= 0.0
@@ -4127,13 +4135,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_wolf_howl_2d_player.pitch_scale = randf_range(0.85, 1.15)
 		_wolf_howl_2d_player.play()
 		return
-	if _wolf_audio_player == null:
-		_wolf_audio_player = AudioStreamPlayer3D.new()
-		_wolf_audio_player.name = "WolfSound"
-		_wolf_audio_player.unit_size = 14.0 if is_bear else 8.0
-		_wolf_audio_player.max_distance = 65.0 if is_bear else 40.0
-		_wolf_audio_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
-		add_child(_wolf_audio_player)
+	_prepare_animal_voice()
 	if _wolf_audio_player.playing and sound_type != "attack" and sound_type != "bite":
 		return
 	var path := ""
@@ -4148,13 +4150,15 @@ func _play_wolf_sound(sound_type: String) -> void:
 			path = "res://assets/audio/quejidohambrelobo.mp3"
 		_:
 			return
-	var stream := _get_cached_audio_stream(path)
+	if is_bear and sound_type != "bite":
+		path = WildlifeAudio.BEAR_ATTACK if sound_type == "attack" else WildlifeAudio.BEAR_GROWL
+	var stream := WildlifeAudio.stream(path) if path.begins_with(WildlifeAudio.DIR) else _get_cached_audio_stream(path)
 	if stream == null:
 		return
 	_wolf_audio_player.stream = stream
 	if is_bear:
-		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" or sound_type == "bite" else 1.0
-		_wolf_audio_player.pitch_scale = randf_range(0.52, 0.64) if sound_type == "bite" else randf_range(0.45, 0.56)
+		_wolf_audio_player.volume_db = -6.0 if sound_type == "bite" else (2.0 if sound_type == "attack" else -2.0)
+		_wolf_audio_player.pitch_scale = randf_range(.96, 1.04) if sound_type != "bite" else .85
 	else:
 		if sound_type == "hungry":
 			# Quejido de hambre: el mp3 ya suena a quejido — sin el tono agudo
@@ -4165,11 +4169,11 @@ func _play_wolf_sound(sound_type: String) -> void:
 			_wolf_audio_player.volume_db = -14.0
 			_wolf_audio_player.pitch_scale = randf_range(0.6, 0.75) * (1.45 if tamed else 1.0)
 		elif sound_type == "bite":
-			_wolf_audio_player.volume_db = 2.0
-			_wolf_audio_player.pitch_scale = randf_range(1.06, 1.22) * (1.30 if tamed else 1.0)
+			_wolf_audio_player.volume_db = -6.0
+			_wolf_audio_player.pitch_scale = randf_range(.96, 1.04)
 		else:
 			_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" else -4.0
-			_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15) * (1.45 if tamed else 1.0)
+			_wolf_audio_player.pitch_scale = randf_range(.96, 1.04)
 	_wolf_audio_player.play()
 
 func _update_stuck_timer(delta: float) -> void:

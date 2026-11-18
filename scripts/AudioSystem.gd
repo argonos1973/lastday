@@ -1,6 +1,8 @@
 extends Node
 class_name AudioSystem
 
+const WildlifeAudio = preload("res://scripts/WildlifeAudio.gd")
+
 const AMBIENT_DAY_PATHS := []
 const AMBIENT_NIGHT_PATHS := [
 	"res://assets/external/audio/ambient_night.wav"
@@ -81,6 +83,8 @@ var _remote_step_pos: Dictionary = {}
 # speed between snapshots; a stale running animation still expires quickly.
 const REMOTE_MOTION_GRACE := .15
 var _remote_step_motion: Dictionary = {}
+var _animal_step_distance: Dictionary = {}
+var _animal_step_species: Dictionary = {}
 var water_step_shots: Array = []
 # Long human recordings need one owned voice per moving actor; the short
 # animal samples keep their independent round-robin pool.
@@ -249,8 +253,8 @@ func _create_players() -> void:
 
 	animal_call_player = AudioStreamPlayer3D.new()
 	animal_call_player.name = "AnimalCalls"
-	animal_call_player.unit_size = 0.5
-	animal_call_player.max_distance = 14.0
+	animal_call_player.unit_size = 6.0
+	animal_call_player.max_distance = 35.0
 	animal_call_player.volume_db = -24.0
 	animal_call_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 	add_child(animal_call_player)
@@ -285,6 +289,7 @@ func _load_audio() -> void:
 		forest_player.play()
 
 func _load_footstep_audio() -> void:
+	WildlifeAudio.prepare()
 	walk_stream = _load_first_stream([WALK_SOUND_PATH])
 	run_stream = _load_first_stream([RUN_SOUND_PATH])
 	if walk_stream != null: _make_loop(walk_stream)
@@ -589,11 +594,13 @@ func _update_animal_calls(delta: float) -> void:
 	var chosen = null
 	var chosen_distance := 9999.0
 	for node in get_tree().get_nodes_in_group("wildlife"):
-		if not node is Node3D:
+		if not node is Node3D or node.get("_is_dead") == true or str(node.get("animal_type")) not in ["deer", "fox"]:
 			continue
+		# Predators own their calls via WildlifeController; don't add a second
+		# random howl, and never play deer calls from a bear or a corpse.
 		var animal := node as Node3D
 		var distance := animal.global_position.distance_to(player.global_position)
-		if distance > 14.0 or distance < 6.0:
+		if distance > 35.0 or distance < 3.0:
 			continue
 		if chosen == null or distance < chosen_distance or (distance < 10.0 and randf() < 0.45):
 			chosen = animal
@@ -618,7 +625,7 @@ func _update_animal_calls(delta: float) -> void:
 	if close and randf() < 0.78:
 		animal_call_timer = randf_range(14.0, 26.0)
 		return
-	_play_one_shot_at(animal_call_player, calls, chosen.global_position, -28.0 if close else -36.0, randf_range(0.96, 1.03))
+	_play_one_shot_at(animal_call_player, calls, chosen.global_position, -10.0 if close else -12.0, randf_range(0.96, 1.03))
 	animal_call_timer = randf_range(26.0, 52.0)
 
 func play_chop_at(pos: Vector3) -> void:
@@ -821,6 +828,9 @@ func _update_remote_footsteps(delta: float) -> void:
 			var a = (pa as Dictionary)[aid]
 			if a != null and is_instance_valid(a) and a.get("_is_dead") != true:
 				_remote_actor_steps(seen, "a:%s" % str(aid), a, str(a.get("current_anim_keyword")), delta, ear, true)
+	for animal in get_tree().get_nodes_in_group("wildlife"):
+		if is_instance_valid(animal) and animal.get("is_puppet") != true and animal.get("_is_dead") != true:
+			_remote_actor_steps(seen, "local:%d" % animal.get_instance_id(), animal, str(animal.get("current_anim_keyword")), delta, ear, true)
 	for k in _remote_step_pos.keys():
 		if not seen.has(k):
 			_stop_remote_locomotion(k)
@@ -828,6 +838,8 @@ func _update_remote_footsteps(delta: float) -> void:
 			_remote_step_phase.erase(k)
 			_remote_step_pos.erase(k)
 			_remote_step_motion.erase(k)
+			_animal_step_distance.erase(k)
+			_animal_step_species.erase(k)
 
 func _remote_actor_steps(seen: Dictionary, key: String, node: Node3D, anim: String, delta: float, ear: Vector3, is_animal: bool) -> void:
 	seen[key] = true
@@ -863,41 +875,57 @@ func _remote_actor_steps(seen: Dictionary, key: String, node: Node3D, anim: Stri
 	var d := pos.distance_to(ear)
 	if kind.is_empty() or d > REMOTE_STEP_MAX_DIST or speed < .15 or teleported:
 		_stop_remote_locomotion(key)
+		_animal_step_distance.erase(key)
 		_remote_step_t.erase(key)
 		_remote_step_phase.erase(key)
 		return
 	if not is_animal:
 		_play_remote_locomotion(key, pos, kind)
 		return
-	var interval := _step_interval(speed,kind == "sneak")
-	if is_animal:
-		interval *= 0.85 # cuatro patas: pasos algo mas frecuentes
-	_remote_step_t[key] = float(_remote_step_t.get(key, interval)) - delta
-	if float(_remote_step_t[key]) > 0.0:
+	var species := str(node.get("animal_type"))
+	if not WildlifeAudio.SPECIES.has(species): return
+	_animal_step_species[key] = species
+	var profile: Dictionary = WildlifeAudio.SPECIES[species]
+	if d > float(profile.range):
+		_animal_step_distance.erase(key)
 		return
-	_remote_step_t[key] = interval
-	_play_remote_step(key, node.global_position, kind, is_animal)
+	# Accumulate actual ground travel, not snapshot timers: no sound when
+	# stationary or sliding in an attack pose, and no catch-up burst on lag.
+	var phase := int(_remote_step_phase.get(key, 0))
+	var stride := float(profile.run if kind == "run" else profile.walk)
+	if kind == "run": stride *= .7 if phase % 2 == 0 else 1.3
+	var distance := float(_animal_step_distance.get(key, 0.0)) + travelled
+	if distance >= stride and travelled > .001:
+		_play_remote_step(key, pos, kind, true)
+		distance = fmod(distance, stride)
+	_animal_step_distance[key] = distance
 
 func _play_remote_step(key: String, pos: Vector3, kind: String, is_animal: bool) -> void:
+	if not is_animal or _remote_step_players.is_empty(): return
+	var species := str(_animal_step_species.get(key, "wolf"))
+	var profile: Dictionary = WildlifeAudio.SPECIES.get(species, WildlifeAudio.SPECIES.wolf)
 	var in_water := _is_step_in_water(pos)
-	var pool := _surface_steps_at(pos)
-	if pool.is_empty() or _remote_step_players.is_empty():
-		return
 	var idx := int(_remote_step_phase.get(key, 0))
+	var scene := get_tree().current_scene
+	var hard: bool = not in_water and (_pos_inside_building(pos) or (scene != null and scene.has_method("_is_on_road") and scene._is_on_road(pos)))
+	var sample: AudioStream = water_step_shots[idx % water_step_shots.size()] if in_water and not water_step_shots.is_empty() else WildlifeAudio.step(species, hard, idx)
+	if sample == null: return
+	# Prefer a free voice. Never interrupt another animal's paw mid-contact.
+	var ap: AudioStreamPlayer3D = null
+	for offset in _remote_step_players.size():
+		var candidate: AudioStreamPlayer3D = _remote_step_players[(_remote_step_index + offset) % _remote_step_players.size()]
+		if not candidate.playing:
+			ap = candidate
+			_remote_step_index = (_remote_step_index + offset + 1) % _remote_step_players.size()
+			break
+	if ap == null: return
 	_remote_step_phase[key] = idx + 1
-	var ap: AudioStreamPlayer3D = _remote_step_players[_remote_step_index]
-	_remote_step_index = (_remote_step_index + 1) % _remote_step_players.size()
 	ap.global_position = pos
-	ap.pitch_scale = randf_range(0.92, 1.08) * (0.85 if is_animal else 1.0)
-	var db := 0.0
-	if kind == "run":
-		db += 2.5
-	elif kind == "sneak":
-		db -= 9.0
-	if is_animal and not in_water:
-		db -= 2.0 # patas/pesado: distinto timbre, no un zapato
-	ap.volume_db = db
-	ap.stream = pool[idx % pool.size()]
+	ap.unit_size = 3.0
+	ap.max_distance = float(profile.range)
+	ap.pitch_scale = float(profile.pitch) * randf_range(.97, 1.03)
+	ap.volume_db = float(profile.db) + (3.0 if kind == "run" else 0.0) + (2.0 if hard else 0.0)
+	ap.stream = sample
 	ap.play()
 
 func _pos_inside_building(p: Vector3) -> bool:
