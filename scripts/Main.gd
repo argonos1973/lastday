@@ -264,6 +264,7 @@ var campfire_fire_timers: Dictionary = {}
 var _house_chimneys: Array = []
 var game_over := false
 var _drink_hold_actor = null
+var _drink_hold_source: WorldAction = null
 var _drink_hold_timer := 0.0
 var _drink_hold_sips := 0
 const _DRINK_HOLD_TIME := 1.5
@@ -1671,12 +1672,25 @@ func _apply_torch_fire_effect(player_node: Node3D, delta: float) -> void:
 
 func _tick_drink_hold(delta: float) -> void:
 	if _drink_hold_actor == null:
+		_drink_hold_source = null
 		_drink_hold_sips = 0
 		return
 	if not is_instance_valid(_drink_hold_actor):
 		_drink_hold_actor = null
+		_drink_hold_source = null
 		_drink_hold_timer = 0.0
 		_drink_hold_sips = 0
+		return
+	var water_error := _water_action_error(_drink_hold_source, _drink_hold_actor)
+	if not water_error.is_empty():
+		var actor = _drink_hold_actor
+		if actor.has_method("cancel_active_action"):
+			actor.cancel_active_action(false)
+		_drink_hold_actor = null
+		_drink_hold_source = null
+		_drink_hold_timer = 0.0
+		_drink_hold_sips = 0
+		actor.notice.emit(water_error)
 		return
 	_drink_hold_timer += delta
 	if _drink_hold_timer >= 1.0:
@@ -1707,6 +1721,7 @@ func _tick_drink_hold(delta: float) -> void:
 		if _drink_hold_sips >= _DRINK_CHANNEL_SIPS:
 			var _done_actor = _drink_hold_actor
 			_drink_hold_actor = null
+			_drink_hold_source = null
 			_drink_hold_timer = 0.0
 			_drink_hold_sips = 0
 			if is_instance_valid(_done_actor) and _done_actor.has_method("cancel_active_action"):
@@ -12779,6 +12794,27 @@ func _await_actor_action(actor, duration: float) -> bool:
 		return false
 	return true
 
+func _water_action_error(action, actor) -> String:
+	if not is_instance_valid(action):
+		return "Ya no puedes alcanzar el agua."
+	return action.water_interaction_error(actor)
+
+func _await_water_fill(action, actor, bottle, duration: float) -> bool:
+	var remaining := duration
+	while remaining > 0.0:
+		var step := minf(remaining, 0.1)
+		if not await _await_actor_action(actor, step):
+			return false
+		remaining -= step
+		var error := _water_action_error(action, actor)
+		if error.is_empty() and (actor.inventory == null or not actor.inventory.items.has(bottle) or actor.get_held_item() != bottle):
+			error = "Debes mantener la botella en la mano."
+		if not error.is_empty():
+			actor.cancel_active_action(false)
+			actor.notice.emit(error)
+			return false
+	return true
+
 func handle_world_action(action, actor) -> void:
 	# Bloquear interacciones concurrentes: operaciones con await (tala, cocinar,
 	# destripar, construir) no deben solaparse por repeticion de tecla.
@@ -13166,60 +13202,34 @@ func _execute_world_action(action, actor) -> void:
 			if actor.has_method("_start_fishing_near_water"):
 				actor._start_fishing_near_water()
 		"drink_water":
-			# If holding an empty plastic bottle, fill it instead of drinking
-			# Only allow filling if the bottle is actually held in the player's hands
-			var held_dw = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_dw != null:
-				var _hands_dw = actor.get("hands") if actor.has_method("get") else null
-				if _hands_dw == null or not _hands_dw.has_method("has_item_in_hands") or not _hands_dw.has_item_in_hands():
-					held_dw = null
-			if held_dw != null and held_dw.item_name == "Botella de plastico":
-				_play_actor_action(actor, "plant", 5.0)
-				if actor.has_method("_play_bottle_fill_audio"):
-					actor._play_bottle_fill_audio(5.0, int(actor.get("_action_serial")))
-				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
-				if hud != null:
-					hud.show_countdown("Llenando botella", 5.0)
-				if not await _await_actor_action(actor, 5.0):
-					return
-				if actor.has_method("_stop_consumption_audio"):
-					actor._stop_consumption_audio()
-				# Remove empty bottle and add filled one
-				for i in range(actor.inventory.items.size()):
-					if actor.inventory.items[i] != null and actor.inventory.items[i].item_name == "Botella de plastico":
-						actor.inventory.remove_index(i)
-						break
-				var filled_bottle = ItemScript.create("Botella de agua llena", "water", 0.4, 1, 100.0)
-				filled_bottle.max_durability = 100.0
-				filled_bottle.durability = 100.0
-				if actor.inventory.add_item(filled_bottle):
-					actor.inventory.changed.emit()
-					if actor.has_method("_sync_held_item"):
-						actor._sync_held_item()
-					actor.notice.emit("Has llenado la botella de agua. Puedes beber de ella.")
+			var water_error := _water_action_error(action, actor)
+			if not water_error.is_empty():
+				actor.notice.emit(water_error)
 				return
-			# If holding a partially empty water bottle, refill it
-			if held_dw != null and (held_dw.item_name == "Botella de agua" or held_dw.item_name == "Botella de agua llena") and held_dw.has_method("is_broken") and not held_dw.is_broken() and float(held_dw.durability) < float(held_dw.max_durability):
+			var held_dw = actor.get_held_item() if actor.has_method("get_held_item") else null
+			var in_hands = actor.get("hands")
+			if in_hands == null or not in_hands.has_method("has_item_in_hands") or not in_hands.has_item_in_hands():
+				held_dw = null
+			if held_dw != null and (held_dw.item_name == "Botella de plastico" or (held_dw.item_name in ["Botella de agua", "Botella de agua llena"] and held_dw.durability < held_dw.max_durability)):
 				_play_actor_action(actor, "plant", 5.0)
 				if actor.has_method("_play_bottle_fill_audio"):
 					actor._play_bottle_fill_audio(5.0, int(actor.get("_action_serial")))
 				actor.notice.emit("Llenando botella %s..." % action.get_meta("drink_source", "del rio"))
 				if hud != null:
 					hud.show_countdown("Llenando botella", 5.0)
-				if not await _await_actor_action(actor, 5.0):
+				if not await _await_water_fill(action, actor, held_dw, 5.0):
 					return
 				if actor.has_method("_stop_consumption_audio"):
 					actor._stop_consumption_audio()
-				held_dw.durability = float(held_dw.max_durability)
-				held_dw.item_name = "Botella de agua llena"
-				actor.inventory.changed.emit()
-				if actor.has_method("_sync_held_item"):
-					actor._sync_held_item()
-				actor.notice.emit("Has llenado la botella de agua.")
+				var filled = actor.inventory.refill_water_bottle(held_dw)
+				if filled != null:
+					actor._select_held_item(actor.inventory.items.find(filled))
+					actor.notice.emit("Has llenado la botella de agua. Puedes beber de ella.")
 				return
 			if _drink_hold_actor != null:
 				return
 			_drink_hold_actor = actor
+			_drink_hold_source = action
 			_drink_hold_actor.set_meta("drink_source", action.get_meta("drink_source", "del rio"))
 			_drink_hold_timer = 0.0
 			_drink_hold_sips = 0

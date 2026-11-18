@@ -91,6 +91,32 @@ func remove_index(index: int, amount := 1):
 	changed.emit()
 	return removed
 
+func refill_water_bottle(item):
+	# Validate the whole replacement before changing quantities or emitting signals.
+	if item == null or not items.has(item) or item.quantity <= 0 or item.item_name not in ["Botella de plastico", "Botella de agua", "Botella de agua llena"]:
+		return null
+	var new_weight := 0.4
+	if get_total_weight() + new_weight - item.weight > max_weight:
+		item_used.emit("No puedes llevar el peso de la botella llena.")
+		return null
+	if item.quantity > 1 and get_stored_count() >= max_slots:
+		item_used.emit("Necesitas un espacio libre para separar la botella que llenas.")
+		return null
+	var filled = item
+	if item.quantity > 1:
+		filled = item.duplicate_stack()
+		filled.quantity = 1
+		item.quantity -= 1
+		items.append(filled)
+	filled.item_name = "Botella de agua llena"
+	filled.item_type = "water"
+	filled.weight = new_weight
+	filled.use_value = 100.0
+	filled.max_durability = 100.0
+	filled.durability = 100.0
+	changed.emit()
+	return filled
+
 func _fmt_restore(old_h: float, new_h: float, old_t: float, new_t: float, old_hp: float, new_hp: float) -> String:
 	var parts: Array = []
 	var hd := new_h - old_h

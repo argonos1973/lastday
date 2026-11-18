@@ -13647,7 +13647,7 @@ func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 				break
 			if not (it is Dictionary) or not _bot_matches_input(input_name, it):
 				continue
-			if CraftingSystem._is_tool(input_name):
+			if CraftingSystem._is_recipe_tool(recipe, input_name):
 				var cur_td := float(it.get("durability", _default_item_max_durability(str(it.get("name", "")), str(it.get("type", "")))))
 				if cur_td <= 0.0:
 					cur_td = 100.0

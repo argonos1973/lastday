@@ -284,7 +284,10 @@ static func _fountain(world: Node3D, server: bool, center: Vector3) -> void:
  world._create_invisible_collision_box("DistrictFountainColumnCollision",center+Vector3(0,.95,0),Vector3(.9,2.4,.9))
  world._register_wildlife_blocker(center,2.0)
  var drink=world._create_world_action("district_fountain_drink","drink_water","Fuente de la plaza",center+Vector3(0,.9,0),Vector3(4.6,1.7,4.6),Color(0.08,0.22,0.48,0.0),true,false)
- if drink!=null:drink.set_meta("drink_source","de la fuente")
+ if drink!=null:
+  drink.set_meta("drink_source","de la fuente")
+  drink.set_meta("water_requires_facing",true)
+  drink.set_meta("water_reach",2.8)
  if server:return
  var fountain: Node3D = load("res://assets/models/environment/city/district_fountain.glb").instantiate()
  fountain.name="DistrictFountain";fountain.position=center+Vector3(0,.03,0);fountain.scale=Vector3(1.6,1.4,1.6)

@@ -17,6 +17,7 @@ const RECIPES := [
 	},
 	{
 		"inputs": { "Palo": 1, "Piedra afilada": 1, "Cuerda": 1 },
+		"consumed_tools": ["Piedra afilada"],
 		"output": { "name": "Cuchillo de piedra", "type": "weapon", "weight": 0.3, "use_value": 10.0, "durability": 60.0, "max_durability": 60.0 },
 		"label": "Atar piedra afilada a un palo para crear cuchillo de piedra"
 	},
@@ -327,7 +328,7 @@ static func can_craft_with_ground(recipe: Dictionary, inventory_items: Array, gr
 static func consume_inputs(recipe: Dictionary, inventory) -> void:
 	for input_name in recipe["inputs"]:
 		var needed: int = recipe["inputs"][input_name]
-		if _is_tool(input_name):
+		if _is_recipe_tool(recipe, input_name):
 			continue
 		if input_name == "ANY_CLOTHING":
 			_consume_clothing(inventory, needed)
@@ -421,7 +422,7 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 	for input_name in recipe.inputs:
 		var needed: int = recipe.inputs[input_name]
 		var ordered := sources.duplicate()
-		if _is_tool(input_name):
+		if _is_recipe_tool(recipe, input_name):
 			ordered.reverse()
 		for source in ordered:
 			if needed <= 0:
@@ -429,8 +430,11 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 			if source.quantity <= 0 or not _matches_input(input_name, source.item):
 				continue
 			var take := mini(needed, int(source.quantity))
-			if _is_tool(input_name):
-				source.durability = maxf(0.0, float(source.durability) - 3.0)
+			if _is_recipe_tool(recipe, input_name):
+				var worn = source.item.duplicate_stack()
+				worn.durability = float(source.durability)
+				worn.reduce_durability(3.0)
+				source.durability = worn.durability
 			else:
 				source.quantity -= take
 				if input_name == "ANY_PELT":
@@ -453,6 +457,9 @@ static func plan_ground_craft(recipe: Dictionary, carried_tools: Array, ground_i
 
 static func craft(recipe: Dictionary, inventory) -> bool:
 	craft_error = ""
+	if not RECIPES.has(recipe):
+		craft_error = "Receta desconocida."
+		return false
 	if not _can_craft(recipe, inventory.items):
 		var missing := []
 		for input_name in recipe["inputs"]:
@@ -497,7 +504,7 @@ static func craft(recipe: Dictionary, inventory) -> bool:
 				break
 			if not _matches_input(input_name, item):
 				continue
-			if _is_tool(input_name):
+			if _is_recipe_tool(recipe, input_name):
 				item.reduce_durability(3.0)
 				needed -= item.quantity
 			else:
@@ -607,6 +614,9 @@ static func _pelt_output(out: Dictionary, pelt_species: String) -> Dictionary:
 	downgraded["weight"] = 0.35
 	return downgraded
 
+static func _is_recipe_tool(recipe: Dictionary, input_name: String) -> bool:
+	return _is_tool(input_name) and not recipe.get("consumed_tools", []).has(input_name)
+
 static func _is_tool(item_name: String) -> bool:
 	return item_name in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra", "Azada", "Azada de piedra", "Pala", "Martillo", "Pico", "Cerillas"]
 
@@ -627,8 +637,8 @@ static func get_recipe_inputs_text(recipe: Dictionary) -> String:
 	var parts := []
 	for input_name in recipe["inputs"]:
 		var amount: int = recipe["inputs"][input_name]
-		if _is_tool(input_name):
-			parts.append("%s (no se gasta)" % input_name)
+		if _is_recipe_tool(recipe, input_name):
+			parts.append("%s (se desgasta)" % input_name)
 		elif input_name == "ANY_CLOTHING":
 			parts.append("%dx Ropa (cualquiera)" % amount)
 		elif input_name == "ANY_PELT":

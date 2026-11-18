@@ -1605,7 +1605,7 @@ func _update_craft_panel() -> void:
 	for recipe in CraftingSystemScript.RECIPES:
 		var relevant := false
 		for input_name in recipe.inputs:
-			if CraftingSystemScript._is_tool(input_name):
+			if CraftingSystemScript._is_recipe_tool(recipe, input_name):
 				continue
 			for entry in ground_items:
 				if CraftingSystemScript._matches_ground_input(input_name, entry):

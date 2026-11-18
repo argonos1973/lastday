@@ -107,6 +107,31 @@ func disable_collision() -> void:
 		collision_layer = 2
 		collision_mask = 0
 
+func water_interaction_error(actor) -> String:
+	if not is_instance_valid(actor) or actor.get("is_dead") == true:
+		return "No puedes beber ahora."
+	if not is_inside_tree() or (depleted and not repeatable):
+		return "Ya no puedes alcanzar el agua."
+	var offset: Vector3 = actor.global_position - global_position
+	if absf(offset.y) > 2.0:
+		return "Acércate al agua."
+	offset.y = 0.0
+	if has_meta("water_reach"):
+		if offset.length() > float(get_meta("water_reach")):
+			return "Acércate a la fuente."
+	elif _collision != null and _collision.shape is BoxShape3D:
+		var local_pos := _collision.to_local(actor.global_position)
+		var half_size: Vector3 = _collision.shape.size * 0.5
+		var edge := Vector2(maxf(0.0, absf(local_pos.x) - half_size.x), maxf(0.0, absf(local_pos.z) - half_size.z))
+		if edge.length() > 3.5:
+			return "Acércate al agua."
+	if get_meta("water_requires_facing", false) == true:
+		var forward: Vector3 = -actor.global_basis.z
+		forward.y = 0.0
+		if offset.length_squared() < 0.01 or forward.normalized().dot(-offset.normalized()) < 0.7:
+			return "Mira hacia la fuente para beber o llenar la botella."
+	return ""
+
 func interact(player) -> void:
 	if has_meta("no_pickup") and bool(get_meta("no_pickup")):
 		player.notice.emit("%s esta rota y no se puede coger." % display_name)
@@ -276,13 +301,17 @@ func get_interaction_text(_player = null) -> String:
 				return "%s - Fruta madurando (%ds)" % [display_name, int(ceil(ready - now))]
 			return "%s - [F] Recoger fruta" % display_name
 		"drink_water":
+			if _player != null:
+				var water_error := water_interaction_error(_player)
+				if not water_error.is_empty():
+					return water_error
 			if _player != null and _player.has_method("get_held_item"):
 				var held = _player.get_held_item()
 				var _hands = _player.get("hands") if _player.has_method("get") else null
 				var _in_hands = _hands != null and _hands.has_method("has_item_in_hands") and _hands.has_item_in_hands()
 				if _in_hands and held != null and held.item_name == "Botella de plastico":
 					return "Llenar botella - [F]"
-				if _in_hands and held != null and (held.item_name == "Botella de agua" or held.item_name == "Botella de agua llena") and held.has_method("is_broken") and not held.is_broken() and float(held.durability) < float(held.max_durability):
+				if _in_hands and held != null and held.item_name in ["Botella de agua", "Botella de agua llena"] and float(held.durability) < float(held.max_durability):
 					return "Llenar botella - [F]"
 			return "Beber agua - [F]"
 		"light_campfire":

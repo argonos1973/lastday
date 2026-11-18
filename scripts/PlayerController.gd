@@ -6886,6 +6886,7 @@ func cancel_active_action(show_cancel_notice: bool = false) -> bool:
 		if main.get("_drink_hold_actor") == self:
 			main.set("_drink_hold_actor", null)
 			main.set("_drink_hold_timer", 0.0)
+			main.set("_drink_hold_source", null)
 		var aud = main.get("audio_system")
 		if aud != null and aud.has_method("stop_chop"):
 			aud.stop_chop()
@@ -7500,16 +7501,22 @@ func _cycle_held_item() -> void:
 	notice.emit("En mano: %s." % item.item_name)
 
 func _craft_campfire() -> void:
-	if inventory == null:
+	if inventory == null or is_dead or is_performing_interruptible_action():
 		return
 	if not inventory.has_item_name("Tronco", 2) or not inventory.has_item_name("Palo", 1):
 		var main_node := get_parent()
 		if main_node != null and main_node.has_method("craft_ground_recipe"):
 			for r in CraftingSystemScript.RECIPES:
 				if r.get("output", {}).get("type", "") == "campfire":
-					if main_node.craft_ground_recipe(self, r):
+					if CraftingSystemScript.can_craft_with_ground(r, get_ground_crafting_tools(), main_node.get_nearby_ground_items(global_position)):
 						play_action_animation("plant", 2.0)
-						notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
+						notice.emit("Crafteando fogata...")
+						if not await _await_local_action(2.0):
+							return
+						if main_node.craft_ground_recipe(self, r):
+							notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
+						else:
+							notice.emit(CraftingSystemScript.craft_error)
 						return
 					break
 		if not inventory.has_item_name("Tronco", 2):
@@ -7548,36 +7555,43 @@ func get_ground_crafting_tools() -> Array:
 	return []
 
 func craft_recipe(recipe: Dictionary, from_ground: bool = false) -> void:
-	if inventory == null or not CraftingSystemScript.RECIPES.has(recipe):
+	if inventory == null or is_dead or is_performing_interruptible_action() or not CraftingSystemScript.RECIPES.has(recipe):
 		return
 	var out: Dictionary = recipe["output"]
+	var main := get_parent()
 	if out["type"] == "shelter":
-		get_parent().begin_shelter_placement(self, recipe, from_ground)
+		main.begin_shelter_placement(self, recipe, from_ground)
+		return
+	if out["type"] == "campfire" and not from_ground:
+		await _craft_campfire()
 		return
 	if from_ground:
-		var main := get_parent()
 		if main == null or not main.has_method("craft_ground_recipe"):
 			return
-		if not main.craft_ground_recipe(self, recipe):
-			notice.emit(CraftingSystemScript.craft_error)
+		if not CraftingSystemScript.can_craft_with_ground(recipe, get_ground_crafting_tools(), main.get_nearby_ground_items(global_position)):
+			notice.emit("No tienes los materiales cercanos necesarios.")
 			return
-		_post_craft_success(recipe, out)
+	elif not CraftingSystemScript.can_craft_with(recipe, inventory.items):
+		notice.emit("No tienes los materiales necesarios.")
 		return
-	# Fogata uses the full campfire flow with animation + spawn
-	if out["type"] == "campfire":
-		_craft_campfire()
+	var opening_can := str(out["name"]).contains("abierta")
+	var duration := 1.5 if opening_can else 2.0
+	play_action_animation("plant" if opening_can else "forage", duration)
+	notice.emit("Abriendo lata con cuchillo..." if opening_can else "Crafteando...")
+	var craft_hud = main.get("hud") if main != null else null
+	if craft_hud != null and craft_hud.has_method("show_countdown"):
+		craft_hud.show_countdown("Abriendo lata" if opening_can else "Crafteando", duration)
+	# Commit only after the interruptible action, using the current ingredients
+	# and capacity. Cancelling must not produce an item or wear out the tool.
+	if not await _await_local_action(duration):
 		return
-	if out["type"] == "shelter":
-		_craft_shelter()
-		return
-	# Try crafting with inventory only first (original path)
-	if not CraftingSystemScript.craft(recipe, inventory):
-		notice.emit(CraftingSystemScript.craft_error if CraftingSystemScript.craft_error != "" else "No tienes los materiales necesarios.")
+	var crafted: bool = main.craft_ground_recipe(self, recipe) if from_ground else CraftingSystemScript.craft(recipe, inventory)
+	if not crafted:
+		notice.emit(CraftingSystemScript.craft_error)
 		return
 	_post_craft_success(recipe, out)
 
-func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
-	# Change equipment only after the transaction succeeded.
+func _post_craft_success(_recipe: Dictionary, out: Dictionary) -> void:
 	for slot in _equipped_slots.keys():
 		var clothing_name := str(_equipped_slots[slot])
 		if not clothing_name.is_empty() and not inventory.has_item_name(clothing_name):
@@ -7585,35 +7599,7 @@ func _post_craft_success(recipe: Dictionary, out: Dictionary) -> void:
 	if (str(out.get("type", "")) == "weapon_bow" or str(out.get("name", "")) in ["Arco de madera", "Arco reforzado"]) and _find_free_back_slot() >= 0:
 		_store_inventory_item_type_on_back("weapon_bow", "el arco")
 	inventory.changed.emit()
-	# Determine animation and duration based on recipe type
-	var craft_anim := "forage"
-	var craft_duration := 2.0
-	var out_name := str(out["name"])
-	if out_name.find("abierta") >= 0:
-		craft_anim = "plant"
-		craft_duration = 1.5
-		notice.emit("Abriendo lata con cuchillo...")
-	else:
-		notice.emit("Has crafteado: %s." % out_name)
-	# Play crafting animation
-	play_action_animation(craft_anim, craft_duration)
-	# Show countdown via parent HUD
-	var parent_node := get_parent()
-	if parent_node != null and parent_node.has_node("HUD"):
-		var hud_node := parent_node.get_node("HUD")
-		if hud_node != null and hud_node.has_method("show_countdown"):
-			hud_node.show_countdown("Abriendo lata" if craft_anim == "plant" else "Crafteando", craft_duration)
-	if craft_anim == "plant":
-		if not await _await_local_action(craft_duration):
-			return
-		notice.emit("Has abierto la lata. Ya puedes comerla.")
-		for _it in inventory.items:
-			if _it != null and _it.has_method("is_broken") and _it.is_broken():
-				if _it.item_name == "Cuchillo":
-					notice.emit("Tu Cuchillo se ha roto!")
-				elif _it.item_name == "Hacha":
-					notice.emit("Tu Hacha se ha roto!")
-				break
+	notice.emit("Has crafteado: %s." % out["name"])
 
 func _toggle_sit(silent := false) -> void:
 	var has_rifle := _has_rifle_equipped()
