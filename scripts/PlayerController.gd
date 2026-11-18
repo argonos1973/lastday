@@ -7137,7 +7137,9 @@ func _play_hit_reaction(play_impact_sound: bool = true, force: bool = false) -> 
 	# Route through the action-anim slot so the clip also travels in
 	# sync_player_state — remote puppets see the victim flinch too.
 	third_person_action_animation = third_person_hit_animation
-	third_person_action_timer = 0.22
+	# Head Hit peaks around 0.35 s. Ending a forced reaction at 0.22 s
+	# blended back to running before the actual flinch became visible.
+	third_person_action_timer = 0.55 if force else 0.22
 	third_person_action_start_offset = 0.0
 	third_person_animation_player.speed_scale = 1.0
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
@@ -11703,19 +11705,19 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 	character.position = character.position.lerp(Vector3(0.0, target_y, 0.0), delta * 10.0)
 	character.rotation_degrees = character.rotation_degrees.lerp(base_rotation + Vector3(0.0, 0.0, sway), delta * 9.0)
 	if third_person_animation_player != null:
-		if climbing_ladder and not third_person_ladder_animation.is_empty():
+		if climbing_ladder and not _forced_hit_reaction_active() and not third_person_ladder_animation.is_empty():
 			if third_person_animation_player.current_animation != third_person_ladder_animation:
 				third_person_animation_player.play(third_person_ladder_animation, 0.12)
 			_loop_third_person_animation(third_person_ladder_animation)
 			third_person_animation_player.speed_scale = 1.15 if moving else 0.0
 			return
-		if is_jumping and not third_person_jump_animation.is_empty():
+		if is_jumping and not _forced_hit_reaction_active() and not third_person_jump_animation.is_empty():
 			_jump_animation_timer = max(0.0, _jump_animation_timer - delta)
 			if third_person_animation_player.current_animation != third_person_jump_animation:
 				third_person_animation_player.play(third_person_jump_animation, 0.1)
 			third_person_animation_player.speed_scale = 1.0
 			return
-		if _is_falling_from_height and not is_jumping and not third_person_jump_down_animation.is_empty():
+		if _is_falling_from_height and not is_jumping and not _forced_hit_reaction_active() and not third_person_jump_down_animation.is_empty():
 			var fall_dist := _max_fall_height - global_position.y
 			if fall_dist > 0.2:
 				if third_person_animation_player.current_animation != third_person_jump_down_animation:
@@ -16235,7 +16237,13 @@ func _play_damage_audio(cause: String) -> void:
 		_play_shot_received_sound()
 		return
 	if cause.ends_with("_bite"):
+		# A confirmed bite must carry both the teeth impact and the victim's
+		# voice, even during the generic fall/shot pain cooldown. Deduplicate
+		# the reliable presentation event together with its damage event.
+		if Time.get_ticks_msec() - _last_bite_audio_msec < 100:
+			return
 		_play_animal_bite_sound(cause)
+		_pain_sound_timer = 0.0
 	_play_pain_sound()
 
 func _play_animal_bite_sound(cause: String = "wolf_bite") -> void:

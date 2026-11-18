@@ -4,6 +4,8 @@ class_name WildlifeController
 const WildlifeAudio = preload("res://scripts/WildlifeAudio.gd")
 
 const BEAR_ATTACK_DURATION := 37.0 / 30.0
+const WOLF_ATTACK_DURATION := 38.0 / 30.0
+const PLAYER_BITE_CONTACT_TIME := 0.45
 
 var patrol_points: Array = []
 var target_index := 0
@@ -27,6 +29,8 @@ var _debug_timer := 0.0
 var _attack_timer := 0.0
 var _attack_cooldown := 0.0
 var _bite_anim_timer := 0.0
+var _player_bite_target: Node3D = null
+var _player_bite_pending := false
 var _stagger_timer := 0.0
 var _stagger_dir := Vector3.ZERO
 var _animal_bite_target: Node3D = null
@@ -322,7 +326,7 @@ func _take_damage_impl(amount: float, from_knife: bool, attacker: Node = null) -
 				_stagger_dir = away_hit
 				_stagger_timer = 0.65 if animal_type == "bear" else 0.90
 				_attack_cooldown = maxf(_attack_cooldown, 1.35 if animal_type == "bear" else 1.55)
-				_bite_anim_timer = 0.0
+				_cancel_player_bite()
 		if animal_type == "bear":
 			# Bears do not flee when shot: they roar and charge the attacker.
 			_prey_flee_timer = 0.0
@@ -578,8 +582,7 @@ func _process_body(delta: float) -> void:
 			if not _puppet_combat_active and delta > 0.0001 and _network_motion.samples.size() > 1:
 				var puppet_moved_xz := Vector2(global_position.x - prev_puppet_pos.x, global_position.z - prev_puppet_pos.z).length()
 				var vis_spd := puppet_moved_xz / delta
-				if vis_spd > 0.65 and _puppet_attack_timer <= 0.18:
-					_puppet_attack_timer = 0.0
+				if vis_spd > 0.65 and _puppet_attack_timer <= 0.0:
 					var loco_clip := _puppet_locomotion_gait(vis_spd)
 					_play_animation_by_name(loco_clip)
 					_update_animation_speed(vis_spd)
@@ -1010,6 +1013,10 @@ func _retreat_from_player() -> Dictionary:
 func _wolf_ai(delta: float) -> Dictionary:
 	if _is_dead:
 		return {"target": global_position, "speed": 0.0}
+	if is_instance_valid(_player_bite_target):
+		return _continue_player_bite(delta)
+	_player_bite_target = null
+	_player_bite_pending = false
 	# Suelta la reclamación si el cebo desapareció o el lobo ya va a por otra
 	# cosa: así otro animal puede tomar la pieza enseguida.
 	if _claimed_meat != null and (not is_instance_valid(_claimed_meat) or _claimed_meat.get("depleted") or (_state != "seek_corpse" and _state != "eating")):
@@ -1347,63 +1354,18 @@ func _wolf_ai(delta: float) -> Dictionary:
 				speed = move_speed * (4.2 if animal_type == "bear" else 4.0)
 			if flat_dist <= 4.0 and height_diff < 1.8:
 				if _attack_cooldown <= 0.0:
+					# Approach first: the old four-metre damage radius could
+					# hurt the victim while this same branch chose "run".
+					if flat_dist > _player_bite_reach():
+						_play_animation_by_name("run")
+						return {"target": _player.global_position, "speed": move_speed * 1.5}
 					_attack_cooldown = 2.5
-					_bite_anim_timer = BEAR_ATTACK_DURATION if animal_type == "bear" else 0.52
+					_bite_anim_timer = _predator_attack_duration()
+					_player_bite_target = _player
+					_player_bite_pending = true
 					_attack_timer = randf_range(5.0, 10.0)
-					if _player.is_in_group("net_player_proxy"):
-						var peer_id: int = _player.get_meta("peer_id", 0)
-						var is_disconnected: bool = _player.get_meta("disconnected", false)
-						var is_ai_bot: bool = _player.get_meta("is_ai_bot", false)
-						var is_proxy_dead: bool = _player.get_meta("proxy_dead", false)
-						if is_proxy_dead:
-							pass
-						elif is_ai_bot and peer_id != 0:
-							var scene_bot := get_tree().current_scene
-							if scene_bot != null and scene_bot.get("survivor_bot_mgr") != null:
-								scene_bot.survivor_bot_mgr.on_bot_damaged(peer_id, _predator_player_damage(), 0, "%s_bite" % animal_type)
-						elif is_disconnected and peer_id != 0:
-							var hp: float = _player.get_meta("proxy_health", 100.0)
-							hp = max(0.0, hp - _predator_player_damage())
-							_player.set_meta("proxy_health", hp)
-							# saved_health is what a reconnect restores — server-
-							# applied damage must land there too.
-							_player.set_meta("saved_health", hp)
-							# La herida sangrante sobrevive a la reconexión en
-							# stats_extra: vuelven sangrando si no se vendan.
-							var ex: Dictionary = _player.get_meta("saved_extra", {}).duplicate(true)
-							var st: Dictionary = ex.get("stats_extra", {})
-							st["bleeding"] = minf(5.0, float(st.get("bleeding", 0.0)) + (1.5 if animal_type == "bear" else 1.0))
-							ex["stats_extra"] = st
-							_player.set_meta("saved_extra", ex)
-							if hp <= 0.0:
-								_player.set_meta("proxy_dead", true)
-								_player.remove_from_group("net_player_proxy")
-								_player.add_to_group("interactable")
-								var scene_node := get_tree().current_scene
-								# The dead character's gear must reach the
-								# ground — without the drop it would vanish
-								# silently inside the dead record.
-								if scene_node != null and scene_node.has_method("_drop_player_loot"):
-									scene_node._drop_player_loot(peer_id, _player)
-								if scene_node != null and scene_node.has_method("_broadcast_player_death"):
-									scene_node._broadcast_player_death(peer_id, _player)
-						elif peer_id != 0:
-							var net_node := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-							if net_node != null and net_node.players.has(peer_id):
-								var bite_kind := "%s_bite" % animal_type
-								net_node.apply_damage_to_client.rpc_id(peer_id, _predator_player_damage(), bite_kind)
-								net_node._broadcast_player_hit(peer_id, bite_kind, _player.global_position)
-					elif _player.has_method("apply_damage"):
-						_player.apply_damage(_predator_player_damage(), "%s_bite" % animal_type)
-						if _player.has_method("_play_hit_reaction"):
-							# force=true: el zarpazo se ve aunque el jugador
-							# este corriendo (el caso natural al ser atacado).
-							_player._play_hit_reaction(false, true)
-						var local_net := get_tree().current_scene.get_node_or_null("/root/NetworkManager")
-						if local_net != null and local_net.is_host:
-							local_net._broadcast_player_hit(local_net.get_my_id(), "%s_bite" % animal_type, _player.global_position)
-					if animal_type == "wolf" or animal_type == "bear":
-						_play_wolf_sound("attack")
+					_play_wolf_sound("attack")
+					return _continue_player_bite(delta)
 				var away_dir := (global_position - _player.global_position).normalized()
 				away_dir.y = 0.0
 				if away_dir.length_squared() < 0.0001:
@@ -1666,6 +1628,79 @@ func _find_nearest_prey() -> Node3D:
 
 func _predator_player_damage() -> float:
 	return 35.0 if animal_type == "bear" else 25.0
+
+func _predator_attack_duration() -> float:
+	return BEAR_ATTACK_DURATION if animal_type == "bear" else WOLF_ATTACK_DURATION
+
+func _player_bite_reach() -> float:
+	return 2.9 if animal_type == "bear" else 2.6
+
+func _cancel_player_bite() -> void:
+	_player_bite_target = null
+	_player_bite_pending = false
+	_bite_anim_timer = 0.0
+
+func _continue_player_bite(delta: float) -> Dictionary:
+	var victim := _player_bite_target
+	_face_towards(victim.global_position, minf(delta * 7.0, 1.0))
+	_play_animation_by_name("attack")
+	# The damaging contact belongs to the jaw snap, after the visible wind-up.
+	# Recheck the original victim: escaping, cover, death and spawn protection
+	# can all invalidate a strike during that wind-up.
+	if _player_bite_pending and _predator_attack_duration() - _bite_anim_timer >= PLAYER_BITE_CONTACT_TIME:
+		_player_bite_pending = false
+		var offset := victim.global_position - global_position
+		var flat := Vector3(offset.x, 0.0, offset.z)
+		var facing := flat.length_squared() < 0.01 or global_basis.z.dot(flat.normalized()) > 0.45
+		var scene := get_tree().current_scene
+		var protected: bool = victim.get_meta("proxy_dead", false) or victim.get("is_dead") == true or victim.get_meta("protection_timer", 0.0) > 0.0 or victim.get_meta("in_built_shelter", false)
+		if not protected and scene != null and scene.has_method("_is_pos_wolf_protected"):
+			protected = scene._is_pos_wolf_protected(victim.global_position)
+		if not protected:
+			protected = _is_near_lit_campfire(victim.global_position, 10.0)
+		if not protected and facing and flat.length() <= _player_bite_reach() and absf(offset.y) < 1.8 and _animal_bite_clear(victim.global_position, victim):
+			_apply_player_bite(victim)
+	if _bite_anim_timer <= 0.0:
+		_cancel_player_bite()
+	return {"target": global_position, "speed": 0.0}
+
+func _apply_player_bite(victim: Node3D) -> void:
+	var kind := "%s_bite" % animal_type
+	var scene := get_tree().current_scene
+	var net_node := get_node_or_null("/root/NetworkManager")
+	if victim.is_in_group("net_player_proxy"):
+		var peer_id: int = victim.get_meta("peer_id", 0)
+		if peer_id == 0 or victim.get_meta("proxy_dead", false):
+			return
+		if victim.get_meta("is_ai_bot", false):
+			if scene != null and scene.get("survivor_bot_mgr") != null:
+				scene.survivor_bot_mgr.on_bot_damaged(peer_id, _predator_player_damage(), 0, kind)
+		elif victim.get_meta("disconnected", false):
+			var hp := maxf(0.0, float(victim.get_meta("proxy_health", 100.0)) - _predator_player_damage())
+			victim.set_meta("proxy_health", hp)
+			victim.set_meta("saved_health", hp)
+			var extra: Dictionary = victim.get_meta("saved_extra", {}).duplicate(true)
+			var stats_extra: Dictionary = extra.get("stats_extra", {})
+			stats_extra["bleeding"] = minf(5.0, float(stats_extra.get("bleeding", 0.0)) + (1.5 if animal_type == "bear" else 1.0))
+			extra["stats_extra"] = stats_extra
+			victim.set_meta("saved_extra", extra)
+			if hp <= 0.0:
+				victim.set_meta("proxy_dead", true)
+				victim.remove_from_group("net_player_proxy")
+				victim.add_to_group("interactable")
+				if scene != null and scene.has_method("_drop_player_loot"):
+					scene._drop_player_loot(peer_id, victim)
+				if scene != null and scene.has_method("_broadcast_player_death"):
+					scene._broadcast_player_death(peer_id, victim)
+		elif net_node != null and net_node.players.has(peer_id):
+			net_node.apply_damage_to_client.rpc_id(peer_id, _predator_player_damage(), kind)
+			net_node._broadcast_player_hit(peer_id, kind, victim.global_position)
+	elif victim.has_method("apply_damage"):
+		victim.apply_damage(_predator_player_damage(), kind)
+		if victim.has_method("_play_hit_reaction"):
+			victim._play_hit_reaction(false, true)
+		if net_node != null and net_node.is_host:
+			net_node._broadcast_player_hit(net_node.get_my_id(), kind, victim.global_position)
 
 func _effective_player_sight_range(p: Node3D) -> float:
 	# Predators should react at a readable distance, not acquire a player from
@@ -2937,9 +2972,11 @@ func _fight_animal(foe: Node3D, delta: float, reach_override := 0.0) -> Dictiona
 	_play_animation_by_name("threaten" if close else "run")
 	return {"target": target, "speed": 0.0 if close else move_speed * 3.4}
 
-func _animal_bite_clear(target: Vector3) -> bool:
+func _animal_bite_clear(target: Vector3, victim: Node3D = null) -> bool:
 	var query := PhysicsRayQueryParameters3D.create(global_position + Vector3.UP * 0.7, target + Vector3.UP * 0.7, 5)
 	query.collide_with_areas = false
+	if victim is CollisionObject3D:
+		query.exclude = [victim.get_rid()]
 	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 
 func _tamed_ai(delta: float) -> Dictionary:
@@ -3303,6 +3340,7 @@ func _set_wolf_foe(foe: Node3D, duration: float = 20.0) -> void:
 	_foe_engaged = 0.0
 	_foe_hits = 0
 	_animal_bite_target = null
+	_cancel_player_bite()
 	if _foe_ignored == foe:
 		_foe_ignored = null
 
@@ -3446,6 +3484,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 		_whistle_aggro_until = 0
 		_orders_cease = true
 		_animal_bite_target = null
+		_cancel_player_bite()
 		_wolf_foe = null
 		_ordered_prey = null
 		_threat_player = null
@@ -3464,6 +3503,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 		_menu_hold_until = 0
 		_orders_cease = false
 		_animal_bite_target = null
+		_cancel_player_bite()
 		_wolf_foe = null
 		_ordered_prey = null
 		_threat_player = null
@@ -3509,6 +3549,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 			return
 		_animal_bite_target = null
 		_foe_ignored = null
+		_cancel_player_bite()
 		_chase_cooldown = 0.0
 		_prey_flee_timer = 0.0
 		_orders_cease = false
@@ -3517,6 +3558,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 	if mode == "cease":
 		_orders_cease = true
 		_animal_bite_target = null
+		_cancel_player_bite()
 		_wolf_foe = null
 		_ordered_prey = null
 		_threat_player = null
@@ -3532,6 +3574,7 @@ func apply_command(mode: String, target: Node = null) -> void:
 	# A movement order cancels the previous hunt/attack and re-enables normal defence.
 	_orders_cease = false
 	_animal_bite_target = null
+	_cancel_player_bite()
 	_wolf_foe = null
 	_ordered_prey = null
 	_threat_player = null
@@ -4097,10 +4140,8 @@ func _play_wolf_sound(sound_type: String) -> void:
 		return
 	if is_puppet and not _is_dead and (sound_type == "attack" or sound_type == "bite"):
 		var start_strike := _puppet_attack_timer <= 0.0
-		if animal_type != "bear":
-			_puppet_attack_timer = 0.52
-		elif start_strike:
-			_puppet_attack_timer = BEAR_ATTACK_DURATION
+		if start_strike:
+			_puppet_attack_timer = _predator_attack_duration()
 		_puppet_bite_cooldown = 1.65
 		_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
 		_play_animation_by_name("attack")
