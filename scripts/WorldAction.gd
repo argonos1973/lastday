@@ -17,7 +17,15 @@ var _rot_timer := 0.0
 
 var _mesh_instance: MeshInstance3D
 var _collision: CollisionShape3D
+var _marker_size := Vector3.ONE
+var _marker_color := Color.WHITE
 var _visual_children: Array[Node] = []
+
+const TICK_GROUP := &"ticking_world_actions"
+const TREE_GROUP := &"fell_tree_actions"
+const TICK_TYPES := ["farm_plot", "wolf_meat_raw", "deer_meat_raw", "fox_meat_raw", "bird_meat_raw"]
+static var _box_shapes: Dictionary = {}
+const BOX_SHAPE_CACHE_LIMIT := 128
 
 static var _interaction_cells: Dictionary = {}
 static var _wide_interactions: Dictionary = {}
@@ -39,6 +47,10 @@ func _notification(what: int) -> void:
 func _update_interaction_index() -> void:
 	if not is_inside_tree():
 		return
+	# Type changes and tree entry both refresh the small service groups. Most
+	# pickups never grow/rot, so the world need not visit every item to find these.
+	_update_service_group(TICK_GROUP, action_type in TICK_TYPES)
+	_update_service_group(TREE_GROUP, action_type == "fell_tree")
 	if action_type == "wolf_meat_raw" or has_meta("wolf_food"):
 		add_to_group("wolf_meat_pickups")
 	elif is_in_group("wolf_meat_pickups"):
@@ -60,6 +72,12 @@ func _update_interaction_index() -> void:
 	else:
 		return
 	_interaction_indexed = true
+
+func _update_service_group(group: StringName, active: bool) -> void:
+	if active and not is_in_group(group):
+		add_to_group(group)
+	elif not active and is_in_group(group):
+		remove_from_group(group)
 
 func _remove_interaction_index() -> void:
 	if not _interaction_indexed:
@@ -394,23 +412,36 @@ func from_dict(data: Dictionary) -> void:
 		_update_crop_visual()
 
 func _make_box(size: Vector3, color: Color) -> void:
-	_mesh_instance = MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	_mesh_instance.mesh = box
-	_mesh_instance.position.y = size.y * 0.5
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.95
-	_mesh_instance.material_override = material
-	add_child(_mesh_instance)
-
+	_marker_size = size
+	_marker_color = color
 	_collision = CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = size
+	# Shapes are immutable after setup. Each action keeps its own collider and
+	# enabled state; identical dimensions share the geometry/physics resource.
+	var shape: BoxShape3D = _box_shapes.get(size)
+	if shape == null:
+		shape = BoxShape3D.new()
+		shape.size = size
+		if _box_shapes.size() < BOX_SHAPE_CACHE_LIMIT:
+			_box_shapes[size] = shape
 	_collision.shape = shape
 	_collision.position.y = size.y * 0.5
 	add_child(_collision)
+
+func _ensure_marker_mesh() -> void:
+	if is_instance_valid(_mesh_instance):
+		return
+	# Only the missing-farm-asset fallback uses this box. Interaction reach and
+	# raycasts use the collision above, independent of a rendered mesh.
+	_mesh_instance = MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = _marker_size
+	_mesh_instance.mesh = box
+	_mesh_instance.position.y = _marker_size.y * 0.5
+	var material := StandardMaterial3D.new()
+	material.albedo_color = _marker_color
+	material.roughness = 0.95
+	_mesh_instance.material_override = material
+	add_child(_mesh_instance)
 
 const FARM_BED_MODEL := "res://assets/models/props/farming/farm_plot.glb"
 
@@ -418,8 +449,7 @@ func _update_crop_visual() -> void:
 	if action_type != "farm_plot":
 		return
 	_clear_visual_children()
-	# The procedural box stays hidden — it only carries the interaction
-	# collision. The tilled soil bed comes from the Blender model.
+	# The tilled soil bed comes from Blender; hide any old fallback marker.
 	if _mesh_instance != null:
 		_mesh_instance.visible = false
 	_add_farm_bed()
@@ -435,8 +465,8 @@ func _update_crop_visual() -> void:
 
 func _add_farm_bed() -> void:
 	if not ResourceLoader.exists(FARM_BED_MODEL):
-		if _mesh_instance != null:
-			_mesh_instance.visible = true
+		_ensure_marker_mesh()
+		_mesh_instance.visible = true
 		return
 	var scene := load(FARM_BED_MODEL) as PackedScene
 	if scene == null:

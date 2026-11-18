@@ -132,7 +132,7 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 	if not _has_fell_tree:
 		if _fell_tree_cache_timer < 0 or now >= _fell_tree_cache_timer:
 			_fell_tree_cache_timer = now + 500
-			_cached_fell_trees = player.get_tree().get_nodes_in_group("world_actions").filter(func(n): return n is WorldAction and (n as WorldAction).action_type == "fell_tree")
+			_cached_fell_trees = player.get_tree().get_nodes_in_group(WorldAction.TREE_GROUP)
 		candidates.append_array(_cached_fell_trees)
 	candidates.append_array(_cached_interactables)
 	candidates = candidates.filter(func(node): return is_instance_valid(node) and node.is_inside_tree() and node.is_in_group("interactable"))

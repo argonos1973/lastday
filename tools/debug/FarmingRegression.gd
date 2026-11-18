@@ -70,7 +70,7 @@ func run() -> void:
 	action.growth = 0.0
 	action._update_crop_visual()
 	check(live_bed.call() != null, "plot shows the Blender tilled bed")
-	check(action._mesh_instance != null and not action._mesh_instance.visible, "procedural marker box stays hidden")
+	check(action._mesh_instance == null, "Blender farm bed needs no hidden marker mesh")
 	var early_plants: Array = live_plants.call()
 	check(early_plants.size() == 9 and String(early_plants[0].scene_file_path).ends_with("crop_stage_0.glb"), "early growth shows a sprout row on each ridge")
 	var planting_transforms: Array[Transform3D] = []

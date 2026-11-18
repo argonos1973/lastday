@@ -1732,8 +1732,8 @@ func _tick_world_actions(delta: float) -> void:
 	# dedicated server has no weather feed (hud == null) and stays at 1.0 —
 	# crop growth is client-driven anyway (harvest is initiated locally).
 	var rain_rate := GameConst.CROP_MOIST_GROWTH if float(_weather_target.get("rain", 0.0)) > GameConst.CROP_RAIN_MIN else 1.0
-	for action in world_actions_by_id.values():
-		if action != null and action.has_method("tick_growth"):
+	for action in get_tree().get_nodes_in_group(WorldActionScript.TICK_GROUP):
+		if not action.is_queued_for_deletion() and world_actions_by_id.get(action.action_id) == action:
 			if action.action_type == "farm_plot":
 				var _crop_prev_state: String = action.action_state
 				action.tick_growth(delta, rain_rate)
@@ -19382,13 +19382,25 @@ static func forest_visibility_radii(detail: float, player_y: float) -> Vector2:
 		FOREST_MM_VISIBLE_RADIUS * detail + vis_bonus,
 		FOREST_MM_HIDE_RADIUS * detail + vis_bonus)
 
+var _forest_visibility_focus := Vector3.INF
+var _forest_visibility_detail := -1.0
+var _forest_visibility_quality := -1
+var _forest_visibility_count := -1
+
 func _update_forest_visibility() -> void:
 	if _forest_multimesh_nodes.is_empty():
 		return
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
-	var radii := forest_visibility_radii(GraphicsSettings.detail_factor(), ppos.y)
+	var detail := GraphicsSettings.detail_factor()
+	if ppos == _forest_visibility_focus and detail == _forest_visibility_detail and _shadow_quality == _forest_visibility_quality and _forest_multimesh_nodes.size() == _forest_visibility_count:
+		return
+	_forest_visibility_focus = ppos
+	_forest_visibility_detail = detail
+	_forest_visibility_quality = _shadow_quality
+	_forest_visibility_count = _forest_multimesh_nodes.size()
+	var radii := forest_visibility_radii(detail, ppos.y)
 	var hide_base := radii.y
 	var show_base := radii.x
 	var shadow_radius: float = ShadowQuality.PRESETS[_shadow_quality].forest
@@ -20244,6 +20256,10 @@ var _grass_batch_lod: Array = []
 var _tall_grass_imposter: ArrayMesh = null
 var _grass_far_meshes: Dictionary = {}
 
+var _grass_visibility_focus := Vector2.INF
+var _grass_visibility_detail := -1.0
+var _grass_visibility_count := -1
+
 func _update_grass_visibility() -> void:
 	if _grass_batch_nodes.is_empty():
 		return
@@ -20251,6 +20267,14 @@ func _update_grass_visibility() -> void:
 		return
 	var ppos: Vector3 = player.global_position
 	var detail := GraphicsSettings.detail_factor()
+	var focus := Vector2(ppos.x, ppos.z)
+	# Looking around does not change distance-based visibility or mesh LOD.
+	# Batch count catches creation during loading; detail changes apply live.
+	if focus == _grass_visibility_focus and detail == _grass_visibility_detail and _grass_batch_nodes.size() == _grass_visibility_count:
+		return
+	_grass_visibility_focus = focus
+	_grass_visibility_detail = detail
+	_grass_visibility_count = _grass_batch_nodes.size()
 	var hide_base := GRASS_HIDE_RADIUS * detail
 	var show_base := GRASS_VISIBLE_RADIUS * detail
 	var any_visible := false
@@ -20264,7 +20288,7 @@ func _update_grass_visibility() -> void:
 		var should_show: bool = dist < ((hide_base if node.visible else show_base) + batch_radius)
 		if node.visible != should_show:
 			node.visible = should_show
-		var lod: Array = _grass_batch_lod[i] if i < _grass_batch_lod.size() else null
+		var lod = _grass_batch_lod[i] if i < _grass_batch_lod.size() else null
 		if lod != null:
 			var want: Mesh = lod[0] if dist < (float(lod[2]) * detail) + batch_radius else lod[1]
 			if node.multimesh.mesh != want:
