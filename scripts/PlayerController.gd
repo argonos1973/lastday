@@ -13858,7 +13858,7 @@ func apply_damage(amount: float, cause: String = "") -> void:
 	# Una flecha solo mata si se clava en la cabeza (cause == "arco_head"):
 	# fuera de la cabeza deja como minimo 1 HP.
 	var nonlethal_arrow := cause in ["arco", "arco_madera", "arrow", "flecha"]
-	var min_hp := 1.0 if (nonlethal_arrow and stats.health > 0.0) else 0.0
+	var min_hp := minf(1.0, stats.health) if (nonlethal_arrow and stats.health > 0.0) else 0.0
 	stats.health = max(min_hp, stats.health - amount)
 	if cause == "melee" or cause.ends_with("_bite") or cause in ["rifle", "m4", "arco", "arco_head", "lanza", "bola"]:
 		is_sitting = false

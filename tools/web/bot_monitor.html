@@ -595,11 +595,12 @@ function renderMap(data) {
   for (const l of (data.landmarks || [])) {
     ext = Math.max(ext, Math.abs(l.pos[0]), Math.abs(l.pos[2]));
   }
+  const actors = [];
   for (const pl of (data.players || [])) {
     ext = Math.max(ext, Math.abs(pl.pos[0]), Math.abs(pl.pos[2]));
+    if (!pl.dead && !pl.offline) actors.push([pl.pos[0], pl.pos[2]]);
   }
   const isBotDead = b => !!(b && (b.dead || String(b.anim || "").startsWith("dead") || b.act === "dead" || Number(b.hp ?? b.health ?? 100) <= 0));
-  const actors = [];
   for (const b of (data.bots || [])) {
     if (isBotDead(b)) continue;
     if (b.pos) { ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2])); actors.push([b.pos[0], b.pos[2]]); }

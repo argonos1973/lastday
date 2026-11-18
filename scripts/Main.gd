@@ -4900,7 +4900,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		return
 	var prev_hp: float = proxy.get_meta("proxy_health", 100.0)
 	var nonlethal_arrow := weapon in ["arco", "arco_madera", "arrow", "flecha"]
-	var min_hp := 1.0 if (nonlethal_arrow and prev_hp > 0.0) else 0.0
+	var min_hp := minf(1.0, prev_hp) if (nonlethal_arrow and prev_hp > 0.0) else 0.0
 	var hp: float = maxf(min_hp, prev_hp - amount)
 	var client_amount := maxf(0.0, prev_hp - hp) if nonlethal_arrow else amount
 	# Los bots que presencian la herida la recuerdan (unica via honesta de

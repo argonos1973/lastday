@@ -41,3 +41,24 @@ assert.deepEqual(mvCtx.autoMapView(800, []).halfSpan, 800 * 1.08, 'sin actores e
 for (const s of ['"wheel"', '"pointerdown"', '"pointermove"', '"dblclick"', 'botMapView', 'botMapAuto', 'mapAutoChk', 'mapZoomIn', 'mapFit'])
   assert(html.includes(s), 'map control present: ' + s);
 console.log('BotMonitorMapRegression errors=0');
+
+// Exercise the full renderer: autoMapView alone cannot catch omitted actors.
+const mapSource = html.slice(html.indexOf('const MAP_MIN_SPAN'), html.indexOf('const CHAT_KIND'));
+const canvasContext = new Proxy({}, {get:(obj,key)=>obj[key] || (()=>{}), set:(obj,key,val)=>(obj[key]=val,true)});
+const canvas = {width:400,height:360,clientWidth:400,getContext:()=>canvasContext};
+const mapContext = {Math, JSON, Number, String, isFinite, BOT_COLORS:{},
+ localStorage:{getItem:()=>null,setItem:()=>{}},
+ document:{getElementById:id=>id==='mapCanvas' ? canvas : {}}};
+vm.createContext(mapContext);vm.runInContext(mapSource,mapContext);
+const aliveBot = {bot_id:901,name:'Bot',hp:100,pos:[10,0,20]};
+const human = {id:2,name:'Jugador',pos:[800,0,700]};
+mapContext.renderMap({bots:[aliveBot],players:[human]});
+assert(vm.runInContext('mapView.cx > 300 && mapView.cz > 300',mapContext), 'auto focus includes a distant online human, not only bots');
+mapContext.renderMap({bots:[],players:[human]});
+assert.equal(vm.runInContext('mapView.cx',mapContext),800,'a lone human is also centered');
+mapContext.renderMap({bots:[aliveBot],players:[{...human,offline:true},{...human,id:3,dead:true}]});
+assert.equal(vm.runInContext('mapView.cx',mapContext),10,'disconnected bodies and corpses do not pull auto focus');
+vm.runInContext('mapAuto=false;mapView={cx:123,cz:456,halfSpan:80}',mapContext);
+mapContext.renderMap({bots:[aliveBot],players:[human]});
+assert.equal(vm.runInContext('mapView.cx',mapContext),123,'polling preserves manual pan/zoom');
+console.log('BotMonitorActorFramingRegression errors=0');

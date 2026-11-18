@@ -149,6 +149,10 @@ func run() -> void:
 	pc_bite.apply_damage(55.0, "arco")
 	check(is_equal_approx(pc_bite.stats.health, 1.0) and not pc_bite.is_dead,
 		"segunda flecha en el cuerpo tampoco mata (hp=%.1f)" % pc_bite.stats.health)
+	pc_bite.stats.health = 0.25
+	pc_bite.apply_damage(55.0, "arco")
+	check(is_equal_approx(pc_bite.stats.health, 0.25) and not pc_bite.is_dead,
+		"flecha corporal no cura al jugador con menos de 1 HP")
 	pc_bite.apply_damage(120.0, "arco_head")
 	check(is_equal_approx(pc_bite.stats.health, 0.0),
 		"flecha en la cabeza (arco_head) sí reduce salud a 0 (hp=%.1f)" % pc_bite.stats.health)

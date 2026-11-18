@@ -2542,8 +2542,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["_act"] = "return_home"
 			b["sitting"] = false
 			b["crouching"] = false
-			var home_run := d_home > 30.0 and _bot_explore_wants_run(b, d_home)
-			_move_bot_towards(b, home_spot, 5.5 if home_run else 3.6, delta, "run" if home_run else "walk")
+			_move_bot_travel(b, home_spot, d_home, 3.6, 5.5, delta)
 			return
 		# En casa: sentado junto a su refugio, recuperando algo de vida como
 		# en el descanso de wants_camp. El lobo domestico recibe 'stay' por
@@ -2576,8 +2575,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["_act"] = "settle"
 				b["sitting"] = false
 				b["crouching"] = false
-				var settle_run := _bot_explore_wants_run(b, d_settle)
-				_move_bot_towards(b, settle_pos, 6.0 if settle_run else 3.6, delta, "run" if settle_run else "walk")
+				_move_bot_travel(b, settle_pos, d_settle, 3.6, 6.0, delta)
 				return
 
 	# 7) Exploracion como un jugador real: viaja por puntos de interes (casas,
@@ -2638,20 +2636,31 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["held_item"] = move_item
 	b["has_rifle"] = move_item == "Fusil de asalto" or move_item == "Rifle francotirador"
 	proxy.set_meta("saved_held_item", move_item)
-	var run_leg := _bot_explore_wants_run(b, flat_t)
+	_move_bot_travel(b, cur_target, flat_t, 3.5, 6.2, delta)
+
+# Los tres tipos de viaje conservan el estado de carrera. Antes solo lo
+# guardaba explorar: volver a casa alternaba run/walk alrededor de 55 energia.
+func _move_bot_travel(b: Dictionary, goal: Vector3, dist: float, walk_speed: float, run_speed: float, delta: float) -> void:
+	var previous_goal: Variant = b.get("_travel_gait_goal")
+	if not (previous_goal is Vector3) or (previous_goal as Vector3).distance_squared_to(goal) > 25.0:
+		b["_expl_run"] = false
+	b["_travel_gait_goal"] = goal
+	var run_leg := _bot_explore_wants_run(b, dist)
 	b["_expl_run"] = run_leg
-	_move_bot_towards(b, cur_target, 6.2 if run_leg else 3.5, delta, "run" if run_leg else "walk")
+	_move_bot_towards(b, goal, run_speed if run_leg else walk_speed, delta, "run" if run_leg else "walk")
 
 # Trote como un jugador: destinos lejanos y energia de sobra corren; al
 # acercarse, cansado o helado vuelve a caminar. La histeresis por tramo
 # (entra a >30 m/55 en., sale a <16 m/32 en.) evita aletear walk/run.
 func _bot_explore_wants_run(b: Dictionary, dist: float) -> bool:
+	if bool(b.get("_stamina_recover", false)):
+		return false
 	var en := _bot_energy(b)
 	var hunger := float(b.get("hunger", 100.0))
 	var thirst := float(b.get("thirst", 100.0))
 	if bool(b.get("_expl_run", false)):
 		return dist >= 16.0 and en >= 32.0 and hunger >= 28.0 and thirst >= 24.0 and not _bot_is_freezing(b)
-	return dist > 30.0 and en >= 55.0 and hunger >= 48.0 and thirst >= 38.0 and not _bot_is_freezing(b) and not bool(b.get("_stamina_recover", false))
+	return dist > 30.0 and en >= 55.0 and hunger >= 48.0 and thirst >= 38.0 and not _bot_is_freezing(b)
 
 # Puntos de interes del mundo: lo mismo que un jugador iria a saquear.
 func _explore_pois() -> Array:
@@ -11519,11 +11528,13 @@ func _wall_between(a: Vector3, bpt: Vector3) -> bool:
 		var la := (Vector3(pa.x, 0.0, pa.y) - origin).rotated(Vector3.UP, -yaw)
 		var lb := (Vector3(pb.x, 0.0, pb.y) - origin).rotated(Vector3.UP, -yaw)
 		var rect := Rect2(-fp.x - 0.3, -fp.y - 0.3, fp.x * 2.0 + 0.6, fp.y * 2.0 + 0.6)
-		# Puerta siempre en la fachada +z local (edge 2); city_17 la desplaza.
-		var dlx := 0.15
-		if def.get("door_position") is Vector3:
-			dlx = float((def["door_position"] as Vector3).x)
-		if _seg2d_crosses_rect_wall(Vector2(la.x, la.z), Vector2(lb.x, lb.z), rect, [{"edge": 2, "at": dlx, "half": 1.45}]):
+		# Door.position es la BISAGRA; la hoja se extiende hacia +x local.
+		# Usar la bisagra como centro bloqueaba el vano del bloque alto y
+		# consideraba transitable parte del muro contiguo.
+		var hinge: Vector3 = def.get("door_position", Vector3(-0.85, 0.12, 6.08))
+		var door_size: Vector3 = def.get("door_size", Vector3(1.7, 2.8, 0.12))
+		var gap := {"edge": 2, "at": hinge.x + door_size.x * 0.5, "half": door_size.x * 0.5}
+		if _seg2d_crosses_rect_wall(Vector2(la.x, la.z), Vector2(lb.x, lb.z), rect, [gap]):
 			return true
 	return false
 
