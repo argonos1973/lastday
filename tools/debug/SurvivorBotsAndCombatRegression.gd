@@ -3317,6 +3317,11 @@ func run() -> void:
 
 	# 10g: bot situado DETRAS de una casa cerrada con bot_nav activa rodea el
 	# edificio hasta la puerta frontal, la abre y entra a recoger el loot
+	# La exploracion previa puede haberlo agachado por una amenaza aleatoria.
+	# Esta prueba mide la ruta corriendo, no el tiempo de la marcha agachada.
+	fresh_b["crouching"] = false
+	fresh_b["energy"] = 100.0
+	(fresh_b["vstats"] as SurvivalStats).energy = 100.0
 	world._server_door_states["Casa prueba Door"] = false
 	world.bot_nav = NavPathfinding.new()
 	world.bot_nav.build(world.wildlife_blockers, [])
@@ -3337,6 +3342,85 @@ func run() -> void:
 	var dist_inside := Vector2(fresh_b["proxy"].global_position.x - 60.0, fresh_b["proxy"].global_position.z - 60.0).length()
 	check(opened_back and dist_inside < 2.5,
 		"SpawnReal 10g: bot detras de casa cerrada rodea al umbral, abre la puerta y entra con bot_nav (open=%s dist=%.2f)" % [str(opened_back), dist_inside])
+
+	# 10g2: con la puerta YA ABIERTA el waypoint frontal queda a <8.5 m desde
+	# el lateral/trasero; si la recta cruza muro in_building_3d NO debe soltar
+	# el nav — el bot rodea por bot_nav hasta asomar al frente y entra.
+	world._server_door_states["Casa prueba Door"] = true
+	world._refresh_nav_door_caches()
+	check(mgr._wall_between(Vector3(60.0, 0.4, 70.0), Vector3(60.0, 0.4, 52.6)),
+		"SpawnReal 10g2a: desde atras la recta al frente cruza el muro trasero -> nav")
+	check(mgr._wall_between(Vector3(66.0, 0.4, 57.0), Vector3(60.0, 0.4, 52.6)),
+		"SpawnReal 10g2b: desde el lateral-trasero la recta cruza la arista lateral -> nav")
+	check(not mgr._wall_between(Vector3(60.0, 0.4, 52.6), Vector3(60.0, 0.4, 57.5)),
+		"SpawnReal 10g2c: del frente al interior solo cruza el vano -> movimiento fino")
+	fresh_b["proxy"].global_position = Vector3(66.0, 0.4, 57.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["path"] = []
+	fresh_b["path_timer"] = 0.0
+	fresh_b["stuck_timer"] = 0.0
+	fresh_b["stuck_count"] = 0
+	fresh_b["macro_timer"] = 0.0
+	fresh_b["macro_pos"] = fresh_b["pos"]
+	for i in range(160):
+		mgr._move_bot_towards(fresh_b, Vector3(60.0, 0.4, 60.0), 4.5, 0.1, "run")
+		if Vector2(fresh_b["proxy"].global_position.x - 60.0, fresh_b["proxy"].global_position.z - 60.0).length() < 2.2:
+			break
+	var dist_side := Vector2(fresh_b["proxy"].global_position.x - 60.0, fresh_b["proxy"].global_position.z - 60.0).length()
+	check(dist_side < 2.5,
+		"SpawnReal 10g2d: desde el lateral rodea la casa por bot_nav y entra por la puerta (dist=%.2f)" % dist_side)
+	world._server_door_states["Casa prueba Door"] = false
+	world._refresh_nav_door_caches()
+
+	# 10g3: trote de exploracion — lejos y con energia corre; cerca del
+	# destino, cansado, recuperando estamina o helandose vuelve a caminar.
+	var vs_g3: SurvivalStats = fresh_b["vstats"]
+	var old_en := vs_g3.energy
+	var old_bt := vs_g3.body_temperature
+	var old_hg3 := float(fresh_b.get("hunger", 85.0))
+	var old_th3 := float(fresh_b.get("thirst", 85.0))
+	fresh_b.erase("_expl_run")
+	fresh_b.erase("_stamina_recover")
+	fresh_b["hunger"] = 90.0
+	fresh_b["thirst"] = 90.0
+	vs_g3.energy = 90.0
+	vs_g3.body_temperature = 36.6
+	check(mgr._bot_explore_wants_run(fresh_b, 200.0),
+		"Explore 10g3a: destino lejano y energia alta -> corre")
+	check(not mgr._bot_explore_wants_run(fresh_b, 10.0),
+		"Explore 10g3b: cerca del destino -> camina")
+	vs_g3.energy = 20.0
+	check(not mgr._bot_explore_wants_run(fresh_b, 200.0),
+		"Explore 10g3c: cansado -> camina aunque quede lejos")
+	vs_g3.energy = 80.0
+	fresh_b["_stamina_recover"] = true
+	check(not mgr._bot_explore_wants_run(fresh_b, 200.0),
+		"Explore 10g3d: recuperando estamina -> camina")
+	fresh_b.erase("_stamina_recover")
+	fresh_b["_expl_run"] = true
+	check(mgr._bot_explore_wants_run(fresh_b, 20.0),
+		"Explore 10g3e: tramo de carrera activo sigue a 20 m")
+	check(not mgr._bot_explore_wants_run(fresh_b, 10.0),
+		"Explore 10g3f: el tramo de carrera se corta al acercarse")
+	vs_g3.body_temperature = 34.0
+	check(not mgr._bot_explore_wants_run(fresh_b, 200.0),
+		"Explore 10g3g: helandose -> camina (conserva calor)")
+	fresh_b["hunger"] = 30.0
+	check(not mgr._bot_explore_wants_run(fresh_b, 200.0),
+		"Explore 10g3h: con hambre no quema calorias corriendo")
+	fresh_b["hunger"] = 60.0
+	fresh_b["thirst"] = 20.0
+	check(not mgr._bot_explore_wants_run(fresh_b, 200.0),
+		"Explore 10g3i: con sed tampoco corre")
+	fresh_b["thirst"] = 80.0
+	vs_g3.body_temperature = 36.6
+	check(mgr._bot_explore_wants_run(fresh_b, 200.0),
+		"Explore 10g3j: alimentado e hidratado vuelve a trotar")
+	fresh_b["hunger"] = old_hg3
+	fresh_b["thirst"] = old_th3
+	fresh_b.erase("_expl_run")
+	vs_g3.energy = old_en
+	vs_g3.body_temperature = old_bt
 
 	# 10h: los POIs incluyen Base Cima y Lago, y el bot sube por la carretera
 	# de montana hasta la Base Militar de la Cima (+56 m)
@@ -3977,8 +4061,15 @@ func run() -> void:
 	fresh_b["thirst"] = 90.0
 	vs.body_temperature = 36.6
 	vs.wetness = 0.0
+	# Intercambio termico pasivo: sin abrigo (protection=0) el objetivo de
+	# equilibrio queda fijo por debajo de 36C aunque el bot camine o corra
+	# (el calor de esfuerzo del jugador tambien cuenta y no debe ocultarse).
+	var clothing_bak10w7 := str(fresh_b["clothing"])
+	fresh_b["clothing"] = ""
+	vs.energy = 30.0
 	for i in range(150):
 		mgr._tick_bot(fresh_b, 0.1)
+	fresh_b["clothing"] = clothing_bak10w7
 	check(vs.body_temperature < 36.0,
 		"SpawnReal 10w7: el frio ambiental baja su temperatura corporal (%.2f)" % vs.body_temperature)
 	vs.body_temperature = 34.6
@@ -4039,6 +4130,46 @@ func run() -> void:
 		"SpawnReal 10w9: con frio letal y materiales enciende una hoguera para calentarse")
 	world.campfire_positions.clear()
 	world.built_campfires.clear()
+
+	# 10w9b: helado sin material ni lena alcanzable no se queda quieto —
+	# marcha para generar calor corporal hasta secarse o encontrar opcion.
+	fresh_b["campfire_id"] = ""
+	fresh_b["campfire_pos"] = Vector3.INF
+	fresh_b["_forage"] = {}
+	fresh_b["_gather"] = {}
+	fresh_b["aggro_target"] = null
+	fresh_b["hide_timer"] = 0.0
+	fresh_b["proxy"].global_position = Vector3(300.0, 0.4, 300.0)
+	fresh_b["pos"] = fresh_b["proxy"].global_position
+	fresh_b["proxy"].set_meta("saved_inventory", [])
+	fresh_b["shelter_id"] = ""
+	fresh_b["shelter_pos"] = Vector3.INF
+	var wa_bak9b: Dictionary = world.world_actions_by_id.duplicate()
+	world.world_actions_by_id.clear()
+	# Sin refugio en TODO el mapa: con una casa a <1400 m el helado corre a
+	# ella (rest), no marcha en el sitio — la marcha es el ultimo recurso.
+	var wb_bak9b: Array = world.wildlife_blockers.duplicate()
+	world.wildlife_blockers.clear()
+	var lc_bak9b: Array = world._lit_campfires.duplicate() if "_lit_campfires" in world else []
+	if "_lit_campfires" in world:
+		world._lit_campfires.clear()
+	vs.body_temperature = 34.0
+	var p0_fm: Vector3 = fresh_b["proxy"].global_position
+	var marched := false
+	for i_fm in range(40):
+		mgr._tick_bot(fresh_b, 0.1)
+		if str(fresh_b.get("_act", "")) == "freeze_march" \
+				and fresh_b["proxy"].global_position.distance_to(p0_fm) > 1.5:
+			marched = true
+			break
+	check(marched,
+		"SpawnReal 10w9b: helado sin fuego ni lena marcha para calentarse (act=%s)" % str(fresh_b.get("_act", "")))
+	world.world_actions_by_id = wa_bak9b
+	world.wildlife_blockers = wb_bak9b
+	if "_lit_campfires" in world:
+		world._lit_campfires = lc_bak9b
+	fresh_b.erase("_freeze_march")
+	vs.body_temperature = 36.6
 
 	# La inanicion/deshidratacion mata igual que al jugador humano.
 	fresh_b["hunger"] = 0.0
@@ -7278,6 +7409,10 @@ func run() -> void:
 	mgr._on_bot_projectile_impact(bx, dummy_arrow_proj, victim_proxy, victim_proxy.global_position + Vector3(0.0, 0.6, 0.0), 175.0, false, "arco")
 	check(is_equal_approx(float(victim_proxy.get_meta("proxy_health", 0.0)), 1.0) and not bool(victim_proxy.get_meta("proxy_dead", false)),
 		"10X8b: Otro flechazo en las piernas a 1 HP tampoco mata al jugador")
+	victim_proxy.set_meta("proxy_health", 0.25)
+	mgr._on_bot_projectile_impact(bx, dummy_arrow_proj, victim_proxy, victim_proxy.global_position + Vector3(0.0, 0.6, 0.0), 175.0, false, "arco")
+	check(is_equal_approx(float(victim_proxy.get_meta("proxy_health", 0.0)), 0.25),
+		"10X8b2: el servidor no cura al jugador con menos de 1 HP por un flechazo corporal")
 	mgr._on_bot_projectile_impact(bx, dummy_arrow_proj, victim_proxy, victim_proxy.global_position + Vector3(0.0, 1.60, 0.0), 175.0, false, "arco")
 	check(is_equal_approx(float(victim_proxy.get_meta("proxy_health", 100.0)), 0.0) and bool(victim_proxy.get_meta("proxy_dead", false)),
 		"10X8c: Flechazo en la cabeza (+1.60 m) si mata al jugador")
@@ -7291,6 +7426,10 @@ func run() -> void:
 	mgr.on_bot_damaged(903, 55.0, 1, "arco")
 	check(is_equal_approx(float(px.get_meta("proxy_health", 0.0)), 1.0) and not bool(px.get_meta("proxy_dead", false)),
 		"10X8d: Flechazo del jugador en el cuerpo de un bot con 20 HP lo deja en 1 HP sin morir")
+	px.set_meta("proxy_health", 0.25)
+	mgr.on_bot_damaged(903, 55.0, 1, "arco")
+	check(is_equal_approx(float(px.get_meta("proxy_health", 0.0)), 0.25),
+		"10X8d2: flecha corporal no cura al bot con menos de 1 HP")
 	mgr.on_bot_damaged(903, 120.0, 1, "arco_head")
 	check(bool(px.get_meta("proxy_dead", false)),
 		"10X8e: Flechazo del jugador en la cabeza del bot (arco_head) si lo mata")

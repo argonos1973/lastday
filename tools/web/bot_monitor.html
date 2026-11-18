@@ -115,7 +115,26 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     display: block;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
   }
+  #mapCanvas.dragging { cursor: grabbing; }
+  .map-btn {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 5px;
+    min-width: 22px;
+    height: 20px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 5px;
+  }
+  .map-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .map-ctl { margin-left: auto; display: inline-flex; gap: 4px; align-items: center; }
+  .map-ctl label { cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
   .legend {
     display: flex;
     flex-wrap: wrap;
@@ -314,6 +333,12 @@
       <span><i class="dot" style="background:#e8b84a"></i> ▲ Base Cima</span>
       <span><i class="dot" style="background:#f2f5f3"></i> ◆ Jugador</span>
       <span><i class="dot" style="background:#52d18a"></i> Refugio Bot</span>
+      <span class="map-ctl">
+        <button class="map-btn" id="mapZoomIn" title="Acercar">+</button>
+        <button class="map-btn" id="mapZoomOut" title="Alejar">−</button>
+        <button class="map-btn" id="mapFit" title="Ver todo el mapa">⤢</button>
+        <label title="Encuadrar automáticamente a los bots vivos"><input type="checkbox" id="mapAutoChk" />auto</label>
+      </span>
     </div>
   </details>
 
@@ -498,8 +523,65 @@ function renderSummary(data) {
   document.getElementById("summaryTableWrap").innerHTML = html;
 }
 
+// Vista del mapa tactico: zoom con rueda (anclado al cursor), paneo con
+// arrastre y auto-enfoque a los actores vivos. Modo y vista manual quedan
+// persistidos en localStorage entre recargas y entre polls.
+const MAP_MIN_SPAN = 40;   // media-anchura minima visible (m)
+const MAP_PAD = 1.08;      // margen al encuadrar el mundo completo
+let mapWorldExt = 500;
+let mapAuto = localStorage.getItem("botMapAuto") !== "0";
+let lastMapData = null;
+let mapView = { cx: 0, cz: 0, halfSpan: 500 };
+try {
+  const sv = JSON.parse(localStorage.getItem("botMapView") || "null");
+  if (sv && isFinite(sv.cx) && isFinite(sv.cz) && isFinite(sv.halfSpan) && sv.halfSpan > 0) mapView = sv;
+} catch (e) {}
+
+function saveMapView() {
+  localStorage.setItem("botMapView", JSON.stringify(mapView));
+  localStorage.setItem("botMapAuto", mapAuto ? "1" : "0");
+}
+
+// MAPVIEW-PURE-BEGIN
+// Paso "bonito" de la rejilla (1/2/5 x 10^n) para ~5 divisiones en pantalla.
+function mapGridStep(halfSpan) {
+  const target = Math.max(halfSpan * 2 / 5, 1);
+  const p = Math.pow(10, Math.floor(Math.log10(target)));
+  for (const m of [1, 2, 5, 10]) if (m * p >= target) return m * p;
+  return 10 * p;
+}
+
+// Encuadre automatico: cubre todos los actores con 60 m de margen, sin
+// alejarse mas alla del mundo ni acercar a menos de 75 m de campo.
+function autoMapView(ext, actors) {
+  let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
+  for (const a of actors) {
+    if (a[0] < minX) minX = a[0];
+    if (a[0] > maxX) maxX = a[0];
+    if (a[1] < minZ) minZ = a[1];
+    if (a[1] > maxZ) maxZ = a[1];
+  }
+  if (minX > maxX) return { cx: 0, cz: 0, halfSpan: ext * MAP_PAD };
+  return {
+    cx: (minX + maxX) / 2,
+    cz: (minZ + maxZ) / 2,
+    halfSpan: Math.min(ext * MAP_PAD, Math.max((maxX - minX) * 0.5 + 60, (maxZ - minZ) * 0.5 + 60, 75))
+  };
+}
+
+// Lee mapView del ambito: con {cx:0,cz:0,halfSpan:ext} reproduce el mapeo
+// clasico mundo[-ext,ext] -> canvas con margen de 12 px.
+function makeMapToScreen(W, H) {
+  return (x, z) => [
+    ((x - mapView.cx) / mapView.halfSpan * 0.5 + 0.5) * (W - 24) + 12,
+    ((z - mapView.cz) / mapView.halfSpan * 0.5 + 0.5) * (H - 24) + 12
+  ];
+}
+// MAPVIEW-PURE-END
+
 function renderMap(data) {
   const canvas = document.getElementById("mapCanvas");
+  if (canvas.clientWidth > 0 && canvas.width !== Math.round(canvas.clientWidth)) canvas.width = Math.round(canvas.clientWidth);
   const ctx = canvas.getContext("2d");
   const W = canvas.width;
   const H = canvas.height;
@@ -517,9 +599,10 @@ function renderMap(data) {
     ext = Math.max(ext, Math.abs(pl.pos[0]), Math.abs(pl.pos[2]));
   }
   const isBotDead = b => !!(b && (b.dead || String(b.anim || "").startsWith("dead") || b.act === "dead" || Number(b.hp ?? b.health ?? 100) <= 0));
+  const actors = [];
   for (const b of (data.bots || [])) {
     if (isBotDead(b)) continue;
-    if (b.pos) ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2]));
+    if (b.pos) { ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2])); actors.push([b.pos[0], b.pos[2]]); }
     if (b.explore_target && b.explore_target.length >= 3) ext = Math.max(ext, Math.abs(b.explore_target[0]), Math.abs(b.explore_target[2]));
     if (b.shelter_pos && b.shelter_pos.length >= 3) ext = Math.max(ext, Math.abs(b.shelter_pos[0]), Math.abs(b.shelter_pos[2]));
     if (b.camp_spot && b.camp_spot.length >= 3) ext = Math.max(ext, Math.abs(b.camp_spot[0]), Math.abs(b.camp_spot[2]));
@@ -528,20 +611,26 @@ function renderMap(data) {
     if (wlp.length >= 3) ext = Math.max(ext, Math.abs(wlp[0]), Math.abs(wlp[2]));
   }
   ext = Math.ceil((ext + 40) / 100) * 100; // margen + redondeo a 100 m
-  document.getElementById("mapTitle").textContent = `Mapa Táctico en Tiempo Real (±${ext} m)`;
+  mapWorldExt = ext;
+  if (mapAuto) mapView = autoMapView(ext, actors);
+  const zoomX = ext / mapView.halfSpan;
+  document.getElementById("mapTitle").textContent = `Mapa Táctico en Tiempo Real (±${ext} m · ×${zoomX.toFixed(1)}${mapAuto ? " auto" : ""})`;
+  const autoChk = document.getElementById("mapAutoChk");
+  if (autoChk) autoChk.checked = mapAuto;
+  lastMapData = data;
 
-  const toScreen = (x, z) => [
-    ((x + ext) / (ext * 2)) * (W - 24) + 12,
-    ((z + ext) / (ext * 2)) * (H - 24) + 12
-  ];
+  const toScreen = makeMapToScreen(W, H);
 
-  // Grid cada 200 m
+  // Rejilla adaptativa al zoom (paso 1/2/5 x 10^n)
+  const gstep = mapGridStep(mapView.halfSpan);
   ctx.strokeStyle = "rgba(38, 56, 48, 0.45)";
   ctx.lineWidth = 1;
-  for (let g = -ext + 200; g <= ext - 200; g += 200) {
+  for (let g = Math.ceil((mapView.cx - mapView.halfSpan) / gstep) * gstep; g <= mapView.cx + mapView.halfSpan; g += gstep) {
     const [gx] = toScreen(g, 0);
-    const [, gz] = toScreen(0, g);
     ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+  }
+  for (let g = Math.ceil((mapView.cz - mapView.halfSpan) / gstep) * gstep; g <= mapView.cz + mapView.halfSpan; g += gstep) {
+    const [, gz] = toScreen(0, g);
     ctx.beginPath(); ctx.moveTo(0, gz); ctx.lineTo(W, gz); ctx.stroke();
   }
 
@@ -1187,6 +1276,71 @@ _botsGrid.addEventListener("dragend", () => {
   localStorage.setItem("botCardOrder", JSON.stringify(order));
   _dragCard = null;
 });
+
+// Interaccion del mapa: rueda = zoom anclado al cursor, arrastre = paneo,
+// doble click = reactivar auto-enfoque. Cualquier gesto manual desactiva el
+// auto y persiste la vista; el repintado es inmediato con el ultimo snapshot.
+const _mapCanvas = document.getElementById("mapCanvas");
+function _mapRedraw() { if (lastMapData) renderMap(lastMapData); }
+function _screenToWorld(mx, my) {
+  return [
+    mapView.cx + ((mx - 12) / (_mapCanvas.width - 24) - 0.5) * 2 * mapView.halfSpan,
+    mapView.cz + ((my - 12) / (_mapCanvas.height - 24) - 0.5) * 2 * mapView.halfSpan
+  ];
+}
+function _mapZoomStep(f) {
+  mapView.halfSpan = Math.min(mapWorldExt * MAP_PAD, Math.max(MAP_MIN_SPAN, mapView.halfSpan * f));
+  mapAuto = false;
+  saveMapView();
+  _mapRedraw();
+}
+_mapCanvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = _mapCanvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) * (_mapCanvas.width / Math.max(r.width, 1));
+  const my = (e.clientY - r.top) * (_mapCanvas.height / Math.max(r.height, 1));
+  const [wx, wz] = _screenToWorld(mx, my);
+  const nh = Math.min(mapWorldExt * MAP_PAD, Math.max(MAP_MIN_SPAN, mapView.halfSpan * (e.deltaY < 0 ? 1 / 1.25 : 1.25)));
+  const k = nh / mapView.halfSpan;
+  mapView = { cx: wx - (wx - mapView.cx) * k, cz: wz - (wz - mapView.cz) * k, halfSpan: nh };
+  mapAuto = false;
+  saveMapView();
+  _mapRedraw();
+}, { passive: false });
+let _mapDrag = null;
+_mapCanvas.addEventListener("pointerdown", e => {
+  _mapCanvas.setPointerCapture(e.pointerId);
+  const r = _mapCanvas.getBoundingClientRect();
+  _mapDrag = { x: e.clientX, y: e.clientY, cx: mapView.cx, cz: mapView.cz, w: r.width, h: r.height };
+  _mapCanvas.classList.add("dragging");
+});
+_mapCanvas.addEventListener("pointermove", e => {
+  if (!_mapDrag) return;
+  const dx = (e.clientX - _mapDrag.x) * (_mapCanvas.width / Math.max(_mapDrag.w, 1));
+  const dy = (e.clientY - _mapDrag.y) * (_mapCanvas.height / Math.max(_mapDrag.h, 1));
+  mapView.cx = _mapDrag.cx - dx / (_mapCanvas.width - 24) * 2 * mapView.halfSpan;
+  mapView.cz = _mapDrag.cz - dy / (_mapCanvas.height - 24) * 2 * mapView.halfSpan;
+  mapAuto = false;
+  _mapRedraw();
+});
+const _mapEndDrag = () => {
+  if (!_mapDrag) return;
+  _mapDrag = null;
+  _mapCanvas.classList.remove("dragging");
+  saveMapView();
+};
+_mapCanvas.addEventListener("pointerup", _mapEndDrag);
+_mapCanvas.addEventListener("pointercancel", _mapEndDrag);
+_mapCanvas.addEventListener("dblclick", () => { mapAuto = true; saveMapView(); _mapRedraw(); });
+document.getElementById("mapZoomIn").addEventListener("click", () => _mapZoomStep(1 / 1.4));
+document.getElementById("mapZoomOut").addEventListener("click", () => _mapZoomStep(1.4));
+document.getElementById("mapFit").addEventListener("click", () => {
+  mapAuto = false;
+  mapView = { cx: 0, cz: 0, halfSpan: mapWorldExt * MAP_PAD };
+  saveMapView();
+  _mapRedraw();
+});
+document.getElementById("mapAutoChk").addEventListener("change", e => { mapAuto = !!e.target.checked; saveMapView(); _mapRedraw(); });
 
 let pollInFlight = false;
 let lastStatusText = null;

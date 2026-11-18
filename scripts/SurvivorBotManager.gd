@@ -2446,6 +2446,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# sueño letal el parapeto sigue mandando (dormir es el mal inminente).
 	if rest_pos == Vector3.INF and _bot_is_freezing(b) and (vst == null or vst.sleep > 8.0):
 		rest_pos = _nearest_safe_refuge(b, 1400.0)
+	# Ni refugio en todo el mapa ni fuego posible: la marcha corta es lo
+	# ultimo — moverse genera calor corporal y seca la ropa; quedarse de
+	# pie o sentado mojado es congelarse seguro.
+	if rest_pos == Vector3.INF and _bot_is_freezing(b) and (vst == null or vst.sleep > 8.0):
+		if _bot_freeze_march(b, delta):
+			return
 	if rest_pos != Vector3.INF and wants_camp:
 		b["_act"] = "rest"
 		var d_sh := Vector2(proxy.global_position.x - rest_pos.x, proxy.global_position.z - rest_pos.z).length()
@@ -2536,7 +2542,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["_act"] = "return_home"
 			b["sitting"] = false
 			b["crouching"] = false
-			_move_bot_towards(b, home_spot, 5.5 if d_home > 30.0 else 3.6, delta, "run" if d_home > 30.0 else "walk")
+			var home_run := d_home > 30.0 and _bot_explore_wants_run(b, d_home)
+			_move_bot_towards(b, home_spot, 5.5 if home_run else 3.6, delta, "run" if home_run else "walk")
 			return
 		# En casa: sentado junto a su refugio, recuperando algo de vida como
 		# en el descanso de wants_camp. El lobo domestico recibe 'stay' por
@@ -2569,7 +2576,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["_act"] = "settle"
 				b["sitting"] = false
 				b["crouching"] = false
-				_move_bot_towards(b, settle_pos, 6.0, delta, "run")
+				var settle_run := _bot_explore_wants_run(b, d_settle)
+				_move_bot_towards(b, settle_pos, 6.0 if settle_run else 3.6, delta, "run" if settle_run else "walk")
 				return
 
 	# 7) Exploracion como un jugador real: viaja por puntos de interes (casas,
@@ -2630,7 +2638,20 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["held_item"] = move_item
 	b["has_rifle"] = move_item == "Fusil de asalto" or move_item == "Rifle francotirador"
 	proxy.set_meta("saved_held_item", move_item)
-	_move_bot_towards(b, cur_target, 3.5, delta, "walk")
+	var run_leg := _bot_explore_wants_run(b, flat_t)
+	b["_expl_run"] = run_leg
+	_move_bot_towards(b, cur_target, 6.2 if run_leg else 3.5, delta, "run" if run_leg else "walk")
+
+# Trote como un jugador: destinos lejanos y energia de sobra corren; al
+# acercarse, cansado o helado vuelve a caminar. La histeresis por tramo
+# (entra a >30 m/55 en., sale a <16 m/32 en.) evita aletear walk/run.
+func _bot_explore_wants_run(b: Dictionary, dist: float) -> bool:
+	var en := _bot_energy(b)
+	var hunger := float(b.get("hunger", 100.0))
+	var thirst := float(b.get("thirst", 100.0))
+	if bool(b.get("_expl_run", false)):
+		return dist >= 16.0 and en >= 32.0 and hunger >= 28.0 and thirst >= 24.0 and not _bot_is_freezing(b)
+	return dist > 30.0 and en >= 55.0 and hunger >= 48.0 and thirst >= 38.0 and not _bot_is_freezing(b) and not bool(b.get("_stamina_recover", false))
 
 # Puntos de interes del mundo: lo mismo que un jugador iria a saquear.
 func _explore_pois() -> Array:
@@ -2780,7 +2801,7 @@ func _is_water_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 # durante 6 h, que sobrevivian al wipe del mundo en la memoria. TTL
 # corto ademas: inalcanzable desde aqui no es inalcanzable siempre.
 const UNREACHABLE_VETO_MIN_FAILS := 3
-const UNREACHABLE_VETO_TTL := 3600.0
+const UNREACHABLE_VETO_TTL := 300.0
 
 func _is_goal_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 	var bl: Array = b.get("_unreachable", [])
@@ -4564,7 +4585,7 @@ func _ai_veto_snapshot(entries: Dictionary, label_key: String, max_n := 6, fixed
 			continue
 		var ed: Dictionary = e
 		var age := now_u - float(ed.get("t", 0.0))
-		var ttl := fixed_ttl if fixed_ttl > 0.0 else float(ed.get("ttl", 10800.0))
+		var ttl := fixed_ttl if fixed_ttl > 0.0 else _ai_fail_entry_ttl(ed)
 		if age >= ttl or age < 0.0:
 			continue
 		out.append({"goal": str(ed.get(label_key, sig)) if not label_key.is_empty() else str(sig),
@@ -5935,7 +5956,7 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return
 	var prev_hp := float(proxy.get_meta("proxy_health", 100.0))
-	var min_hp := 1.0 if (weapon in ["arco", "arco_madera", "arrow", "flecha"] and prev_hp > 0.0) else 0.0
+	var min_hp := minf(1.0, prev_hp) if (weapon in ["arco", "arco_madera", "arrow", "flecha"] and prev_hp > 0.0) else 0.0
 	var hp := maxf(min_hp, prev_hp - amount)
 	b["health"] = hp
 	proxy.set_meta("proxy_health", hp)
@@ -11460,6 +11481,105 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		return exit_point
 	return goal
 
+# La aproximacion a puerta solo justifica soltar la malla nav (in_building_3d)
+# cuando la linea recta al waypoint NO atraviesa ningun muro: desde el muro
+# trasero o un lateral la recta choca con la pared y el bot debe seguir
+# bordeando con bot_nav hasta asomar al frente del vano. Los vanos de puerta
+# no cuentan como muro — abrir la hoja cerrada ya lo gestiona
+# _resolve_door_approach_goal / bot_try_open_door_at al llegar.
+func _wall_between(a: Vector3, bpt: Vector3) -> bool:
+	var pa := Vector2(a.x, a.z)
+	var pb := Vector2(bpt.x, bpt.z)
+	if (pb - pa).length() < 0.05:
+		return false
+	var seg_rect := Rect2(pa, Vector2.ZERO).expand(pb)
+	if world != null and ("wildlife_blockers" in world):
+		for blk in world.wildlife_blockers:
+			if not (blk is Dictionary) or not (blk as Dictionary).has("house_bounds"):
+				continue
+			var dblk: Dictionary = blk
+			# Los edificios de ciudad los evalua el bucle CityBlock de abajo,
+			# que conoce footprint/yaw/puerta reales (city_17 desplaza la suya).
+			if int(dblk.get("city_building_index", -1)) >= 0:
+				continue
+			var hb: Rect2 = dblk["house_bounds"]
+			if not hb.grow(0.6).intersects(seg_rect):
+				continue
+			if _seg2d_crosses_rect_wall(pa, pb, hb, _house_wall_gaps(dblk, hb)):
+				return true
+	for i in range(CityBlock.BUILDINGS.size()):
+		var def: Dictionary = CityBlock.BUILDINGS[i]
+		if not (def.get("position") is Vector3):
+			continue
+		var origin: Vector3 = CityExpansion.CENTER + (def["position"] as Vector3)
+		var fp: Vector2 = def.get("footprint", Vector2(6.0, 6.0))
+		if not seg_rect.grow(fp.length() + 0.5).has_point(Vector2(origin.x, origin.z)):
+			continue
+		var yaw := float(def.get("yaw", 0.0))
+		var la := (Vector3(pa.x, 0.0, pa.y) - origin).rotated(Vector3.UP, -yaw)
+		var lb := (Vector3(pb.x, 0.0, pb.y) - origin).rotated(Vector3.UP, -yaw)
+		var rect := Rect2(-fp.x - 0.3, -fp.y - 0.3, fp.x * 2.0 + 0.6, fp.y * 2.0 + 0.6)
+		# Puerta siempre en la fachada +z local (edge 2); city_17 la desplaza.
+		var dlx := 0.15
+		if def.get("door_position") is Vector3:
+			dlx = float((def["door_position"] as Vector3).x)
+		if _seg2d_crosses_rect_wall(Vector2(la.x, la.z), Vector2(lb.x, lb.z), rect, [{"edge": 2, "at": dlx, "half": 1.45}]):
+			return true
+	return false
+
+# Vanos practicables en el perimetro de un bloqueador (arista + coordenada a
+# lo largo de ella): el vano de la puerta en casas, los dos portones siempre
+# abiertos en graneros. edge: 0=N(z min), 1=E(x max), 2=S(z max), 3=W(x min).
+func _house_wall_gaps(dblk: Dictionary, hb: Rect2) -> Array:
+	if bool(dblk.get("barn_door_always_open", false)) and dblk.has("back_door_x"):
+		var bx := hb.get_center().x
+		return [
+			{"edge": 0, "at": float(dblk.get("front_door_x", bx)), "half": float(dblk.get("front_door_w", 2.8)) * 0.5 + 0.45},
+			{"edge": 2, "at": float(dblk.get("back_door_x", bx)), "half": float(dblk.get("back_door_w", 2.8)) * 0.5 + 0.45},
+		]
+	var bpos: Vector3 = dblk.get("pos", Vector3(hb.get_center().x, 0.0, hb.get_center().y))
+	var dc: Vector3 = world._blocker_door_center(dblk, bpos, hb) if world != null and world.has_method("_blocker_door_center") else dblk.get("door_center", dblk.get("door_pos", Vector3.INF))
+	if not dc.is_finite():
+		return []
+	var gap_half := float(dblk.get("front_door_w", 2.0)) * 0.5 + 0.45
+	var dp := Vector2(dc.x, dc.z)
+	var dn := absf(dp.y - hb.position.y)
+	var ds := absf(dp.y - hb.end.y)
+	var dw := absf(dp.x - hb.position.x)
+	var de := absf(dp.x - hb.end.x)
+	var edge := 0
+	var m := dn
+	if ds < m:
+		edge = 2
+		m = ds
+	if dw < m:
+		edge = 3
+		m = dw
+	if de < m:
+		edge = 1
+	return [{"edge": edge, "at": dp.x if (edge == 0 or edge == 2) else dp.y, "half": gap_half}]
+
+func _seg2d_crosses_rect_wall(pa: Vector2, pb: Vector2, r: Rect2, gaps: Array) -> bool:
+	var c0 := r.position
+	var c1 := Vector2(r.end.x, r.position.y)
+	var c2 := r.end
+	var c3 := Vector2(r.position.x, r.end.y)
+	var edges := [[c0, c1], [c1, c2], [c2, c3], [c3, c0]]
+	for e in range(4):
+		var hit = Geometry2D.segment_intersects_segment(pa, pb, edges[e][0], edges[e][1])
+		if hit == null:
+			continue
+		var p: Vector2 = hit
+		var at := p.x if (e == 0 or e == 2) else p.y
+		var in_gap := false
+		for g in gaps:
+			if int(g["edge"]) == e and absf(at - float(g["at"])) <= float(g["half"]):
+				in_gap = true
+				break
+		if not in_gap:
+			return true
+	return false
+
 # Guia de ascenso y descenso por la carretera asfaltada en espiral hacia la
 # Base Militar de la Cima (HighMountainZone, cota +56 m): un humano no escala
 # el acantilado en linea recta ni se tira desde 56 m; sube y baja siguiendo los
@@ -11536,7 +11656,7 @@ func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: fl
 	var goal := _resolve_building_interior_waypoint(b, cur, road_goal)
 	var on_mountain_3d: bool = road_goal != raw_goal or (cur.x < -235.0 and cur.z < -235.0 and cur.y > 2.0)
 	var flat_dist := Vector2(goal.x - cur.x, goal.z - cur.z).length()
-	var in_building_3d: bool = not on_mountain_3d and (_is_in_any_building_3d(cur) or (goal != road_goal and flat_dist <= 8.5))
+	var in_building_3d: bool = not on_mountain_3d and (_is_in_any_building_3d(cur) or (goal != road_goal and flat_dist <= 8.5 and not _wall_between(cur, goal)))
 	# Inercia como un jugador: tras una pausa >0.5 s arranca desde parado, sin
 	# saltos bruscos de velocidad ni giros instantaneos.
 	var now := float(Time.get_ticks_msec()) / 1000.0
@@ -14596,7 +14716,7 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 		var e: Dictionary = (mem["failed_goals"] as Dictionary)[k]
 		if not (e is Dictionary):
 			continue
-		if now_u - float(e.get("t", 0.0)) >= float(e.get("ttl", 10800.0)):
+		if now_u - float(e.get("t", 0.0)) >= _ai_fail_entry_ttl(e):
 			continue
 		if str(e.get("cause", "")) == "precondition":
 			continue
@@ -14725,7 +14845,7 @@ func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_pr
 		var e: Dictionary = (mem["failed_goals"] as Dictionary)[k]
 		if not (e is Dictionary):
 			continue
-		if now_u - float(e.get("t", 0.0)) >= float(e.get("ttl", 10800.0)):
+		if now_u - float(e.get("t", 0.0)) >= _ai_fail_entry_ttl(e):
 			continue
 		if str(e.get("cause", "")) == "precondition":
 			continue
@@ -15505,7 +15625,7 @@ func _ai_build_prompt(b: Dictionary) -> String:
 	var fgd: Dictionary = mem.get("failed_goals", {})
 	for k in fgd.keys():
 		var e = fgd[k]
-		if e is Dictionary and now_u - float((e as Dictionary).get("t", 0.0)) < float((e as Dictionary).get("ttl", 10800.0)):
+		if e is Dictionary and now_u - float((e as Dictionary).get("t", 0.0)) < _ai_fail_entry_ttl(e):
 			var parts := str(k).split("|")
 			fail_recs.append({"goal": str((e as Dictionary).get("act", parts[0] + ":" + (parts[1] if parts.size() > 1 else ""))),
 				"cause": str((e as Dictionary).get("cause", "")), "zone": (e as Dictionary).get("zone", []),
@@ -15935,19 +16055,26 @@ func _ai_parse_plan(content: String, b: Dictionary) -> Array:
 # Firma de un objetivo para recordar que fracaso: accion+destino y, si es un
 # punto concreto, su zona aproximada (~60 m) — el mismo "vuelve a casa" no se
 # vetaria en otro refugio.
-# Vigencia del veto segun la causa del fracaso: el terreno no cambia (la ruta
-# imposible sigue imposible) pero la falta de recursos o el azar si.
+# Vigencia del veto de un objetivo fallado: 5 min para cualquier causa —
+# el castigo largo (hasta 4 h) congelaba la rutina entera del bot; reintentar
+# pronto con otro plan es lo que hace un humano. AI_FAIL_TTL_MAX capea en
+# lectura los registros antiguos escritos con TTL largos, sin borrar memoria.
+const AI_FAIL_TTL_MAX := 300.0
 const AI_FAIL_TTL := {
-	"nav_blocked": 3600.0, # ~1 h: un nav_blocked suele delatar al origen
-	# atascado, no al destino — no es prueba de 6 h (ver unreachable_pois).
-	"stuck_timeout": 14400.0, # ~4 h: el objetivo se resistio entero
-	"timeout": 14400.0,
-	"no_progress": 10800.0, # ~3 h: se intento y no rindio aqui
-	"precondition": 2700.0, # ~45 min: faltan requisitos, pueden aparecer
+	"nav_blocked": 300.0,
+	"stuck_timeout": 300.0,
+	"timeout": 300.0,
+	"no_progress": 300.0,
+	"precondition": 300.0,
 }
 
 func _ai_fail_ttl(cause: String) -> float:
-	return float(AI_FAIL_TTL.get(cause, 10800.0))
+	return float(AI_FAIL_TTL.get(cause, AI_FAIL_TTL_MAX))
+
+# Vigencia efectiva de una entrada de failed_goals: la suya si cabe en el
+# cap de 5 min; las escritas con el regimen largo anterior caducan al cap.
+func _ai_fail_entry_ttl(e: Dictionary) -> float:
+	return minf(float(e.get("ttl", AI_FAIL_TTL_MAX)), AI_FAIL_TTL_MAX)
 
 # Donde pretende ir el paso aunque aun no lleve pos resuelto: la misma
 # resolucion que hace _ai_apply_decision (casa/campamento para el modo pos,
@@ -16034,7 +16161,7 @@ func _ai_goal_recently_failed(b: Dictionary, d: Dictionary) -> bool:
 	if str((e as Dictionary).get("cause", "")) == "precondition":
 		return false
 	var age := Time.get_unix_time_from_system() - float((e as Dictionary).get("t", 0.0))
-	return age < float((e as Dictionary).get("ttl", 10800.0))
+	return age < _ai_fail_entry_ttl(e)
 
 # Los recuerdos de fracaso caducan: al cargar una memoria vieja se podan las
 # entradas fuera de vigencia (cada registro lleva su propia ttl; las memorias
@@ -16044,7 +16171,7 @@ func _ai_prune_expired_memory(mem: Dictionary) -> void:
 	var fg: Dictionary = mem.get("failed_goals", {})
 	for k in fg.keys():
 		var e = fg[k]
-		if not (e is Dictionary) or now_u - float((e as Dictionary).get("t", 0.0)) >= float((e as Dictionary).get("ttl", 10800.0)):
+		if not (e is Dictionary) or now_u - float((e as Dictionary).get("t", 0.0)) >= _ai_fail_entry_ttl(e):
 			fg.erase(k)
 	var un: Dictionary = mem.get("unreachable_pois", {})
 	for k in un.keys():
@@ -16168,7 +16295,12 @@ func _ai_apply_decision(bot_id: int, content: String) -> bool:
 			cur["_step_deadline_ms"] = now_ms + _ai_step_budget_msec(b, cur)
 			b["_ai_last_apply"] = "reaffirmed"
 			return true
-		var age_sec := (now_ms - int(cur.get("_applied_at", 0))) / 1000.0
+		# Sin _applied_at la directiva no fue instalada por _ai_apply_decision
+		# (inyeccion externa o memoria antigua): no puede acreditar juventud —
+		# tratarla como joven congelaria cualquier plan durante los primeros
+		# AI_DIRECTIVE_MIN_COMMIT_SEC de uptime del motor.
+		var applied_at := int(cur.get("_applied_at", -1))
+		var age_sec := (now_ms - applied_at) / 1000.0 if applied_at >= 0 else AI_DIRECTIVE_MIN_COMMIT_SEC
 		if age_sec < AI_DIRECTIVE_MIN_COMMIT_SEC and int(d.get("priority", 3)) <= int(cur.get("priority", 3)):
 			cur["until"] = now_ms + AI_DIRECTIVE_TTL_MSEC
 			cur["_step_deadline_ms"] = now_ms + _ai_step_budget_msec(b, cur)
@@ -18276,4 +18408,74 @@ func _bot_night_sentry_wander(b: Dictionary, delta: float) -> bool:
 		wander["idle_t"] = 0.0
 		wander["n"] = int(wander.get("n", 0)) + 1
 		b["_night_wander"] = wander
+	return true
+
+# Ultimo recurso del helado sin fuego ni refugio ni lena alcanzable: un
+# humano aterido no se tumba a congelarse — se mueve. Marcha continua en
+# paseos cortos alrededor del sitio: el movimiento suma +0.4 C al objetivo
+# termico y el tiempo en marcha seca la ropa; es supervivencia, no deriva.
+# Solo sale al paso de _bot_try_cold_rescue cuando ya no queda nada real.
+func _bot_freeze_march(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not _bot_is_freezing(b) or bool(b.get("sleeping", false)):
+		return false
+	if b.get("aggro_target") != null or float(b.get("hide_timer", 0.0)) > 0.0:
+		return false
+	var fm: Dictionary = b.get("_freeze_march", {})
+	var anchor_v: Variant = fm.get("anchor", proxy.global_position)
+	var anchor: Vector3 = anchor_v if anchor_v is Vector3 else proxy.global_position
+	if not anchor.is_finite() or Vector2(proxy.global_position.x - anchor.x, proxy.global_position.z - anchor.z).length() > 22.0:
+		anchor = proxy.global_position
+		fm["pos"] = null
+	fm["anchor"] = anchor
+	var tgt: Variant = fm.get("pos", null)
+	# Un tramo vetado por el navegador deja de ser candidato inmediatamente.
+	# Conservarlo hacia repetir el mismo destino bloqueado indefinidamente.
+	var has_tgt: bool = tgt is Vector3 and (tgt as Vector3).is_finite() and not _is_goal_blacklisted(b, tgt) and Vector2(proxy.global_position.x - (tgt as Vector3).x, proxy.global_position.z - (tgt as Vector3).z).length() > 1.4
+	if not has_tgt:
+		fm["pos"] = null
+		fm["stalled"] = 0.0
+		# RNG local por bot y tramo: no consume el stream global, igual que
+		# la ronda de _bot_night_sentry_wander. Marchar al agua moja mas —
+		# la charca se descarta como destino de calentamiento.
+		var rng := RandomNumberGenerator.new()
+		rng.seed = int(b["bot_id"]) * 3571 + int(fm.get("n", 0)) * 104729
+		# Avanzar tambien si fallan los seis sondeos: el proximo intento debe
+		# probar otras direcciones, sin repetir para siempre la misma muestra.
+		fm["n"] = int(fm.get("n", 0)) + 1
+		for i in range(6):
+			var ang := rng.randf() * TAU
+			var rr := rng.randf_range(7.0, 13.0)
+			var cand := anchor + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
+			cand.y = proxy.global_position.y
+			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
+				continue
+			if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(cand)) > 0.05:
+				continue
+			fm["pos"] = cand
+			b["_freeze_march"] = fm
+			has_tgt = true
+			tgt = cand
+			break
+		if not has_tgt:
+			b["_freeze_march"] = fm
+			return false
+	b["sitting"] = false
+	b["crouching"] = false
+	proxy.set_meta("crouching", false)
+	var tp: Vector3 = tgt
+	var before := proxy.global_position
+	_move_bot_towards(b, tp, 3.6, delta, "walk")
+	b["_act"] = "freeze_march"
+	# El navegador decide la animacion; si una puerta u obstaculo detiene el
+	# paso, no publicar walk mientras el cuerpo sigue quieto.
+	var advanced := Vector2(proxy.global_position.x - before.x, proxy.global_position.z - before.z).length()
+	fm["stalled"] = float(fm.get("stalled", 0.0)) + delta if advanced < 0.01 else 0.0
+	if float(fm["stalled"]) >= 3.0:
+		fm["pos"] = null
+		fm["stalled"] = 0.0
+	if Vector2(proxy.global_position.x - tp.x, proxy.global_position.z - tp.z).length() <= 1.4:
+		fm["pos"] = null
+		fm["n"] = int(fm.get("n", 0)) + 1
+	b["_freeze_march"] = fm
 	return true
