@@ -1003,7 +1003,7 @@ function renderBots(data) {
         const lastBy = b.last_death_killer || "";
         const lastWp = b.last_death_weapon || b.last_death_cause || "";
         if (!dlog.length && !lastBy && !nem.name) return "";
-        const KIND_ES = {wolf_bite:"mordedura de lobo",bear_bite:"mordedura de oso",melee:"cuerpo a cuerpo",rifle:"disparo de rifle",bola:"boleadoras",arco:"flecha",arco_madera:"flecha",arrow:"flecha",lanza:"lanza",starved:"inanición",dehydrated:"deshidratación",hypothermia:"hipotermia",exhausted:"agotamiento",heatstroke:"golpe de calor",combat:"combate",bled:"desangrado",sick:"enfermedad",succumbed:"sucumbió"};
+        const KIND_ES = {wolf_bite:"mordedura de lobo",bear_bite:"mordedura de oso",melee:"cuerpo a cuerpo",rifle:"disparo de rifle",bola:"boleadoras",arco:"flecha",arco_head:"flecha en la cabeza",arco_madera:"flecha",arrow:"flecha",lanza:"lanza",starved:"inanición",dehydrated:"deshidratación",hypothermia:"hipotermia",exhausted:"agotamiento",heatstroke:"golpe de calor",combat:"combate",bled:"desangrado",sick:"enfermedad",succumbed:"sucumbió"};
         const kindEs = k => KIND_ES[k] || k;
         return `<details class="sec" data-sec id="sec_${b.bot_id}_death"><summary class="section-label">☠ Muertes (${b.deaths || 0})${nem.name ? ` · Némesis: ${esc(nem.name)} ×${nem.count}` : ""}</summary>
         <div class="decision-box" style="border-left-color:var(--danger)">

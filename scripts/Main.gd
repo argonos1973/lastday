@@ -3298,9 +3298,9 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 			player.notice.emit("¡Boleadoras! Te han trabado las piernas (6s, -%d HP)." % int(round(amount)))
 		elif weapon in ["rifle", "m4"] and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
-		elif weapon in ["melee", "wolf_bite", "bear_bite", "arco", "lanza"] and player.has_method("_play_hit_reaction"):
+		elif weapon in ["melee", "wolf_bite", "bear_bite", "arco", "arco_head", "lanza"] and player.has_method("_play_hit_reaction"):
 			var is_bite := weapon.ends_with("_bite")
-			player._play_hit_reaction(true, is_bite)
+			player._play_hit_reaction(weapon == "melee", is_bite)
 		if weapon in ["rifle", "m4"]:
 			player._recoil_pitch -= deg_to_rad(5.5)
 			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
@@ -3321,10 +3321,11 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 			player._spawn_blood_splatter(pos, 0.6)
 			if player.has_method("_attach_bola_snare_visual"):
 				player._attach_bola_snare_visual(player, 6.0)
-		elif kind in ["melee", "wolf_bite", "bear_bite"]:
+		elif kind in ["melee", "wolf_bite", "bear_bite", "arco", "arco_head", "lanza"]:
+			var is_bite_local := kind.ends_with("_bite")
 			player._spawn_blood_splatter(pos, 0.8)
-			player._play_hit_reaction(true, kind.ends_with("_bite"))
-			if kind.ends_with("_bite"):
+			player._play_hit_reaction(kind == "melee", is_bite_local)
+			if is_bite_local:
 				player._play_pain_sound()
 		return
 	if not remote_players.has(peer_id):
@@ -3341,11 +3342,12 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		if rp.has_method("_attach_bola_snare_visual"):
 			rp._attach_bola_snare_visual(rp, 6.0)
 		if rp.has_method("_play_hit_reaction"):
-			rp._play_hit_reaction(true)
-	elif kind in ["melee", "wolf_bite", "bear_bite"]:
+			rp._play_hit_reaction(false)
+	elif kind in ["melee", "wolf_bite", "bear_bite", "arco", "arco_head", "lanza"]:
+		var is_bite_rp := kind.ends_with("_bite")
 		rp._spawn_blood_splatter(pos, 0.8)
-		rp._play_hit_reaction(true, kind.ends_with("_bite"))
-		if kind.ends_with("_bite"):
+		rp._play_hit_reaction(kind == "melee", is_bite_rp)
+		if is_bite_rp or kind in ["arco", "arco_head", "lanza"]:
 			rp._play_pain_sound()
 
 func _net_player_condition_audio(peer_id: int, condition: String) -> void:
@@ -3404,6 +3406,7 @@ func _weapon_death_label(weapon: String) -> String:
 		"m4": return "fusil de asalto"
 		"melee": return "cuerpo a cuerpo"
 		"bola": return "boleadoras"
+		"arco_head": return "flecha en la cabeza"
 		"arco", "arco_madera", "arrow", "flecha": return "flecha"
 		"lanza", "spear": return "lanza"
 		"wolf_bite": return "mordiscos"
@@ -4872,7 +4875,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# _sender_within fails closed when the attacker has no proxy — a
 		# missing proxy must not silently skip the reach check.
 		var max_reach := 5.0
-		if weapon in ["rifle", "m4", "bola", "arco", "lanza"]:
+		if weapon in ["rifle", "m4", "bola", "arco", "arco_head", "lanza"]:
 			max_reach = PlayerController.RIFLE_RANGE + 20.0
 		elif weapon != "melee":
 			return
@@ -4895,8 +4898,11 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		elif weapon == "melee" and proxy.get_meta("pvp_death_pending", false):
 			proxy.set_meta("pending_death_cause", "melee")
 		return
-	var hp: float = proxy.get_meta("proxy_health", 100.0)
-	hp = max(0.0, hp - amount)
+	var prev_hp: float = proxy.get_meta("proxy_health", 100.0)
+	var nonlethal_arrow := weapon in ["arco", "arco_madera", "arrow", "flecha"]
+	var min_hp := 1.0 if (nonlethal_arrow and prev_hp > 0.0) else 0.0
+	var hp: float = maxf(min_hp, prev_hp - amount)
+	var client_amount := maxf(0.0, prev_hp - hp) if nonlethal_arrow else amount
 	# Los bots que presencian la herida la recuerdan (unica via honesta de
 	# saber que alguien esta tocado: no consultan la vida ajena).
 	if survivor_bot_mgr != null:
@@ -4948,7 +4954,7 @@ func _net_damage_player(target_peer_id: int, amount: float, sender: int, weapon:
 		# Send damage to the target client if still connected — melee hits also
 		# carry the weapon so the victim plays the head-hit flinch.
 		if net.peer != null and net.peer_alive(target_peer_id):
-			net.apply_damage_to_client.rpc_id(target_peer_id, amount, weapon)
+			net.apply_damage_to_client.rpc_id(target_peer_id, client_amount, weapon)
 		if net.has_method("_broadcast_player_hit"):
 			net._broadcast_player_hit(target_peer_id, weapon, proxy.global_position)
 	# Lobos domesticados: el del agredido defiende a su dueño; el del agresor

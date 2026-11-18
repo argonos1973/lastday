@@ -4947,7 +4947,7 @@ func _find_rooftop_foe(b: Dictionary, radius: float = BOT_ROOF_WATCH_RANGE) -> N
 # peligroso. Devuelve el ancla de la amenaza recordada o INF si la zona esta
 # tranquila. El botin bueno repetido va apagando la alarma.
 func _bot_survivor_combat_cause(cause: String) -> bool:
-	return cause in ["rifle", "m4", "melee", "combat", "bola", "arco", "arco_madera", "arrow", "lanza", "spear"]
+	return cause in ["rifle", "m4", "melee", "combat", "bola", "arco", "arco_head", "arco_madera", "arrow", "lanza", "spear"]
 
 func _bot_learned_risk_at(pos: Vector3, bot_id: int) -> Vector3:
 	var mem: Dictionary = _memory.get(bot_id, {})
@@ -5867,24 +5867,28 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 				target = walked
 				break
 			walked = walked.get_parent()
-	# Impacto por capsula (proxy sin fisica): cabeza = tercio superior.
-	if target != null and not is_headshot and (target.is_in_group("net_player_proxy") or target.is_in_group("ai_survivor_bot")):
-		var top := 0.55 if bool(target.get_meta("prone", false)) or bool(target.get_meta("sleeping", false)) else (1.25 if bool(target.get_meta("crouching", false)) or bool(target.get_meta("sitting", false)) or bool(target.get_meta("saved_sitting", false)) else 1.72)
-		is_headshot = hit_pos.y - (target as Node3D).global_position.y >= top - 0.35
+	# Impacto por capsula (proxy sin fisica): cabeza = franja craneal superior.
+	var is_wildlife_tgt: bool = target != null and (target is WildlifeController or target.is_in_group("wildlife"))
+	var is_human_actor: bool = target != null and not is_wildlife_tgt and (target.is_in_group("net_player_proxy") or target.is_in_group("ai_survivor_bot") or target.is_in_group("remote_player") or target.has_method("apply_damage"))
+	if is_human_actor and not is_headshot:
+		var prone_now: bool = bool(target.get_meta("prone", false)) or bool(target.get_meta("sleeping", false)) or target.get("is_prone") == true or target.get("is_sleeping") == true
+		var low_now: bool = bool(target.get_meta("crouching", false)) or bool(target.get_meta("sitting", false)) or bool(target.get_meta("saved_sitting", false)) or target.get("is_crouching") == true or target.get("is_sitting") == true
+		var top := 0.55 if prone_now else (1.25 if low_now else 1.72)
+		is_headshot = hit_pos.y - (target as Node3D).global_position.y >= top - 0.30
 	if target == null:
 		return
 	# Energia residual del proyectil: igual que en el impacto del jugador
 	var energy := clampf(projectile.velocity.length() / maxf(projectile.launch_speed, 1.0), 0.45, 1.0)
 	var dmg := dmg_base * (2.2 if is_headshot else 1.0) * energy
-	# Paridad PvP: contra jugadores reales el bot cobra lo mismo que cobra un
-	# jugador con ese arma (55 cuerpo / 120 cabeza en arco y lanza, 18 plano
-	# en boleadoras — PlayerController.gd::_apply_rifle_target_damage). Antes
-	# las flechas heredaban el daño PvE (125-215) y cualquier impacto mataba.
-	if target.is_in_group("net_player_proxy") and weapon_kind in ["arco", "lanza", "bola"]:
+	# Paridad contra personajes humanos (jugador o superviviente): 55 cuerpo /
+	# 120 cabeza en arco y lanza, 18 plano en boleadoras. Las flechas fuera de
+	# la cabeza llevan "arco" (no letal: deja como minimo 1 HP); solo "arco_head"
+	# puede matar por flecha.
+	if is_human_actor and weapon_kind in ["arco", "lanza", "bola"]:
 		dmg = 18.0 if is_bola or weapon_kind == "bola" else (120.0 if is_headshot else 55.0)
 	if is_bola and target is Node3D:
 		target.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
-	if target is WildlifeController or target.is_in_group("wildlife"):
+	if is_wildlife_tgt:
 		if target.has_method("take_damage"):
 			target.take_damage(dmg, false, proxy)
 		if bool(target.get("_is_dead")):
@@ -5892,6 +5896,8 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 			_bot_start_gutting(b, target)
 	else:
 		var wname := weapon_kind if not weapon_kind.is_empty() else ("rifle" if dmg_base > 100.0 else ("bola" if is_bola else "melee"))
+		if wname == "arco" and is_human_actor and is_headshot:
+			wname = "arco_head"
 		_apply_bot_damage_to_target(b, target, dmg, wname)
 
 func _apply_bot_damage_to_target(b: Dictionary, target: Node3D, amount: float, weapon: String) -> void:
@@ -5918,7 +5924,7 @@ func _apply_bot_damage_to_target(b: Dictionary, target: Node3D, amount: float, w
 		if weapon in ["rifle", "m4"] and target.has_method("_play_shot_reaction"):
 			target._play_shot_reaction()
 		elif target.has_method("_play_hit_reaction"):
-			target._play_hit_reaction(true)
+			target._play_hit_reaction(weapon == "melee")
 
 func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String = "melee") -> void:
 	if not bots.has(bot_id):
@@ -5928,7 +5934,9 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return
-	var hp := maxf(0.0, float(proxy.get_meta("proxy_health", 100.0)) - amount)
+	var prev_hp := float(proxy.get_meta("proxy_health", 100.0))
+	var min_hp := 1.0 if (weapon in ["arco", "arco_madera", "arrow", "flecha"] and prev_hp > 0.0) else 0.0
+	var hp := maxf(min_hp, prev_hp - amount)
 	b["health"] = hp
 	proxy.set_meta("proxy_health", hp)
 	proxy.set_meta("saved_health", hp)
@@ -5977,7 +5985,7 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	# Reaccion visual sincronizada: el kind va directo a _net_player_hit_event,
 	# que ya distingue rifle (sangre + reaccion de disparo), melee, wolf_bite
 	# y bear_bite (sangre + reaccion + sonido de dolor).
-	var hit_kind := weapon if weapon in ["rifle", "m4", "melee", "wolf_bite", "bear_bite", "bola"] else "melee"
+	var hit_kind := weapon if weapon in ["rifle", "m4", "melee", "wolf_bite", "bear_bite", "bola", "arco", "arco_head", "lanza"] else "melee"
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["crouching"] = false
@@ -6157,7 +6165,7 @@ func _record_death_lesson(b: Dictionary, mem: Dictionary, death_kind: String) ->
 			_adjust_trait(p, "survival_instinct", 0.05, float(base_p["survival_instinct"]))
 			record_strategy_outcome(bid, "fortify_camp", true, 0.10)
 			_record_milestone(bid, "learned_first_aid")
-		"rifle", "bola", "arco", "arco_madera", "arrow", "lanza":
+		"rifle", "bola", "arco", "arco_head", "arco_madera", "arrow", "lanza":
 			# Muerte a distancia: aprende a desconfiar, a no cruzar campo
 			# abierto de dia y a cubrir/camuflar su campamento.
 			cat = "ranged"

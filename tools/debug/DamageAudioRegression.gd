@@ -115,8 +115,7 @@ func run() -> void:
 		"malo.mp3 loads through _play_unwell_sound")
 	local_pc.free()
 
-	# --- El mordisco ya no reproduce audio (el "bong" se quito) pero el
-	# resto de sonidos del animal siguen ruteando ---
+	# --- El mordisco usa dentellada seca (<0.8s, sin "bong" ni puñetazo) ---
 	var scene := Node3D.new()
 	root.add_child(scene)
 	current_scene = scene
@@ -125,13 +124,35 @@ func run() -> void:
 	wolf.animal_type = "wolf"
 	scene.add_child(wolf)
 	wolf._play_wolf_sound("bite")
-	check(wolf._wolf_audio_player == null or not (wolf._wolf_audio_player as AudioStreamPlayer3D).playing,
-		"la mordida no reproduce sonido (bong eliminado)")
+	var b_stream: AudioStream = (wolf._wolf_audio_player as AudioStreamPlayer3D).stream if wolf._wolf_audio_player is AudioStreamPlayer3D else null
+	check(wolf._wolf_audio_player is AudioStreamPlayer3D
+			and b_stream is AudioStreamWAV
+			and b_stream.get_length() > 0.35 and b_stream.get_length() < 0.85
+			and (wolf._wolf_audio_player as AudioStreamPlayer3D).playing,
+		"la mordida reproduce dentellada WAV corta sin bong (len=%.2fs)" % (b_stream.get_length() if b_stream != null else -1.0))
 	wolf._play_wolf_sound("growl")
 	check(wolf._wolf_audio_player is AudioStreamPlayer3D
 			and (wolf._wolf_audio_player as AudioStreamPlayer3D).stream != null
 			and (wolf._wolf_audio_player as AudioStreamPlayer3D).playing,
-		"los gruñidos del lobo siguen sonando tras quitar el bong")
+		"los gruñidos del lobo siguen sonando")
+	# Mordisco recibido en Main._net_apply_damage NO dispara punch_impact.wav
+	var pc_bite = PlayerScript.new()
+	root.add_child(pc_bite)
+	pc_bite._play_hit_reaction(false, true)
+	check(pc_bite._impact_audio_player == null or not pc_bite._impact_audio_player.playing,
+		"mordedura en víctima no reproduce sonido de puñetazo")
+	# Flechas fuera de la cabeza nunca bajan de 1 HP; en la cabeza sí matan
+	pc_bite.stats.health = 25.0
+	pc_bite.apply_damage(55.0, "arco")
+	check(is_equal_approx(pc_bite.stats.health, 1.0) and not pc_bite.is_dead,
+		"flecha fuera de la cabeza deja 1 HP y no mata (hp=%.1f)" % pc_bite.stats.health)
+	pc_bite.apply_damage(55.0, "arco")
+	check(is_equal_approx(pc_bite.stats.health, 1.0) and not pc_bite.is_dead,
+		"segunda flecha en el cuerpo tampoco mata (hp=%.1f)" % pc_bite.stats.health)
+	pc_bite.apply_damage(120.0, "arco_head")
+	check(is_equal_approx(pc_bite.stats.health, 0.0),
+		"flecha en la cabeza (arco_head) sí reduce salud a 0 (hp=%.1f)" % pc_bite.stats.health)
+	pc_bite.free()
 
 	world.free()
 	scene.free()

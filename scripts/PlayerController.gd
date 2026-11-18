@@ -13791,7 +13791,7 @@ func take_damage(amount: float, from_knife: bool = false, weapon: String = "mele
 		if weapon in ["rifle", "m4"]:
 			_play_shot_reaction()
 		else:
-			_play_hit_reaction(true)
+			_play_hit_reaction(weapon == "melee")
 		var scene_node := get_tree().current_scene if is_inside_tree() else null
 		var net_node := scene_node.get_node_or_null("/root/NetworkManager") if scene_node != null else null
 		var peer_id: int = get_meta("peer_id", 0)
@@ -13804,7 +13804,7 @@ func take_damage(amount: float, from_knife: bool = false, weapon: String = "mele
 			elif scene_node != null and scene_node.get("survivor_bot_mgr") != null:
 				scene_node.survivor_bot_mgr.on_bot_damaged(peer_id, amount, 1, weapon)
 		return
-	apply_damage(amount)
+	apply_damage(amount, weapon)
 
 func _land_after_fall() -> void:
 	var drop := _max_fall_height - global_position.y
@@ -13855,8 +13855,12 @@ func apply_damage(amount: float, cause: String = "") -> void:
 						notice.emit("%s se ha roto por el ataque!" % item.item_name)
 		if any_broken:
 			inventory.changed.emit()
-	stats.health = max(0.0, stats.health - amount)
-	if cause == "melee" or cause.ends_with("_bite") or cause in ["rifle", "m4", "arco", "lanza", "bola"]:
+	# Una flecha solo mata si se clava en la cabeza (cause == "arco_head"):
+	# fuera de la cabeza deja como minimo 1 HP.
+	var nonlethal_arrow := cause in ["arco", "arco_madera", "arrow", "flecha"]
+	var min_hp := 1.0 if (nonlethal_arrow and stats.health > 0.0) else 0.0
+	stats.health = max(min_hp, stats.health - amount)
+	if cause == "melee" or cause.ends_with("_bite") or cause in ["rifle", "m4", "arco", "arco_head", "lanza", "bola"]:
 		is_sitting = false
 		is_prone = false
 		_sit_cooldown = 0.0
@@ -15890,8 +15894,12 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 				target_node = walked
 				break
 			walked = walked.get_parent()
-		if target_node == null and node.is_in_group("net_player_proxy"):
+		if target_node == null and (node.is_in_group("net_player_proxy") or node.is_in_group("ai_survivor_bot")):
 			target_node = node
+	if target_node != null and not is_headshot and (target_node.is_in_group("net_player_proxy") or target_node.is_in_group("ai_survivor_bot")):
+		var cap_top := 0.55 if bool(target_node.get_meta("prone", false)) or bool(target_node.get_meta("sleeping", false)) else (1.25 if bool(target_node.get_meta("crouching", false)) or bool(target_node.get_meta("sitting", false)) else 1.72)
+		if hit_pos.y - (target_node as Node3D).global_position.y >= cap_top - 0.30:
+			is_headshot = true
 	if target_node != null:
 		var dmg := base_damage * (2.2 if is_headshot else 1.0) * energy_mult
 		if is_bola and target_node is Node3D:
@@ -15900,9 +15908,11 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 				target_node.set("is_crouching", true)
 			_attach_bola_snare_visual(target_node as Node3D, 6.0)
 			notice.emit("¡Boleadoras! Has trabado a la presa (6s).")
-		if target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy"):
+		if target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy") or target_node.is_in_group("ai_survivor_bot"):
+			var is_arrow := item_name.begins_with("Flecha")
 			var pvp_dmg := (18.0 if is_bola else (120.0 if is_headshot else 55.0))
-			_apply_rifle_target_damage(target_node, pvp_dmg, "bola" if is_bola else ("arco" if item_name.begins_with("Flecha") else "lanza"))
+			var wtag := "bola" if is_bola else (("arco_head" if is_headshot else "arco") if is_arrow else "lanza")
+			_apply_rifle_target_damage(target_node, pvp_dmg, wtag)
 			if not is_bola:
 				notice.emit("¡Impacto en la cabeza!" if is_headshot else "¡Impacto al jugador!")
 		elif is_bola and target_node is WildlifeController and target_node.is_puppet:

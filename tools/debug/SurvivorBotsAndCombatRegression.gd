@@ -7258,6 +7258,42 @@ func run() -> void:
 	bx["_farm"] = {}
 	(bx["_mem"] as Dictionary)["farm_plots"] = []
 	world._planted_crops = []
+	# 10X8: Flechas solo matan si se clavan en la cabeza (jugador proxy y bots)
+	var dummy_arrow_proj := preload("res://scripts/RifleProjectile.gd").new()
+	dummy_arrow_proj.velocity = Vector3(0.0, 0.0, -75.0)
+	dummy_arrow_proj.launch_speed = 75.0
+	world.add_child(dummy_arrow_proj)
+	var victim_proxy := Node3D.new()
+	victim_proxy.add_to_group("net_player_proxy")
+	victim_proxy.set_meta("peer_id", 777)
+	victim_proxy.set_meta("proxy_health", 25.0)
+	victim_proxy.set_meta("saved_health", 25.0)
+	victim_proxy.set_meta("proxy_dead", false)
+	world.add_child(victim_proxy)
+	victim_proxy.global_position = Vector3(10.0, 0.4, 10.0)
+	world.server_proxies[777] = victim_proxy
+	mgr._on_bot_projectile_impact(bx, dummy_arrow_proj, victim_proxy, victim_proxy.global_position + Vector3(0.0, 1.0, 0.0), 175.0, false, "arco")
+	check(is_equal_approx(float(victim_proxy.get_meta("proxy_health", 0.0)), 1.0) and not bool(victim_proxy.get_meta("proxy_dead", false)),
+		"10X8a: Flechazo de bot en el pecho con 25 HP deja al jugador en 1 HP vivo (hp=%.1f)" % float(victim_proxy.get_meta("proxy_health", 0.0)))
+	mgr._on_bot_projectile_impact(bx, dummy_arrow_proj, victim_proxy, victim_proxy.global_position + Vector3(0.0, 0.6, 0.0), 175.0, false, "arco")
+	check(is_equal_approx(float(victim_proxy.get_meta("proxy_health", 0.0)), 1.0) and not bool(victim_proxy.get_meta("proxy_dead", false)),
+		"10X8b: Otro flechazo en las piernas a 1 HP tampoco mata al jugador")
+	mgr._on_bot_projectile_impact(bx, dummy_arrow_proj, victim_proxy, victim_proxy.global_position + Vector3(0.0, 1.60, 0.0), 175.0, false, "arco")
+	check(is_equal_approx(float(victim_proxy.get_meta("proxy_health", 100.0)), 0.0) and bool(victim_proxy.get_meta("proxy_dead", false)),
+		"10X8c: Flechazo en la cabeza (+1.60 m) si mata al jugador")
+	world.server_proxies.erase(777)
+	victim_proxy.queue_free()
+	dummy_arrow_proj.queue_free()
+	mgr._respawn_bot(mgr.bots[903])
+	bx = mgr.bots[903]
+	px = bx["proxy"]
+	px.set_meta("proxy_health", 20.0)
+	mgr.on_bot_damaged(903, 55.0, 1, "arco")
+	check(is_equal_approx(float(px.get_meta("proxy_health", 0.0)), 1.0) and not bool(px.get_meta("proxy_dead", false)),
+		"10X8d: Flechazo del jugador en el cuerpo de un bot con 20 HP lo deja en 1 HP sin morir")
+	mgr.on_bot_damaged(903, 120.0, 1, "arco_head")
+	check(bool(px.get_meta("proxy_dead", false)),
+		"10X8e: Flechazo del jugador en la cabeza del bot (arco_head) si lo mata")
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")

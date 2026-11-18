@@ -2855,6 +2855,8 @@ func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 			if close and facing and _animal_bite_clear(target):
 				foe.take_damage(60.0 if animal_type == "bear" else (35.0 if not tamed_to.is_empty() else 25.0), false, self)
 				_foe_hits += 1
+				if animal_type == "wolf" or animal_type == "bear":
+					_play_wolf_sound("bite")
 		# Finish the authored clip instead of cutting its recovery at 0.85 s.
 		var bite_duration := 1.1
 		if _animation_player != null:
@@ -3810,7 +3812,7 @@ func _spawn_local_blood_burst(at_pos: Vector3) -> void:
 static func prepare_combat_audio() -> void:
 	# Decode shared attack/pain sounds while loading, not on the first bite.
 	for path in ["res://assets/audio/loboherido.wav", "res://assets/audio/animal_herido.wav",
-		"res://assets/external/audio/downloaded/wolf_growl.wav"]:
+		"res://assets/audio/wolf_bite.wav", "res://assets/external/audio/downloaded/wolf_growl.wav"]:
 		_get_cached_audio_stream(path)
 
 static func _get_cached_audio_stream(path: String) -> AudioStream:
@@ -3996,10 +3998,6 @@ func _play_wolf_sound(sound_type: String) -> void:
 		_play_animation_by_name("attack")
 		if _animation_player != null:
 			_animation_player.speed_scale = 1.0
-	# La mordida sobre el jugador no lleva sonido: el sample sonaba a
-	# campanada ("bong") fuera de lugar. La animacion de ataque sigue.
-	if sound_type == "bite":
-		return
 	var is_bear := animal_type == "bear"
 	# El lobo domesticado no aulla como el salvaje: usa un ladrido corto y mas
 	# agudo (growl agudo) para distinguirse de lejos en cualquier sonido.
@@ -4044,6 +4042,8 @@ func _play_wolf_sound(sound_type: String) -> void:
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
+		"bite":
+			path = "res://assets/audio/wolf_bite.wav"
 		"hungry":
 			path = "res://assets/audio/quejidohambrelobo.mp3"
 		_:
@@ -4054,7 +4054,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 	_wolf_audio_player.stream = stream
 	if is_bear:
 		_wolf_audio_player.volume_db = 4.0 if sound_type == "attack" or sound_type == "bite" else 1.0
-		_wolf_audio_player.pitch_scale = randf_range(0.45, 0.56)
+		_wolf_audio_player.pitch_scale = randf_range(0.52, 0.64) if sound_type == "bite" else randf_range(0.45, 0.56)
 	else:
 		if sound_type == "hungry":
 			# Quejido de hambre: el mp3 ya suena a quejido — sin el tono agudo
@@ -4064,8 +4064,11 @@ func _play_wolf_sound(sound_type: String) -> void:
 		elif sound_type == "growl_low":
 			_wolf_audio_player.volume_db = -14.0
 			_wolf_audio_player.pitch_scale = randf_range(0.6, 0.75) * (1.45 if tamed else 1.0)
+		elif sound_type == "bite":
+			_wolf_audio_player.volume_db = 2.0
+			_wolf_audio_player.pitch_scale = randf_range(1.06, 1.22) * (1.30 if tamed else 1.0)
 		else:
-			_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" or sound_type == "bite" else -4.0
+			_wolf_audio_player.volume_db = 0.0 if sound_type == "attack" else -4.0
 			_wolf_audio_player.pitch_scale = randf_range(0.85, 1.15) * (1.45 if tamed else 1.0)
 	_wolf_audio_player.play()
 

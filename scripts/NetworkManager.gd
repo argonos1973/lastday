@@ -1172,7 +1172,7 @@ func _broadcast_player_hit(peer_id: int, kind: String, pos: Vector3, include_vic
 
 @rpc("authority", "reliable")
 func player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
-	if kind not in ["rifle", "melee", "wolf_bite", "bear_bite"] or not pos.is_finite():
+	if kind not in ["rifle", "m4", "melee", "wolf_bite", "bear_bite", "arco", "arco_head", "lanza", "bola"] or not pos.is_finite():
 		return
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("_net_player_hit_event"):
