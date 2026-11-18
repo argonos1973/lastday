@@ -1,0 +1,155 @@
+extends SceneTree
+
+# Actual imported models + production movement/interpolation, without world
+# generation, audio, saves or wall-clock waits. AI requests a steady pace;
+# navigation can slow/block it, as in a river or at a closed passage.
+class World extends Node3D:
+	var depth := 0.0
+	var blocked := false
+	func find_path_wildlife(_start: Vector3, goal: Vector3) -> Array:
+		return [] if blocked else [goal]
+	func is_wildlife_allowed_at(_pos: Vector3) -> bool: return not blocked
+	func _get_exact_ground_y(_x: float, _z: float) -> float: return 0.0
+	func get_river_depth_at(_pos: Vector3) -> float: return depth
+
+class Animal extends WildlifeController:
+	func _process(_delta: float) -> void: pass
+	func _update_tracks() -> void: pass
+	func _update_wolf_sounds(_delta: float) -> void: pass
+	func _play_wolf_sound(_kind: String) -> void: pass
+	func _escape_if_trapped(_delta: float) -> bool: return false
+
+class MovingAnimal extends Animal:
+	var requested_speed := 1.0
+	var requested_gait := "walk"
+	func _prey_ai(_delta: float) -> Dictionary: return _motion_request()
+	func _wolf_ai(_delta: float) -> Dictionary: return _motion_request()
+	func _motion_request() -> Dictionary:
+		_state = "flee"
+		_play_animation_by_name(requested_gait)
+		return {"target": position + Vector3(0, 0, 40), "speed": requested_speed}
+
+var failures := 0
+func check(ok: bool, label: String) -> void:
+	if not ok:
+		failures += 1
+		push_error(label)
+func _initialize() -> void: call_deferred("run")
+
+func run() -> void:
+	var world := World.new()
+	root.add_child(world)
+	current_scene = world
+	var dt := 1.0 / 60.0
+	for kind in ["bear", "deer"]:
+		var animal := MovingAnimal.new()
+		world.add_child(animal)
+		animal.setup(kind, [Vector3.ZERO, Vector3(0,0,40)])
+		animal._speed_jitter = 1.0
+		animal._wolf_hunger = 100.0
+		var ap := animal._animation_player
+		check(ap != null, kind + " real GLB has an AnimationPlayer")
+		ap.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+		for gait in ["walk", "trot", "run"]:
+			animal.requested_gait = gait
+			animal.requested_speed = animal.move_speed * (3.2 if gait == "run" else (1.65 if gait == "trot" else 1.0))
+			for frame in range(90):
+				animal._process_body(dt)
+				ap.advance(dt)
+			check(animal.current_anim_keyword == gait, kind + " selects " + gait)
+			check(absf(ap.speed_scale - 1.0) < 0.01, kind + " " + gait + " keeps authored cadence")
+			check(animal._visual_root.rotation.z == 0.0 and animal._visual_root.position.y == 0.0, kind + " imported gait has no extra procedural bob/roll")
+		# Fast flight request, but wading only achieves walking speed. The cycle
+		# must progress, not restart run -> walk on every simulation frame.
+		world.depth = 1.0
+		animal._water_query_timer = 0.3
+		animal.requested_gait = "gallop" if kind == "deer" else "run"
+		for frame in range(50):
+			animal._process_body(dt)
+			ap.advance(dt)
+		check(animal.current_anim_keyword == "walk", kind + " wades instead of running in place")
+		check(ap.current_animation_position > 0.6, kind + " wading cycle advances without per-tick restarts")
+		check(absf(ap.speed_scale - 1.024) < 0.02, kind + " wading cadence matches real displacement")
+		world.blocked = true
+		var stopped := animal.position
+		animal._process_body(dt)
+		check(stopped.is_equal_approx(animal.position) and animal.current_anim_keyword == "idle", kind + " blocked legs stop")
+		world.blocked = false
+		world.depth = 0.0
+		animal.free()
+
+		var puppet := Animal.new()
+		world.add_child(puppet)
+		puppet.setup_puppet(kind)
+		ap = puppet._animation_player
+		ap.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+		var pace := puppet.move_speed * 3.2
+		for frame in range(120):
+			if frame % 6 == 0:
+				puppet.puppet_apply(Vector3(0,0,frame * dt * pace), 0.0, "run", false, false)
+			puppet._process_body(dt)
+			ap.advance(dt)
+		check(puppet.current_anim_keyword == "run" and absf(ap.speed_scale - 1.0) < 0.02, kind + " remote run cadence matches server")
+		for frame in range(120):
+			puppet._process_body(dt)
+			ap.advance(dt)
+		check(puppet.current_anim_keyword == "idle", kind + " stale movement packets stop leg animation")
+		if kind == "bear":
+			puppet.puppet_apply(puppet.position, 0.0, "attack", false, false)
+			for frame in range(180):
+				puppet._process_body(dt)
+				ap.advance(dt)
+			check(not ap.is_playing(), "stale remote attack snapshot cannot repeat a finished strike")
+			var nearby_wolf := Animal.new()
+			world.add_child(nearby_wolf)
+			nearby_wolf.setup_puppet("wolf")
+			nearby_wolf.tamed_to = "remote-owner"
+			nearby_wolf.position = puppet.position + Vector3(1,0,0)
+			puppet.puppet_apply(puppet.position, 0.0, "eat", false, false)
+			nearby_wolf.notify_puppet_damaged()
+			for frame in range(60):
+				puppet._process_body(dt)
+				ap.advance(dt)
+			check(puppet.current_anim_keyword == "eat" and "eat" in ap.current_animation, "remote bear uses exported feeding clip")
+			check(ap.speed_scale == 1.0 and ap.current_animation_position > 0.8, "remote feeding plays continuously at authored speed")
+			check(not puppet._puppet_combat_active, "nearby wolf cannot invent remote bear attacks while feeding")
+			nearby_wolf.free()
+		puppet.free()
+
+	# Real bear AI must show its strike, check contact once and stop its body.
+	var bear := Animal.new()
+	var deer := Animal.new()
+	world.add_child(bear)
+	world.add_child(deer)
+	bear.setup("bear", [Vector3.ZERO, Vector3(0,0,40)])
+	deer.setup("deer", [Vector3(0,0,1.8), Vector3(0,0,40)])
+	bear._cached_wildlife = [bear, deer]
+	bear._wolf_hunger = 20.0
+	var hp := deer.health
+	var decision := bear._wolf_ai(0.1)
+	check(bear.current_anim_keyword == "attack" and decision.speed == 0.0, "bear stops to strike its prey")
+	check(deer.health == hp, "prey not damaged before paw contact")
+	bear._wolf_ai(0.21)
+	check(deer.health == hp - 60.0, "bear hit lands at contact")
+	bear._wolf_ai(0.4)
+	check(deer.health == hp - 60.0 and bear.current_anim_keyword == "attack", "single damage event and full strike recovery")
+	bear._wolf_ai(0.6)
+	bear._attack_cooldown = 0.0
+	bear._wolf_ai(0.1)
+	deer.position.z = 7.0
+	bear._wolf_ai(0.21)
+	check(deer.health == hp - 60.0, "escaping the strike before contact prevents damage")
+	bear._wolf_ai(1.0)
+	decision = bear._wolf_ai(dt)
+	check(is_equal_approx(decision.speed, bear.move_speed * 2.8), "strike fix preserves bear hunting speed")
+	# Feeding state works on the authoritative animal too.
+	bear._wolf_eating_timer = 8.0
+	bear._wolf_eating_target = deer
+	bear._state = "eating"
+	bear._play_animation_by_name("idle")
+	check(bear.current_anim_keyword == "eat", "bear eating overrides idle")
+	bear._process_body(dt)
+	check("eat" in bear._animation_player.current_animation, "authoritative eating uses real GLB clip")
+	world.free()
+	print("BearDeerMotionRegression failures=", failures)
+	quit(1 if failures else 0)

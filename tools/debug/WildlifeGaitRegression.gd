@@ -11,7 +11,7 @@ func run():
  var stage := Node3D.new()
  root.add_child(stage)
  current_scene = stage
- for kind in ["wolf", "deer"]:
+ for kind in ["wolf", "deer", "bear"]:
   var animal := Animal.new()
   stage.add_child(animal)
   animal.setup(kind, [Vector3.ZERO])
@@ -26,6 +26,7 @@ func run():
    var pos := ap.current_animation_position
    animal._play_animation_by_name(gait)
    check(is_equal_approx(pos, ap.current_animation_position), "same gait must not restart")
+  animal.is_puppet = true
   animal._puppet_desired_anim = "gallop"
   check(animal._puppet_locomotion_gait(animal.move_speed * 2.2) == "gallop", "preserve gallop and run hysteresis")
   animal._play_animation_by_name("trot")
@@ -33,7 +34,7 @@ func run():
   animal._play_animation_by_name("idle")
   animal._update_animation_speed(20)
   check(is_equal_approx(ap.speed_scale, 1.0), "rest cadence")
-  if kind == "wolf":
+  if kind in ["wolf", "bear"]:
    animal._play_animation_by_name("attack")
    animal._update_animation_speed(20)
    check(is_equal_approx(ap.speed_scale, 1.0), "attack cadence")

@@ -39,7 +39,7 @@ class TestAnimal extends WildlifeControllerScript:
 
 class TestPlayer extends Node3D:
 	var health := 100.0
-	func apply_damage(amount: float) -> void:
+	func apply_damage(amount: float, _source := "") -> void:
 		health -= amount
 
 var failures := 0
@@ -83,10 +83,14 @@ func _run() -> void:
 	bear._wolf_hunger_threshold = 100.0
 	var prey_result: Dictionary = bear._wolf_ai(0.016)
 	check(bear._state == "chase_prey" and prey_result.target == deer.global_position, "hungry bear targets a nearby deer")
+	check(deer.health == deer.max_health and prey_result.speed == 0.0, "bear prepares its strike before contact")
+	bear._wolf_ai(0.31)
 	check(deer.health < deer.max_health, "bear attack damages its prey")
+	bear._wolf_ai(1.0) # Finish strike recovery before the next attack.
 	deer.health = 35.0
 	bear._attack_cooldown = 0.0
 	bear._wolf_ai(0.016)
+	bear._wolf_ai(0.31)
 	bear._wolf_ai(0.016)
 	check(deer._is_dead and bear._state == "eating" and bear._wolf_eating_target == deer, "bear kills and begins eating its deer prey")
 
@@ -104,9 +108,12 @@ func _run() -> void:
 	bear._attack_cooldown = 0.0
 	var wolf_prey_res: Dictionary = bear._wolf_ai(0.016)
 	check(bear._state == "chase_prey" and wolf_prey_res.target == wild_wolf.global_position, "hungry bear hunts wild wolves")
+	bear._wolf_ai(0.31)
+	bear._wolf_ai(1.0)
 	wild_wolf.health = 50.0
 	bear._attack_cooldown = 0.0
 	bear._wolf_ai(0.016)
+	bear._wolf_ai(0.31)
 	bear._wolf_ai(0.016)
 	check(wild_wolf._is_dead and bear._state == "eating" and bear._wolf_eating_target == wild_wolf, "bear kills and eats wolf carrion")
 	wild_wolf.free()
@@ -125,7 +132,7 @@ func _run() -> void:
 	bear._wolf_hunger_threshold = 0.0
 	bear._wolf_ai(0.016)
 	check(player.health == 65.0, "bear attack damages a nearby character for 35 health")
-	check(bear.last_sound == "attack", "bear plays attack roar when striking character")
+	check(bear.last_sound == "bite", "bear plays contact sound when striking character")
 
 	# Bears require exactly 3 rifle shots (260 base dmg each) to die and do not flee when shot
 	var shot_bear := TestAnimal.new()

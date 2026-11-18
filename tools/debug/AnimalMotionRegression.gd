@@ -133,6 +133,7 @@ func run() -> void:
 	for i in range(10): animal._process(1.0 / 60.0)
 	check(animal.ticks == 10, "Sheltered observer keeps nearby animal simulation smooth")
 	observer.position = Vector3(550,0,0)
+	observer.set_meta("is_aiming", true) # 620 m visibility requires the scope; normal range is 180 m.
 	animal._observer_check_timer = 0.0
 	animal.ticks = 0
 	for i in range(10): animal._process(1.0/60.0)

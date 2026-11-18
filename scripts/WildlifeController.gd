@@ -1,6 +1,8 @@
 extends Node3D
 class_name WildlifeController
 
+const BEAR_ATTACK_DURATION := 37.0 / 30.0
+
 var patrol_points: Array = []
 var target_index := 0
 var move_speed := 1.2
@@ -10,6 +12,7 @@ var _legs: Array[Node3D] = []
 var _visual_root: Node3D
 var _player: Node3D
 var _animation_player: AnimationPlayer
+var _animation_paused_for_distance := false
 var _stuck_time := 0.0
 var _last_position := Vector3.ZERO
 var _current_path: Array = []
@@ -80,6 +83,8 @@ var _observer_check_timer := 0.0
 var _near_network_observer := false
 var current_anim_keyword := "walk"
 var _puppet_desired_anim := "walk"
+var _defer_locomotion_animation := false
+var _requested_locomotion := ""
 var _puppet_attack_timer := 0.0
 var _puppet_bite_cooldown := 0.0
 var _puppet_combat_timer := 0.0
@@ -93,6 +98,11 @@ var _tamed_fur_state := 0
 static var _tamed_fur_mat_mine: StandardMaterial3D = null
 static var _tamed_fur_mat_other: StandardMaterial3D = null
 var _tamed_rest_time := 0.0
+var _tamed_move_speed := 0.0
+var _follow_owner_id := 0
+var _follow_owner_pos := Vector3.ZERO
+var _follow_sample_time := 0.0
+var _follow_owner_speed := 0.0
 var _hit_flash_timer := 0.0
 var _gutted := false
 var _corpse_body: CollisionObject3D = null
@@ -184,6 +194,7 @@ var _wildlife_cache_timer := 0.0
 # Puppet mode: visual-only animal controlled by network sync (no AI)
 func setup_puppet(kind: String) -> void:
 	animal_type = kind
+	move_speed = _species_walk_speed(kind)
 	is_puppet = true
 	add_to_group("wildlife")
 	match animal_type:
@@ -228,6 +239,10 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		_puppet_desired_anim = anim.to_lower()
 		if _puppet_attack_timer > 0.0 or (_puppet_combat_active and _puppet_desired_anim in ["idle", "walk", "trot", "sit", "lie"]):
 			return
+		if _uses_measured_locomotion() and _network_motion.samples.size() > 1 and _puppet_desired_anim in ["walk", "trot", "run", "gallop"]:
+			# The interpolated body can still be slowing down or wading. Let
+			# its actual motion select the gait, without restarting it per packet.
+			return
 		_play_animation_by_name(anim)
 
 func notify_puppet_damaged() -> void:
@@ -242,6 +257,10 @@ func notify_puppet_damaged() -> void:
 			continue
 		var w := node as WildlifeController
 		if w._is_dead or (w.animal_type != "wolf" and w.animal_type != "bear"):
+			continue
+		if w.animal_type == "bear":
+			# Bears use their own authoritative attack/sound events, not a
+			# synthetic strike whenever any nearby animal receives damage.
 			continue
 		if w.global_position.distance_to(global_position) <= 4.2:
 			w._puppet_combat_timer = maxf(w._puppet_combat_timer, 3.0)
@@ -418,7 +437,7 @@ func setup(kind: String, points: Array) -> void:
 	_last_position = global_position
 	_progress_ref_pos = global_position
 	target_index = 1 if patrol_points.size() > 1 else 0
-	move_speed = 1.55 if animal_type == "bear" else (1.65 if animal_type == "deer" else (2.0 if animal_type == "wolf" else 2.35))
+	move_speed = _species_walk_speed(animal_type)
 	_speed_jitter = randf_range(0.85, 1.18)
 	# Golden-ratio phase spread: sequential wildlife names produce consecutive
 	# hashes, so a plain mod clusters them into the same update frame.
@@ -540,9 +559,11 @@ func _process_body(delta: float) -> void:
 			if far_from_viewer:
 				if _animation_player != null and _animation_player.is_playing():
 					_animation_player.pause()
+					_animation_paused_for_distance = true
 				return
-			if _animation_player != null and not _animation_player.is_playing() and not _animation_player.current_animation.is_empty():
+			if _animation_player != null and _animation_paused_for_distance:
 				_animation_player.play()
+				_animation_paused_for_distance = false
 			_update_water_depth(delta)
 			_update_puppet_combat(delta)
 			_wildlife_cache_timer += delta
@@ -559,11 +580,15 @@ func _process_body(delta: float) -> void:
 					_play_animation_by_name(loco_clip)
 					_update_animation_speed(vis_spd)
 				elif _puppet_attack_timer <= 0.0:
-					if vis_spd > 0.35 and current_anim_keyword in ["idle", "sit", "lie", "eat", "attack", "threaten"]:
+					if _uses_measured_locomotion() and vis_spd > 0.12:
+						_play_animation_by_name(_puppet_locomotion_gait(vis_spd))
+						_update_animation_speed(vis_spd)
+					elif vis_spd > 0.35 and current_anim_keyword in ["idle", "sit", "lie", "eat", "attack", "threaten"]:
 						_play_animation_by_name("trot" if vis_spd > move_speed * 1.45 else "walk")
 						_update_animation_speed(vis_spd)
-					elif vis_spd <= 0.12 and not _puppet_desired_anim.is_empty() and current_anim_keyword != _puppet_desired_anim:
-						_play_animation_by_name(_puppet_desired_anim)
+					elif vis_spd <= 0.12 and not _puppet_desired_anim.is_empty():
+						var stopped_anim := "idle" if _uses_measured_locomotion() and _puppet_desired_anim in ["walk", "trot", "run", "gallop"] else _puppet_desired_anim
+						_play_animation_by_name(stopped_anim)
 		if (animal_type == "wolf" or animal_type == "bear") and not _is_dead:
 			_update_wolf_sounds(delta)
 		if _is_dead:
@@ -723,13 +748,12 @@ func _process_body(delta: float) -> void:
 				if scene != null and scene.has_method("_note_wildlife_death"):
 					scene._note_wildlife_death(animal_type, global_position)
 		if _wolf_eating_timer > 0.0:
-			if animal_type == "wolf":
-				_play_animation_by_name("eat")
-				if is_instance_valid(_wolf_eating_target):
-					var toward_food := _wolf_eating_target.global_position - global_position
-					toward_food.y = 0.0
-					if toward_food.length_squared() > 0.01:
-						rotation.y = lerp_angle(rotation.y, atan2(toward_food.x, toward_food.z), minf(1.0, delta * 5.0))
+			_play_animation_by_name("eat")
+			if is_instance_valid(_wolf_eating_target):
+				var toward_food := _wolf_eating_target.global_position - global_position
+				toward_food.y = 0.0
+				if toward_food.length_squared() > 0.01:
+					rotation.y = lerp_angle(rotation.y, atan2(toward_food.x, toward_food.z), minf(1.0, delta * 5.0))
 			_wolf_eating_timer -= delta
 			var satiation_cap := (100.0 if not tamed_to.is_empty() else 60.0) if animal_type == "wolf" else 85.0
 			_wolf_hunger = min(satiation_cap, _wolf_hunger + delta * 5.0)
@@ -775,6 +799,10 @@ func _process_body(delta: float) -> void:
 		_chase_stuck_time = 0.0
 	var target: Vector3
 	var speed: float
+	# Select locomotion once, after navigation/water have determined real travel.
+	# Otherwise the AI's run request restarts the clip on every slow wading tick.
+	_defer_locomotion_animation = _uses_measured_locomotion()
+	_requested_locomotion = ""
 	if animal_type == "wolf" or animal_type == "bear":
 		var result := _wolf_ai(delta)
 		target = result["target"]
@@ -783,8 +811,14 @@ func _process_body(delta: float) -> void:
 		var result := _prey_ai(delta)
 		target = result["target"]
 		speed = result["speed"]
+	_defer_locomotion_animation = false
 	# Variación natural: cada animal tiene su propio ritmo y no camina en línea recta
-	if _state == "chase_prey" and _ordered_prey != null:
+	if animal_type == "wolf" and not tamed_to.is_empty() and _state in ["follow", "guard"]:
+		# Companion speed must keep up with its owner independently of the
+		# random patrol multiplier. Ease acceleration, but obey stop commands now.
+		_tamed_move_speed = move_toward(_tamed_move_speed, speed, delta * (10.0 if speed < _tamed_move_speed else 6.0)) if speed > 0.0 else 0.0
+		speed = _tamed_move_speed
+	elif _state == "chase_prey" and _ordered_prey != null:
 		speed *= maxf(_speed_jitter, 1.0)
 	else:
 		speed *= _speed_jitter
@@ -824,6 +858,11 @@ func _process_body(delta: float) -> void:
 	var direct_chase_dist := 35.0 if (_state == "chase_prey" and _ordered_prey != null) else 15.0
 	var direct_goal: Vector3 = target if _state == "chase_player" else (chase_live.global_position if chase_live != null else target)
 	var use_direct_chase := chase_live != null and global_position.distance_to(chase_live.global_position) < direct_chase_dist and _direct_route_allowed(direct_goal)
+	# Nearby companions follow the current safe destination instead of a path
+	# trailing the owner by up to 1.2 seconds. Walls/water still require a route.
+	if animal_type == "wolf" and not tamed_to.is_empty() and _state == "follow" and to_target.length() < 15.0 and _direct_route_allowed(target):
+		use_direct_chase = true
+		direct_goal = target
 	if not use_direct_chase:
 		if _current_path.is_empty() and not _path_failed_empty and speed > 0.0 and to_target.length() > 0.15:
 			_path_recalc_timer = 0.0
@@ -854,6 +893,7 @@ func _process_body(delta: float) -> void:
 	if move_target.distance_to(global_position) < 0.1 and speed > 0.0 and to_target.length() > 0.12:
 		if _direct_route_allowed(target) or (to_target.length() < 4.5 and _is_position_allowed(global_position + to_target.normalized() * minf(0.55, to_target.length()))):
 			move_target = target
+	var before_move := global_position
 	_route_waiting = move_target.distance_to(global_position) < 0.1 or speed <= 0.0
 	if _route_waiting and not (current_anim_keyword in ["attack", "threaten", "shake", "eat", "sit", "lie"]):
 		_play_animation_by_name("idle")
@@ -861,14 +901,21 @@ func _process_body(delta: float) -> void:
 		var turn_spd := 9.0 if (_prey_flee_timer > 0.0 or _state == "flee") else 6.0
 		_move_towards(move_target, speed, delta, turn_spd)
 	_update_tamed_visuals()
-	var moved_xz := Vector2(global_position.x - _last_position.x, global_position.z - _last_position.z).length()
-	if moved_xz > 0.004:
+	var moved_xz := Vector2(global_position.x - before_move.x, global_position.z - before_move.z).length()
+	var measured_motion := _uses_measured_locomotion()
+	if moved_xz > (0.000001 if measured_motion else 0.004):
+		var actual_speed := moved_xz / maxf(delta, 0.0001)
 		var allow_override := current_anim_keyword in ["idle", "sit", "lie", "eat"] or (_bite_anim_timer <= 0.0 and _animal_bite_target == null and current_anim_keyword in ["attack", "threaten"])
-		if allow_override:
+		if measured_motion and (allow_override or current_anim_keyword in ["walk", "trot", "run", "gallop"]):
+			_play_animation_by_name(_puppet_locomotion_gait(actual_speed, _requested_locomotion))
+		elif allow_override:
 			_play_animation_by_name("run" if speed > move_speed * 2.2 else ("trot" if speed > move_speed * 1.25 else "walk"))
-		_walk_time += delta * speed * 4.8
+		_walk_time += delta * (actual_speed if measured_motion else speed) * 4.8
 		_animate_legs(delta)
-		_update_animation_speed(speed)
+		_update_animation_speed(actual_speed if measured_motion else speed)
+	elif measured_motion and current_anim_keyword in ["walk", "trot", "run", "gallop"]:
+		_play_animation_by_name("idle")
+		_tamed_move_speed = 0.0
 
 func attract_to_noise(pos: Vector3, radius: float) -> void:
 	if _is_dead:
@@ -1141,7 +1188,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_state = "fight_wolf"
 			_chase_target = _wolf_foe
 			return _fight_animal(_wolf_foe, delta)
-	_animal_bite_target = null
+	if animal_type != "bear" or _state != "chase_prey":
+		_animal_bite_target = null
 	# Lobo domesticado: seguir/guardar al dueño o defenderlo de una amenaza
 	_threat_timer = max(0.0, _threat_timer - delta)
 	if _threat_player != null and (not is_instance_valid(_threat_player) or _threat_timer <= 0.0 or _threat_player.get_meta("proxy_dead", false) or _threat_player.get("is_dead") == true):
@@ -1288,6 +1336,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			_state = "chase_player"
 			_chase_target = _player
 			_noise_attract_timer = 0.0
+			_animal_bite_target = null
 			if dist_to_player < 5.0:
 				speed = move_speed * 1.5
 			else:
@@ -1295,7 +1344,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			if flat_dist <= 4.0 and height_diff < 1.8:
 				if _attack_cooldown <= 0.0:
 					_attack_cooldown = 2.5
-					_bite_anim_timer = 0.52
+					_bite_anim_timer = BEAR_ATTACK_DURATION if animal_type == "bear" else 0.52
 					_attack_timer = randf_range(5.0, 10.0)
 					if _player.is_in_group("net_player_proxy"):
 						var peer_id: int = _player.get_meta("peer_id", 0)
@@ -1475,6 +1524,13 @@ func _wolf_ai(delta: float) -> Dictionary:
 					return _fight_animal(nearest_prey, delta)
 				_state = "chase_prey"
 				_chase_target = nearest_prey
+				if animal_type == "bear":
+					# Use the authored strike and its contact phase, rather than
+					# damaging prey while playing a running cycle through it.
+					var hunt_result := _fight_animal(nearest_prey, delta, 2.2)
+					if hunt_result["speed"] > 0.0:
+						hunt_result["speed"] = move_speed * 2.8
+					return hunt_result
 				target = nearest_prey.global_position
 				speed = move_speed * 2.8
 				var hit_range := 2.2 if animal_type == "bear" else 1.5
@@ -2829,9 +2885,11 @@ func _release_owner_record() -> void:
 		scene._clear_tamed_wolf_record(tamed_to)
 
 # Animal combat: one contact check per bite, using the existing attack clip.
-func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
+func _fight_animal(foe: Node3D, delta: float, reach_override := 0.0) -> Dictionary:
 	var target := foe.global_position
 	var reach := 3.2 if animal_type == "bear" or str(foe.get("animal_type")) == "bear" else 2.6
+	if reach_override > 0.0:
+		reach = reach_override
 	_face_towards(target, minf(delta * 7.0, 1.0))
 	var close := global_position.distance_to(target) <= reach
 	if _animal_bite_target != foe:
@@ -2858,7 +2916,7 @@ func _fight_animal(foe: Node3D, delta: float) -> Dictionary:
 				if animal_type == "wolf" or animal_type == "bear":
 					_play_wolf_sound("bite")
 		# Finish the authored clip instead of cutting its recovery at 0.85 s.
-		var bite_duration := 1.1
+		var bite_duration := BEAR_ATTACK_DURATION if animal_type == "bear" else 1.1
 		if _animation_player != null:
 			for clip_name in _animation_player.get_animation_list():
 				if "attack" in clip_name.to_lower():
@@ -2881,6 +2939,7 @@ func _animal_bite_clear(target: Vector3) -> bool:
 func _tamed_ai(delta: float) -> Dictionary:
 	_house_direct_goal = false
 	var owner := _resolve_owner()
+	_update_follow_owner_speed(owner, delta)
 	var owner_anchor: Vector3 = owner.global_position if owner != null else global_position
 	var leash_anchor: Vector3 = _stay_pos if _follow_mode in ["stay", "patrol"] else owner_anchor
 	# Desenganche: no perseguir amenazas o presas lejos del dueno/puesto — vuelve a su lado.
@@ -3103,21 +3162,36 @@ func _tamed_ai(delta: float) -> Dictionary:
 		_snap_to_terrain()
 		_current_path.clear()
 		_path_index = 0
+		_tamed_move_speed = 0.0
+		_play_animation_by_name("idle")
+		return {"handled": true, "target": global_position, "speed": 0.0}
 	var follow_goal := _safe_follow_spot(owner.global_position, 2.4)
-	var spd := move_speed * 1.4
-	var anim := "walk"
-	var owner_sprinting: bool = owner.get("is_sprinting") == true or owner.get_meta("sprinting", false) == true
-	if owner_sprinting and od > 3.5:
-		spd = move_speed * 3.4
-		anim = "run"
-	elif od > 26.0:
-		spd = move_speed * 3.2
-		anim = "run"
-	elif od > 9.0:
-		spd = move_speed * 2.1
-		anim = "trot"
-	_play_animation_by_name(anim)
+	# Match the owner's measured pace plus a bounded closing speed. Even the
+	# slowest patrol variant can keep up with a 7 m/s sprint without teleporting.
+	var spd := clampf(_follow_owner_speed + maxf(od - 3.0, 0.0) * 0.9, move_speed * 0.6, move_speed * 4.2)
 	return {"handled": true, "target": follow_goal, "speed": spd}
+
+func _update_follow_owner_speed(owner: Node3D, delta: float) -> void:
+	if owner == null:
+		_follow_owner_id = 0
+		_follow_owner_speed = 0.0
+		return
+	if _follow_owner_id != owner.get_instance_id():
+		_follow_owner_id = owner.get_instance_id()
+		_follow_owner_pos = owner.global_position
+		_follow_sample_time = 0.0
+		_follow_owner_speed = 0.0
+	if owner is CharacterBody3D:
+		_follow_owner_speed = minf(Vector2(owner.velocity.x, owner.velocity.z).length(), move_speed * 3.5)
+		return
+	# Server proxies move only when a snapshot arrives. Average a short window
+	# instead of alternating between zero and a spike on each network packet.
+	_follow_sample_time += delta
+	if _follow_sample_time >= 0.2:
+		var travelled := Vector2(owner.global_position.x - _follow_owner_pos.x, owner.global_position.z - _follow_owner_pos.z).length()
+		_follow_owner_speed = minf(travelled / _follow_sample_time, move_speed * 3.5) if travelled < 10.0 else 0.0
+		_follow_owner_pos = owner.global_position
+		_follow_sample_time = 0.0
 
 # Objetivo del doble silbido: lo más cercano al dueño o al propio lobo —
 # cualquier animal salvaje/ajeno y cualquier jugador que no sea el dueño.
@@ -3190,7 +3264,7 @@ func _face_towards(pos: Vector3, delta: float) -> void:
 	var d := pos - global_position
 	d.y = 0.0
 	if d.length_squared() > 0.04:
-		rotation.y = lerp_angle(rotation.y, atan2(d.x, d.z), delta * 3.5)
+		rotation.y = lerp_angle(rotation.y, atan2(d.x, d.z), clampf(delta * 3.5, 0.0, 1.0))
 
 func _safe_follow_spot(owner_pos: Vector3, pref_dist: float) -> Vector3:
 	var to_wolf := global_position - owner_pos
@@ -3550,6 +3624,13 @@ func _update_puppet_combat(delta: float) -> void:
 	_puppet_attack_timer = maxf(0.0, _puppet_attack_timer - delta)
 	_puppet_bite_cooldown = maxf(0.0, _puppet_bite_cooldown - delta)
 	_puppet_combat_timer = maxf(0.0, _puppet_combat_timer - delta)
+	if animal_type == "bear":
+		# The server now sends the complete authored strike. Proximity-based
+		# client attacks invented extra hits during recovery (or while eating).
+		_puppet_combat_active = _puppet_attack_timer > 0.0
+		if _puppet_combat_active:
+			_play_animation_by_name("attack")
+		return
 	var foe := _find_puppet_melee_foe()
 	if foe != null:
 		if not _puppet_combat_active and _puppet_bite_cooldown <= 0.0 and _puppet_attack_timer <= 0.0:
@@ -3881,23 +3962,29 @@ func _find_nearest_animal(kind: String) -> Node3D:
 
 func _play_animation_by_name(keyword: String) -> void:
 	var lower_keyword := keyword.to_lower()
-	if lower_keyword == "idle" and animal_type == "wolf" and _wolf_eating_timer > 0.0:
+	if _defer_locomotion_animation and lower_keyword in ["walk", "trot", "run", "gallop"]:
+		_requested_locomotion = lower_keyword
+		return
+	if lower_keyword == "idle" and animal_type in ["wolf", "bear"] and _wolf_eating_timer > 0.0:
 		lower_keyword = "eat"
 	if lower_keyword == "idle" and animal_type == "wolf" and not tamed_to.is_empty() and not is_puppet and _state in ["follow", "guard"] and _threat_player == null:
 		if _tamed_rest_time >= 12.0 and _follow_mode == "stay":
 			lower_keyword = "lie"
 		elif _tamed_rest_time >= 2.0:
 			lower_keyword = "sit"
+	var previous_keyword := current_anim_keyword
 	current_anim_keyword = lower_keyword
 	if _animation_player == null:
 		return
+	if animal_type == "bear" and lower_keyword == "attack" and previous_keyword == "attack" and not _animation_player.is_playing() and "attack" in _animation_player.assigned_animation.to_lower():
+		return # An unchanged snapshot must not restart a completed one-shot.
 	# Rest and fight clips keep their authored cadence even after a network
 	# speed update.
 	if lower_keyword in ["idle", "sit", "lie", "eat", "attack", "threaten", "shake"]:
 		_animation_player.speed_scale = 1.0
 	var current := _animation_player.current_animation
 	if not current.is_empty() and current.to_lower().find(lower_keyword) >= 0 and (lower_keyword != "run" or current.to_lower().find("frighten") < 0):
-		if not _animation_player.is_playing():
+		if not _animation_player.is_playing() and not (animal_type == "bear" and lower_keyword == "attack"):
 			_animation_player.play(current)
 		return
 	var best := ""
@@ -3918,7 +4005,7 @@ func _play_animation_by_name(keyword: String) -> void:
 		for animation_name in anim_list:
 			var animation := _animation_player.get_animation(animation_name)
 			if animation != null:
-				animation.loop_mode = Animation.LOOP_LINEAR
+				animation.loop_mode = Animation.LOOP_NONE if animal_type == "bear" and "attack" in animation_name.to_lower() else Animation.LOOP_LINEAR
 	for cand_kw in candidates:
 		for animation_name in anim_list:
 			if animation_name.to_lower().find(cand_kw) >= 0 and not (lower_keyword in ["walk", "trot", "run", "gallop"] and "frighten" in animation_name.to_lower()):
@@ -3934,16 +4021,22 @@ func _play_animation_by_name(keyword: String) -> void:
 			_animation_player.speed_scale = 1.0
 		_animation_player.play(best, 0.65 if lower_keyword in ["sit", "lie"] else 0.2)
 
-func _puppet_locomotion_gait(speed: float) -> String:
+func _uses_measured_locomotion() -> bool:
+	return animal_type in ["bear", "deer"] or (animal_type == "wolf" and not tamed_to.is_empty())
+
+func _puppet_locomotion_gait(speed: float, preferred_gait := "") -> String:
 	# Hysteresis prevents snapshot interpolation noise from blending between
 	# two leg cycles every frame at the walk/trot/run boundaries.
 	var ratio := speed / maxf(move_speed, 0.01)
 	var running := current_anim_keyword in ["run", "gallop"]
-	if ratio > (2.0 if running else 2.3):
-		return "gallop" if _puppet_desired_anim == "gallop" else "run"
+	if ratio > (2.1 if running else 2.3):
+		return "gallop" if (preferred_gait == "gallop" or (is_puppet and _puppet_desired_anim == "gallop")) else "run"
 	if ratio > (1.05 if current_anim_keyword == "trot" else 1.25):
 		return "trot"
 	return "walk"
+
+static func _species_walk_speed(kind: String) -> float:
+	return 1.55 if kind == "bear" else (1.65 if kind == "deer" else (2.0 if kind == "wolf" else 2.35))
 
 func _update_animation_speed(speed: float) -> void:
 	if _animation_player == null:
@@ -3952,8 +4045,8 @@ func _update_animation_speed(speed: float) -> void:
 		_animation_player.speed_scale = 1.0
 		return
 	var nominal_speed := maxf(move_speed, 0.01)
-	if animal_type in ["wolf", "deer"]:
-		# The imported run cycles already contain a fast stride (0.43 s).
+	if animal_type in ["wolf", "deer", "bear"]:
+		# The imported run cycles already contain a fast stride (0.43–0.53 s).
 		# Dividing every gait by walking speed played those cycles at 2.5x.
 		# Inspect the actual clip so missing-gait fallbacks use its cadence.
 		var clip := _animation_player.current_animation.to_lower()
@@ -3961,7 +4054,8 @@ func _update_animation_speed(speed: float) -> void:
 			nominal_speed *= 3.2
 		elif "trot" in clip:
 			nominal_speed *= 1.65
-		_animation_player.speed_scale = clampf(speed / nominal_speed, 0.65, 1.35)
+		var min_cadence := 0.25 if _uses_measured_locomotion() and "walk" in clip else 0.65
+		_animation_player.speed_scale = clampf(speed / nominal_speed, min_cadence, 1.35)
 	else:
 		_animation_player.speed_scale = clampf(speed / nominal_speed, 0.5, 2.5)
 
@@ -3992,12 +4086,18 @@ func _play_wolf_sound(sound_type: String) -> void:
 			_net.animal_sound.rpc(name, sound_type)
 		return
 	if is_puppet and not _is_dead and (sound_type == "attack" or sound_type == "bite"):
-		_puppet_attack_timer = 0.52
+		var start_strike := _puppet_attack_timer <= 0.0
+		if animal_type != "bear":
+			_puppet_attack_timer = 0.52
+		elif start_strike:
+			_puppet_attack_timer = BEAR_ATTACK_DURATION
 		_puppet_bite_cooldown = 1.65
 		_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
 		_play_animation_by_name("attack")
 		if _animation_player != null:
 			_animation_player.speed_scale = 1.0
+			if animal_type == "bear" and start_strike and not _animation_player.is_playing():
+				_animation_player.play(_animation_player.assigned_animation)
 	var is_bear := animal_type == "bear"
 	# El lobo domesticado no aulla como el salvaje: usa un ladrido corto y mas
 	# agudo (growl agudo) para distinguirse de lejos en cualquier sonido.
@@ -4225,7 +4325,7 @@ func _update_water_depth_impl(delta: float) -> void:
 		else:
 			_water_depth = 0.0
 	var target_sink: float = -clamp(_water_depth, 0.0, 1.4) * 0.35
-	_water_sink = lerp(_water_sink, target_sink, delta * 5.0)
+	_water_sink = lerp(_water_sink, target_sink, clampf(delta * 5.0, 0.0, 1.0))
 	if _visual_root != null and is_instance_valid(_visual_root):
 		_visual_root.position.y = _water_sink
 
@@ -4257,7 +4357,7 @@ func _move_towards_impl(target_pos: Vector3, speed: float, delta: float, turn_sp
 		return
 	global_position = next_pos
 	_snap_to_terrain()
-	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), delta * turn_speed)
+	rotation.y = lerp_angle(rotation.y, atan2(dir.x, dir.z), clampf(delta * turn_speed, 0.0, 1.0))
 
 func _snap_to_terrain() -> void:
 	var _t := Time.get_ticks_usec()
@@ -4406,13 +4506,13 @@ func _move_with_avoidance(dir: Vector3, speed: float, delta: float, turn_speed: 
 			continue
 		global_position = next_pos
 		_snap_to_terrain()
-		rotation.y = lerp_angle(rotation.y, atan2(candidate.x, candidate.z), delta * turn_speed)
+		rotation.y = lerp_angle(rotation.y, atan2(candidate.x, candidate.z), clampf(delta * turn_speed, 0.0, 1.0))
 		return true
 	# Ningún candidato con anticipación libre: aceptar el mejor paso inmediato
 	if fallback_dir.length() > 0.01:
 		global_position = fallback_pos
 		_snap_to_terrain()
-		rotation.y = lerp_angle(rotation.y, atan2(fallback_dir.x, fallback_dir.z), delta * turn_speed)
+		rotation.y = lerp_angle(rotation.y, atan2(fallback_dir.x, fallback_dir.z), clampf(delta * turn_speed, 0.0, 1.0))
 		return true
 	return false
 
@@ -4650,6 +4750,13 @@ func _compute_wolf_separation(radius: float) -> Vector3:
 	return push
 
 func _animate_legs(delta: float) -> void:
+	if _animation_player != null:
+		# Imported clips already contain torso bob and foot contacts. Adding the
+		# procedural fallback on top made hooves/paws float and jerk sideways.
+		if _visual_root != null:
+			_visual_root.position.y = _water_sink
+			_visual_root.rotation.z = 0.0
+		return
 	if _visual_root != null:
 		_visual_root.position.y = _water_sink + sin(_walk_time * 2.0) * 0.035
 		_visual_root.rotation_degrees.z = sin(_walk_time) * 2.0

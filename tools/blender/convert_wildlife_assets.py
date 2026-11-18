@@ -3,7 +3,7 @@
 Run from the project root with:
   Blender --background --factory-startup --python tools/blender/convert_wildlife_assets.py
 
-Only the idle, walk, trot and run cycles used by WildlifeController are retained.
+Only the locomotion, idle and feeding/combat clips used by WildlifeController are retained.
 The original source folders at the project root are left untouched.
 """
 
@@ -45,6 +45,7 @@ ANIMALS = {
             "trot": ("a_trotfast_f",),
             "run": ("a_runfast_f",),
             "attack": ("a_bear_clackteeth_x3", "a_brownbear_clackteeth"),
+            "eat": ("a_grazingonspota_1",),
         },
     },
 }
