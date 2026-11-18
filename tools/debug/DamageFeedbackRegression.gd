@@ -23,6 +23,11 @@ func reset(actor):
 func voice_for(actor, weapon: String):
 	return actor._shot_audio_player if weapon in ["rifle","m4"] else actor._pain_audio_player
 func run():
+	print("AUDIO_OUTPUT driver=", AudioServer.get_driver_name(), " device=", AudioServer.output_device, " input=", ProjectSettings.get_setting("audio/driver/enable_input"))
+	if OS.get_cmdline_user_args().has("--require-output") and AudioServer.get_driver_name() == "Dummy":
+		push_error("Real output required: an internal Dummy mix cannot prove audible playback")
+		quit(1)
+		return
 	var world := Fixture.World.new(); root.add_child(world); current_scene = world
 	world.net = Fixture.Net.new(); world.add_child(world.net)
 	var actor := Fixture.Actor.new(); world.add_child(actor); world.player = actor

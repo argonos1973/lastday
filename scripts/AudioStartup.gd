@@ -11,6 +11,21 @@ static func needs_output_recovery(platform: String, driver: String, input_enable
 	# CoreAudio and PulseAudio; the saved override prevents a restart loop.
 	return platform in ["macOS", "Linux"] and driver == "Dummy" and input_enabled and not headless and not forced_dummy
 
+static func has_no_desktop_microphone(platform: String, devices: PackedStringArray) -> bool:
+	# "Default" is an alias, not evidence that a capture device exists.
+	return platform in ["macOS", "Linux", "Windows"] and devices.size() <= 1
+
+static func restart_arguments(engine_args: PackedStringArray, user_args: PackedStringArray, source_project: String = "") -> PackedStringArray:
+	var result := engine_args.duplicate()
+	# Godot consumes --path before get_cmdline_args(). A source checkout must
+	# not relaunch into the project manager when its working directory changes.
+	if not source_project.is_empty() and not result.has("--path"):
+		result.append_array(PackedStringArray(["--path", source_project]))
+	if not user_args.is_empty():
+		result.append("--")
+		result.append_array(user_args)
+	return result
+
 static func save_input_preference(enabled: bool, path: String = CONFIG_PATH) -> Error:
 	var config := ConfigFile.new()
 	var error := config.load(path)
@@ -43,6 +58,8 @@ func _ready() -> void:
 	# Tests/tools must never rewrite a real user's preferences or relaunch.
 	if Engine.is_editor_hint() or OS.has_feature("dedicated_server") or args.has("--script") or args.has("-s"):
 		return
+	var source_project := ProjectSettings.globalize_path("res://") if OS.has_feature("editor") else ""
+	var restart_args := restart_arguments(args, OS.get_cmdline_user_args(), source_project)
 	var pulse_runtime := OS.get_environment("PULSE_RUNTIME_PATH")
 	var pulse_server := OS.get_environment("PULSE_SERVER")
 	var pulse_sink := OS.get_environment("PULSE_SINK")
@@ -63,7 +80,7 @@ func _ready() -> void:
 		OS.set_environment("PULSE_SERVER", "unix:%s/pulse/native" % runtime_dir)
 		OS.set_environment("PULSE_SINK", "")
 		print("[AUDIO] CRD enviaba el audio a la sesión remota; reiniciando con PipeWire local.")
-		OS.set_restart_on_exit(true, args)
+		OS.set_restart_on_exit(true, restart_args)
 		get_tree().quit()
 		return
 	if OS.get_name() == "Linux":
@@ -76,22 +93,22 @@ func _ready() -> void:
 		if args[i] == "--audio-driver" and args[i + 1] == "Dummy":
 			forced_dummy = true
 	if not needs_output_recovery(OS.get_name(), AudioServer.get_driver_name(), input_enabled_at_boot, DisplayServer.get_name() == "headless", forced_dummy):
+		if DisplayServer.get_name() != "headless":
+			print("[AUDIO] Salida: %s / %s; entrada al arrancar: %s" % [AudioServer.get_driver_name(), AudioServer.output_device, input_enabled_at_boot])
 		return
 	if save_input_preference(false) != OK:
 		push_error("No se pudo guardar la recuperación de audio. Revisa los permisos de la carpeta de configuración.")
 		return
 	print("[AUDIO] El controlador de audio inició como Dummy con entrada activada; reiniciando una vez con salida de audio activa.")
-	OS.set_restart_on_exit(true, args)
+	OS.set_restart_on_exit(true, restart_args)
 	get_tree().quit()
 
 func microphone_unavailable_reason() -> String:
 	if AudioServer.get_driver_name() == "Dummy":
 		return "No hay salida de audio disponible. Revisa el dispositivo de sonido y reinicia el juego."
-	if OS.get_name() == "Linux" and AudioServer.get_input_device_list().size() <= 1:
+	if has_no_desktop_microphone(OS.get_name(), AudioServer.get_input_device_list()):
 		return "No se detecta un micrófono. Puedes seguir escuchando el juego y a los demás jugadores."
 	if OS.get_name() == "macOS":
-		if AudioServer.get_input_device_list().size() <= 1:
-			return "No se detecta un micrófono. Puedes seguir escuchando el juego y a los demás jugadores."
 		if not input_enabled_at_boot:
 			if save_input_preference(true) != OK:
 				return "No se pudo activar el micrófono: no se puede guardar la configuración de audio."

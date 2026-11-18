@@ -46,6 +46,7 @@ class TestMain extends MainScript:
 
 class DummyInventory extends Node:
 	signal changed
+	signal condition_changed
 	var items: Array = []
 	var max_weight := 25.0
 	var max_slots := 8

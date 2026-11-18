@@ -24,6 +24,11 @@ func check(ok: bool, label: String):
 	checks += 1
 	if not ok: failures += 1; push_error(label)
 func run():
+	print("AUDIO_OUTPUT driver=", AudioServer.get_driver_name(), " device=", AudioServer.output_device, " input=", ProjectSettings.get_setting("audio/driver/enable_input"))
+	if OS.get_cmdline_user_args().has("--require-output") and AudioServer.get_driver_name() == "Dummy":
+		push_error("Real output required: an internal Dummy mix cannot prove audible playback")
+		quit(1)
+		return
 	var world := World.new(); root.add_child(world); current_scene = world
 	world.net = Net.new(); world.add_child(world.net)
 	var actor := Actor.new(); actor.name = "Player"; world.add_child(actor); world.player = actor
@@ -68,21 +73,31 @@ func run():
 		animal._play_wolf_sound("growl")
 		check(animal._wolf_audio_player == null or not animal._wolf_audio_player.playing,"dead "+species+" stays silent")
 		animal.free()
-	# Sprint cadence: a quadruped gallop is ~3 footfall groups per second with
-	# suspension — a flat distance-stride would drum ~7+ taps/s at full speed.
+	# Measure actual emitted contacts with a free mixer voice. Without retiring
+	# voices, a synthetic loop can fill the pool and falsely pass a rate check.
 	for sprint_case in [["wolf", 8.0], ["bear", 6.5]]:
 		var species_s: String = sprint_case[0]; var spd_s: float = sprint_case[1]
-		var sprinter := Animal.new(); sprinter.animal_type = species_s; sprinter.is_puppet = true
-		world.add_child(sprinter)
-		var skey := "a:sprint_%s" % species_s
-		var taps := 0
-		for i in 120:
-			sprinter.global_position += Vector3(spd_s / 60.0, 0, 0)
-			var before := int(audio._remote_step_phase.get(skey, 0))
-			audio._remote_actor_steps({}, skey, sprinter, "run", 1.0 / 60, Vector3.ZERO, true)
-			taps += int(audio._remote_step_phase.get(skey, 0)) - before
-		check(taps >= 3 and taps <= 9, species_s+" sprint cadence is a bound, not a drum roll (taps/2s="+str(taps)+")")
-		sprinter.free()
+		for fps in [30, 60, 144]:
+			var sprinter := Animal.new(); sprinter.animal_type = species_s; sprinter.is_puppet = true
+			world.add_child(sprinter)
+			var skey := "a:sprint_%s_%d" % [species_s, fps]
+			var contacts: Array[float] = []
+			audio._remote_actor_steps({}, skey, sprinter, "run", 1.0/fps, sprinter.position, true)
+			for i in 4*fps:
+				for voice in audio._remote_step_players: voice.stop()
+				sprinter.position.x += spd_s/fps
+				var before := int(audio._remote_step_phase.get(skey, 0))
+				audio._remote_actor_steps({}, skey, sprinter, "run", 1.0/fps, sprinter.position, true)
+				if int(audio._remote_step_phase.get(skey, 0)) > before: contacts.append(float(i+1)/fps)
+			var expected := 4.0 / float(Bank.SPECIES[species_s].run_cycle)
+			check(absf(contacts.size()-expected) <= 1.0, species_s+" sprint rate at "+str(fps)+" FPS: "+str(contacts.size()/4.0)+" contacts/s")
+			var short_gap := INF; var long_gap := 0.0
+			for i in range(1, contacts.size()):
+				var gap := contacts[i]-contacts[i-1]
+				short_gap = minf(short_gap, gap); long_gap = maxf(long_gap, gap)
+			check(long_gap > short_gap*1.5, species_s+" alternates short/long contacts instead of a uniform roll")
+			print("SPRINT_CADENCE species=",species_s," fps=",fps," contacts_per_second=",contacts.size()/4.0," gaps=",short_gap,"/",long_gap)
+			sprinter.free()
 	# Bite is a reliable victim effect, even without an animal puppet loaded.
 	for cause in ["wolf_bite","bear_bite"]:
 		actor.stats.health = 100

@@ -676,6 +676,7 @@ var third_person_loaded_path := ""
 var third_person_action_animation := ""
 var third_person_action_timer := 0.0
 var third_person_action_start_offset := 0.0
+var _hit_reaction_forced := false
 var _attack_cooldown := 0.0
 var _is_aiming := false
 var _scope_overlay: Control = null
@@ -1293,7 +1294,7 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	# timer ends so locomotion resumes seamlessly right after.
 	if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty():
 		var incoming_lower := anim.to_lower()
-		if not incoming_lower.contains("shot") and not incoming_lower.contains("hit") and not incoming_lower.contains("attack") and not incoming_lower.contains("punch"):
+		if _forced_hit_reaction_active() or (not incoming_lower.contains("shot") and not incoming_lower.contains("hit") and not incoming_lower.contains("attack") and not incoming_lower.contains("punch")):
 			_update_puppet_ground_alignment(0.08)
 			return
 	if third_person_animation_player != null and anim != _puppet_current_anim:
@@ -1495,6 +1496,9 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 func puppet_set_aiming(aiming: bool) -> void:
 	if not is_puppet:
 		return
+	# A snapshot sent before the bite may arrive after its reliable hit event.
+	# Keep the short reaction visible; subsequent snapshots restore the stance.
+	aiming = aiming and not _forced_hit_reaction_active()
 	_is_aiming = aiming
 	if not aiming:
 		# Release the direct-aim state immediately — the next _update_rifle_ik
@@ -2143,7 +2147,7 @@ func _input(event: InputEvent) -> void:
 		if camera != null:
 			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 			if _is_aiming:
-				camera.rotation.y = _breath_yaw_offset * 0.5
+				camera.rotation.y = _recoil_yaw + _breath_yaw_offset * 0.5
 	if event.is_action_pressed("interact") and not event.echo:
 		_interact()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
@@ -7103,16 +7107,16 @@ func _apply_melee_death_visual() -> void:
 		character.position = Vector3(0.0, third_person_ground_offset, 0.0)
 	third_person_animation_player.play(third_person_melee_death_animation, 0.1)
 
+func _forced_hit_reaction_active() -> bool:
+	return _hit_reaction_forced and third_person_action_timer > 0.0 and not third_person_action_animation.is_empty() and third_person_action_animation == third_person_hit_animation
+
 func _play_hit_reaction(play_impact_sound: bool = true, force: bool = false) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
 	if play_impact_sound:
 		_play_punch_impact_sound()
-	# Nunca pisar un ataque cuerpo a cuerpo, disparo de arco o movimiento activo
-	# del jugador: la reaccion de impacto es solo visual en reposo. Un mordisco
-	# (force) si se muestra aunque corras — el zarpazo es el evento que te frena
-	# y tambien te quita la mira (apply_damage ya cancelo la postura antes de
-	# llamar aqui; este gate es el seguro para eventos que llegan sin dano).
+	# Ordinary impacts yield to actions/locomotion; a confirmed predator bite
+	# must remain visible while escaping, without stopping player movement.
 	if not force:
 		if _is_aiming or _throw_charging or _throw_aim_hold or third_person_action_timer > 0.0:
 			return
@@ -7120,10 +7124,21 @@ func _play_hit_reaction(play_impact_sound: bool = true, force: bool = false) -> 
 			return
 	if third_person_hit_animation.is_empty() or not third_person_animation_player.has_animation(third_person_hit_animation):
 		return
+	_hit_reaction_forced = force
+	if force:
+		# Observers receive presentation only, so apply_damage did not cancel
+		# their cached aiming/throw pose. Release it here as well as locally.
+		_throw_charging = false
+		_throw_aim_hold = false
+		_throw_aim_frozen = false
+		_throw_anim_frozen = false
+		_is_firing = false
+		_cancel_aim()
 	# Route through the action-anim slot so the clip also travels in
 	# sync_player_state — remote puppets see the victim flinch too.
 	third_person_action_animation = third_person_hit_animation
 	third_person_action_timer = 0.22
+	third_person_action_start_offset = 0.0
 	third_person_animation_player.speed_scale = 1.0
 	third_person_animation_player.play(third_person_hit_animation, 0.06)
 
@@ -10092,7 +10107,7 @@ func _m4_pose_uses_modifier() -> bool:
 
 func _m4_camera_ready() -> bool:
 	# Third-person camera aiming keeps the stock shouldered without opening ADS.
-	return _mounted_rifle_is_m4 and not is_sprinting and not is_sitting and not is_prone
+	return _mounted_rifle_is_m4 and not is_sprinting and not is_sitting and not is_prone and not _forced_hit_reaction_active()
 
 func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
 	# The camera travels from third person to ADS. Its position must never
@@ -11585,11 +11600,12 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 			# Breath sway adds small offsets to pitch only (yaw handled by body rotation)
 			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
 			# Small lateral sway via rotation.y (offset from body, not absolute)
-			camera.rotation.y = _breath_yaw_offset * 0.5
+			camera.rotation.y = _recoil_yaw + _breath_yaw_offset * 0.5
 	else:
 		if not _debug_cam_active:
 			camera.position = camera.position.lerp(target_position, delta * 10.0)
 			camera.rotation.x = _pitch + _recoil_pitch + _breath_pitch_offset
+			camera.rotation.y = _recoil_yaw
 	if not _debug_cam_active:
 		camera.rotation.z = lerp_angle(camera.rotation.z, roll, delta * 8.0)
 	if not _debug_cam_active:
@@ -11708,7 +11724,7 @@ func _update_third_person_animation(moving: bool, delta: float) -> void:
 				return
 		var throw_aim_walking := (_throw_aim_hold or _throw_charging or (_has_throwable_weapon_equipped() and _is_aiming)) and moving and not _bow_aim_walk_animation.is_empty()
 		var hit_flinch_walking := moving and (third_person_action_animation == third_person_hit_animation or third_person_action_animation == third_person_shot_animation)
-		if hit_flinch_walking:
+		if hit_flinch_walking and not _forced_hit_reaction_active():
 			third_person_action_timer = 0.0
 			third_person_action_animation = ""
 		if third_person_action_timer > 0.0 and not third_person_action_animation.is_empty() and not throw_aim_walking:
