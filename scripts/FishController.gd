@@ -10,6 +10,8 @@ const MODEL_PATHS := [
 ]
 # Más luminosos que el agua para que el pez se distinga nadando bajo la superficie.
 const COLORS := [Color(.34,.44,.38),Color(.44,.41,.26),Color(.36,.45,.48)]
+const VISUAL_DISTANCE := 75.0
+const VISUAL_MARGIN := 10.0
 var center := Vector3.ZERO
 var along := Vector3.RIGHT
 var across := Vector3.BACK
@@ -80,6 +82,20 @@ func update_pose(seconds: float) -> void:
 
 func _process(delta: float) -> void:
     _time += delta
+    var camera := get_viewport().get_camera_3d()
+    var near := true
+    if camera != null:
+        var parent := get_parent_node_3d()
+        var world_center := parent.global_transform * center if parent != null else center
+        # Keep the whole swimming route inside the active radius. Time keeps
+        # advancing while distant fish sleep, so returning to the shore resumes
+        # the same deterministic (or server-synchronized) trajectory.
+        var radius := VISUAL_DISTANCE + VISUAL_MARGIN + absf(length) * .42 + absf(width) * .30
+        near = camera.global_position.distance_squared_to(world_center) <= radius * radius
+    if _visual != null and _visual.visible != near:
+        _visual.visible = near
+    if not near:
+        return
     var network := get_node_or_null("/root/NetworkManager")
     var seconds := _time
     if network != null and network.get("is_connected") == true:
@@ -110,6 +126,8 @@ func _build_fish() -> void:
     for part in parts:
         var mi := part as MeshInstance3D
         mi.layers = 1 << 17 # Exclude moving fish from cached lake reflections.
+        mi.visibility_range_end = VISUAL_DISTANCE
+        mi.visibility_range_end_margin = VISUAL_MARGIN
         var box := mi.transform*mi.get_aabb()
         bounds = box if first else bounds.merge(box)
         first = false

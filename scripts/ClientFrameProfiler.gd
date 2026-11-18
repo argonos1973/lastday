@@ -28,6 +28,7 @@ var _sections: Dictionary = {}
 var _report_elapsed := 0.0
 var _sample_count := 0
 var _sample_write_index := 0
+var _last_frame_usec := 0
 
 func setup(world: Node) -> void:
 	_world = world
@@ -39,6 +40,7 @@ func setup(world: Node) -> void:
 	# one (shader/pipeline compilation, uploads) in the stored slow frames.
 	_viewport_rid = get_viewport().get_viewport_rid()
 	RenderingServer.viewport_set_measure_render_time(_viewport_rid, true)
+	_last_frame_usec = Time.get_ticks_usec()
 	print("[CLIENT_PROFILE] enabled; sampling real client for connected gameplay")
 
 func record_section(label: String, started_usec: int) -> void:
@@ -52,14 +54,32 @@ func record_section(label: String, started_usec: int) -> void:
 	_sections[label] = item
 	CombatProf.frame_only(label, elapsed)
 
-func _process(delta: float) -> void:
-	# Values belong to the frame that just finished drawing, like `delta`.
+func _can_sample_frame() -> bool:
+	return DisplayServer.get_name() == "headless" or DisplayServer.window_can_draw()
+
+func _process(_delta: float) -> void:
+	var now := Time.get_ticks_usec()
+	if not _can_sample_frame():
+		# macOS suspends drawing for covered/minimized windows. Resuming one
+		# is not a gameplay hitch and must not inherit its stale render time.
+		_last_frame_usec = 0
+		_sections.clear()
+		CombatProf.reset()
+		return
+	if _last_frame_usec == 0:
+		_last_frame_usec = now
+		return
+	# Godot caps simulation delta after a stall (about 133 ms with eight
+	# physics steps). Measure real time so a two-second freeze stays visible.
+	var frame_ms := float(now - _last_frame_usec) / 1000.0
+	_last_frame_usec = now
+	# Renderer values belong to the frame that just finished drawing.
 	var render_cpu := RenderingServer.viewport_get_measured_render_time_cpu(_viewport_rid) + RenderingServer.get_frame_setup_time_cpu() if _viewport_rid.is_valid() else 0.0
 	var render_gpu := RenderingServer.viewport_get_measured_render_time_gpu(_viewport_rid) if _viewport_rid.is_valid() else 0.0
 	_push_sample("render_cpu_ms", render_cpu)
 	_push_sample("render_gpu_ms", render_gpu)
-	CombatProf.end_frame(delta * 1000.0, {"render_cpu_ms": render_cpu, "render_gpu_ms": render_gpu} if delta * 1000.0 >= SPIKE_MS else {})
-	_push_sample("frame_ms", delta * 1000.0)
+	CombatProf.end_frame(frame_ms, {"render_cpu_ms": render_cpu, "render_gpu_ms": render_gpu} if frame_ms >= SPIKE_MS else {})
+	_push_sample("frame_ms", frame_ms)
 	_push_sample("process_ms", Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	_push_sample("physics_ms", Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
 	_push_sample("navigation_ms", Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0)
@@ -69,7 +89,7 @@ func _process(delta: float) -> void:
 		_sample_count += 1
 	else:
 		_sample_write_index = (_sample_write_index + 1) % SAMPLE_CAPACITY
-	_report_elapsed += delta
+	_report_elapsed += frame_ms / 1000.0
 	if _report_elapsed < REPORT_INTERVAL:
 		return
 	_report_elapsed = fmod(_report_elapsed, REPORT_INTERVAL)
@@ -115,7 +135,7 @@ func _print_report() -> void:
 		_percentile(_samples.draw_calls, .95), _percentile(_samples.primitives, .95),
 		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
 		float(OS.get_static_memory_usage()) / 1048576.0, world_pos.x, world_pos.y, world_pos.z,
-		str(ProjectSettings.get_setting("rendering/renderer/rendering_method")), str(get_viewport().get_visible_rect().size),
+		RenderingServer.get_current_rendering_method(), str(get_viewport().get_visible_rect().size),
 	])
 	var ranked: Array = []
 	for label: String in _sections:

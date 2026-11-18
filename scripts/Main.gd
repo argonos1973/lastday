@@ -890,6 +890,8 @@ func _ready() -> void:
 			await get_tree().process_frame
 			await get_tree().process_frame
 			if _scene_quitting: return
+		await _prepare_world_entry_render()
+		if _scene_quitting: return
 	# Wait for an actual rendered frame, including the last near-detail batch,
 	# before exposing the scene. process_frame resumes BEFORE rendering.
 	if DisplayServer.get_name() != "headless":
@@ -939,6 +941,34 @@ func _prepare_world_entry_details() -> void:
 		if not pending: break
 		await get_tree().process_frame
 
+func _prepare_world_entry_render() -> void:
+	if _scene_quitting or DisplayServer.get_name() == "headless" or OS.has_feature("dedicated_server"):
+		return
+	var original := get_viewport().get_camera_3d()
+	if original == null:
+		return
+	_set_loading_phase("Preparando gráficos...")
+	# Use the actual game viewport: a separate SubViewport has its own render
+	# caches. First-use uploads/pipelines must finish behind the loading overlay,
+	# including views the player will see on their first turn.
+	var warm := Camera3D.new()
+	warm.name = "EntryRenderWarmup"
+	for property in ["projection", "fov", "size", "near", "far", "keep_aspect", "frustum_offset", "h_offset", "v_offset", "cull_mask", "environment", "attributes"]:
+		warm.set(property, original.get(property))
+	add_child(warm)
+	var view := original.global_transform
+	warm.global_transform = view
+	warm.make_current()
+	for step in range(8):
+		if _scene_quitting or not is_instance_valid(original):
+			break
+		warm.global_basis = Basis(Vector3.UP, TAU * float(step) / 8.0) * view.basis
+		await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+	if is_instance_valid(original) and original.is_inside_tree():
+		original.make_current()
+	warm.free()
+
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
 	_loading_bar_target = 1.0
@@ -958,6 +988,7 @@ const _LOADING_PHASE_TARGET := {
 	"Plantando la hojarasca...": 0.96,
 	"Generando fauna...": 0.99,
 	"Preparando entorno cercano...": 0.99,
+	"Preparando gráficos...": 0.99,
 }
 
 func _set_loading_phase(text: String) -> void:
@@ -9329,6 +9360,7 @@ func _create_house_grass_asset(node_name: String, pos: Vector3, scale_value: flo
 	_create_grass_clump(pos, scale_value * 1.6, Color(0.17, 0.33, 0.10).lerp(Color(0.35, 0.43, 0.15), _world_rng.randf()))
 
 func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: float, height: float, wall_t: float) -> void:
+	var decal_start := get_child_count()
 	var ivy_mat := MaterialFactory.make_overgrowth_material("ivy_sheet", TEX_IVY_SHEET, 0.28)
 	var drape_mat := MaterialFactory.make_overgrowth_material("ivy_drape", TEX_IVY_DRAPE, 0.3)
 	var grime_mat := MaterialFactory.make_overgrowth_material("base_damp", TEX_BASE_MOSS, 0.0, true)
@@ -9436,6 +9468,64 @@ func _create_house_ivy(origin: Vector3, label: String, half_w: float, half_d: fl
 				continue
 			var top := height - 0.15 - _world_rng.randf_range(0.0, 0.8)
 			_create_wall_growth(origin, label + " Drape", u_axis, side, face_off + 0.02, Rect2(u - dw * 0.5, top - dh, dw, dh), openings, drape_mat, false)
+	_batch_house_decals(get_children().slice(decal_start))
+
+func _batch_house_decals(candidates: Array) -> void:
+	# Like CityBlock's facade batches: keep every clipped/mirrored patch, but
+	# submit one mesh per material and wall instead of hundreds of small planes.
+	# Each face keeps a separate bounds/sort center and its original draw range.
+	var groups := {}
+	var materials := {}
+	for node in candidates:
+		var mi := node as MeshInstance3D
+		if mi == null or not mi.mesh is PlaneMesh or not mi.material_override is StandardMaterial3D:
+			continue
+		var style := str(mi.name).rsplit("_", true, 1)[0]
+		var face := mi.basis.z.normalized()
+		var key := "%s|%d|%d" % [style, roundi(face.x), roundi(face.z)]
+		(groups.get_or_add(key, []) as Array).append(mi)
+	for key in groups:
+		var items: Array = groups[key]
+		if items.size() < 2:
+			continue
+		var first := items[0] as MeshInstance3D
+		var style := str(first.name).rsplit("_", true, 1)[0]
+		if not materials.has(style):
+			var material := first.material_override.duplicate() as StandardMaterial3D
+			material.uv1_scale = Vector3.ONE
+			material.uv1_offset = Vector3.ZERO
+			materials[style] = material
+		var bounds: AABB = first.transform * first.get_aabb()
+		for mi: MeshInstance3D in items:
+			bounds = bounds.merge(mi.transform * mi.get_aabb())
+		var center := bounds.get_center()
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for mi: MeshInstance3D in items:
+			var mat := mi.material_override as StandardMaterial3D
+			var arrays := mi.mesh.surface_get_arrays(0)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var transform := mi.transform
+			transform.origin -= center
+			var normal_basis := transform.basis.inverse().transposed()
+			var mirrored := transform.basis.determinant() < 0.0
+			for triangle in range(0, indices.size(), 3):
+				for corner in range(3):
+					# Godot reverses the front-face winding of a negative-scale
+					# instance. Preserve that when baking it into an identity basis.
+					var index := indices[triangle + (2 - corner if mirrored else corner)]
+					st.set_normal((normal_basis * normals[index]).normalized())
+					st.set_uv(uvs[index] * Vector2(mat.uv1_scale.x, mat.uv1_scale.y) + Vector2(mat.uv1_offset.x, mat.uv1_offset.y))
+					st.add_vertex(transform * vertices[index])
+		st.generate_tangents()
+		first.mesh = st.commit()
+		first.transform = Transform3D(Basis.IDENTITY, center)
+		first.material_override = materials[style]
+		for index in range(1, items.size()):
+			(items[index] as MeshInstance3D).free()
 
 func _create_wall_growth(origin: Vector3, label: String, u_axis: String, side: float, face_off: float, area: Rect2, openings: Array[Rect2], material: StandardMaterial3D, mirror: bool) -> void:
 	var regions: Array[Rect2] = [area]

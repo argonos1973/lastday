@@ -1,5 +1,9 @@
 extends SceneTree
 
+class Profiler extends "res://scripts/ClientFrameProfiler.gd":
+	var drawable := true
+	func _can_sample_frame() -> bool: return drawable
+
 class NetworkStub extends Node:
 	var is_connected := true
 	var is_host := false
@@ -17,7 +21,7 @@ func _initialize() -> void:
 func run() -> void:
 	var world := WorldStub.new()
 	root.add_child(world)
-	var profiler = preload("res://scripts/ClientFrameProfiler.gd").new()
+	var profiler := Profiler.new()
 	root.add_child(profiler)
 	profiler.setup(world)
 	var started := Time.get_ticks_usec() - 2000
@@ -27,9 +31,19 @@ func run() -> void:
 	if profiler._samples.frame_ms.size() != 1: errors += 1
 	if int(profiler._sections.get("sample.section", {}).get("calls", 0)) != 1: errors += 1
 	profiler._report_elapsed = profiler.REPORT_INTERVAL - .01
+	profiler._last_frame_usec = Time.get_ticks_usec() - 20000
 	profiler._process(.02)
 	if not profiler._sections.is_empty(): errors += 1
 	if profiler._samples.frame_ms.size() != 0: errors += 1
+	profiler._last_frame_usec = Time.get_ticks_usec() - 2000000
+	profiler._process(1.0 / 60.0)
+	if profiler._samples.frame_ms[0] < 1999.0: errors += 1
+	if CombatProf.take_spikes().count != 1: errors += 1
+	profiler.drawable = false
+	profiler._process(1.0 / 60.0)
+	profiler.drawable = true
+	profiler._process(1.0 / 60.0)
+	if profiler._samples.frame_ms.size() != 1: errors += 1
 	print("CLIENT_FRAME_PROFILER errors=", errors)
 	world.queue_free()
 	profiler.queue_free()

@@ -48,9 +48,35 @@ func run():
 	if resumed[0] < 7: errors += 1;push_error("Entry must yield while the nearby cover is being built")
 	if not world._near_ground_cover.pending.is_empty() or not world._pending_puppets.is_empty(): errors += 1;push_error("Entry returned before local detail / actors were ready")
 	if DisplayServer.get_name() != "headless" and world.puppet_animals.size()!=2: errors+=1;push_error("Entry must finish the initial animal snapshot")
+	var camera := Camera3D.new()
+	world.add_child(camera)
+	camera.position = Vector3(2,3,7)
+	camera.rotation = Vector3(-.2,.4,.1)
+	camera.fov = 73.0
+	camera.cull_mask = 1 | (1 << 17)
+	camera.make_current()
+	var original_view := camera.global_transform
+	var original_player: Transform3D = world.player.transform
+	var directions := {}
+	var view_settings := [true]
+	var observe_draw := func():
+		var active := root.get_camera_3d()
+		if active != null and active != camera:
+			directions[active.global_basis.z.snapped(Vector3.ONE * .001)] = true
+			view_settings[0] = view_settings[0] and active.fov == camera.fov and active.cull_mask == camera.cull_mask and active.global_position.is_equal_approx(camera.global_position)
+	RenderingServer.frame_post_draw.connect(observe_draw)
+	await world._prepare_world_entry_render()
+	RenderingServer.frame_post_draw.disconnect(observe_draw)
+	if DisplayServer.get_name() != "headless" and (directions.size() != 8 or not view_settings[0]):
+		errors += 1;push_error("Entry must render all eight directions with the real view settings")
+	if root.get_camera_3d() != camera or not camera.global_transform.is_equal_approx(original_view) or not world.player.transform.is_equal_approx(original_player):
+		errors += 1;push_error("Render warmup must restore the camera without moving the player or changing their view")
+	if world.get_node_or_null("EntryRenderWarmup") != null:
+		errors += 1;push_error("Render warmup must release its temporary camera")
 	world._near_ground_cover.pending=[1,2,3]
 	world._scene_quitting=true
 	await world._prepare_world_entry_details()
+	await world._prepare_world_entry_render()
 	if world._near_ground_cover.pending.size()!=3: errors+=1;push_error("Disconnect/quit cancels the entry preparation")
 	world.queue_free();for i in 4:await process_frame
 	print("WORLD_ENTRY errors=",errors)

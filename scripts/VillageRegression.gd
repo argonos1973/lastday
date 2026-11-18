@@ -34,6 +34,7 @@ func first_named(world: Node, needle: String) -> Node:
 	return null
 
 func run() -> void:
+	check_decal_batch()
 	var world := TestWorld.new()
 	root.add_child(world)
 	current_scene = world
@@ -83,17 +84,6 @@ func run() -> void:
 	if grime != null:
 		var gmat := grime.material_override as StandardMaterial3D
 		check(gmat != null and gmat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA, "Grime blends smoothly onto plaster")
-	# Doorway stays clear: no decal crosses |x| < 0.85 on the front face (+z)
-	var door_clear := true
-	for child in world.get_children():
-		if child is MeshInstance3D and (child.name.contains(" Ivy") or child.name.contains(" Grime") or child.name.contains(" Drape")):
-			var mi := child as MeshInstance3D
-			if mi.position.z > 0.0 and mi.position.z > absf(mi.position.x):
-				var mesh := mi.mesh as PlaneMesh
-				var w := mesh.size.x if mesh != null else 0.0
-				if absf(mi.position.x) - w * 0.5 < 0.85:
-					door_clear = false
-	check(door_clear, "Vegetation decals keep the doorway clear")
 	check_overgrowth_geometry(world, Vector3.ZERO, "TestHouse", 8.0, 9.0, 4.35)
 	check_roof_geometry(world.get_node("TestHouse Roof"))
 	check_window_clearance(world, "TestHouse")
@@ -135,18 +125,18 @@ func check_overgrowth_geometry(world: Node3D, origin: Vector3, label: String, wi
 		if not child is MeshInstance3D or not str(child.name).begins_with(label + " "):
 			continue
 		var mi := child as MeshInstance3D
-		if not mi.mesh is PlaneMesh:
+		if not (" Ivy" in str(mi.name) or " Grime" in str(mi.name) or " Drape" in str(mi.name) or " BaseMoss" in str(mi.name)):
 			continue
-		var plane := mi.mesh as PlaneMesh
-		var arrays := plane.get_mesh_arrays()
+		var arrays := mi.mesh.surface_get_arrays(0)
 		var normal: Vector3 = mi.basis * arrays[Mesh.ARRAY_NORMAL][0]
 		if " Ivy" in str(mi.name) or " Grime" in str(mi.name) or " Drape" in str(mi.name) or " BaseMoss" in str(mi.name):
 			wall_count += 1
 			walls_vertical = walls_vertical and absf(normal.normalized().y) < 0.001
-			var center := mi.position - origin
-			var front := center.z > depth * 0.5 and absf(normal.z) > 0.9
-			if front:
-				doorway_clear = doorway_clear and absf(center.x) - plane.size.x * 0.5 >= 0.9
+			for triangle: PackedVector3Array in decal_triangles(mi):
+				if triangle[0].z - origin.z > depth * 0.5 and absf(normal.z) > 0.9:
+					var left := minf(triangle[0].x, minf(triangle[1].x, triangle[2].x)) - origin.x
+					var right := maxf(triangle[0].x, maxf(triangle[1].x, triangle[2].x)) - origin.x
+					doorway_clear = doorway_clear and (right <= -0.9 or left >= 0.9)
 			for vertex in arrays[Mesh.ARRAY_VERTEX]:
 				var p: Vector3 = mi.transform * vertex - origin
 				var along_wall := p.x if absf(normal.z) > 0.9 else p.z
@@ -161,6 +151,59 @@ func check_overgrowth_geometry(world: Node3D, origin: Vector3, label: String, wi
 	check(doorway_clear, label + ": vegetation leaves the full doorway clear")
 	check(wall_bounded, label + ": wall vegetation stays within the facade")
 	check(moss_count > 0 and moss_low, label + ": all moss and damp remain below 0.85 metres")
+	check(wall_count <= 16, label + ": facade vegetation fits four materials per wall")
+
+func decal_triangles(mi: MeshInstance3D) -> Array:
+	var arrays := mi.mesh.surface_get_arrays(0)
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+	var count := indices.size() if not indices.is_empty() else vertices.size()
+	var out := []
+	for t in range(0, count, 3):
+		var triangle := PackedVector3Array()
+		for corner in range(3):
+			triangle.append(mi.transform * vertices[indices[t + corner] if not indices.is_empty() else t + corner])
+		out.append(triangle)
+	return out
+
+func decal_vertex_signature(world: Node3D) -> Dictionary:
+	var signature := {}
+	for mi: MeshInstance3D in world.get_children():
+		var arrays := mi.mesh.surface_get_arrays(0)
+		var mat := mi.material_override as StandardMaterial3D
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+		for i in range(indices.size() if not indices.is_empty() else vertices.size()):
+			var index := indices[i] if not indices.is_empty() else i
+			var p := mi.transform * vertices[index]
+			var n := (mi.basis.inverse().transposed() * normals[index]).normalized()
+			var uv := uvs[index] * Vector2(mat.uv1_scale.x, mat.uv1_scale.y) + Vector2(mat.uv1_offset.x, mat.uv1_offset.y)
+			var key := "%d,%d,%d|%d,%d|%d,%d,%d" % [roundi(p.x * 10000), roundi(p.y * 10000), roundi(p.z * 10000), roundi(uv.x * 10000), roundi(uv.y * 10000), roundi(n.x * 10000), roundi(n.y * 10000), roundi(n.z * 10000)]
+			signature[key] = int(signature.get(key, 0)) + 1
+	return signature
+
+func check_decal_batch() -> void:
+	var world := TestWorld.new()
+	root.add_child(world)
+	var mat := StandardMaterial3D.new()
+	mat.uv1_scale = Vector3(.4, .7, 1)
+	mat.uv1_offset = Vector3(.2, .1, 0)
+	var origin := Vector3(21, 2, -17)
+	for side in [-1.0, 1.0]:
+		for mirror in [false, true]:
+			world._create_wall_decal(origin, "Batch Ivy", "x", side, 4.0, -2.0 if mirror else 2.0, .4, 1.5, 2.3, mat, mirror)
+	var before := decal_vertex_signature(world)
+	world._batch_house_decals(world.get_children())
+	check(world.get_child_count() == 2, "Repeated decals batch separately on each wall")
+	check(decal_vertex_signature(world) == before, "Batching preserves every vertex, normal, clipped UV and mirror")
+	check(mat.uv1_scale == Vector3(.4, .7, 1) and mat.uv1_offset == Vector3(.2, .1, 0), "Batching does not mutate shared materials")
+	for mi: MeshInstance3D in world.get_children():
+		var normal: Vector3 = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_NORMAL][0]
+		for triangle: PackedVector3Array in decal_triangles(mi):
+			check((triangle[2] - triangle[0]).cross(triangle[1] - triangle[0]).normalized().dot(normal) > .999, "Baked mirrored triangles keep front-face winding")
+	world.free()
 
 func check_roof_geometry(roof: MeshInstance3D) -> void:
 	var center := roof.mesh.get_aabb().get_center()
@@ -214,9 +257,11 @@ func check_window_clearance(world: Node3D, label: String) -> void:
 	for child in world.get_children():
 		if child is MeshInstance3D and str(child.name).begins_with(label + " ") and (" Ivy" in str(child.name) or " Drape" in str(child.name)):
 			ivy_count += 1
-			var bounds: AABB = child.transform * child.get_aabb()
-			for window in windows:
-				clear = clear and not bounds.grow(0.001).intersects(window)
+			for triangle: PackedVector3Array in decal_triangles(child):
+				var bounds := AABB(triangle[0], Vector3.ZERO)
+				bounds = bounds.expand(triangle[1]).expand(triangle[2])
+				for window in windows:
+					clear = clear and not bounds.grow(0.001).intersects(window)
 	check(windows.size() == 6 and ivy_count > 0 and clear, label + ": ivy redistributes around all six windows with clearance")
 
 func check_house_variety() -> void:
@@ -253,7 +298,7 @@ func check_house_variety() -> void:
 			check_roof_geometry(porch_roof)
 		if OS.get_cmdline_user_args().has("--gallery"):
 			await sample._flush_grass_batches()
-			await preview(sample, "/tmp/lastday_house_%02d.png" % (i + 1))
+			await preview(sample, "build/tmp/lastday_house_%02d.png" % (i + 1))
 		sample.queue_free()
 		await process_frame
 	var finish_keys := finishes.keys()
@@ -261,7 +306,7 @@ func check_house_variety() -> void:
 	check(roof_heights.size() >= 6, "Roof silhouettes vary, not only wall colors")
 	check(silhouettes.size() >= 6, "Porches, shutters and architectural details vary")
 
-func preview(world: Node3D, path: String = "/tmp/lastday_village_preview.png") -> void:
+func preview(world: Node3D, path: String = "build/tmp/lastday_village_preview.png") -> void:
 	root.size = Vector2i(1280, 800)
 	var environment := WorldEnvironment.new()
 	var env := Environment.new()

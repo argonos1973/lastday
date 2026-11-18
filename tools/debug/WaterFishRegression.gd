@@ -140,6 +140,47 @@ func run() -> void:
     check(not Network.accepts_player_state(true,42,43),"server rejects impersonation")
     check(Network.accepts_player_state(false,1,42),"client accepts server relay")
     check(not Network.accepts_player_state(false,43,42),"client rejects direct peer spoof")
+    _check_fish_distance()
     world.free()
     print("WATER_FISH_REGRESSION failures=",failures)
     quit(1 if failures else 0)
+
+func _check_fish_distance() -> void:
+    var parent := Node3D.new()
+    parent.position = Vector3(140,3,-95)
+    root.add_child(parent)
+    var fish := Fish.new()
+    fish.setup(Vector3(2,0,3),Vector3.RIGHT,Vector3.BACK,8.0,2.0,42,1)
+    parent.add_child(fish)
+    var camera := Camera3D.new()
+    root.add_child(camera)
+    camera.make_current()
+    var near_position := parent.global_transform * fish.center + Vector3(0,3,7)
+    camera.global_position = near_position
+    fish._process(.25)
+    var last_position := fish.position
+    var last_swim: float = fish._materials[0].get_shader_parameter("swim_time")
+    camera.global_position = near_position + Vector3(500,0,0)
+    fish._process(20.0)
+    check(not fish._visual.visible and fish.position == last_position,"distant fish stop submitting meshes and pose updates")
+    check(fish._materials[0].get_shader_parameter("swim_time") == last_swim,"distant fish do not upload shader parameters")
+    camera.global_position = near_position
+    fish._process(.25)
+    check(fish._visual.visible and fish.position.is_equal_approx(fish.pose_at(20.5)),"returning to translated shore restores the current trajectory")
+    var network = root.get_node("NetworkManager")
+    var was_connected: bool = network.is_connected
+    var water_time: float = network.water_world_time
+    network.is_connected = true
+    network.water_world_time = 125.5
+    fish._process(.1)
+    check(fish.position.is_equal_approx(fish.pose_at(125.5)),"near fish use server water time")
+    camera.global_position = near_position + Vector3(500,0,0)
+    network.water_world_time = 600.0
+    fish._process(15.0)
+    camera.global_position = near_position
+    fish._process(.1)
+    check(fish._visual.visible and fish.position.is_equal_approx(fish.pose_at(600.0)),"returning fish catch up to server time")
+    network.is_connected = was_connected
+    network.water_world_time = water_time
+    camera.free()
+    parent.free()

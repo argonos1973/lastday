@@ -8,6 +8,8 @@ class_name TrackPrint
 const MAX_TRACKS := 1600
 const LIFETIME := 600.0
 const FADE_TIME := 90.0
+const VISUAL_DISTANCE := 60.0
+const VISUAL_MARGIN := 10.0
 
 static var _tracks: Array = []
 static var _textures: Dictionary = {}
@@ -61,12 +63,18 @@ static func spawn(parent: Node, pos: Vector3, yaw: float, kind: String, size: fl
 	t.add_to_group("track_prints")
 	t.mesh = quad
 	t.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Retain the trail for its full lifetime, but do not submit tiny transparent
+	# quads on the other side of the map. The rim must use the same range.
+	t.visibility_range_end = VISUAL_DISTANCE
+	t.visibility_range_end_margin = VISUAL_MARGIN
 	# Los meshes/materiales se comparten por kind: el fundido usa
 	# GeometryInstance3D.transparency por instancia, nunca muta el material.
 	var rim_mi := MeshInstance3D.new()
 	rim_mi.name = "TrackRim"
 	rim_mi.mesh = rim_quad
 	rim_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	rim_mi.visibility_range_end = VISUAL_DISTANCE
+	rim_mi.visibility_range_end_margin = VISUAL_MARGIN
 	rim_mi.position = Vector3(0.0, 0.0, -0.002)
 	t.add_child(rim_mi)
 	parent.add_child(t)

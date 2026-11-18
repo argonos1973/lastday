@@ -14,6 +14,9 @@ extends Node
 ## Remote shooters are real PlayerController puppets driven through the same
 ## handlers the RPCs call on a client (_net_player_shot_rifle, _net_apply_damage),
 ## so the client-side cost of PvP is measured without a second machine.
+## --client-visuals --noon samples idle_house/client_turn/idle_forest with
+## passive remote actors instead of server AI. Entry render preparation runs
+## at the measured spawn point, as it does when joining a real game.
 
 const ItemScript = preload("res://scripts/Item.gd")
 const GraphicsSettings = preload("res://scripts/GraphicsSettings.gd")
@@ -31,10 +34,16 @@ class NoSave extends Node:
 		pass
 
 class ProbeWorld extends "res://scripts/Main.gd":
+	const PROFILE_HOME := Vector3(26.0, 0.0, 36.0)
 	signal profile_ready
 	func _ready() -> void:
 		await super._ready()
 		profile_ready.emit()
+	func _create_player() -> void:
+		if OS.get_cmdline_user_args().has("--client-visuals"):
+			_has_pending_spawn_pos = true
+			_pending_spawn_pos = PROFILE_HOME + Vector3.UP * (_get_exact_ground_y(PROFILE_HOME.x, PROFILE_HOME.z) + 0.3)
+		super._create_player()
 	func _save_world_change_silent() -> void:
 		pass
 	func _on_player_died() -> void:
@@ -731,6 +740,9 @@ func run() -> void:
 	var only_arg := _arg("--only=")
 	if not only_arg.is_empty():
 		only = Array(only_arg.split(","))
+	var client_visuals := OS.get_cmdline_user_args().has("--client-visuals")
+	if client_visuals and only.is_empty():
+		only = ["idle_house", "client_turn", "idle_forest"]
 	var soak := float(_arg("--soak=", "0"))
 	_ab_no_flash = OS.get_cmdline_user_args().has("--ab-no-flash")
 	# Launched from the start menu in an exported client: drop the menu scene.
@@ -763,6 +775,14 @@ func run() -> void:
 	get_tree().current_scene = world
 	await world.profile_ready
 	player = world.player
+	if client_visuals:
+		world.survivor_bot_mgr = null
+		for animal in get_tree().get_nodes_in_group("wildlife"):
+			if animal is WildlifeController:
+				animal.is_puppet = true
+				animal.puppet_apply(animal.global_position, animal.rotation.y, "idle", animal._is_dead, animal._gutted, animal._rot_timer)
+			elif animal is BirdController:
+				animal.is_puppet = true
 	player.camera.make_current()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	await get_tree().create_timer(4.0).timeout
@@ -776,12 +796,17 @@ func run() -> void:
 
 	# ---- House spot: fixed (the spawn point is random per session) ----------
 	# "Casa abandonada 3" (_HOUSE_DOOR_LAYOUT): front wall at z = 18 + 7.5 / 2.
-	var home := Vector3(26.0, 0.0, 36.0)
+	var home := ProbeWorld.PROFILE_HOME
 	var wall_target := Vector3(25.0, 1.6, 21.75)
 	_teleport(home)
 	_aim_at(wall_target)
 	await _settle(3.0)
 	await _scenario("idle_house", secs, func(_t: float) -> void: pass)
+	if client_visuals:
+		var initial_yaw: float = player.rotation.y
+		await _scenario("client_turn", secs, func(t: float) -> void:
+			player.rotation.y = initial_yaw + TAU * t / secs)
+		player.rotation.y = initial_yaw
 	state.next = 0.0
 	await _scenario("rifle_wall", secs, func(t: float) -> void:
 		if t >= float(state.next):
