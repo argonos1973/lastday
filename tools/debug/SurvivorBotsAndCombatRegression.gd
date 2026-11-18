@@ -2760,6 +2760,13 @@ func run() -> void:
 		var mem_p: Dictionary = mgr._ensure_bot_memory(bid_p, cfg_p)
 		mem_p["personality"] = mgr._default_personality_for_bot(bid_p, cfg_p)
 		mem_p["strategies"] = {}
+		# El motor EU tambien lee el aprendizaje acumulado (failed_goals,
+		# zone_yield, known_locations) y la memoria tactica (_foe_mem): sin
+		# limpiarlos la decision depende de las secciones previas del test.
+		mem_p["failed_goals"] = {}
+		mem_p["zone_yield"] = {}
+		mem_p["known_locations"] = {}
+		mgr.bots[bid_p]["_foe_mem"] = {}
 		mgr.bots[bid_p]["personality"] = mem_p["personality"]
 
 	# Aceptación 1: Los tres bots muestran decisiones diferentes ante una situación idéntica

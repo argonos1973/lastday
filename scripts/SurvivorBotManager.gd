@@ -6378,6 +6378,24 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 	var in_close := _pos_in_house_bounds(lpos) or _pos_in_house_bounds(cur)
 	var fgoal := lpos if (separated_by_structure or in_close) else _bot_formation_slot(b, leader, lpos)
 	var d_goal := Vector2(cur.x - fgoal.x, cur.z - fgoal.z).length()
+	# Separado del lider por un muro/piso y sin progreso real hacia el: la
+	# ruta por puertas/escaleras se sigue intentando, pero si ~25 s no le
+	# acercan nada (puerta que no abre, vano inalcanzable), deja de empujar
+	# la pared y monta guardia fuera — quieto o en rondas cortas.
+	if separated_by_structure and not leader_moving and dist <= 14.0:
+		if dist < float(b.get("_follow_sep_d", INF)) - 0.15:
+			b["_follow_sep_d"] = dist
+			b["_follow_stall"] = 0.0
+		else:
+			b["_follow_stall"] = float(b.get("_follow_stall", 0.0)) + delta
+			if float(b["_follow_stall"]) > 25.0:
+				if _bot_escort_patrol(b, leader, delta):
+					return
+				b["anim"] = "idle"
+				return
+	else:
+		b["_follow_sep_d"] = INF
+		b["_follow_stall"] = 0.0
 	if d_goal > 1.7 or separated_by_structure:
 		var leader_sprinting: bool = bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true)
 		var should_run: bool = not bool(b.get("crouching", false)) and (d_goal > 7.0 or (d_goal > 3.0 and leader_sprinting))
@@ -11935,9 +11953,13 @@ func _bot_is_freezing(b: Dictionary) -> bool:
 	# tapaba comer sin hambre para curarse; ya no se desperdicia comida asi.
 	# La cascada letal es frio->hambre: a <36 C el cuerpo quema comida x1.6
 	# y la hipotermia e inanicion llegan juntas. Quien ya murio de frio
-	# empieza a buscar calor mucho antes (cap 0.9: a 6 muertes actua a
-	# 36.35 C — antes de que el multiplicador de hambre arranque).
-	var thresh := 35.45 + minf(0.9, float(cold_lessons) * 0.15)
+	# empieza a buscar calor antes (cap 0.45: a 3 muertes actua a 35.9 C —
+	# justo sobre la banda del multiplicador de hambre). El cap no puede
+	# subir mas: bajo techo el cuerpo equilibra ~36.1-36.4 C (SurvivalStats
+	# lerea el target hacia 36.6 max), asi que un umbral 36.35 nunca se
+	# satisface sentado y el bot quedaba acampado en casa para siempre —
+	# moverse al sol calienta mas (+0.4/+0.8) que el propio techo.
+	var thresh := 35.45 + minf(0.45, float(cold_lessons) * 0.15)
 	return st != null and not st.dead and st.body_temperature < thresh
 
 func _bot_is_exhausted(b: Dictionary) -> bool:
