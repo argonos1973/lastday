@@ -18443,16 +18443,18 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 		if Vector2(cur.x - pp.x, cur.z - pp.z).length() < 25.0 and can_spare_water:
 			b["_farm"] = {"phase": "water", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 2.0, "tool": ""}
 			return true
-	# 4) Sembrar un bancal nuevo — el ultimo recurso, no supervivencia:
-	# solo con refugio ya construido, hambre y sed cubiertos, ni agotado ni
-	# helado, semillas de sobra (guarda una para replantar) y el sitio a
-	# tiro. Quien anda a medio mapa o mal de lo basico no jardinea.
-	if has_tool and plots.size() < 2 \
-			and not str(b["shelter_id"]).is_empty() \
-			and _bot_item_count(proxy, "Semillas") >= 2 \
+	# 4) Sembrar un bancal nuevo — mejora de asentado o jugada desesperada,
+	# nunca rutina: con refugio, hambre/sed cubiertos y semillas de sobra es
+	# una inversion de quien esta comodo; pero quien se queda sin nada que
+	# comer puede sembrar hasta la ultima semilla aunque no tenga casa.
+	var seeds := _bot_item_count(proxy, "Semillas")
+	var desperate := not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b))
+	var surplus := not str(b["shelter_id"]).is_empty() \
+			and seeds >= 2 \
 			and float(b["hunger"]) >= 55.0 \
 			and float(b["thirst"]) >= 45.0 \
-			and not _bot_is_exhausted(b) and not _bot_is_freezing(b):
+			and not _bot_is_exhausted(b) and not _bot_is_freezing(b)
+	if has_tool and plots.size() < 2 and seeds >= 1 and (desperate or surplus):
 		var spot := _bot_find_farm_spot(b)
 		if spot != Vector3.INF and Vector2(cur.x - spot.x, cur.z - spot.z).length() < 60.0:
 			b["_farm"] = {"phase": "plant", "pos": spot, "t": 0.0, "t_need": 4.0, "tool": tool_name}
