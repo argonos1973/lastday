@@ -3,6 +3,7 @@ extends Control
 const NetworkManagerScript = preload("res://scripts/NetworkManager.gd")
 const SaveIntegration = preload("res://scripts/InicioSaveIntegration.gd")
 const GraphicsSettings = preload("res://scripts/GraphicsSettings.gd")
+const GameLang = preload("res://scripts/GameLang.gd")
 
 var _online_menu := false
 var _play_requested := false
@@ -222,7 +223,7 @@ void fragment(){
 	actions.add_theme_constant_override("separation",18)
 	_menu_panel.add_child(actions)
 	_btn_play = Button.new()
-	_btn_play.text = "JUGAR   →"
+	_btn_play.text = GameLang.t("JUGAR   →", "PLAY   →")
 	_btn_play.custom_minimum_size = Vector2(360,64)
 	_btn_play.add_theme_font_size_override("font_size",23)
 	_btn_play.add_theme_color_override("font_color",Color(.90,.93,.92))
@@ -233,7 +234,7 @@ void fragment(){
 	_btn_play.add_theme_stylebox_override("focus",_menu_button_style(Color(0,0,0,0),Color(.95,.95,.82)))
 	_btn_play.pressed.connect(_on_play)
 	actions.add_child(_btn_play)
-	_status_label = _menu_label(actions,"Conectando al servidor…",14,Color(.74,.79,.72))
+	_status_label = _menu_label(actions,GameLang.t("Conectando al servidor…", "Connecting to server…"),14,Color(.74,.79,.72))
 	_status_label.custom_minimum_size = Vector2(360,40)
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
@@ -244,7 +245,7 @@ void fragment(){
 	var character := VBoxContainer.new()
 	character.add_theme_constant_override("separation",4)
 	_char_panel_node.add_child(character)
-	_char_title_label = _menu_label(character,"ELIGE TU SUPERVIVIENTE",13,Color(.72,.77,.67))
+	_char_title_label = _menu_label(character,GameLang.t("ELIGE TU SUPERVIVIENTE", "CHOOSE YOUR SURVIVOR"),13,Color(.72,.77,.67))
 	_char_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_char_name_label = _menu_label(character,"",32,Color(.94,.94,.87))
 	_char_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -331,7 +332,7 @@ func _menu_button_style(color: Color, border := Color(0,0,0,0)) -> StyleBoxFlat:
 func _build_options_button() -> void:
 	var gear := Button.new()
 	gear.text = "⚙"
-	gear.tooltip_text = "Opciones de rendimiento"
+	gear.tooltip_text = GameLang.t("Opciones de rendimiento", "Performance options")
 	gear.custom_minimum_size = Vector2(34, 30)
 	gear.add_theme_font_size_override("font_size", 17)
 	gear.add_theme_color_override("font_color", Color(.82,.85,.83))
@@ -381,17 +382,17 @@ func _build_options_panel() -> void:
 	_options_panel.add_child(box)
 
 	var title := Label.new()
-	title.text = "RENDIMIENTO"
+	title.text = GameLang.t("RENDIMIENTO", "PERFORMANCE")
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
 	box.add_child(title)
 
 	var screen_options := OptionButton.new()
-	screen_options.add_item("Pantalla: ventana")
-	screen_options.add_item("Pantalla: completa")
+	for label in GameLang.opt_list("screen"):
+		screen_options.add_item(label)
 	screen_options.select(1 if GraphicsSettings.fullscreen() else 0)
-	screen_options.tooltip_text = "Ventana o pantalla completa. Aplica al instante."
+	screen_options.tooltip_text = GameLang.t("Ventana o pantalla completa. Aplica al instante.", "Window or fullscreen. Applies instantly.")
 	box.add_child(screen_options)
 
 	# Solo se ofrecen las resoluciones que caben en esta pantalla — cada
@@ -406,7 +407,7 @@ func _build_options_panel() -> void:
 		if ri == cur_res:
 			res_options.select(i)
 	res_options.disabled = GraphicsSettings.fullscreen()
-	res_options.tooltip_text = "Resolucion de la ventana (modo ventana). Solo las que caben en esta pantalla."
+	res_options.tooltip_text = GameLang.t("Resolucion de la ventana (modo ventana). Solo las que caben en esta pantalla.", "Window resolution (windowed mode). Only resolutions that fit this screen.")
 	box.add_child(res_options)
 
 	screen_options.item_selected.connect(func(index: int):
@@ -420,31 +421,30 @@ func _build_options_panel() -> void:
 
 	var scale_options := OptionButton.new()
 	for i in range(GraphicsSettings.RENDER_SCALE_LABELS.size()):
-		scale_options.add_item("Escala de render: %s" % GraphicsSettings.RENDER_SCALE_LABELS[i])
+		scale_options.add_item(GameLang.t("Escala de render: %s", "Render scale: %s") % GraphicsSettings.RENDER_SCALE_LABELS[i])
 	scale_options.select(GraphicsSettings.render_scale_index())
-	scale_options.tooltip_text = "Resolucion interna del 3D. Menos escala = mas FPS."
+	scale_options.tooltip_text = GameLang.t("Resolucion interna del 3D. Menos escala = mas FPS.", "Internal 3D resolution. Lower scale = more FPS.")
 	scale_options.item_selected.connect(func(index: int):
 		GraphicsSettings.save_render_scale_index(index)
 		GraphicsSettings.apply_render_scale(get_viewport()))
 	box.add_child(scale_options)
 
 	var shadow_options := OptionButton.new()
-	shadow_options.add_item("Sombras: bajas")
-	shadow_options.add_item("Sombras: equilibradas")
-	shadow_options.add_item("Sombras: altas")
+	for label in GameLang.opt_list("shadow"):
+		shadow_options.add_item(label)
 	shadow_options.select(preload("res://scripts/ShadowQuality.gd").selected())
-	shadow_options.tooltip_text = "Calidad de sombras para la próxima partida. Conserva las sombras cercanas."
+	shadow_options.tooltip_text = GameLang.t("Calidad de sombras para la próxima partida. Conserva las sombras cercanas.", "Shadow quality for the next session. Keeps near shadows.")
 	shadow_options.item_selected.connect(func(index: int):
 		var result := preload("res://scripts/ShadowQuality.gd").save_selection(index)
 		if result != OK:
-			push_warning("No se pudo guardar la calidad de sombras: %s" % error_string(result)))
+			push_warning(GameLang.t("No se pudo guardar la calidad de sombras: %s", "Could not save shadow quality: %s") % error_string(result)))
 	box.add_child(shadow_options)
 
 	var detail_options := OptionButton.new()
-	for label in GraphicsSettings.DETAIL_LABELS:
-		detail_options.add_item(label)
+	for i in range(GraphicsSettings.DETAIL_LABELS.size()):
+		detail_options.add_item(GameLang.opt_label("detail", i))
 	detail_options.select(GraphicsSettings.detail_index())
-	detail_options.tooltip_text = "LOD, hierba corta, salpicaduras y alcance del bosque lejano. Los arboles cercanos y la cobertura nunca cambian. Se aplica al entrar en partida."
+	detail_options.tooltip_text = GameLang.t("LOD, hierba corta, salpicaduras y alcance del bosque lejano. Los arboles cercanos y la cobertura nunca cambian. Se aplica al entrar en partida.", "LOD, short grass, splashes and far-forest reach. Nearby trees and cover never change. Applies when entering a session.")
 	detail_options.item_selected.connect(func(index: int):
 		GraphicsSettings.save_detail_index(index))
 	box.add_child(detail_options)
@@ -452,16 +452,16 @@ func _build_options_panel() -> void:
 	var vsync_check := CheckButton.new()
 	vsync_check.text = "VSync"
 	vsync_check.button_pressed = GraphicsSettings.vsync()
-	vsync_check.tooltip_text = "Sincroniza con el monitor: quita el tearing, añade algo de latencia."
+	vsync_check.tooltip_text = GameLang.t("Sincroniza con el monitor: quita el tearing, añade algo de latencia.", "Syncs with the monitor: removes tearing, adds a bit of latency.")
 	vsync_check.toggled.connect(func(on: bool):
 		GraphicsSettings.save_vsync(on)
 		GraphicsSettings.apply_window())
 
 	var profile := OptionButton.new()
-	for label in ["Perfil: rendimiento", "Perfil: equilibrado", "Perfil: calidad", "Perfil: personalizado"]:
+	for label in GameLang.opt_list("profile"):
 		profile.add_item(label)
 	profile.select(GraphicsSettings.profile_index())
-	profile.tooltip_text = "Rendimiento: 720p, escala 100%, sombras y detalles bajos. No cambia VSync. Sombras al entrar en partida."
+	profile.tooltip_text = GameLang.t("Rendimiento: 720p, escala 100%, sombras y detalles bajos. No cambia VSync. Sombras al entrar en partida.", "Performance: 720p, 100% scale, low shadows and detail. Does not change VSync. Shadows apply when entering a session.")
 	box.add_child(profile)
 	box.move_child(profile, 1)
 	profile.item_selected.connect(func(index: int):
@@ -482,6 +482,55 @@ func _build_options_panel() -> void:
 		option.item_selected.connect(func(_index: int): profile.select(GraphicsSettings.profile_index()))
 
 	box.add_child(vsync_check)
+
+	var lang_options := OptionButton.new()
+	for label in GameLang.opt_list("lang"):
+		lang_options.add_item(label)
+	lang_options.select(maxi(0, GameLang.LANGS.find(GameLang.lang())))
+	lang_options.tooltip_text = GameLang.t("Idioma de la interfaz.", "Interface language.")
+	lang_options.item_selected.connect(func(index: int):
+		var code: String = GameLang.LANGS[index]
+		if code == GameLang.lang():
+			return
+		if GameLang.save_lang(code) == OK:
+			_retranslate()
+		else:
+			lang_options.select(maxi(0, GameLang.LANGS.find(GameLang.lang()))))
+	box.add_child(lang_options)
+	box.move_child(lang_options, 1)
+
+# Repinta todas las cadenas visibles tras un cambio de idioma: el panel se
+# reconstruye, la tarjeta guardada se regenera y el estado vuelve al mensaje
+# neutro del punto en que este la conexion.
+func _retranslate() -> void:
+	if _btn_play != null:
+		_btn_play.text = GameLang.t("JUGAR   →", "PLAY   →")
+	if _btn_options != null:
+		_btn_options.tooltip_text = GameLang.t("Opciones de rendimiento", "Performance options")
+	if _char_title_label != null:
+		_char_title_label.text = GameLang.t("TU SUPERVIVIENTE · SERVIDOR", "YOUR SURVIVOR · SERVER") if _mp_locked else GameLang.t("ELIGE TU SUPERVIVIENTE", "CHOOSE YOUR SURVIVOR")
+	if _status_label != null:
+		_status_label.text = _idle_status()
+	if _name_panel != null:
+		_name_panel.queue_free()
+		_name_panel = null
+	if _options_panel != null:
+		var was_visible := _options_panel.visible
+		_options_panel.queue_free()
+		_options_panel = null
+		_build_options_panel()
+		_options_panel.visible = was_visible
+	_update_char_view()
+	_relayout_menu()
+
+# Mensaje de reposo del menu en el idioma activo: lo sustituye el siguiente
+# evento de red.
+func _idle_status() -> String:
+	if _mp_locked:
+		return GameLang.t("Personaje recuperado · Listo para jugar", "Character restored · Ready to play")
+	if _name_request_pending:
+		return GameLang.t("Elige tu personaje y pulsa Jugar", "Choose your character and press Play")
+	return GameLang.t("Conectado · Listo para jugar", "Connected · Ready to play")
 
 # Los paneles se posicionan en píxeles: al cambiar el tamaño de la ventana
 # (p.ej. pantalla completa) hay que recolocarlos. Se anclan por el borde
@@ -555,7 +604,7 @@ func _process(_delta: float) -> void:
 						if _ip_edit != null and not _discovered_ips.is_empty():
 							_ip_edit.text = str(_discovered_ips[0])
 						if _status_label != null:
-							_status_label.text = "Servidor encontrado: %s" % str(_discovered_ips[0])
+							_status_label.text = GameLang.t("Servidor encontrado: %s", "Server found: %s") % str(_discovered_ips[0])
 						pass # print("[DISCOVERY] Servidor encontrado: %s" % str(_discovered_ips))
 			count -= 1
 	# Active scan fallback: only probe local subnet when "Conectar por IP" is open
@@ -628,7 +677,7 @@ func _process_scan(_delta: float) -> void:
 					if _ip_edit != null and not _discovered_ips.is_empty():
 						_ip_edit.text = str(_discovered_ips[0])
 					if _status_label != null:
-						_status_label.text = "Servidor encontrado: %s" % str(_discovered_ips[0])
+						_status_label.text = GameLang.t("Servidor encontrado: %s", "Server found: %s") % str(_discovered_ips[0])
 					pass # print("[DISCOVERY] Servidor encontrado via scan: %s" % str(_discovered_ips))
 				_scanning = false
 				if _scan_probe != null:
@@ -663,12 +712,12 @@ func _on_host() -> void:
 	_apply_char_selection()
 	_net = get_node("/root/NetworkManager")
 	if _net.host_game():
-		_status_label.text = "Servidor iniciado en puerto %d" % GameConst.GAME_PORT
+		_status_label.text = GameLang.t("Servidor iniciado en puerto %d", "Server started on port %d") % GameConst.GAME_PORT
 		_mode = "host"
 		# Give a moment for the server to be ready
 		get_tree().create_timer(0.5).timeout.connect(_start_game)
 	else:
-		_status_label.text = "Error al crear servidor"
+		_status_label.text = GameLang.t("Error al crear servidor", "Failed to create server")
 
 func _on_show_join() -> void:
 	_ip_edit.visible = true
@@ -701,7 +750,7 @@ func _on_join() -> void:
 		return
 	var ip := _ip_edit.text.strip_edges()
 	if ip.is_empty():
-		_status_label.text = "Introduce una IP"
+		_status_label.text = GameLang.t("Introduce una IP", "Enter an IP")
 		return
 	_save_ip(ip)
 	_begin_join(ip)
@@ -728,7 +777,7 @@ func _begin_join(target: String) -> void:
 	_rejected = false
 	var pw := NetworkManagerScript.OFFICIAL_SERVER_PASSWORD if target == NetworkManagerScript.OFFICIAL_SERVER_URL else ""
 	if _net.join_game(target, pw):
-		_status_label.text = "Actualizando personaje..." if status_refresh else ("Conectando al servidor oficial..." if target == NetworkManagerScript.OFFICIAL_SERVER_URL else "Conectando...")
+		_status_label.text = GameLang.t("Actualizando personaje...", "Updating character...") if status_refresh else (GameLang.t("Conectando al servidor oficial...", "Connecting to official server...") if target == NetworkManagerScript.OFFICIAL_SERVER_URL else GameLang.t("Conectando...", "Connecting..."))
 		_mode = "join"
 		# Con un personaje bloqueado la tarjeta se mantiene durante la
 		# revalidacion: el servidor la confirma de nuevo o pide nombre (muerto)
@@ -739,7 +788,7 @@ func _begin_join(target: String) -> void:
 			_clamp_to_selectable_card()
 	else:
 		_joining = false
-		_status_label.text = "No se pudo conectar. Pulsa Jugar para reintentar."
+		_status_label.text = GameLang.t("No se pudo conectar. Pulsa Jugar para reintentar.", "Could not connect. Press Play to retry.")
 
 # El servidor pide el nombre solo cuando la conexion abre un personaje nuevo:
 # con un personaje vivo en el registro del servidor se entra directo con el
@@ -753,7 +802,7 @@ func _on_player_name_required() -> void:
 	if _online_menu and not _play_requested:
 		# El placeholder sin nombre sigue pidiendo nombre en cada registro —
 		# la consulta puede cerrarse igualmente al resolverse.
-		_status_label.text = "Elige tu personaje y pulsa Jugar"
+		_status_label.text = GameLang.t("Elige tu personaje y pulsa Jugar", "Choose your character and press Play")
 		return
 	if not _started:
 		_prompt_player_name()
@@ -787,13 +836,13 @@ func _prompt_player_name() -> void:
 		vbox.add_theme_constant_override("separation", 12)
 		_name_panel.add_child(vbox)
 		var title := Label.new()
-		title.text = "NOMBRE DE JUGADOR"
+		title.text = GameLang.t("NOMBRE DE JUGADOR", "PLAYER NAME")
 		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		title.add_theme_font_size_override("font_size", 18)
 		title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.5))
 		vbox.add_child(title)
 		_name_edit = LineEdit.new()
-		_name_edit.placeholder_text = "Tu nombre..."
+		_name_edit.placeholder_text = GameLang.t("Tu nombre...", "Your name...")
 		_name_edit.max_length = 24
 		_name_edit.custom_minimum_size = Vector2(280, 38)
 		_name_edit.add_theme_font_size_override("font_size", 16)
@@ -829,14 +878,14 @@ func _prompt_player_name() -> void:
 		btn_style.corner_radius_bottom_left = 8
 		btn_style.corner_radius_bottom_right = 8
 		var btn_go := Button.new()
-		btn_go.text = "Entrar"
+		btn_go.text = GameLang.t("Entrar", "Enter")
 		btn_go.custom_minimum_size = Vector2(120, 38)
 		btn_go.add_theme_font_size_override("font_size", 16)
 		btn_go.add_theme_stylebox_override("normal", btn_style)
 		btn_go.pressed.connect(_on_name_confirmed)
 		btn_row.add_child(btn_go)
 		var btn_cancel := Button.new()
-		btn_cancel.text = "Cancelar"
+		btn_cancel.text = GameLang.t("Cancelar", "Cancel")
 		btn_cancel.custom_minimum_size = Vector2(120, 38)
 		btn_cancel.add_theme_font_size_override("font_size", 16)
 		btn_cancel.add_theme_stylebox_override("normal", btn_style)
@@ -852,7 +901,7 @@ func _prompt_player_name() -> void:
 			_play_requested = false
 			_exit_join_pick()
 			if _status_label != null:
-				_status_label.text = "Conexion cancelada")
+				_status_label.text = GameLang.t("Conexion cancelada", "Connection cancelled"))
 		btn_row.add_child(btn_cancel)
 	# Prefill con el nombre del personaje seleccionado — se puede editar.
 	if _char_index >= 0 and _char_index < CHAR_CONFIGS.size():
@@ -864,7 +913,7 @@ func _prompt_player_name() -> void:
 func _on_name_confirmed() -> void:
 	var pname := _name_edit.text.strip_edges()
 	if pname.is_empty():
-		_name_edit.placeholder_text = "Escribe un nombre"
+		_name_edit.placeholder_text = GameLang.t("Escribe un nombre", "Enter a name")
 		_name_edit.grab_focus()
 		return
 	_name_panel.visible = false
@@ -884,7 +933,7 @@ func _on_name_confirmed() -> void:
 func _on_auth_rejected(reason: String) -> void:
 	_rejected = true
 	if _status_label != null:
-		_status_label.text = "Servidor lleno" if reason == "full" else "Contraseña incorrecta"
+		_status_label.text = GameLang.t("Servidor lleno", "Server full") if reason == "full" else GameLang.t("Contraseña incorrecta", "Wrong password")
 
 func _save_ip(ip: String) -> void:
 	var cfg := ConfigFile.new()
@@ -901,7 +950,7 @@ func _load_saved_ip() -> String:
 
 func _on_net_connected() -> void:
 	if _status_label != null:
-		_status_label.text = "Conectado, cargando..."
+		_status_label.text = GameLang.t("Conectado, cargando...", "Connected, loading...")
 	# En join el mundo solo arranca tras _sync_player_list (registro aceptado):
 	# un rechazo puede tardar ~0.5 s y el guard de _start_game debe fallar.
 	if _mode != "join":
@@ -949,7 +998,7 @@ func _on_net_ready() -> void:
 	if _mode != "join" or _started:
 		return
 	if _status_label != null:
-		_status_label.text = "Conectado!"
+		_status_label.text = GameLang.t("Conectado!", "Connected!")
 	get_tree().create_timer(0.3).timeout.connect(_maybe_start_game)
 
 func _maybe_start_game() -> void:
@@ -958,7 +1007,7 @@ func _maybe_start_game() -> void:
 	if _online_menu:
 		if not _play_requested:
 			if _status_label != null:
-				_status_label.text = "Elige tu personaje y pulsa Jugar" if _name_request_pending else ("Personaje recuperado · Listo para jugar" if _mp_locked else "Conectado · Listo para jugar")
+				_status_label.text = GameLang.t("Elige tu personaje y pulsa Jugar", "Choose your character and press Play") if _name_request_pending else (GameLang.t("Personaje recuperado · Listo para jugar", "Character restored · Ready to play") if _mp_locked else GameLang.t("Conectado · Listo para jugar", "Connected · Ready to play"))
 			# Consulta de estado resuelta: se suelta la conexion — la tarjeta
 			# bloqueada (o la ausencia de ella) ya refleja al personaje real.
 			if _status_poll:
@@ -975,7 +1024,7 @@ func _maybe_start_game() -> void:
 		if _btn_enter != null:
 			_btn_enter.visible = true
 		if _status_label != null:
-			_status_label.text = "Tu personaje sigue en el servidor"
+			_status_label.text = GameLang.t("Tu personaje sigue en el servidor", "Your character is still on the server")
 		return
 	_start_game()
 
@@ -999,7 +1048,7 @@ func _on_server_character_locked(payload: Dictionary) -> void:
 	_apply_char_selection()
 	_set_picker_locked(true)
 	if _status_label != null and _status_label.text.begins_with("Conect"):
-		_status_label.text = "Personaje encontrado en el servidor"
+		_status_label.text = GameLang.t("Personaje encontrado en el servidor", "Character found on the server")
 	# Si la lista ya llego antes que este aviso, respeta tambien el Entrar.
 	if _mode == "join" and not _started and not _name_request_pending and _btn_enter != null and _net != null and _net.is_connected:
 		_btn_enter.visible = true
@@ -1076,7 +1125,7 @@ func _set_picker_locked(locked: bool) -> void:
 		_btn_next.disabled = locked
 		_btn_next.visible = not locked
 	if _char_title_label != null:
-		_char_title_label.text = "TU SUPERVIVIENTE · SERVIDOR" if locked else "ELIGE TU SUPERVIVIENTE"
+		_char_title_label.text = GameLang.t("TU SUPERVIVIENTE · SERVIDOR", "YOUR SURVIVOR · SERVER") if locked else GameLang.t("ELIGE TU SUPERVIVIENTE", "CHOOSE YOUR SURVIVOR")
 	if not locked and _btn_enter != null:
 		_btn_enter.visible = false
 
@@ -1105,7 +1154,7 @@ func _on_net_failed() -> void:
 	_name_request_pending = false
 	if _name_panel != null: _name_panel.hide()
 	if _status_label != null and not _rejected:
-		_status_label.text = "Servidor no disponible. Pulsa Jugar para reintentar."
+		_status_label.text = GameLang.t("Servidor no disponible. Pulsa Jugar para reintentar.", "Server unavailable. Press Play to retry.")
 	_set_picker_locked(false)
 	_mode = ""
 	_exit_join_pick()
@@ -1119,7 +1168,7 @@ func _start_game() -> void:
 	# overwrite savegame.json (open doors, drops) with the local save.
 	if _mode == "join" and (_net == null or not _net.is_connected):
 		if _status_label != null and not _rejected:
-			_status_label.text = "Fallo de conexion"
+			_status_label.text = GameLang.t("Fallo de conexion", "Connection failed")
 		return
 	_started = true
 	# A non-saved character starts a fresh game: drop the old save so it can

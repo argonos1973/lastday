@@ -3,6 +3,7 @@ class_name InicioSaveIntegration
 
 const MilitaryJacketsScript = preload("res://scripts/MilitaryJackets.gd")
 const AutumnClothesScript = preload("res://scripts/AutumnClothes.gd")
+const GameLang = preload("res://scripts/GameLang.gd")
 
 static func maybe_insert_saved_character(inicio: Node) -> void:
 	var sgm = inicio.get_node_or_null("/root/SaveGameManager")
@@ -73,16 +74,16 @@ static func update_saved_info(inicio: Node, cfg: Dictionary) -> void:
 	if player_data.is_empty():
 		return
 	var is_server := bool(cfg.get("is_server_save", false))
-	var info_text := "Continuar en servidor\n" if is_server else "Continuar partida local\n"
+	var info_text := GameLang.t("Continuar en servidor\n", "Continue on server\n") if is_server else GameLang.t("Continuar partida local\n", "Continue local game\n")
 	var survival_seconds: float = _survival_seconds(player_data)
 	var total_seconds: int = int(survival_seconds)
 	var days: int = total_seconds / 86400
 	var hrs: int = (total_seconds / 3600) % 24
 	var mins: int = (total_seconds / 60) % 60
 	if days > 0:
-		info_text += "Supervivencia: Dia %d - %02d:%02d" % [days + 1, hrs, mins]
+		info_text += GameLang.t("Supervivencia: Dia %d - %02d:%02d", "Survival: Day %d - %02d:%02d") % [days + 1, hrs, mins]
 	else:
-		info_text += "Supervivencia: %02d:%02d:%02d" % [hrs, mins, total_seconds % 60]
+		info_text += GameLang.t("Supervivencia: %02d:%02d:%02d", "Survival: %02d:%02d:%02d") % [hrs, mins, total_seconds % 60]
 	var lbl := Label.new()
 	lbl.text = info_text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
