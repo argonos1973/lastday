@@ -17485,11 +17485,23 @@ func get_full_web_status() -> Dictionary:
 			snap["ambush"] = {}
 		var fplots: Array = _bot_farm_plots(b)
 		var fready := 0
+		var fgrowing := 0
+		var fpct := 0
+		var fempty := 0
+		var frot := 0
 		for fp in fplots:
 			var rec := _bot_crop_record(str((fp as Dictionary).get("id", "")))
-			if not rec.is_empty() and str(_crop_effective_state(rec).get("state", "")) == "ready":
-				fready += 1
-		snap["farm"] = {"plots": fplots.size(), "ready": fready}
+			if rec.is_empty():
+				continue
+			var eff := _crop_effective_state(rec)
+			match str(eff.get("state", "")):
+				"ready": fready += 1
+				"rotten": frot += 1
+				"empty": fempty += 1
+				_:
+					fgrowing += 1
+					fpct = maxi(fpct, int(clampf(float(eff.get("growth", 0.0)) / 450.0, 0.0, 1.0) * 100.0))
+		snap["farm"] = {"plots": fplots.size(), "ready": fready, "growing": fgrowing, "empty": fempty, "rotten": frot, "pct": fpct}
 		var nb: Dictionary = b.get("_last_nav_block", {})
 		if not nb.is_empty() and nb.get("pos") is Vector3:
 			var nbp: Vector3 = nb["pos"]
@@ -18127,17 +18139,18 @@ func _crop_effective_state(c: Dictionary) -> Dictionary:
 	var state := str(c.get("crop_state", "planted"))
 	var ready := float(c.get("ready_unix", 0.0))
 	var now := Time.get_unix_time_from_system()
+	var growth := float(c.get("growth", 0.0))
 	if state == "planted":
 		var updated := float(c.get("updated_unix", now))
 		var elapsed := maxf(0.0, now - updated)
 		var moist := clampf(float(c.get("watered_until", 0.0)) - updated, 0.0, elapsed)
-		var growth := float(c.get("growth", 0.0)) + moist * GameConst.CROP_MOIST_GROWTH + (elapsed - moist)
+		growth += moist * GameConst.CROP_MOIST_GROWTH + (elapsed - moist)
 		if growth >= 450.0:
 			state = "ready"
 			ready = now - maxf(0.0, growth - 450.0)
 	if state == "ready" and ready > 0.0 and now - ready >= GameConst.CROP_ROT_SECONDS:
 		state = "rotten"
-	return {"state": state, "ready_unix": ready}
+	return {"state": state, "ready_unix": ready, "growth": growth}
 
 func _bot_crop_record(crop_id: String) -> Dictionary:
 	if world != null and "_planted_crops" in world:
