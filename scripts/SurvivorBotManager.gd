@@ -18391,7 +18391,9 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 			tool_name = str(it["name"])
 			break
 	var cur := proxy.global_position
-	# 1) Cosechar lo maduro: se pudre en ~10 min y es comida regalada.
+	# 1) Cosechar lo maduro: se pudre en ~10 min y es comida regalada. El
+	# arrastre es regional — no se cruza el mapa por un cultivo (a 120 m se
+	# llega dentro de la ventana de pudricion cuando ya estaba por la zona).
 	for p in plots:
 		var rec := _bot_crop_record(str(p.get("id", "")))
 		if rec.is_empty():
@@ -18399,6 +18401,8 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 		var eff := _crop_effective_state(rec)
 		var pp: Vector3 = rec.get("pos", _bot_plot_pos(p)) if rec.get("pos") is Vector3 else _bot_plot_pos(p)
 		if pp == Vector3.INF:
+			continue
+		if Vector2(cur.x - pp.x, cur.z - pp.z).length() > 120.0:
 			continue
 		if eff["state"] == "ready":
 			b["_farm"] = {"phase": "harvest", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 1.25, "tool": ""}
@@ -18410,13 +18414,17 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 	var starving := float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy, _bot_raw_meat_is_food(b))
 	if starving:
 		return false
-	# 2) Replantar un bancal vacio propio si lleva semillas y herramienta.
+	# 2) Replantar un bancal vacio propio si lleva semillas y herramienta —
+	# solo de paso (tras cosechar ya esta encima); un bancal vacio lejano no
+	# llama de vuelta, espera a la proxima visita.
 	if has_tool and _bot_item_count(proxy, "Semillas") >= 1:
 		for p in plots:
 			var rec := _bot_crop_record(str(p.get("id", "")))
 			if not rec.is_empty() and str(rec.get("crop_state", "")) == "empty":
 				var pp: Vector3 = rec.get("pos", _bot_plot_pos(p)) if rec.get("pos") is Vector3 else _bot_plot_pos(p)
 				if pp == Vector3.INF:
+					continue
+				if Vector2(cur.x - pp.x, cur.z - pp.z).length() > 40.0:
 					continue
 				b["_farm"] = {"phase": "replant", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 4.0, "tool": tool_name}
 				return true
@@ -18435,10 +18443,18 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 		if Vector2(cur.x - pp.x, cur.z - pp.z).length() < 25.0 and can_spare_water:
 			b["_farm"] = {"phase": "water", "crop_id": str(rec.get("id", "")), "pos": pp, "t": 0.0, "t_need": 2.0, "tool": ""}
 			return true
-	# 4) Sembrar un bancal nuevo: herramienta + semillas + un sitio valido.
-	if has_tool and _bot_item_count(proxy, "Semillas") >= 1 and plots.size() < 3:
+	# 4) Sembrar un bancal nuevo — el ultimo recurso, no supervivencia:
+	# solo con refugio ya construido, hambre y sed cubiertos, ni agotado ni
+	# helado, semillas de sobra (guarda una para replantar) y el sitio a
+	# tiro. Quien anda a medio mapa o mal de lo basico no jardinea.
+	if has_tool and plots.size() < 2 \
+			and not str(b["shelter_id"]).is_empty() \
+			and _bot_item_count(proxy, "Semillas") >= 2 \
+			and float(b["hunger"]) >= 55.0 \
+			and float(b["thirst"]) >= 45.0 \
+			and not _bot_is_exhausted(b) and not _bot_is_freezing(b):
 		var spot := _bot_find_farm_spot(b)
-		if spot != Vector3.INF:
+		if spot != Vector3.INF and Vector2(cur.x - spot.x, cur.z - spot.z).length() < 60.0:
 			b["_farm"] = {"phase": "plant", "pos": spot, "t": 0.0, "t_need": 4.0, "tool": tool_name}
 			return true
 	return false
