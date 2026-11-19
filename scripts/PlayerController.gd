@@ -381,7 +381,7 @@ var _scope_zoom_index := 0
 var _rifle_zero_range := 100.0
 const RIFLE_NAME := "Rifle francotirador"
 const RIFLE_AMMO_TYPE := "7.62x54mm"
-const RIFLE_MAG_SIZE := 5
+const RIFLE_MAG_SIZE := GameConst.RIFLE_MAG_SIZE
 const RIFLE_DAMAGE := 260.0
 const RIFLE_MAGAZINE_MODEL := "res://assets/models/weapons/rifle_magazine.glb"
 # Fusil de asalto M4 — mismo item_type "weapon_rifle" pero semiautomatico,
@@ -395,8 +395,8 @@ const M4_MAGAZINE_MODEL := "res://assets/models/weapons/m4_magazine.glb"
 const M4_SHOOT_SOUND := "res://assets/audio/m4_disparo.mp3"
 const RIFLE_RELOAD_SOUND := "res://assets/audio/reload.mp3"
 const M4_AMMO_TYPE := "5,56 × 45 mm NATO"
-const M4_MAG_SIZE := 30
-const M4_BURST_ROUNDS := 3
+const M4_MAG_SIZE := GameConst.M4_MAG_SIZE
+const M4_BURST_ROUNDS := GameConst.M4_BURST_ROUNDS
 const M4_DAMAGE := 95.0
 const M4_PVP_HEAD := 60.0
 const M4_PVP_BODY := 28.0
@@ -14404,7 +14404,7 @@ func _initialize_rifle_ammo() -> void:
 		_m4_ammo_initialized = true
 		_m4_magazine = M4_MAG_SIZE
 		if _m4_reserve_ammo <= 0:
-			_m4_reserve_ammo = M4_MAG_SIZE * 3
+			_m4_reserve_ammo = M4_MAG_SIZE * GameConst.GUN_START_RESERVE_MAGS
 		return
 	if _rifle_ammo_initialized:
 		return
@@ -14413,7 +14413,7 @@ func _initialize_rifle_ammo() -> void:
 	if _equipped_slots.get("chaleco", "") == "Chaleco táctico":
 		_rifle_reserve_ammo = maxi(_rifle_reserve_ammo, RIFLE_MAG_SIZE * 5)
 	elif _rifle_reserve_ammo <= 0:
-		_rifle_reserve_ammo = RIFLE_MAG_SIZE * 3
+		_rifle_reserve_ammo = RIFLE_MAG_SIZE * GameConst.GUN_START_RESERVE_MAGS
 
 func get_vest_magazines_count() -> int:
 	var mag_size := _rifle_mag_size()
@@ -14445,10 +14445,10 @@ func _reload_rifle() -> void:
 		if r_anim != null:
 			r_anim.loop_mode = Animation.LOOP_NONE
 		third_person_action_animation = _rifle_reload_animation
-		third_person_action_timer = 2.2
+		third_person_action_timer = GameConst.GUN_RELOAD_TIME
 		third_person_action_start_offset = 0.0
 		third_person_animation_player.play(_rifle_reload_animation, 0.08)
-	if not await _await_local_action(2.2):
+	if not await _await_local_action(GameConst.GUN_RELOAD_TIME):
 		_is_reloading = false
 		return
 	_is_reloading = false
@@ -14469,6 +14469,14 @@ func _reload_rifle() -> void:
 	if main != null and main.has_method("_sync_local_player_inventory"):
 		main.call_deferred("_sync_local_player_inventory")
 
+static func ammo_item_is_m4(item_name: String) -> bool:
+	return item_name.findn("5.56") >= 0 or item_name.findn("5,56") >= 0 or item_name.findn("m4") >= 0 or item_name.findn("asalto") >= 0
+
+static func ammo_item_rounds(item_name: String, use_value: float) -> int:
+	if use_value > 0.0:
+		return int(use_value)
+	return M4_MAG_SIZE if ammo_item_is_m4(item_name) else RIFLE_MAG_SIZE
+
 func _load_ammo_item(item, index := -1) -> void:
 	if item == null or inventory == null or str(item.item_type) != "ammo":
 		return
@@ -14478,10 +14486,8 @@ func _load_ammo_item(item, index := -1) -> void:
 	# La 5.56 del M4 va a su propia reserva; el resto alimenta el 7.62 del
 	# francotirador. Los nombres de los items de municion deciden el calibre.
 	var ammo_name := str(item.item_name)
-	var is_556 := ammo_name.findn("5.56") >= 0 or ammo_name.findn("5,56") >= 0 or ammo_name.findn("m4") >= 0 or ammo_name.findn("asalto") >= 0
-	var rounds := M4_MAG_SIZE if is_556 else RIFLE_MAG_SIZE
-	if item.use_value > 0.0:
-		rounds = int(item.use_value)
+	var is_556 := ammo_item_is_m4(ammo_name)
+	var rounds := ammo_item_rounds(ammo_name, float(item.use_value))
 	inventory.remove_index(idx, 1)
 	if is_556:
 		_m4_reserve_ammo += rounds

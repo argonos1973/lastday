@@ -14000,6 +14000,11 @@ func _grant_vest_magazines(action, actor, item_name: String, item_obj = null) ->
 		if item_obj != null:
 			item_obj.set_meta("player_dropped", true)
 		return
+	if actor is Node3D and actor.get_meta("is_ai_bot", false) == true and survivor_bot_mgr != null:
+		var ammo: Dictionary = survivor_bot_mgr._bot_gun_ammo(actor)
+		ammo["reserve"] = int(ammo.get("reserve", 0)) + GameConst.RIFLE_MAG_SIZE * 5
+		survivor_bot_mgr._bot_gun_ammo_save(actor, ammo)
+		return
 	if actor == null or not ("_rifle_reserve_ammo" in actor):
 		return
 	var rounds: int = actor.RIFLE_MAG_SIZE * 5

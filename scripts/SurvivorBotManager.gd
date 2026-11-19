@@ -18,10 +18,10 @@ const InterruptionManager = preload("res://scripts/bot_ai/BotInterruptionManager
 
 # Municion de armas de fuego del bot: mismo modelo que PlayerController
 # (M4_MAG_SIZE=30 / RIFLE_MAG_SIZE=5, recarga de 2.2 s).
-const BOT_M4_MAG_SIZE := 30
-const BOT_SNIPER_MAG_SIZE := 5
-const BOT_M4_BURST_ROUNDS := 3
-const BOT_GUN_RELOAD_TIME := 2.2
+const BOT_M4_MAG_SIZE := GameConst.M4_MAG_SIZE
+const BOT_SNIPER_MAG_SIZE := GameConst.RIFLE_MAG_SIZE
+const BOT_M4_BURST_ROUNDS := GameConst.M4_BURST_ROUNDS
+const BOT_GUN_RELOAD_TIME := GameConst.GUN_RELOAD_TIME
 
 const BOT_CONFIGS := [
 	{
@@ -1120,7 +1120,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 	proxy.set_meta("saved_held_item", held_str)
 	proxy.set_meta("saved_extra", {
 		"stats_extra": {"survival_seconds": float(cfg.get("beard_stage", 0)) * 15000.0, "energy": 100.0, "sleep": 100.0, "body_temperature": 36.8},
-		"rifle_ammo": {"initialized": true, "m4_initialized": true, "m4_magazine": 30, "m4_reserve": 90, "magazine": 5, "reserve": 20},
+		"rifle_ammo": _bot_initial_gun_ammo(),
 	})
 
 	world.add_child(proxy)
@@ -1660,6 +1660,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if proxy == null or not is_instance_valid(proxy):
 		return
 	if bool(proxy.get_meta("proxy_dead", false)):
+		_bot_cancel_gun_reload(b)
 		if not str(b.get("anim", "")).begins_with("dead"):
 			b["anim"] = "dead"
 		b["_act"] = "dead"
@@ -1674,6 +1675,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# Sincronizar vida real desde el proxy (por si recibió daño de lobo, oso o jugador)
 	var live_hp := float(proxy.get_meta("proxy_health", 100.0))
 	if live_hp < float(b["health"]) - 0.5:
+		_bot_cancel_gun_reload(b)
 		# Recibió daño recientemente: salir de descanso/ocultación para defenderse o huir
 		b["sitting"] = false
 		b["sleeping"] = false
@@ -1683,8 +1685,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	b["attack_cooldown"] = maxf(0.0, float(b["attack_cooldown"]) - delta)
 	b["shoot_cooldown"] = maxf(0.0, float(b["shoot_cooldown"]) - delta)
-	if float(b["shoot_cooldown"]) <= 0.0:
-		b["gun_reloading"] = false
+	_bot_tick_gun_reload(b, delta)
 	b["tame_cooldown"] = maxf(0.0, float(b["tame_cooldown"]) - delta)
 	b["_tame_wait_t"] = maxf(0.0, float(b.get("_tame_wait_t", 0.0)) - delta)
 	b["eat_cooldown"] = maxf(0.0, float(b["eat_cooldown"]) - delta)
@@ -4804,6 +4805,11 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 			return true
 		b["_cover_goal"] = Vector3.INF
 	_cover_learning_tick(b, delta, false)
+	# Sin cobertura alcanzable hay que detenerse para terminar la recarga.
+	# El zigzag de abajo la cancelaria cada tick, dejando el fusil vacio.
+	if bool(b.get("gun_reloading", false)):
+		_stop_bot_motion(b)
+		return true
 	# No solid cover nearby: keep moving instead of crouching in the open.
 	b["crouching"] = false
 	proxy.set_meta("crouching", false)
@@ -5859,6 +5865,8 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float, weapon := "")
 		weapon = str(b.get("held_item", "Fusil de asalto"))
 	if bool(b.get("gun_reloading", false)):
 		return
+	b["_gun_burst_revision"] = int(b.get("_gun_burst_revision", 0)) + 1
+	var burst_revision := int(b["_gun_burst_revision"])
 	# El M4 dispara en rafagas de hasta 3 balas como el jugador
 	# (M4_BURST_ROUNDS): una bala real por proyectil, cada 90 ms, y se
 	# corta si el bot muere, cambia de arma, entra en recarga o agota el
@@ -5866,12 +5874,13 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float, weapon := "")
 	var burst_rounds := 1
 	if _bot_gun_is_m4(weapon):
 		burst_rounds = mini(BOT_M4_BURST_ROUNDS, _bot_gun_loaded(_bot_gun_ammo(proxy), weapon))
-	_bot_fire_rifle_round(b, target, dmg, weapon)
+	if not _bot_fire_rifle_round(b, target, dmg, weapon):
+		return
 	if burst_rounds <= 1:
 		return
 	for extra_i in range(1, burst_rounds):
 		get_tree().create_timer(0.09 * float(extra_i)).timeout.connect(func():
-			if not is_instance_valid(self) or not is_instance_valid(proxy) or not is_instance_valid(target) or bool(b.get("dead", false)) or float(b.get("health", 100.0)) <= 0.0 or str(b.get("held_item", "")) != weapon or bool(b.get("gun_reloading", false)):
+			if not is_instance_valid(self) or not is_instance_valid(proxy) or not is_instance_valid(target) or bool(b.get("dead", false)) or float(b.get("health", 100.0)) <= 0.0 or str(b.get("held_item", "")) != weapon or bool(b.get("gun_reloading", false)) or int(b.get("_gun_burst_revision", 0)) != burst_revision:
 				return
 			_bot_fire_rifle_round(b, target, dmg, weapon)
 		)
@@ -5879,24 +5888,32 @@ func _bot_fire_rifle_at(b: Dictionary, target: Node3D, dmg: float, weapon := "")
 # Una bala del bot: sale de la orientacion REAL de la mira (adquisicion +
 # respiracion + retroceso + dispersion, las reglas del jugador) y vuela como
 # proyectil fisico — el daño solo existe si la trayectoria intersecta.
-func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: String) -> void:
+func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: String) -> bool:
 	var _cpt := Time.get_ticks_usec()
 	var proxy: Node3D = b["proxy"]
 	# Recheck at release: navigation can move the shooter after perception.
-	if not is_instance_valid(proxy) or not is_instance_valid(target) or not _has_clear_shot(proxy.global_position, target.global_position):
+	if not is_instance_valid(proxy) or not is_instance_valid(target) or bool(proxy.get_meta("proxy_dead", false)) \
+			or bool(b.get("gun_reloading", false)) or str(b.get("held_item", "")) != weapon \
+			or not _has_clear_shot(proxy.global_position, target.global_position):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.recheck_fail", _cpt)
-		return
+		return false
 	var is_m4 := _bot_gun_is_m4(weapon)
 	var kind := "m4" if is_m4 else "sniper"
+	# El gatillo con cargador vacio inicia recarga sin pagar energia de tiro,
+	# igual que _shoot_rifle del jugador.
+	if _bot_gun_loaded(_bot_gun_ammo(proxy), weapon) <= 0:
+		_bot_gun_prepare_shot(b, weapon)
+		return false
 	# Coste de energia del disparo — el mismo que el jugador: un bot agotado
 	# no puede disparar igual que un jugador agotado no puede. Se comprueba
 	# ANTES de consumir la bala para no perderla en un intento abortado.
-	if not _bot_pay_shot_energy(b, kind):
+	if _bot_energy(b) < _bot_shot_energy_cost(kind):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.tired", _cpt)
-		return
+		return false
 	if not _bot_gun_prepare_shot(b, weapon):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.no_ammo", _cpt)
-		return
+		return false
+	_bot_pay_shot_energy(b, kind)
 	var bot_id := int(b["bot_id"])
 	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 1.4), 0.0)
 	var spread := _bot_current_spread_deg(b, is_m4)
@@ -5919,6 +5936,7 @@ func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: St
 	# sale limpia y la siguiente paga el levantamiento — en rafaga M4 las
 	# balas 2 y 3 heredan el retroceso acumulado, sin re-apuntar perfecto.
 	_bot_apply_rifle_recoil(b, is_m4)
+	return true
 
 # Daño base de cada flecha, igual que en el arco del jugador.
 func _bot_arrow_base_damage(arrow_name: String) -> float:
@@ -6126,6 +6144,8 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return
+	if amount > 0.0:
+		_bot_cancel_gun_reload(b)
 	var prev_hp := float(proxy.get_meta("proxy_health", 100.0))
 	var min_hp := minf(1.0, prev_hp) if (weapon in ["arco", "arco_madera", "arrow", "flecha"] and prev_hp > 0.0) else 0.0
 	var hp := maxf(min_hp, prev_hp - amount)
@@ -6202,6 +6222,7 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
 		return
+	_bot_cancel_gun_reload(b)
 	_loot_clear(b)
 	var bot_id := int(b["bot_id"])
 	# Aprendizaje persistente: recordar donde y por que murio para que su
@@ -10368,6 +10389,10 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 			return
 	proxy.set_meta("saved_inventory", inv)
 	_ai_note_loot(b, enm, etp)
+	if enm == "Chaleco táctico" and world.has_method("_grant_vest_magazines") and "world_actions_by_id" in world:
+		var vest_action = world.world_actions_by_id.get(id)
+		if is_instance_valid(vest_action):
+			world._grant_vest_magazines(vest_action, proxy, enm)
 	_auto_equip_best_gear(b)
 	var best_w := _best_weapon_name(proxy)
 	if not best_w.is_empty() and not bool(b["torch_lit"]):
@@ -10778,8 +10803,8 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			keep.append(it)
 			continue
 		if tp in ["ammo", "ammo_arrow"]:
-			var keep_ammo := (best_w == "Fusil de asalto" and (nm == "Cargador de M4" or nm == "Balas 5.56")) \
-				or (best_w == "Rifle francotirador" and nm == "Cargador de fusil") \
+			var keep_ammo := (tp == "ammo" and best_w in ["Fusil de asalto", "Rifle francotirador"] \
+				and PlayerController.ammo_item_is_m4(nm) == _bot_gun_is_m4(best_w)) \
 				or (best_w in ["Arco de madera", "Arco reforzado"] and tp == "ammo_arrow")
 			if keep_ammo:
 				keep.append(it)
@@ -13498,19 +13523,43 @@ func _consume_bot_arrow(proxy: Node3D) -> String:
 # (cargador + reserva por calibre, recarga de ~2.2 s, items de municion que
 # alimentan la reserva). Vive en la meta del proxy para que sobreviva a los
 # cambios de estado del bot y se repliegue en saved_extra.rifle_ammo.
+func _bot_initial_gun_ammo() -> Dictionary:
+	return {
+		"initialized": false, "m4_initialized": false,
+		"m4_magazine": 0, "m4_reserve": 0, "magazine": 0, "reserve": 0,
+	}
+
 func _bot_gun_ammo(proxy: Node3D) -> Dictionary:
 	var ammo: Dictionary = proxy.get_meta("bot_gun_ammo", {})
+	var changed := false
 	if ammo.is_empty():
 		var extra: Dictionary = proxy.get_meta("saved_extra", {})
 		ammo = (extra.get("rifle_ammo", {}) as Dictionary).duplicate()
 		if ammo.is_empty():
-			ammo = {
-				"m4_magazine": BOT_M4_MAG_SIZE,
-				"m4_reserve": BOT_M4_MAG_SIZE * 3,
-				"magazine": BOT_SNIPER_MAG_SIZE,
-				"reserve": BOT_SNIPER_MAG_SIZE * 4
-			}
-		proxy.set_meta("bot_gun_ammo", ammo)
+			ammo = _bot_initial_gun_ammo()
+		changed = true
+	# La dotacion inicial aparece una sola vez al adquirir ese fusil, como
+	# _initialize_rifle_ammo. Los estados antiguos sin flags ya representan
+	# municion real (incluidos ceros): nunca rellenarlos al restaurarlos.
+	for weapon in ["Fusil de asalto", "Rifle francotirador"]:
+		var is_m4 := _bot_gun_is_m4(weapon)
+		var flag := "m4_initialized" if is_m4 else "initialized"
+		if not ammo.has(flag):
+			ammo[flag] = ammo.has(_bot_gun_loaded_key(weapon)) or ammo.has(_bot_gun_reserve_key(weapon))
+			changed = true
+		if bool(ammo[flag]) or _bot_item_count(proxy, weapon) <= 0:
+			continue
+		ammo[flag] = true
+		ammo[_bot_gun_loaded_key(weapon)] = _bot_gun_mag_size(weapon)
+		var reserve := _bot_gun_reserve(ammo, weapon)
+		if not is_m4 and "Chaleco táctico" in str(proxy.get_meta("saved_clothing", "")).split(","):
+			reserve = maxi(reserve, BOT_SNIPER_MAG_SIZE * 5)
+		elif reserve <= 0:
+			reserve = _bot_gun_mag_size(weapon) * GameConst.GUN_START_RESERVE_MAGS
+		ammo[_bot_gun_reserve_key(weapon)] = reserve
+		changed = true
+	if changed:
+		_bot_gun_ammo_save(proxy, ammo)
 	return ammo
 
 func _bot_gun_ammo_save(proxy: Node3D, ammo: Dictionary) -> void:
@@ -13547,7 +13596,7 @@ func _bot_gun_ammo_item_idx(proxy: Node3D, weapon: String) -> int:
 		if not (it is Dictionary) or str(it.get("type", "")) != "ammo" or int(it.get("quantity", 1)) <= 0:
 			continue
 		var n := str(it.get("name", ""))
-		var is_556 := n.findn("5.56") >= 0 or n.findn("5,56") >= 0 or n.findn("m4") >= 0 or n.findn("asalto") >= 0
+		var is_556 := PlayerController.ammo_item_is_m4(n)
 		if is_556 == want_m4:
 			return i
 	return -1
@@ -13560,9 +13609,7 @@ func _bot_gun_load_ammo_item(proxy: Node3D, ammo: Dictionary, weapon: String) ->
 		return false
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var it: Dictionary = inv[idx]
-	var rounds := int(it.get("use_value", 0))
-	if rounds <= 0:
-		rounds = _bot_gun_mag_size(weapon)
+	var rounds := PlayerController.ammo_item_rounds(str(it.get("name", "")), float(it.get("use_value", 0.0)))
 	it["quantity"] = int(it.get("quantity", 1)) - 1
 	if int(it["quantity"]) <= 0:
 		inv.remove_at(idx)
@@ -13575,7 +13622,7 @@ func _bot_gun_load_ammo_item(proxy: Node3D, ammo: Dictionary, weapon: String) ->
 # True si el bot posee un arma de fuego del calibre de este item de
 # municion (para retirarla del refugio, como haria el jugador).
 func _bot_gun_wants_ammo_item(proxy: Node3D, item_name: String) -> bool:
-	var is_556 := item_name.findn("5.56") >= 0 or item_name.findn("5,56") >= 0 or item_name.findn("m4") >= 0 or item_name.findn("asalto") >= 0
+	var is_556 := PlayerController.ammo_item_is_m4(item_name)
 	return _bot_item_count(proxy, "Fusil de asalto" if is_556 else "Rifle francotirador") > 0
 
 # El arma solo es usable si queda algo cargado, en reserva o en items.
@@ -13585,32 +13632,82 @@ func _bot_gun_any_ammo(proxy: Node3D, weapon: String) -> bool:
 
 # Un disparo del bot: devuelve true si sale (y consume una bala del
 # cargador). Con cargador vacio intenta recargar desde la reserva o desde
-# un item de municion del inventario; la recarga cuesta el mismo tiempo
-# que al jugador (shoot_cooldown = BOT_GUN_RELOAD_TIME) y no dispara en
-# ese tick. Sin reserva ni items devuelve false con el arma seca.
+# un item de municion del inventario. La recarga solo transfiere las balas
+# al terminar, igual que PlayerController._reload_rifle.
 func _bot_gun_prepare_shot(b: Dictionary, weapon: String) -> bool:
 	var proxy: Node3D = b["proxy"]
+	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)) \
+			or float(b.get("health", 100.0)) <= 0.0 or bool(b.get("gun_reloading", false)) \
+			or weapon not in ["Fusil de asalto", "Rifle francotirador"] \
+			or str(b.get("held_item", "")) != weapon or _bot_item_count(proxy, weapon) <= 0:
+		return false
 	var ammo := _bot_gun_ammo(proxy)
 	var lkey := _bot_gun_loaded_key(weapon)
 	if _bot_gun_loaded(ammo, weapon) > 0:
 		ammo[lkey] = int(ammo.get(lkey, 0)) - 1
 		_bot_gun_ammo_save(proxy, ammo)
 		return true
+	_bot_start_gun_reload(b, weapon)
+	return false
+
+func _bot_start_gun_reload(b: Dictionary, weapon: String) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)) \
+			or float(b.get("health", 100.0)) <= 0.0 or bool(b.get("gun_reloading", false)) \
+			or weapon not in ["Fusil de asalto", "Rifle francotirador"] \
+			or str(b.get("held_item", "")) != weapon or _bot_item_count(proxy, weapon) <= 0 \
+			or _bot_is_moving(b) or bool(b.get("sleeping", false)):
+		return false
+	var ammo := _bot_gun_ammo(proxy)
+	if _bot_gun_loaded(ammo, weapon) >= _bot_gun_mag_size(weapon):
+		return false
 	if _bot_gun_reserve(ammo, weapon) <= 0:
 		_bot_gun_load_ammo_item(proxy, ammo, weapon)
-	var rkey := _bot_gun_reserve_key(weapon)
-	if int(ammo.get(rkey, 0)) <= 0:
+	if _bot_gun_reserve(ammo, weapon) <= 0:
 		return false
-	var rounds: int = mini(_bot_gun_mag_size(weapon) - int(ammo.get(lkey, 0)), int(ammo.get(rkey, 0)))
-	ammo[lkey] = int(ammo.get(lkey, 0)) + rounds
-	ammo[rkey] = int(ammo.get(rkey, 0)) - rounds
-	_bot_gun_ammo_save(proxy, ammo)
+	b["_gun_reload_weapon"] = weapon
+	b["_gun_reload_left"] = BOT_GUN_RELOAD_TIME
+	b["_gun_reload_origin"] = proxy.global_position
+	b["_gun_burst_revision"] = int(b.get("_gun_burst_revision", 0)) + 1
 	b["shoot_cooldown"] = BOT_GUN_RELOAD_TIME
 	b["gun_reloading"] = true
 	# Reloading also makes noise while crouched/prone, where no standing
 	# reload clip is sent to clients. The receiver deduplicates clip + event.
 	_emit_bot_condition_audio(b,"reload")
-	return false
+	return true
+
+func _bot_cancel_gun_reload(b: Dictionary) -> void:
+	if bool(b.get("gun_reloading", false)):
+		b["shoot_cooldown"] = 0.0
+	b["gun_reloading"] = false
+	b.erase("_gun_reload_weapon")
+	b.erase("_gun_reload_left")
+	b.erase("_gun_reload_origin")
+
+func _bot_tick_gun_reload(b: Dictionary, delta: float) -> void:
+	if not bool(b.get("gun_reloading", false)):
+		return
+	var proxy: Node3D = b.get("proxy")
+	var weapon := str(b.get("_gun_reload_weapon", ""))
+	# Movimiento, cambio de arma y muerte interrumpen la accion humana.
+	# El bot puede correr a cobertura, pero alli debe empezar de nuevo.
+	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)) \
+			or float(b.get("health", 100.0)) <= 0.0 or weapon.is_empty() \
+			or str(b.get("held_item", "")) != weapon or _bot_item_count(proxy, weapon) <= 0 \
+			or _bot_is_moving(b) or bool(b.get("sleeping", false)) \
+			or proxy.global_position.distance_to(b.get("_gun_reload_origin", proxy.global_position)) > 0.05:
+		_bot_cancel_gun_reload(b)
+		return
+	b["_gun_reload_left"] = maxf(0.0, float(b["_gun_reload_left"]) - delta)
+	b["shoot_cooldown"] = float(b["_gun_reload_left"])
+	if float(b["_gun_reload_left"]) > 0.0:
+		return
+	var ammo := _bot_gun_ammo(proxy)
+	var rounds := mini(maxi(0, _bot_gun_mag_size(weapon) - _bot_gun_loaded(ammo, weapon)), _bot_gun_reserve(ammo, weapon))
+	ammo[_bot_gun_loaded_key(weapon)] = _bot_gun_loaded(ammo, weapon) + rounds
+	ammo[_bot_gun_reserve_key(weapon)] = _bot_gun_reserve(ammo, weapon) - rounds
+	_bot_gun_ammo_save(proxy, ammo)
+	_bot_cancel_gun_reload(b)
 
 func _bot_best_thrown_weapon(proxy: Node3D) -> String:
 	for w in ["Lanza de hueso", "Lanza", "Palo afilado"]:

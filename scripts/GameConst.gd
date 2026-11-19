@@ -9,6 +9,13 @@ const WORLD_LIMIT := 480.0
 const WORLD_LIMIT_Z := 892.0
 const WORLD_SEED := 1337
 
+# -- Firearms (human player and survivor bots) -----------------------------
+const RIFLE_MAG_SIZE := 5
+const M4_MAG_SIZE := 30
+const M4_BURST_ROUNDS := 3
+const GUN_RELOAD_TIME := 2.2
+const GUN_START_RESERVE_MAGS := 3
+
 # -- Survivor emergency recovery -----------------------------------------
 const BOT_EMERGENCY_REFUGE_RADIUS := 1400.0
 const BOT_HEAT_ALERT_TEMP := 37.75
