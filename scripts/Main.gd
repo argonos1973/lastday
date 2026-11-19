@@ -8221,9 +8221,21 @@ func _create_map() -> void:
 	if is_server:
 		# Match client roof locations even though the server skips visual props.
 		_military_tent_pos = _find_flat_area_for_tent()
+		# El cliente tiene esta tienda en HOUSE_FOOTPRINTS al llamar a
+		# _create_fruit_trees; copiar el orden de las appends mantiene los
+		# predicados _is_near_house identicos en ambos lados.
+		HOUSE_FOOTPRINTS.append({"origin": _military_tent_pos, "w": 9.0, "d": 12.0})
 		_remote_tent_pos = _find_flat_area_for_remote_tent()
 		_city_tent_pos = _find_flat_area_for_city_tent()
 		_city_tent2_pos = _find_flat_area_for_city_tent2()
+		# Acciones pick_fruit identicas a las del cliente (mismo _fruit_rng,
+		# mismas posiciones): sin ellas los bots del servidor dedicado no
+		# tenian ningun frutal que recolectar.
+		_create_fruit_trees()
+		# El cliente anade estas tres tiendas tras _create_fruit_trees.
+		HOUSE_FOOTPRINTS.append({"origin": _remote_tent_pos, "w": 9.0, "d": 12.0})
+		HOUSE_FOOTPRINTS.append({"origin": _city_tent_pos, "w": 9.0, "d": 12.0})
+		HOUSE_FOOTPRINTS.append({"origin": _city_tent2_pos, "w": 9.0, "d": 12.0})
 		_build_city_military_base_perimeter(true)
 		_register_server_house_blockers()
 		# Cascara fisica de casas/graneros/tiendas/refugio: sin ella la linea de
@@ -10289,9 +10301,14 @@ func _create_fruit_tree(pos: Vector3, fruit_type_index: int = 0) -> void:
 	var _visual_rng := RandomNumberGenerator.new()
 	_visual_rng.seed = tree_id
 	var tree_scale := _visual_rng.randf_range(3.0, 4.0)
-	var spawned := _try_instance_external_scene([model_path], visual_name, pos, Vector3.ONE * tree_scale, Vector3(0, _visual_rng.randf_range(0, 360), 0), true, 0.0)
-	if not spawned:
-		return
+	# En el servidor dedicado la accion pick_fruit se crea igual pero sin malla:
+	# los bots forrajean contra la WorldAction, no contra el visual.
+	var is_ded: bool = net != null and net.is_dedicated_server
+	var spawned := false
+	if not is_ded:
+		spawned = _try_instance_external_scene([model_path], visual_name, pos, Vector3.ONE * tree_scale, Vector3(0, _visual_rng.randf_range(0, 360), 0), true, 0.0)
+		if not spawned:
+			return
 	var tree_node := get_node_or_null(visual_name)
 	if tree_node != null:
 		tree_node.add_to_group("world_action_visual")
@@ -10458,6 +10475,88 @@ func _create_survival_objectives() -> void:
 		_create_pickup_item({"id": "hut_food", "name": "Lata de comida", "type": "food", "weight": 0.35, "qty": 1, "use": 32.0, "pos": hut_pos + Vector3(0.3, 0.05, -3.2), "paths": [CANNED_FOOD_LOW_MODEL], "scale": 0.0005, "rot": Vector3(0, 90, 0), "color": Color(0.6, 0.4, 0.2)})
 		_create_pickup_item({"id": "hut_matches", "name": "Cerillas", "type": "tool_matches", "weight": 0.1, "qty": 10, "use": 0.0, "pos": hut_pos + Vector3(-0.8, 0.05, -3.0), "paths": ["res://assets/models/props/box_of_matches_north_korea_1955.glb"], "scale": 0.0005, "rot": Vector3(0, 0, 0), "color": Color(0.3, 0.2, 0.1)})
 		_create_pickup_item({"id": "hut_fishing_rod", "name": "Caña de pescar", "type": "tool_fishing", "weight": 0.6, "qty": 1, "use": 0.0, "pos": hut_pos + Vector3(1.2, 0.05, -2.5), "paths": ["res://assets/models/props/cana_de_pescar.glb"], "scale": 1.0, "rot": Vector3(0, 45, 0), "color": Color(0.25, 0.18, 0.10)})
+	_create_harvestable_bushes()
+
+# Arbustos cosechables (fell_bush) con ids identicos en cliente y servidor
+# dedicado: el pase visual de la vegetacion solo corre en el cliente, asi que
+# el servidor se quedaba sin ningun arbusto real — sin palos ni semillas los
+# bots no podian recoger leña ni abrir huertos. La corriente rng propia
+# (no _world_rng) hace las posiciones deterministas en ambos lados.
+func _create_harvestable_bushes() -> void:
+	var is_ded: bool = net != null and net.is_dedicated_server
+	var bush_rng := RandomNumberGenerator.new()
+	bush_rng.seed = GameConst.WORLD_SEED + 777333
+	var placed := 0
+	var attempts := 0
+	while placed < 420 and attempts < 2400:
+		attempts += 1
+		var pos := Vector3(bush_rng.randf_range(-MAP_EXTENT * 0.92, MAP_EXTENT * 0.92), 0.0, bush_rng.randf_range(-MAP_EXTENT * 0.92, MAP_EXTENT * 0.92))
+		if Vector2(pos.x, pos.z).length() < 70.0:
+			continue
+		if not _can_place_ground_vegetation(pos, 2.0):
+			continue
+		pos.y = _get_exact_ground_y(pos.x, pos.z)
+		_create_harvestable_bush(pos, bush_rng, is_ded)
+		placed += 1
+	# Franja sur (paso y ciudad): mismos arbustos para los bots que van alli.
+	var south_placed := 0
+	var south_attempts := 0
+	while south_placed < 120 and south_attempts < 700:
+		south_attempts += 1
+		var spos := Vector3(bush_rng.randf_range(-55.0, 75.0), 0.0, bush_rng.randf_range(450.0, 890.0))
+		if _is_on_road(spos) or CityExpansion.on_road(spos, 4.0, _south_road_end()):
+			continue
+		if CityExpansion.inside_building(spos):
+			continue
+		if not _can_place_ground_vegetation(spos, 2.0):
+			continue
+		spos.y = _get_exact_ground_y(spos.x, spos.z)
+		_create_harvestable_bush(spos, bush_rng, is_ded)
+		south_placed += 1
+
+# Un arbusto cosechable: consume los mismos draws de bush_rng en cliente y
+# servidor (shuffle -> scale -> yaw / base_color) para que la posicion del
+# siguiente no se desplace; el servidor solo crea la WorldAction fell_bush.
+func _create_harvestable_bush(pos: Vector3, bush_rng: RandomNumberGenerator, is_ded: bool) -> void:
+	var bush_id := int(round(pos.x)) * 73856093 ^ int(round(pos.z)) * 19349663
+	if bush_id < 0:
+		bush_id = -bush_id
+	var visual_name := "Bush_%d" % bush_id
+	var shuffled := NodeUtils.shuffled_paths(REAL_BUSH_MODELS, bush_rng)
+	var model_path := ""
+	for p in shuffled:
+		if MaterialFactory.resource_path_exists(str(p)):
+			model_path = str(p)
+			break
+	# Draws incondicionales: si un modelo faltara solo en un lado, el numero de
+	# consumos sigue siendo el mismo y las posiciones no divergen.
+	var radius := bush_rng.randf_range(0.8, 1.4)
+	var s := bush_rng.randf_range(radius * 0.22, radius * 0.42)
+	var yaw := bush_rng.randf_range(0, 360)
+	var tint := bush_rng.randf()
+	var base_color := Color(0.05, 0.12, 0.045).lerp(Color(0.10, 0.17, 0.075), tint)
+	if _depleted_action_ids.has("fell_bush_%d" % bush_id):
+		return
+	var meta_names := ""
+	if not is_ded:
+		if not model_path.is_empty():
+			var final_y := pos.y + pos.y - _bush_unit_offset(model_path) * s
+			_pending_bushes.append({"path": model_path, "pos": pos, "t": Transform3D(Basis.from_euler(Vector3(0, deg_to_rad(yaw), 0)).scaled(Vector3.ONE * s), Vector3(pos.x, final_y, pos.z))})
+			meta_names = visual_name
+		else:
+			var parts := ["_Core", "_LobeA", "_LobeB"]
+			var offsets := [Vector3(0, radius * 0.25, 0), Vector3(radius * 0.30, radius * 0.35, -radius * 0.12), Vector3(-radius * 0.28, radius * 0.28, radius * 0.18)]
+			var sizes := [Vector3(radius, radius * 0.48, radius * 0.82), Vector3(radius * 0.55, radius * 0.36, radius * 0.50), Vector3(radius * 0.48, radius * 0.34, radius * 0.52)]
+			var colors := [base_color, base_color.darkened(0.10), base_color.lightened(0.06)]
+			for i in range(3):
+				var pname: String = visual_name + parts[i]
+				_create_visual_sphere(pname, pos + offsets[i], sizes[i], colors[i])
+				var pnode := get_node_or_null(pname)
+				if pnode != null:
+					pnode.add_to_group("world_action_visual")
+			meta_names = visual_name + "_Core|" + visual_name + "_LobeA|" + visual_name + "_LobeB"
+	var action = _create_world_action("fell_bush_%d" % bush_id, "fell_bush", "Arbusto", pos, Vector3(1.4, 1.2, 1.4), Color(0.08, 0.14, 0.05), false, false)
+	action.set_meta("visual_name", meta_names)
 
 func _create_river_drink_zones() -> void:
 	var segments := _default_river_segments()
