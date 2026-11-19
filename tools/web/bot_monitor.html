@@ -548,9 +548,9 @@ function renderSummary(data) {
 const MAP_MIN_SPAN = 40;   // media-anchura minima visible (m)
 const MAP_PAD = 1.08;      // margen al encuadrar el mundo completo
 let mapWorldExt = 500;
-let mapAuto = localStorage.getItem("botMapAuto") !== "0";
+let mapAuto = localStorage.getItem("botMapAuto") === "1";
 let lastMapData = null;
-let mapView = { cx: 0, cz: 0, halfSpan: 500 };
+let mapView = null;
 try {
   const sv = JSON.parse(localStorage.getItem("botMapView") || "null");
   if (sv && isFinite(sv.cx) && isFinite(sv.cz) && isFinite(sv.halfSpan) && sv.halfSpan > 0) mapView = sv;
@@ -633,6 +633,7 @@ function renderMap(data) {
   ext = Math.ceil((ext + 40) / 100) * 100; // margen + redondeo a 100 m
   mapWorldExt = ext;
   if (mapAuto) mapView = autoMapView(ext, actors);
+  if (!mapView) mapView = { cx: 0, cz: 0, halfSpan: ext * MAP_PAD };
   const zoomX = ext / mapView.halfSpan;
   document.getElementById("mapTitle").textContent = `Mapa Táctico en Tiempo Real (±${ext} m · ×${zoomX.toFixed(1)}${mapAuto ? " auto" : ""})`;
   const autoChk = document.getElementById("mapAutoChk");
@@ -1309,6 +1310,7 @@ function _screenToWorld(mx, my) {
   ];
 }
 function _mapZoomStep(f) {
+  if (!mapView) mapView = { cx: 0, cz: 0, halfSpan: mapWorldExt * MAP_PAD };
   mapView.halfSpan = Math.min(mapWorldExt * MAP_PAD, Math.max(MAP_MIN_SPAN, mapView.halfSpan * f));
   mapAuto = false;
   saveMapView();
@@ -1316,6 +1318,7 @@ function _mapZoomStep(f) {
 }
 _mapCanvas.addEventListener("wheel", e => {
   e.preventDefault();
+  if (!mapView) mapView = { cx: 0, cz: 0, halfSpan: mapWorldExt * MAP_PAD };
   const r = _mapCanvas.getBoundingClientRect();
   const mx = (e.clientX - r.left) * (_mapCanvas.width / Math.max(r.width, 1));
   const my = (e.clientY - r.top) * (_mapCanvas.height / Math.max(r.height, 1));
@@ -1329,6 +1332,7 @@ _mapCanvas.addEventListener("wheel", e => {
 }, { passive: false });
 let _mapDrag = null;
 _mapCanvas.addEventListener("pointerdown", e => {
+  if (!mapView) mapView = { cx: 0, cz: 0, halfSpan: mapWorldExt * MAP_PAD };
   _mapCanvas.setPointerCapture(e.pointerId);
   const r = _mapCanvas.getBoundingClientRect();
   _mapDrag = { x: e.clientX, y: e.clientY, cx: mapView.cx, cz: mapView.cz, w: r.width, h: r.height };
