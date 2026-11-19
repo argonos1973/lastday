@@ -1795,9 +1795,15 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		_tick_fauna_hearing(b)
 		_try_share_allied_knowledge(b, delta)
 		_bot_social_update(b)
-		# Orden de equipo "equip": si no queda equipo suelto a mano, se da por cumplida
+		# Orden de equipo "equip" o incursion propia: si no queda equipo suelto
+		# a mano, se da por cumplida — salvo que el bot siga desarmado con una
+		# base militar conocida y la incursion no este vetada por un fallo
+		# reciente: en ese caso la mision persiste hasta conseguir arma.
 		if bool(b.get("equip_mission", false)) and (b["_s_loot"] as Dictionary).is_empty():
-			b["equip_mission"] = false
+			var raid_kind := _bot_gear_raid_kind(b)
+			if raid_kind == "" or _ai_goal_recently_failed(b,
+					{"action": "scavenge", "target": raid_kind, "goal": "gear_up_at_military_base"}):
+				b["equip_mission"] = false
 
 	var is_night := _is_world_night()
 	if not is_night:
@@ -10176,7 +10182,8 @@ func _backpack_tier(nm: String) -> int:
 
 # Equipo vestible/usable: lo que la orden "equip" debe buscar en el suelo.
 func _is_gear_item(nm: String, tp: String) -> bool:
-	if tp in ["weapon", "weapon_rifle", "tool_axe", "tool_spear", "backpack", "clothing"]:
+	if tp in ["weapon", "weapon_rifle", "tool_axe", "tool_spear", "backpack", "clothing",
+			"ammo", "ammo_arrow"]:
 		return true
 	return PlayerController.CLOTHING_SLOTS.has(nm) or nm.begins_with("Mochila")
 
@@ -15185,6 +15192,39 @@ func _ai_stat_reason(b: Dictionary, reason: String) -> void:
 # ante una situación idéntica, Elena (supervivencia/curiosidad), Carlos
 # (valentía/cooperación/fortificación) y Kael (agresividad/desconfianza/saqueo)
 # producen decisiones distintas y sirven también como fallback cuando Groq no está.
+# Incursion de equipo autonoma ("equip_mission" sin jugador): el bot sin un
+# arma decente — fusil con municion, arco con flechas o acero de verdad
+# (Hacha, Cuchillo; los palos afilados y el hueso/piedra tallados no
+# cuentan) — que ya conoce una base militar (o, en su defecto, la ciudad)
+# monta su propia expedicion a por equipo. Devuelve el kind a saquear o "".
+func _bot_gear_raid_kind(b: Dictionary) -> String:
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return ""
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	for w in ["Fusil de asalto", "Rifle francotirador"]:
+		for it in inv:
+			if it is Dictionary and str(it.get("name", "")) == w \
+					and int(it.get("quantity", 1)) > 0 \
+					and float(it.get("durability", 100.0)) > 0.0 \
+					and _bot_gun_any_ammo(proxy, w):
+				return ""
+	if _bot_best_bow(proxy) != "" and _bot_arrow_count(proxy) > 0:
+		return ""
+	for w in ["Hacha", "Cuchillo"]:
+		if _bot_item_count(proxy, w) > 0:
+			return ""
+	var known: Dictionary = (b.get("_mem", {}) as Dictionary).get("known_locations", {})
+	for kid in known.keys():
+		var k = known[kid]
+		if k is Dictionary and str(k.get("kind", "")) == "military":
+			return "military"
+	for kid in known.keys():
+		var k = known[kid]
+		if k is Dictionary and str(k.get("kind", "")) == "city":
+			return "city"
+	return ""
+
 func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dictionary:
 	var use_eu := BOT_UTILITY_ENGINE and str(situation.get("engine", "")) != "legacy"
 	var pers := _get_bot_personality(b)
@@ -15208,6 +15248,19 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	var need_food := clampf((75.0 - hunger) / 55.0, 0.0, 1.4)
 	var need_heal := clampf((80.0 - hp) / 60.0, 0.0, 1.4)
 	var need_water := clampf((65.0 - thirst) / 50.0, 0.0, 1.4)
+
+	# Incursion de equipo autonoma: sin arma decente y con una base militar
+	# (o la ciudad) conocida, ir a por equipo manda sobre la rutina. La
+	# directiva queda fijada a su POI: en ruta el bot sigue comiendo,
+	# bebiendo, forrajeando o sembrando si se queda sin recursos — las
+	# necesidades son actos del tick, el plan no se rompe por ellas.
+	var raid_kind := _bot_gear_raid_kind(b)
+	if raid_kind != "" and not threat_present and hunger >= 45.0 and thirst >= 40.0 and hp >= 40.0:
+		var raid_spec := {"action": "scavenge", "target": raid_kind, "goal": "gear_up_at_military_base"}
+		if not _ai_goal_recently_failed(b, raid_spec):
+			b["equip_mission"] = true
+			return {"action": "scavenge", "target": raid_kind, "poi_kind": raid_kind,
+				"goal": "gear_up_at_military_base", "priority": 4, "reason": "gear_raid:unarmed"}
 
 	# Beneficios brutos (sin preference): el modo legacy los multiplica por la
 	# preferencia aprendida; el modo EU los multiplica por P(éxito) beta-binomial
@@ -16046,7 +16099,7 @@ func _ai_step_busy(b: Dictionary) -> bool:
 			or float(b.get("hide_timer", 0.0)) > 0.0 or bool(b.get("sitting", false)) \
 			or bool(b.get("sleeping", false)) or is_instance_valid(b.get("gut_target")):
 		return true
-	for k in ["_gather", "_s_loot", "_craft_state", "_ambush", "_forage", "_salvage"]:
+	for k in ["_gather", "_s_loot", "_craft_state", "_ambush", "_forage", "_salvage", "_farm"]:
 		var v = b.get(k)
 		if v is Dictionary and not (v as Dictionary).is_empty():
 			return true

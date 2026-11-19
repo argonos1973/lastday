@@ -7479,6 +7479,64 @@ func run() -> void:
 	check(bool(px.get_meta("proxy_dead", false)),
 		"10X8e: Flechazo del jugador en la cabeza del bot (arco_head) si lo mata")
 
+	# 10Y: Incursion de equipo autonoma — sin arma decente + base militar
+	# conocida => scavenge a militar (equip_mission); desvios de supervivencia
+	# (sembrar, forrajear) cuentan como trabajo del paso y no abortan.
+	var rb: Dictionary = mgr.bots[901]
+	var rp: Node3D = rb["proxy"]
+	rp.set_meta("saved_inventory", [])
+	rb["_s_predator"] = null
+	rb["_s_foe"] = null
+	rb["health"] = 95.0
+	rb["hunger"] = 80.0
+	rb["thirst"] = 80.0
+	rb["equip_mission"] = false
+	(rb["_mem"] as Dictionary)["known_locations"] = {}
+	(rb["_mem"] as Dictionary)["failed_goals"] = {}
+	check(mgr._bot_gear_raid_kind(rb) == "",
+		"10Y1: sin arma pero sin base conocida no hay incursion")
+	(rb["_mem"] as Dictionary)["known_locations"] = {
+		"military:10:20": {"id": "military:10:20", "kind": "military", "pos": [10.0, 0.0, 20.0]},
+	}
+	check(mgr._bot_gear_raid_kind(rb) == "military",
+		"10Y2: desarmado con base militar conocida la elige como objetivo")
+	var grd := mgr.decide_situational_action(rb, {"hp": 95.0, "hunger": 80.0, "thirst": 80.0, "threat": false})
+	check(str(grd.get("action", "")) == "scavenge" and str(grd.get("target", "")) == "military",
+		"10Y3: la decision forzada es scavenge a la base militar (act=%s)" % grd.get("action", ""))
+	check(bool(rb.get("equip_mission", false)),
+		"10Y4: la incursion levanta equip_mission")
+	var grd2 := mgr.decide_situational_action(rb, {"hp": 95.0, "hunger": 10.0, "thirst": 80.0, "threat": false})
+	check(str(grd2.get("action", "")) != "scavenge",
+		"10Y5: famelico (hambre=10) no sale de incursion (act=%s)" % grd2.get("action", ""))
+	rb["equip_mission"] = false
+	# Veto por fallo reciente: la incursion no se reemite en caliente.
+	var raid_sig := mgr._ai_failed_goal_sig({"action": "scavenge", "target": "military"}, rb)
+	(rb["_mem"] as Dictionary)["failed_goals"] = {
+		raid_sig: {"t": Time.get_unix_time_from_system(), "ttl": 300.0, "cause": "stuck_timeout", "act": "scavenge:military"},
+	}
+	var grd3 := mgr.decide_situational_action(rb, {"hp": 95.0, "hunger": 80.0, "thirst": 80.0, "threat": false})
+	check(str(grd3.get("action", "")) != "scavenge" and not bool(rb.get("equip_mission", false)),
+		"10Y6: incursion vetada tras stuck_timeout no se reemite (act=%s)" % grd3.get("action", ""))
+	(rb["_mem"] as Dictionary)["failed_goals"] = {}
+	# Con arma decente la incursion no se propone.
+	rp.set_meta("saved_inventory", [{"name": "Cuchillo", "type": "weapon", "quantity": 1, "durability": 80.0}])
+	check(mgr._bot_gear_raid_kind(rb) == "",
+		"10Y7: con Cuchillo en el inventario ya no hace falta incursion")
+	rp.set_meta("saved_inventory", [])
+	# Sembrar/forrajear en ruta cuenta como trabajo legitimo del paso.
+	rb["aggro_target"] = null
+	rb["flee_until"] = 0.0
+	rb["hide_timer"] = 0.0
+	rb["sitting"] = false
+	rb["sleeping"] = false
+	rb["gut_target"] = null
+	for st_k in ["_gather", "_s_loot", "_craft_state", "_ambush", "_forage", "_salvage", "_farm"]:
+		rb[st_k] = {}
+	check(not mgr._ai_step_busy(rb), "10Y8a: sin estados de trabajo el paso no esta ocupado")
+	rb["_farm"] = {"pos": Vector3(1.0, 0.0, 1.0), "phase": "plant"}
+	check(mgr._ai_step_busy(rb), "10Y8b: sembrar en ruta cuenta como trabajo del paso")
+	rb["_farm"] = {}
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
