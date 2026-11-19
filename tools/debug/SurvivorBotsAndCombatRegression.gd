@@ -1302,16 +1302,16 @@ func run() -> void:
 	check(mgr._nearest_other_camp_dist(carlos["camp_spot"] + Vector3(40.0, 0.0, 0.0), 901) < 45.0,
 		"_nearest_other_camp_dist detecta el campamento cercano")
 
-	# --- 10k-bis) Campamento de banda: quienes se toleran comparten el llano ---
-	# Elena y Carlos (pacificos) acampan juntos a 14-26 m; el bandido Kael sigue
-	# a 120 m de ellos. Sin relaciones registradas vale la faccion.
+	# --- 10k-bis) Campamento de banda: quienes YA se toleran comparten llano ---
+	# Sin relacion registrada NADIE comparte solar — los extranos reclaman
+	# cada cual su solar a >=120 m. El llano compartido (14-26 m) solo
+	# emerge cuando ambos guardan una relacion tolerada.
 	var rels_bak := {}
 	for bid in [901, 902, 903, 904]:
 		var mm: Dictionary = mgr._ensure_bot_memory(bid)
 		rels_bak[bid] = mm.get("relationships", {})
 		mm["relationships"] = {}
-	# Aislar a Ataulfo del experimento: en produccion compartiria llano con
-	# Kael (bandido<->bandido se tolera por faccion), aqui no.
+	# Aislar a Ataulfo del experimento: hostilidad registrada hacia todos.
 	for bid in [901, 902, 903]:
 		(mgr._ensure_bot_memory(bid) as Dictionary)["relationships"]["bot_904"] = {"hostility": 0.9, "fear": 0.0}
 	(mgr._ensure_bot_memory(904) as Dictionary)["relationships"] = {
@@ -1319,9 +1319,14 @@ func run() -> void:
 		"bot_902": {"hostility": 0.9, "fear": 0.0},
 		"bot_903": {"hostility": 0.9, "fear": 0.0},
 	}
-	check(mgr._camps_may_share(901, 902), "dos pacificos comparten el llano de campamento")
+	check(not mgr._camps_may_share(901, 902),
+		"dos bots sin trato NO comparten el llano de campamento")
 	check(not mgr._camps_may_share(901, 903) and not mgr._camps_may_share(903, 901),
 		"bandido y pacifico NO comparten campamento")
+	# Relacion tolerada en ambos sentidos: Elena y Carlos ya pueden compartir.
+	(mgr._ensure_bot_memory(901) as Dictionary)["relationships"]["bot_902"] = {"hostility": 0.1, "fear": 0.0}
+	(mgr._ensure_bot_memory(902) as Dictionary)["relationships"]["bot_901"] = {"hostility": 0.1, "fear": 0.0}
+	check(mgr._camps_may_share(901, 902), "conocidos y tolerados comparten el llano de campamento")
 	var band_anchor: Vector3 = mgr._band_camp_anchor(901, Vector3(22.0, 0.0, 12.0))
 	check(band_anchor != Vector3.INF and band_anchor.distance_to(carlos["camp_spot"]) < 40.0,
 		"el ancla de banda tira del campamento tolerado (d=%.0f)" % (band_anchor.distance_to(carlos["camp_spot"]) if band_anchor != Vector3.INF else -1.0))

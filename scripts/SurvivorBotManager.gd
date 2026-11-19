@@ -588,21 +588,26 @@ func _nearest_other_camp_dist(pos: Vector3, self_id: int) -> float:
 # del mapa, >=140 m del centro de spawn, lejos de POIs calientes y de los
 # puntos donde el bot ya murio o le quemaron la base. Cada bot tira hacia su
 # propio sector para que las bases queden repartidas por el mapa.
-# Acampar juntos exige tolerancia mutua: relacion sin hostilidad ni miedo en
-# ambos sentidos. Pareja nunca tratada usa la desconfianza de faccion — los
-# bandidos comparten llano (0.30), un bandido con un pacifico no (0.65).
-func _camp_rel(a_id: int, b_id: int) -> Dictionary:
+# Acampar juntos exige tolerancia mutua REGISTRADA: una relacion ya tratada
+# sin hostilidad ni miedo en ambos sentidos. Dos bots que jamas se han visto
+# no comparten fogata — son extranos y cada cual reclama su propio solar a
+# >=120 m (asi las bases nacen repartidas por el mapa). Cuando dos bandidos
+# se conocen y no se temen, el llano compartido emerge solo.
+func _camp_rel_stored(a_id: int, b_id: int) -> Dictionary:
 	var key := "bot_%d" % b_id
-	var mem := _ensure_bot_memory(a_id)
-	var rels: Dictionary = mem.get("relationships", {})
+	var rels: Dictionary = _ensure_bot_memory(a_id).get("relationships", {})
 	if rels.has(key) and rels[key] is Dictionary:
 		return rels[key]
-	return {"hostility": _rel_initial_hostility(a_id, key), "fear": 0.0}
+	return {}
 
 func _camps_may_share(a_id: int, b_id: int) -> bool:
 	if a_id <= 0 or b_id <= 0 or a_id == b_id:
 		return false
-	for rel in [_camp_rel(a_id, b_id), _camp_rel(b_id, a_id)]:
+	var ra := _camp_rel_stored(a_id, b_id)
+	var rb := _camp_rel_stored(b_id, a_id)
+	if ra.is_empty() or rb.is_empty():
+		return false
+	for rel in [ra, rb]:
 		if float(rel.get("hostility", 0.0)) > 0.4 or float(rel.get("fear", 0.0)) > 0.55:
 			return false
 	return true
@@ -669,7 +674,7 @@ func _pick_remote_base_spot(bot_id: int, spawn_pos: Vector3, mem: Dictionary) ->
 		score += _base_spot_safety(mem, cp)
 		# Territorio propio: las bases de los bots no se apiñan — cada solar
 		# puntua mejor cuanto mas lejos quede de los campamentos de los demas.
-		score += minf(_nearest_other_camp_dist(cp, bot_id), 160.0) * 0.6
+		score += minf(_nearest_other_camp_dist(cp, bot_id), 300.0) * 0.6
 		if score > best_score:
 			best_score = score
 			best = cp
