@@ -272,9 +272,28 @@
   details.sec { margin-top: 6px; }
   details.sec > summary.section-label { margin-top: 0; opacity: 0.92; }
   details.sec[open] > summary.section-label { opacity: 1; }
+  .langsel {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 50;
+    font-size: 12px;
+    letter-spacing: .08em;
+    background: rgba(11, 15, 13, .78);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 5px 12px;
+    backdrop-filter: blur(6px);
+  }
+  .langsel a { color: var(--muted); text-decoration: none; }
+  .langsel a:hover { color: var(--accent); }
+  .langsel .on { color: var(--accent); font-weight: 700; }
+  .langsel .sep { color: #3a4450; margin: 0 6px; }
 </style>
 </head>
 <body>
+
+<div class="langsel"><span class="on">ES</span><span class="sep">·</span><a href="index_en.html">EN</a></div>
 
 <header>
   <div class="brand">

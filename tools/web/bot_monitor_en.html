@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Last Day — AI Bots Cognitive Monitor (Groq / Qwen)</title>
+<style>
+  :root {
+    --bg: #0b0f0d;
+    --panel: #121916;
+    --panel-alt: #17211d;
+    --border: #263830;
+    --text: #e3ece6;
+    --muted: #8fa698;
+    --accent: #52d18a;
+    --warn: #e5a93c;
+    --danger: #e25555;
+    --info: #4da6ff;
+    --elena: #4ecdc4;
+    --carlos: #f7b731;
+    --kael: #ff5e57;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 14px 18px 32px;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+  }
+  .brand h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: #fff;
+  }
+  .brand p { color: var(--muted); font-size: 12px; }
+  .metrics-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .metric-pill {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 11px;
+    min-width: 110px;
+  }
+  .metric-pill .label {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .metric-pill .val {
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge.ok { background: rgba(82, 209, 138, 0.16); color: var(--accent); border: 1px solid rgba(82, 209, 138, 0.4); }
+  .badge.warn { background: rgba(229, 169, 60, 0.16); color: var(--warn); border: 1px solid rgba(229, 169, 60, 0.4); }
+  .badge.err { background: rgba(226, 85, 85, 0.16); color: var(--danger); border: 1px solid rgba(226, 85, 85, 0.4); }
+  .badge.info { background: rgba(77, 166, 255, 0.16); color: var(--info); border: 1px solid rgba(77, 166, 255, 0.4); }
+
+  .top-grid {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 1100px) {
+    .top-grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 13px 15px;
+  }
+  .card-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--border);
+  }
+  #mapCanvas {
+    width: 100%;
+    height: 360px;
+    background: #080d0b;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: block;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+  #mapCanvas.dragging { cursor: grabbing; }
+  .map-btn {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 5px;
+    min-width: 22px;
+    height: 20px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 5px;
+  }
+  .map-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .map-ctl { margin-left: auto; display: inline-flex; gap: 4px; align-items: center; }
+  .map-ctl label { cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+  .bots-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  @media (max-width: 1200px) {
+    .bots-grid { grid-template-columns: 1fr; }
+  }
+  .bot-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .bot-name {
+    font-size: 16px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .bot-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .drag-grip { cursor: grab; color: var(--muted); font-size: 13px; padding: 0 2px; user-select: none; }
+  .drag-grip:active { cursor: grabbing; }
+  .fold-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 7px; margin-top: 5px; transition: transform .15s; }
+  .fold-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .bot-card.dragging { opacity: .4; }
+  .bot-card.collapsed .bot-body { display: none; }
+  .bot-card.collapsed .bot-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .bot-card.collapsed .fold-btn { transform: rotate(-90deg); }
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    margin: 11px 0 6px;
+    font-weight: 600;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 92px 1fr 40px;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+    font-size: 12px;
+  }
+  .bar-track {
+    height: 8px;
+    background: #0a0e0c;
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.35s ease;
+  }
+  .decision-box {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .decision-box .goal-line {
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 3px;
+  }
+  .decision-box .meta-line {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .kv-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .kv-item {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+  .kv-item b { color: var(--muted); font-weight: 500; display: block; font-size: 10px; }
+  .pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .item-tag {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-size: 11px;
+  }
+  table.mini-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  table.mini-table th, table.mini-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid rgba(38, 56, 48, 0.55);
+    text-align: left;
+  }
+  table.mini-table th { color: var(--muted); font-weight: 600; }
+  .empty-note { color: var(--muted); font-style: italic; font-size: 11px; }
+  details[data-chat] summary { cursor: pointer; list-style: none; user-select: none; }
+  details[data-chat] summary::-webkit-details-marker { display: none; }
+  details[data-chat] summary::before { content: "▸ "; color: var(--muted); }
+  details[data-chat][open] > summary::before { content: "▾ "; }
+  details.chat-det summary.section-label { margin-top: 2px; }
+  details[data-sec] summary { cursor: pointer; list-style: none; user-select: none; }
+  details[data-sec] summary::-webkit-details-marker { display: none; }
+  details[data-sec] summary::before { content: "▸ "; color: var(--muted); }
+  details[data-sec][open] > summary::before { content: "▾ "; }
+  details.sec { margin-top: 6px; }
+  details.sec > summary.section-label { margin-top: 0; opacity: 0.92; }
+  details.sec[open] > summary.section-label { opacity: 1; }
+  .langsel {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 50;
+    font-size: 12px;
+    letter-spacing: .08em;
+    background: rgba(11, 15, 13, .78);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 5px 12px;
+    backdrop-filter: blur(6px);
+  }
+  .langsel a { color: var(--muted); text-decoration: none; }
+  .langsel a:hover { color: var(--accent); }
+  .langsel .on { color: var(--accent); font-weight: 700; }
+  .langsel .sep { color: #3a4450; margin: 0 6px; }
+</style>
+</head>
+<body>
+
+<div class="langsel"><a href="index.html">ES</a><span class="sep">·</span><span class="on">EN</span></div>
+
+<header>
+  <div class="brand">
+    <h1>LAST DAY — AI Bots Cognitive Monitor</h1>
+    <p id="subStatus">Connecting to the dedicated server's live telemetry...</p>
+  </div>
+  <div class="metrics-row">
+    <div class="metric-pill">
+      <div class="label">Groq / Qwen Status</div>
+      <div class="val" id="mGroqStatus"><span class="badge info">Loading...</span></div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">AI Provider</div>
+      <div class="val" id="mProvider"><span class="badge info">groq</span></div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Requests (Today / Total)</div>
+      <div class="val" id="mGroqCalls">0 / 380</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Tokens (Today / Total)</div>
+      <div class="val" id="mGroqTokens">0 / 120k</div>
+    </div>
+    <div class="metric-pill" style="min-width:235px">
+      <div class="label">Usage by model / pool</div>
+      <div class="val" id="mModelUse" style="font-size:11px;line-height:1.5">--</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Cache / 429s / Queue</div>
+      <div class="val" id="mGroqCache">0 · 0 · 0</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Server (FPS / Time)</div>
+      <div class="val" id="mServerPerf">-- fps · --:--</div>
+    </div>
+    <div class="metric-pill">
+      <div class="label">Wildlife / Players</div>
+      <div class="val" id="mWorldCounts">-- · --</div>
+    </div>
+  </div>
+</header>
+
+<div class="top-grid">
+  <details class="card" data-sec id="mapCard" open>
+    <summary class="card-title">
+      <span id="mapTitle">Real-Time Tactical Map</span>
+      <span id="mapClock" style="color:var(--muted);font-size:12px;">Live (2s)</span>
+    </summary>
+    <canvas id="mapCanvas" width="400" height="360"></canvas>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--elena)"></i> Elena (901)</span>
+      <span><i class="dot" style="background:var(--carlos)"></i> Carlos (902)</span>
+      <span><i class="dot" style="background:var(--kael)"></i> Kael (903)</span>
+      <span><i class="dot" style="background:#6c8cff"></i> House / City</span>
+      <span><i class="dot" style="background:#d96b27"></i> Military / Tower</span>
+      <span><i class="dot" style="background:#e8b84a"></i> ▲ Summit Base</span>
+      <span><i class="dot" style="background:#f2f5f3"></i> ◆ Player</span>
+      <span><i class="dot" style="background:#52d18a"></i> Bot Shelter</span>
+      <span class="map-ctl">
+        <button class="map-btn" id="mapZoomIn" title="Zoom in">+</button>
+        <button class="map-btn" id="mapZoomOut" title="Zoom out">−</button>
+        <button class="map-btn" id="mapFit" title="Fit whole map">⤢</button>
+        <label title="Auto-frame living bots"><input type="checkbox" id="mapAutoChk" />auto</label>
+      </span>
+    </div>
+  </details>
+
+  <details class="card" data-sec id="summaryCard" open>
+    <summary class="card-title">
+      <span>Strategic Summary &amp; Qwen Decision Flow</span>
+      <span id="modelBadge" class="badge info">qwen/qwen3.8-27b</span>
+    </summary>
+    <div id="summaryTableWrap"></div>
+  </details>
+</div>
+
+<details class="card" id="chatCard" data-chat style="display:none">
+  <summary class="card-title"><span>💬 Conversations (in-game chat)</span><span id="chatCount" class="badge info"></span></summary>
+  <div id="chatLogWrap"></div>
+</details>
+
+<div class="bots-grid" id="botsContainer"></div>
+
+<script>
+const BOT_COLORS = { 901: "#4ecdc4", 902: "#f7b731", 903: "#ff5e57" };
+const TRAIT_LABELS = {
+  bravery: "Bravery",
+  aggression: "Aggression",
+  curiosity: "Curiosity",
+  sociability: "Sociability",
+  distrust: "Distrust",
+  cooperation: "Cooperation",
+  survival_instinct: "Survival Inst."
+};
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function fmtHour(tod) {
+  const h = Math.floor(tod || 0);
+  const m = Math.floor(((tod || 0) - h) * 60);
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+}
+
+function fmtDur(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (d > 0) return `${d} d ${h} h`;
+  if (h > 0) return `${h} h ${m} m`;
+  if (m > 0) return `${m} m ${s} s`;
+  return `${s} s`;
+}
+
+const openChats = new Set(JSON.parse(localStorage.getItem("chatOpen") || '["chatCard","mapCard","summaryCard"]'));
+document.addEventListener("toggle", e => {
+  if (e.target.matches && e.target.matches("details[data-chat], details[data-sec]")) {
+    e.target.open ? openChats.add(e.target.id) : openChats.delete(e.target.id);
+    localStorage.setItem("chatOpen", JSON.stringify([...openChats]));
+  }
+}, true);
+function restoreChatOpen() {
+  for (const d of document.querySelectorAll("details[data-chat], details[data-sec]")) d.open = openChats.has(d.id);
+}
+
+function timeAgo(ts) {
+  const sec = Math.max(0, Math.floor(Date.now() / 1000 - Number(ts || 0)));
+  return fmtDur(sec) + " ago";
+}
+
+function barColor(val) {
+  if (val >= 65) return "#52d18a";
+  if (val >= 35) return "#e5a93c";
+  return "#e25555";
+}
+
+function renderHeader(data) {
+  const srv = data.server || {};
+  const g = data.groq || {};
+  const st = String(g.status || "idle");
+  let cls = "info";
+  if (st.includes("online") || st.includes("200")) cls = "ok";
+  else if (st.includes("429") || st.includes("quota") || st.includes("provider_switch")) cls = "warn";
+  else if (st.includes("error")) cls = "err";
+
+  // Active provider in the chain: groq = primary (ok), anything else =
+  // secondary fallback (warn — the primary failed or ran out of quota).
+  const provName = String(g.provider || "groq");
+  const provCls = provName === "groq" ? "ok" : "warn";
+  document.getElementById("mProvider").innerHTML = `<span class="badge ${provCls}">${esc(provName)}</span>`;
+  // Pool breakdown: each provider has its own quota (gemini-* -> gemini).
+  const budgets = g.providers || {groq: {max_calls: 380, max_tokens: 120000}, gemini: {max_calls: 600, max_tokens: 900000}};
+  const provOf = m => m.startsWith("gemini") ? "gemini" : "groq";
+  const tokByModel = g.tokens_day_by_model || {};
+  const provTag = bud => bud.day_done ? ' <span class="badge bwarn">daily ban</span>' : (bud.blocked_s > 0 ? ` <span class="badge bwarn">wait ${bud.blocked_s}s</span>` : "");
+  const modelRows = Object.entries(g.calls_day_by_model || {}).map(([m, c]) => {
+    const p = provOf(m), bud = budgets[p] || {};
+    const tk = tokByModel[m] || 0;
+    const pctC = bud.max_calls ? Math.min(100, Math.round(100 * c / bud.max_calls)) : 0;
+    const pctT = bud.max_tokens ? Math.min(100, Math.round(100 * tk / bud.max_tokens)) : 0;
+    const col = pctC > 80 || pctT > 80 ? "var(--warn)" : "var(--muted)";
+    return `<div title="${esc(m)}" style="color:${col}"><b>${esc(p)}</b> · ${esc(m.split("/").pop())}: ${c}/${bud.max_calls || "?"} calls · ${Math.round(tk / 1000)}k/${Math.round((bud.max_tokens || 0) / 1000)}k tok${provTag(bud)}</div>`;
+  });
+  // State of pools unused today (banned or cooling down): no model row.
+  const usedProv = new Set(Object.keys(g.calls_day_by_model || {}).map(provOf));
+  const idleRows = Object.entries(budgets).filter(([p]) => !usedProv.has(p)).map(([p, bud]) =>
+    (bud.day_done || bud.blocked_s > 0) ? `<div style="color:var(--muted)"><b>${esc(p)}</b> · 0 calls${provTag(bud)}</div>` : "");
+  document.getElementById("mModelUse").innerHTML = modelRows.concat(idleRows).join("") || "--";
+
+  document.getElementById("mGroqStatus").innerHTML = `<span class="badge ${cls}">${esc(st)}</span>`;
+  document.getElementById("mGroqCalls").textContent = `${g.calls_day || 0} / ${g.max_calls_day || 380} (tot ${g.calls_total || 0})`;
+  document.getElementById("mGroqTokens").textContent = `${g.tokens_day || 0} / ${Math.round((g.max_tokens_day || 120000)/1000)}k (tot ${g.tokens_total || 0})`;
+  document.getElementById("mGroqCache").textContent = `${g.cache_hits || 0} cache · ${g.http_429_count || 0} 429s · ${g.queue_size || 0} queue · chat ${g.chat_status || "idle"}`;
+  document.getElementById("mServerPerf").textContent = `${srv.fps || 0} fps · ${fmtHour(srv.time_of_day)} ${srv.is_night ? "🌙" : "☀️"}`;
+  const pls = (data.players || []).filter(p => !p.offline);
+  const plNames = pls.map(p => p.name).join(", ");
+  document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} wildlife · ${srv.players_online || 0} pl.${plNames ? ` (${plNames})` : ""}`;
+  const chatM = g.chat_model && g.chat_model !== g.model ? ` · chat ${g.chat_model}` : "";
+  const prov = g.provider && g.provider !== "groq" ? g.provider + ":" : "";
+  document.getElementById("modelBadge").textContent = prov + (g.model || "qwen/qwen3.8-27b") + chatM;
+  const dt = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : "--:--:--";
+  const teams = data.teams || [];
+  const teamTxt = teams.length
+    ? " · " + teams.map(t => `👥 ${t.leader}+${(t.members || []).map(m => m.name).join("+")}`).join(" | ")
+    : "";
+  document.getElementById("subStatus").textContent = `Godot 4 Dedicated Server authority · Last snapshot: ${dt}${teamTxt}`;
+}
+
+function renderSummary(data) {
+  const bots = data.bots || [];
+  let html = `<table class="mini-table">
+    <thead>
+      <tr>
+        <th>Bot</th>
+        <th>Position</th>
+        <th>Status / Weapon</th>
+        <th>Team / Garden</th>
+        <th>Current Goal</th>
+        <th>Last Decision (Qwen / Local)</th>
+        <th>Locations / Deaths</th>
+      </tr>
+    </thead><tbody>`;
+  for (const b of bots) {
+    const col = BOT_COLORS[b.bot_id] || "#52d18a";
+    const p = b.pos || [0,0,0];
+    const d = b.last_qwen_decision || {};
+    const srcBadge = d.source === "qwen"
+      ? `<span class="badge ok">Qwen p=${d.priority || 3}</span>`
+      : `<span class="badge info">${esc(d.source || "Local")}</span>`;
+    html += `<tr>
+      <td><b style="color:${col}">${esc(b.name)} (${b.bot_id})</b><br/><span style="color:var(--muted)">${esc(b.faction)} · ⭐ ${b.score ?? 0} pts · alive ${fmtDur(b.alive_seconds)} · ⌀ life ${fmtDur(b.avg_life_seconds)}</span></td>
+      <td>(${Math.round(p[0])}, ${Math.round(p[2])})<br/><span style="color:var(--muted)">y=${Number(p[1]||0).toFixed(1)}m</span></td>
+      <td>${esc(b.anim || "idle")} <span class="badge info">${esc(b.act || "?")}</span> ${b.crouching ? "· Crouching" : ""} ${b.in_shelter ? "· ⛺ Shelter" : ""} ${!b.in_shelter && b.in_house ? "· 🏠 House" : ""}<br/><b>${esc(b.held_item || "Hands")}</b></td>
+      <td>${(() => {
+        const mates = (b.team_mates || []).map(m => m.name || m.id).join(", ");
+        let t = "";
+        const roleLbl = {lider: "👑 Leader", scout: "🧭 Scout", soldier: "🛡️ Soldier", forager: "🎒 Forager"}[b.member_role] || "";
+        if (b.team_role === "leader") t = `<span class="badge ok">👑 leader</span> ${esc(mates)}`;
+        else if (b.team_role === "member") t = `<span class="badge info">member</span>${roleLbl ? ` <span class="badge ok">${roleLbl}</span>` : ""} with ${esc(mates)}`;
+        else t = `<span style="color:var(--muted)">solo</span>`;
+        if (b.team_danger > 0 && b.team_role === "member") t += ` <span class="badge" style="color:var(--danger)">⚠️ danger ×${b.team_danger}</span>`;
+        if (b.team_refused > 0 && b.team_role === "member") t += ` <span class="badge" style="color:var(--warn)">🙅 refuses help ×${b.team_refused}</span>`;
+        const mt = b.meet || {};
+        if (mt.target) t += `<br/><span style="color:var(--accent)">🔎 seeking ${esc(mt.target)}${mt.dist >= 0 ? ` (${mt.dist} m)` : ""}</span>`;
+        const amb = b.ambush || {};
+        if (amb.target) t += `<br/><span style="color:var(--danger)">🗡 stalking ${esc(amb.target)}${amb.dist >= 0 ? ` (${amb.dist} m)` : ""}</span>`;
+        const farm = b.farm || {};
+        if (farm.plots > 0) t += `<br/><span style="color:var(--accent)">🌱 ${farm.plots} bed${farm.plots > 1 ? "s" : ""} · ${farm.ready} ready</span>`;
+        const wl = b.wolf || {};
+        if (wl.tamed) t += `<br/><span style="color:var(--accent)">🐺 ${esc(wl.name || "wolf")} (${esc(wl.mode || "follow")})</span>`;
+        else if (wl.taming) t += `<br/><span style="color:var(--muted)">🐺 taming ${wl.progress || 0}/${wl.need || 3}</span>`;
+        return t;
+      })()}</td>
+      <td><b>${esc(b.current_goal || "survival_patrol")}</b></td>
+      <td>${d.action ? `${srcBadge} <b>${esc(d.action)}</b> → ${esc(d.target || "-")}<br/><span style="color:var(--muted)">${esc(d.reason || "")}</span>` : `<span class="empty-note">Local tactical AI active</span>`}</td>
+      <td>${b.known_locations_count || 0} known<br/><span style="color:var(--muted)">${b.deaths || 0} deaths${b.last_death_killer ? ` — last: ${esc(b.last_death_killer)} (${esc(b.last_death_weapon || b.last_death_cause)})` : (b.last_death_cause ? ` (${esc(b.last_death_cause)})` : "")}</span></td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  document.getElementById("summaryTableWrap").innerHTML = html;
+}
+
+// Tactical map view: wheel zoom (anchored to the cursor), drag panning and
+// auto-focus on living actors. Mode and manual view are persisted in
+// localStorage across reloads and polls.
+const MAP_MIN_SPAN = 40;   // minimum visible half-width (m)
+const MAP_PAD = 1.08;      // margin when framing the whole world
+let mapWorldExt = 500;
+let mapAuto = localStorage.getItem("botMapAuto") !== "0";
+let lastMapData = null;
+let mapView = { cx: 0, cz: 0, halfSpan: 500 };
+try {
+  const sv = JSON.parse(localStorage.getItem("botMapView") || "null");
+  if (sv && isFinite(sv.cx) && isFinite(sv.cz) && isFinite(sv.halfSpan) && sv.halfSpan > 0) mapView = sv;
+} catch (e) {}
+
+function saveMapView() {
+  localStorage.setItem("botMapView", JSON.stringify(mapView));
+  localStorage.setItem("botMapAuto", mapAuto ? "1" : "0");
+}
+
+// MAPVIEW-PURE-BEGIN
+// "Pretty" grid step (1/2/5 x 10^n) for ~5 on-screen divisions.
+function mapGridStep(halfSpan) {
+  const target = Math.max(halfSpan * 2 / 5, 1);
+  const p = Math.pow(10, Math.floor(Math.log10(target)));
+  for (const m of [1, 2, 5, 10]) if (m * p >= target) return m * p;
+  return 10 * p;
+}
+
+// Auto framing: covers every actor with 60 m of margin, without zooming out
+// past the world or zooming in to less than a 75 m field.
+function autoMapView(ext, actors) {
+  let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
+  for (const a of actors) {
+    if (a[0] < minX) minX = a[0];
+    if (a[0] > maxX) maxX = a[0];
+    if (a[1] < minZ) minZ = a[1];
+    if (a[1] > maxZ) maxZ = a[1];
+  }
+  if (minX > maxX) return { cx: 0, cz: 0, halfSpan: ext * MAP_PAD };
+  return {
+    cx: (minX + maxX) / 2,
+    cz: (minZ + maxZ) / 2,
+    halfSpan: Math.min(ext * MAP_PAD, Math.max((maxX - minX) * 0.5 + 60, (maxZ - minZ) * 0.5 + 60, 75))
+  };
+}
+
+// Reads mapView from scope: {cx:0,cz:0,halfSpan:ext} reproduces the classic
+// mapping world[-ext,ext] -> canvas with a 12 px margin.
+function makeMapToScreen(W, H) {
+  return (x, z) => [
+    ((x - mapView.cx) / mapView.halfSpan * 0.5 + 0.5) * (W - 24) + 12,
+    ((z - mapView.cz) / mapView.halfSpan * 0.5 + 0.5) * (H - 24) + 12
+  ];
+}
+// MAPVIEW-PURE-END
+
+function renderMap(data) {
+  const canvas = document.getElementById("mapCanvas");
+  if (canvas.clientWidth > 0 && canvas.width !== Math.round(canvas.clientWidth)) canvas.width = Math.round(canvas.clientWidth);
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Dynamic extent: the city/military base sits outside the ±500 m center
+  let ext = 500;
+  for (const p of (data.pois || [])) {
+    ext = Math.max(ext, Math.abs(p.pos[0]), Math.abs(p.pos[2]));
+  }
+  for (const l of (data.landmarks || [])) {
+    ext = Math.max(ext, Math.abs(l.pos[0]), Math.abs(l.pos[2]));
+  }
+  const actors = [];
+  for (const pl of (data.players || [])) {
+    ext = Math.max(ext, Math.abs(pl.pos[0]), Math.abs(pl.pos[2]));
+    if (!pl.dead && !pl.offline) actors.push([pl.pos[0], pl.pos[2]]);
+  }
+  const isBotDead = b => !!(b && (b.dead || String(b.anim || "").startsWith("dead") || b.act === "dead" || Number(b.hp ?? b.health ?? 100) <= 0));
+  for (const b of (data.bots || [])) {
+    if (isBotDead(b)) continue;
+    if (b.pos) { ext = Math.max(ext, Math.abs(b.pos[0]), Math.abs(b.pos[2])); actors.push([b.pos[0], b.pos[2]]); }
+    if (b.explore_target && b.explore_target.length >= 3) ext = Math.max(ext, Math.abs(b.explore_target[0]), Math.abs(b.explore_target[2]));
+    if (b.shelter_pos && b.shelter_pos.length >= 3) ext = Math.max(ext, Math.abs(b.shelter_pos[0]), Math.abs(b.shelter_pos[2]));
+    if (b.camp_spot && b.camp_spot.length >= 3) ext = Math.max(ext, Math.abs(b.camp_spot[0]), Math.abs(b.camp_spot[2]));
+    if (b.last_death_pos && b.last_death_pos.length >= 3) ext = Math.max(ext, Math.abs(b.last_death_pos[0]), Math.abs(b.last_death_pos[2]));
+    const wlp = (b.wolf || {}).pos || [];
+    if (wlp.length >= 3) ext = Math.max(ext, Math.abs(wlp[0]), Math.abs(wlp[2]));
+  }
+  ext = Math.ceil((ext + 40) / 100) * 100; // margin + round to 100 m
+  mapWorldExt = ext;
+  if (mapAuto) mapView = autoMapView(ext, actors);
+  const zoomX = ext / mapView.halfSpan;
+  document.getElementById("mapTitle").textContent = `Real-Time Tactical Map (±${ext} m · ×${zoomX.toFixed(1)}${mapAuto ? " auto" : ""})`;
+  const autoChk = document.getElementById("mapAutoChk");
+  if (autoChk) autoChk.checked = mapAuto;
+  lastMapData = data;
+
+  const toScreen = makeMapToScreen(W, H);
+
+  // Zoom-adaptive grid (1/2/5 x 10^n step)
+  const gstep = mapGridStep(mapView.halfSpan);
+  ctx.strokeStyle = "rgba(38, 56, 48, 0.45)";
+  ctx.lineWidth = 1;
+  for (let g = Math.ceil((mapView.cx - mapView.halfSpan) / gstep) * gstep; g <= mapView.cx + mapView.halfSpan; g += gstep) {
+    const [gx] = toScreen(g, 0);
+    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+  }
+  for (let g = Math.ceil((mapView.cz - mapView.halfSpan) / gstep) * gstep; g <= mapView.cz + mapView.halfSpan; g += gstep) {
+    const [, gz] = toScreen(0, g);
+    ctx.beginPath(); ctx.moveTo(0, gz); ctx.lineTo(W, gz); ctx.stroke();
+  }
+
+  // POIs
+  for (const poi of (data.pois || [])) {
+    const [px, pz] = toScreen(poi.pos[0], poi.pos[2]);
+    ctx.fillStyle = (poi.kind === "military" || poi.kind === "tower") ? "#d96b27"
+      : (poi.kind === "house" || poi.kind === "city") ? "#6c8cff" : "rgba(143,166,152,0.35)";
+    ctx.beginPath();
+    ctx.arc(px, pz, poi.kind === "tower" ? 4.5 : 3.0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Fixed world landmarks (summit military base, etc.): golden triangle
+  // with label — they are not bot exploration POIs.
+  for (const l of (data.landmarks || [])) {
+    const [lx, lz] = toScreen(l.pos[0], l.pos[2]);
+    ctx.fillStyle = "#e8b84a";
+    ctx.strokeStyle = "#e8b84a";
+    ctx.beginPath();
+    ctx.moveTo(lx, lz - 8);
+    ctx.lineTo(lx - 7, lz + 5);
+    ctx.lineTo(lx + 7, lz + 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#080d0b";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    if (l.label) {
+      ctx.fillStyle = "#e8b84a";
+      ctx.font = "bold 10px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(l.label, lx, lz + 16);
+      ctx.textAlign = "left";
+    }
+  }
+
+  // Human players (white outlined diamond, dimmed if the body is offline)
+  for (const pl of (data.players || [])) {
+    const [px, pz] = toScreen(pl.pos[0], pl.pos[2]);
+    const isOff = !!pl.offline;
+    ctx.fillStyle = pl.dead ? "#8a8f8c" : (isOff ? "rgba(242,245,243,0.45)" : "#f2f5f3");
+    ctx.beginPath();
+    ctx.moveTo(px, pz - 7);
+    ctx.lineTo(px + 7, pz);
+    ctx.lineTo(px, pz + 7);
+    ctx.lineTo(px - 7, pz);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#080d0b";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = isOff ? "rgba(242,245,243,0.65)" : "#f2f5f3";
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText((pl.name || "Player") + (isOff ? " (off)" : ""), px, pz - 10);
+    ctx.textAlign = "left";
+  }
+
+  // Bots, shelters, targets (live bots only in the map preview)
+  for (const b of (data.bots || [])) {
+    if (isBotDead(b)) continue;
+    const col = BOT_COLORS[b.bot_id] || "#52d18a";
+    const pos = b.pos || [0,0,0];
+    const [bx, bz] = toScreen(pos[0], pos[2]);
+
+    if (b.shelter_pos && b.shelter_pos.length >= 3) {
+      const [sx, sz] = toScreen(b.shelter_pos[0], b.shelter_pos[2]);
+      ctx.strokeStyle = col;
+      ctx.fillStyle = "rgba(82, 209, 138, 0.25)";
+      ctx.strokeRect(sx - 5, sz - 5, 10, 10);
+      ctx.fillRect(sx - 5, sz - 5, 10, 10);
+      if (b.shelter_camo) {
+        ctx.font = "10px sans-serif";
+        ctx.fillText("🌿", sx + 6, sz - 6);
+      }
+    } else if (b.camp_spot && b.camp_spot.length >= 3) {
+      // Chosen campsite (remote base pending construction)
+      const [cx, cz] = toScreen(b.camp_spot[0], b.camp_spot[2]);
+      ctx.strokeStyle = col;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(cx - 4, cz - 4, 8, 8);
+      ctx.setLineDash([]);
+      ctx.font = "9px sans-serif";
+      ctx.fillText("🏕", cx + 5, cz - 5);
+    }
+
+    // Last death point (the killer shows in its card)
+    if (b.last_death_pos && b.last_death_pos.length >= 3 && b.last_death_unix) {
+      const [dx2, dz2] = toScreen(b.last_death_pos[0], b.last_death_pos[2]);
+      ctx.font = "11px sans-serif";
+      ctx.fillText("💀", dx2 - 6, dz2 + 4);
+    }
+
+    // Tamed or taming wolf: position, line to the owner and 🐺
+    const wl = b.wolf || {};
+    if ((wl.tamed || wl.taming) && wl.pos && wl.pos.length >= 3) {
+      const [wx, wz] = toScreen(wl.pos[0], wl.pos[2]);
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.55;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(bx, bz);
+      ctx.lineTo(wx, wz);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1.0;
+      ctx.font = "12px sans-serif";
+      ctx.fillText(wl.taming ? "🐺⁉" : "🐺", wx - 7, wz + 4);
+      if (wl.taming && wl.progress) {
+        ctx.font = "9px sans-serif";
+        ctx.fillStyle = col;
+        ctx.fillText(`${wl.progress}/${wl.need || 3}`, wx + 6, wz - 5);
+      }
+    }
+
+    if (b.explore_target && b.explore_target.length >= 3) {
+      const [tx, tz] = toScreen(b.explore_target[0], b.explore_target[2]);
+      ctx.strokeStyle = col;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(bx, bz);
+      ctx.lineTo(tx, tz);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(bx, bz, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#080d0b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText(`${b.name} (${b.hp}%)`, bx + 9, bz + 4);
+  }
+
+  // Team links (solid line in the leader's color) and ambushes
+  // (dashed red from the stalker to the victim).
+  const actorById = {};
+  for (const b2 of (data.bots || [])) actorById[b2.bot_id] = b2;
+  for (const pl2 of (data.players || [])) actorById[pl2.id] = pl2;
+  for (const b of (data.bots || [])) {
+    if (isBotDead(b) || !b.pos || b.pos.length < 3) continue;
+    const [bx, bz] = toScreen(b.pos[0], b.pos[2]);
+    if (b.team_role === "leader") {
+      const lcol = BOT_COLORS[b.bot_id] || "#52d18a";
+      for (const m of (b.team_mates || [])) {
+        const mb = actorById[m.id];
+        if (!mb || isBotDead(mb) || !mb.pos || mb.pos.length < 3) continue;
+        const [mx, mz] = toScreen(mb.pos[0], mb.pos[2]);
+        ctx.strokeStyle = lcol;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(bx, bz);
+        ctx.lineTo(mx, mz);
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+      }
+    }
+    const amb = b.ambush || {};
+    if (amb.target_id) {
+      const tv = actorById[amb.target_id];
+      if (tv && !isBotDead(tv) && tv.pos && tv.pos.length >= 3) {
+        const [ax, az] = toScreen(tv.pos[0], tv.pos[2]);
+        ctx.strokeStyle = "#d94a4a";
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(bx, bz);
+        ctx.lineTo(ax, az);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#d94a4a";
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText("🗡", ax - 4, az - 11);
+      }
+    }
+  }
+}
+
+const CHAT_KIND = {
+  greet: ["greeting", "ok"], help: ["help", "err"], alliance: ["alliance", "info"],
+  whisper: ["whisper", "warn"], taunt: ["taunt", "warn"], reply: ["reply", "info"], talk: ["chat", "info"],
+  order: ["order", "ok"], request: ["request", "warn"],
+  teach: ["lesson", "ok"], voice: ["voice", "info"]
+};
+function renderChat(data) {
+  const log = data.chat_log || [];
+  const card = document.getElementById("chatCard");
+  if (!log.length) { card.style.display = "none"; return; }
+  card.style.display = "";
+  document.getElementById("chatCount").textContent = log.length + " msgs";
+  let html = "";
+  for (const m of log.slice().reverse()) {
+    const k = CHAT_KIND[m.kind] || CHAT_KIND.talk;
+    const hh = m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : "--:--:--";
+    html += `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12px">
+      <span style="color:var(--muted)">${hh}</span>
+      <b>${esc(m.from)}</b> <span style="color:var(--muted)">→</span> <b>${esc(m.to)}</b>
+      <span class="badge ${k[1]}" style="font-size:9px">${k[0]}</span>
+      <div style="color:#cdd6c4;margin-top:1px">${esc(m.text)}</div>
+    </div>`;
+  }
+  document.getElementById("chatLogWrap").innerHTML = html;
+}
+
+function renderBots(data) {
+  const container = document.getElementById("botsContainer");
+  const savedOrder = loadCardUI().order;
+  const bots = (data.bots || []).slice().sort((a, c) => {
+    const ia = savedOrder.indexOf(String(a.bot_id));
+    const ib = savedOrder.indexOf(String(c.bot_id));
+    return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib);
+  });
+  let html = "";
+
+  for (const b of bots) {
+    const col = BOT_COLORS[b.bot_id] || "#52d18a";
+    const p = b.personality || {};
+    const base = b.base_personality || {};
+    const d = b.last_qwen_decision || {};
+    const inv = b.inventory || [];
+    const rels = Object.values(b.relationships || {});
+    const strats = Object.entries(b.strategies || {}).sort((a, c) => (Number(c[1].last || 0) - Number(a[1].last || 0)));
+    const milestones = Object.entries(b.milestones || {}).sort((a, c) => (Number(c[1]) - Number(a[1])));
+    const locs = (b.known_locations || []).slice(0, 8);
+    const mems = (b.recent_memories || []).slice().reverse();
+
+    let traitsHtml = "";
+    for (const [k, label] of Object.entries(TRAIT_LABELS)) {
+      const now = Number(p[k] || 0);
+      const pct = Math.round(now * 100);
+      const dv = now - Number(base[k] || now);
+      const dtxt = Math.abs(dv) >= 0.02
+        ? `<span style="color:${dv > 0 ? "var(--accent)" : "var(--danger)"};font-size:10px">${dv > 0 ? "▲" : "▼"}${dv > 0 ? "+" : ""}${dv.toFixed(2)}</span>`
+        : `<span style="color:var(--muted);font-size:10px">·</span>`;
+      traitsHtml += `<div class="bar-row">
+        <span>${esc(label)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${col}"></div></div>
+        <span style="text-align:right;color:var(--muted)">${now.toFixed(2)} ${dtxt}</span>
+      </div>`;
+    }
+
+    let invHtml = inv.length
+      ? inv.map(it => `<span class="item-tag">${esc(it.name)}${it.quantity > 1 ? ` ×${it.quantity}` : ""}</span>`).join("")
+      : `<span class="empty-note">Empty backpack</span>`;
+
+    const stash = b.shelter_stash || [];
+    let stashHtml = stash.length
+      ? stash.map(it => `<span class="item-tag">${esc(it.name)}${(it.quantity || it.qty || 1) > 1 ? ` ×${it.quantity || it.qty}` : ""}</span>`).join("")
+      : `<span class="empty-note">No items stored in its shelter</span>`;
+
+    let relHtml = rels.length
+      ? `<table class="mini-table"><thead><tr><th>Actor</th><th>Trust</th><th>Hostile</th><th>Fear</th><th>Help/Atk</th></tr></thead><tbody>` +
+        rels.map(r => `<tr>
+          <td><b>${esc(r.name || r.id)}</b></td>
+          <td style="color:${r.trust >= 0 ? "var(--accent)" : "var(--danger)"}">${Number(r.trust || 0).toFixed(2)}</td>
+          <td>${Number(r.hostility || 0).toFixed(2)}</td>
+          <td>${Number(r.fear || 0).toFixed(2)}</td>
+          <td>+${r.helped || 0} / -${r.attacked || 0}</td>
+        </tr>`).join("") + `</tbody></table>`
+      : `<div class="empty-note">No recorded player interactions yet</div>`;
+
+    const actStrats = strats.filter(([sk]) => !sk.startsWith("plan:"));
+    const planStrats = strats.filter(([sk]) => sk.startsWith("plan:"));
+    const stratPill = ([sk, sv], si) => {
+      const age = sv.last ? timeAgo(Number(sv.last)) : "";
+      const hot = si === 0 && sv.last ? `<span class="badge ok" style="font-size:9px">active ${esc(age)}</span>` : (sv.last ? ` <span style="color:var(--muted);font-size:10px">${esc(age)}</span>` : "");
+      return `<span class="item-tag"><b>${esc(sk.replace(/^plan:/, "plan·"))}</b>: ×${Number(sv.preference || 1).toFixed(2)} (${sv.success || 0}✓/${sv.fail || 0}✗)${hot}</span>`;
+    };
+    let stratHtml = strats.length
+      ? (actStrats.length ? `<div class="empty-note" style="margin:2px 0">Actions</div><div class="pill-list">` + actStrats.map(stratPill).join("") + `</div>` : "")
+        + (planStrats.length ? `<div class="empty-note" style="margin:4px 0 2px">Completed plans</div><div class="pill-list">` + planStrats.map(stratPill).join("") + `</div>` : "")
+      : `<div class="empty-note">Learning ongoing strategies...</div>`;
+
+    const MILESTONE_LABELS = {
+      first_team: "🤝 First team", first_lead: "👑 First time leading",
+      first_ambush: "🗡️ First ambush", first_farm: "🌱 First crop",
+      first_harvest: "🧺 First harvest", first_chat: "💬 First chat",
+      first_alliance: "📣 First answered alliance", first_rescue: "🚑 First rescue underway",
+      first_dismantle: "🪓 First shelter dismantled", first_raid: "🎒 First stash raided",
+      learned_hydration: "💧 Learned to seek water earlier", learned_foraging: "🍄 Learned to forage earlier",
+      learned_predator_evasion: "🐺 Learned to spot predators from afar",
+      learned_combat_tactics: "🛡️ Learned tactical combat fallback",
+      learned_shelter_warmth: "🔥 Learned to prioritize warmth and shelter"
+    };
+    const adapts = b.adaptations || [];
+    const adaptHtml = adapts.length
+      ? `<div class="pill-list" style="margin-bottom:6px">` + adapts.map(a => `<span class="item-tag" style="border-color:rgba(82,209,138,.45);color:#b9f5d0">${esc(a)}</span>`).join("") + `</div>`
+      : "";
+    let mstHtml = adaptHtml + (milestones.length
+      ? `<div class="pill-list">` + milestones.map(([mk, ts]) =>
+          `<span class="item-tag">${MILESTONE_LABELS[mk] || esc(mk)} <span style="color:var(--muted)">${new Date(Number(ts) * 1000).toLocaleDateString()}</span></span>`
+        ).join("") + `</div>`
+      : (adapts.length ? "" : `<div class="empty-note">No new behaviors discovered yet</div>`));
+
+    let memHtml = mems.length
+      ? `<table class="mini-table"><thead><tr><th>Event</th><th>Actor / Zone</th><th>Detail</th></tr></thead><tbody>` +
+        mems.map(m => `<tr>
+          <td><b>${esc(m.type)}</b></td>
+          <td>${esc(m.actor)} · ${esc(m.zone)}</td>
+          <td style="color:var(--muted)">${esc(m.detail)}</td>
+        </tr>`).join("") + `</tbody></table>`
+      : `<div class="empty-note">No recent events</div>`;
+
+    const bchat = (b.chat_log || []).slice().reverse();
+    let bchatHtml = bchat.length
+      ? bchat.map(m => {
+          const k = CHAT_KIND[m.kind] || CHAT_KIND.talk;
+          const out = Number(m.from_id) === Number(b.bot_id);
+          const hh = m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : "--:--";
+          return `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:11px">
+            <span style="color:var(--muted)">${hh}</span>
+            <span class="badge ${k[1]}" style="font-size:9px">${k[0]}</span>
+            <b>${esc(out ? b.name : m.from)}</b> <span style="color:var(--muted)">→</span> <b>${esc(out ? m.to : b.name)}</b>
+            <div style="color:#cdd6c4">${esc(m.text)}</div>
+          </div>`;
+        }).join("")
+      : `<div class="empty-note">Has not talked to anyone yet</div>`;
+
+    let locHtml = locs.length
+      ? `<div class="pill-list">` + locs.map(l =>
+          `<span class="item-tag">${esc(l.id)} (${l.source === "shared" ? "🤝" : "👁️"} r=${Number(l.risk || 0).toFixed(1)})</span>`
+        ).join("") + `</div>`
+      : `<div class="empty-note">Exploring initial surroundings</div>`;
+
+    const bt = Number(b.body_temperature ?? 36.6);
+    const tempW = Math.max(0, Math.min(100, (bt - 33.0) / 7.0 * 100));
+    const tempC = bt < 35.4 ? "#4aa3df" : (bt > 38.2 ? "#e25555" : "#52d18a");
+    const tempTxt = bt.toFixed(1) + "°C";
+
+    html += `<div class="card bot-card" data-bot="${b.bot_id}">
+      <div class="bot-header">
+        <div>
+          <div class="bot-name">
+            <span class="drag-grip" draggable="true" title="Drag to move the card">⠿</span>
+            <span class="dot" style="background:${col};width:12px;height:12px"></span>
+            <span>${esc(b.name)}</span>
+            <span class="badge ${b.faction === "hostile" ? "err" : "ok"}">${esc(b.faction)}</span>
+            ${b.sick ? `<span class="badge warn">Sick</span>` : ""}
+            ${b.dead ? `<span class="badge err">DEAD${b.respawn_seconds ? ` — respawn in ${fmtDur(b.respawn_seconds)}` : ""}</span>` : ""}
+          </div>
+          <div class="bot-sub">ID ${b.bot_id} · Weapon: <b>${esc(b.held_item || "None")}</b> · Backpack: ${esc(b.backpack || "None")}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:22px;font-weight:800;color:${col};line-height:1">⭐ ${b.score ?? 0}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">SCORE</div>
+          <div style="font-size:11px;margin-top:6px">Alive: <b>${fmtDur(b.alive_seconds)}</b> · ⌀ life: <b>${fmtDur(b.avg_life_seconds)}</b></div>
+          <div style="font-size:10px;color:var(--muted)">Total accumulated: ${fmtDur(b.alive_total_seconds)} · ${b.deaths || 0} deaths</div>
+          <span class="badge info" style="margin-top:5px">${esc(b.anim || "idle")} · ${esc(b.act || "?")}</span>
+          <br/><button class="fold-btn" title="Collapse / expand the card">▾</button>
+        </div>
+      </div>
+      <div class="bot-body">
+
+      ${(() => {
+        const st = b.stats || {};
+        return `<div class="kv-grid" style="margin-bottom:4px">
+          <div class="kv-item"><b>Bots killed</b>${st.kills_bot || 0}</div>
+          <div class="kv-item"><b>Players killed</b>${st.kills_player || 0}</div>
+          <div class="kv-item"><b>Deaths</b>${b.deaths || 0}${b.last_death_killer ? ` — ${esc(b.last_death_killer)}` : ""}${b.last_death_cause ? ` (${esc(b.last_death_cause)})` : ""}</div>
+        </div>`;
+      })()}
+
+      <div class="bar-row">
+        <span>Health</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.hp}%;background:${barColor(b.hp)}"></div></div>
+        <span style="text-align:right">${b.hp}%</span>
+      </div>
+      <div class="bar-row">
+        <span>Blood${Number(b.bleeding || 0) > 0 ? " 🩸" : ""}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.blood ?? 100}%;background:#c0392b"></div></div>
+        <span style="text-align:right">${b.blood ?? "—"}%</span>
+      </div>
+      <div class="bar-row">
+        <span>Hunger</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.hunger}%;background:${barColor(b.hunger)}"></div></div>
+        <span style="text-align:right">${b.hunger}%</span>
+      </div>
+      <div class="bar-row">
+        <span>Thirst</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${b.thirst}%;background:${barColor(b.thirst)}"></div></div>
+        <span style="text-align:right">${b.thirst}%</span>
+      </div>
+      <div class="bar-row">
+        <span>Temp${Number(b.wetness || 0) > 0.05 ? " 🌧" : ""}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${tempW}%;background:${tempC}"></div></div>
+        <span style="text-align:right">${tempTxt}</span>
+      </div>
+
+      ${(() => {
+        const mates = (b.team_mates || []).map(m => esc(m.name || m.id)).join(", ");
+        const amb = b.ambush || {};
+        const farm = b.farm || {};
+        const mt = b.meet || {};
+        const hasTeam = b.team_role === "leader" || b.team_role === "member";
+        if (!hasTeam && !amb.target && !(farm.plots > 0) && !mt.target && !(b.team_danger > 0)) return "";
+        const roleName = {lider: "👑 Leader", scout: "🧭 Scout", soldier: "🛡️ Soldier", forager: "🎒 Forager"}[b.member_role] || "";
+        return `<div class="section-label">Team, Ambush &amp; Garden</div>
+        <div class="decision-box" style="border-left-color:${col}">
+          ${hasTeam ? `<div class="meta-line">${b.team_role === "leader" ? "👑 <b>Leader</b> of:" : `🤝 <b>Member</b>${roleName ? ` — role <b>${roleName}</b>` : ""}, follows:`} ${mates}</div>` : `<div class="meta-line" style="color:var(--muted)">No team — lone survival</div>`}
+          ${mt.target ? `<div class="meta-line">🔎 <b>Regrouping:</b> travelling to meet <b>${esc(mt.target)}</b>${mt.dist >= 0 ? ` ${mt.dist} m away` : ""}</div>` : ""}
+          ${amb.target ? `<div class="meta-line" style="color:var(--danger)">🗡 <b>Ambush underway:</b> stalking <b>${esc(amb.target)}</b>${amb.dist >= 0 ? ` ${amb.dist} m away` : ""} (${amb.t || 0}s stalking)</div>` : ""}
+          ${b.team_danger > 0 && b.team_role === "member" ? `<div class="meta-line" style="color:var(--danger)">⚠️ <b>Danger brought to the group:</b> ×${b.team_danger} — ${4 - b.team_danger} from expulsion</div>` : ""}
+          ${farm.plots > 0 ? `<div class="meta-line">🌱 <b>Garden:</b> ${farm.plots} bed${farm.plots > 1 ? "s" : ""} · ${farm.ready} ready to harvest</div>` : ""}
+        </div>`;
+      })()}
+
+      <div class="section-label">Goal &amp; Last Decision (Qwen / Local Brain)</div>
+      <div class="decision-box" style="border-left-color:${col}">
+        <div class="goal-line">🎯 ${esc(b.current_goal || "survival_patrol")}</div>
+        ${d.action
+          ? `<div class="meta-line">Action: <b>${esc(d.action)}</b> → Target: <b>${esc(d.target || "-")}</b> · Priority: <b>${d.priority || 3}/5</b> (${esc(d.source || "qwen")})</div>
+             <div class="meta-line">Reason: "${esc(d.reason || "")}"</div>`
+          : `<div class="meta-line">Running on local tactical AI (waiting for a consultation window)</div>`
+        }
+        ${(() => {
+          const pg = b.pending_goals || [];
+          if (!pg.length) return "";
+          const q = pg.slice(0, 5).map(s => esc(String(s.action || s.goal || "?")) + (s.target ? "→" + esc(String(s.target)) : "")).join(" → ");
+          return `<div class="meta-line" style="opacity:.8">📋 Queued: ${q}${pg.length > 5 ? ` (+${pg.length - 5})` : ""}</div>`;
+        })()}
+        ${(() => {
+          const a = b.ai_stats || {};
+          const bits = [];
+          if ((a.qwen_ok|0) + (a.qwen_invalid|0) + (a.local_decisions|0) > 0)
+            bits.push(`qwen ${a.qwen_ok|0}✓/${a.qwen_invalid|0}✗ · local ${a.local_decisions|0}`);
+          if ((a.plans_completed|0) + (a.plans_failed|0) > 0)
+            bits.push(`plans ${a.plans_completed|0}✓/${a.plans_failed|0}✗`);
+          if ((a.steps_started|0) + (a.steps_completed|0) + (a.steps_failed|0) + (a.steps_done|0) > 0)
+            bits.push(`steps ${a.steps_completed|0}✓/${a.steps_failed|0}✗ of ${(a.steps_started|0) || (a.steps_done|0)}`);
+          if ((a.latency_ms_last|0) > 0)
+            bits.push(`${a.latency_ms_last|0} ms`);
+          if ((a.blocked_recoveries|0) > 0)
+            bits.push(`blocks recovered ${a.blocked_recoveries|0}`);
+          const tail = b.blocked ? ` · <span style="color:var(--danger)">⛔ blocked</span>` : "";
+          if (!bits.length && !b.blocked) return "";
+          return `<div class="meta-line" style="opacity:.85">🧠 ${bits.join(" · ")}${tail}</div>`;
+        })()}
+      </div>
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_pers"><summary class="section-label">Evolved Personality (7 Traits)</summary>
+      ${traitsHtml}</details>
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_rel"><summary class="section-label">Social Relationships (Trust / Hostility / Fear)</summary>
+      ${relHtml}</details>
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_mst"><summary class="section-label">Behavior Evolution (Milestones)</summary>
+      ${mstHtml}</details>
+
+      ${(() => {
+        const dlog = b.death_log || [];
+        const nem = b.nemesis || {};
+        const lastBy = b.last_death_killer || "";
+        const lastWp = b.last_death_weapon || b.last_death_cause || "";
+        if (!dlog.length && !lastBy && !nem.name) return "";
+        const KIND_EN = {wolf_bite:"wolf bite",bear_bite:"bear bite",melee:"melee",rifle:"rifle shot",bola:"bolas",arco:"arrow",arco_head:"headshot arrow",arco_madera:"arrow",arrow:"arrow",lanza:"spear",starved:"starvation",dehydrated:"dehydration",hypothermia:"hypothermia",exhausted:"exhaustion",heatstroke:"heatstroke",combat:"combat",bled:"bled out",sick:"sickness",succumbed:"succumbed"};
+        const kindEn = k => KIND_EN[k] || k;
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_death"><summary class="section-label">☠ Deaths (${b.deaths || 0})${nem.name ? ` · Nemesis: ${esc(nem.name)} ×${nem.count}` : ""}</summary>
+        <div class="decision-box" style="border-left-color:var(--danger)">
+          ${lastBy || lastWp ? `<div class="meta-line">Last: ${lastBy ? `<b>${esc(lastBy)}</b> with ` : ""}<b>${esc(kindEn(lastWp))}</b>${b.last_death_unix ? ` · ${esc(timeAgo(Number(b.last_death_unix)))}` : ""}</div>` : ""}
+          ${dlog.slice().reverse().map(d2 => `<div class="meta-line" style="color:var(--muted)">— ${d2.by ? `Killed by <b>${esc(d2.by)}</b> · ` : ""}${esc(kindEn(d2.weapon || d2.kind || ""))}${d2.t ? ` · ${new Date(Number(d2.t) * 1000).toLocaleString()}` : ""}</div>`).join("")}
+        </div></details>`;
+      })()}
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_strat"><summary class="section-label">Learned Strategies (most recent first)</summary>
+      ${stratHtml}</details>
+
+      ${(() => {
+        // Honest tactical perception: what the bot BELIEVES it knows about the
+        // current enemy — source (seen/heard/told), live confidence and age.
+        const foe = b.foe_intel || {};
+        if (!foe.src) return "";
+        const SRC = {seen: "👁 seen", heard: "👂 heard", told: "📢 told"};
+        const cNow = Math.round(Number(foe.conf_now ?? foe.conf ?? 0) * 100);
+        const cCol = cNow > 60 ? "var(--danger)" : (cNow > 30 ? "var(--warn)" : "var(--muted)");
+        const pos = (foe.pos || []).length >= 3 ? ` (${foe.pos[0]}, ${foe.pos[2]})` : "";
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_foe"><summary class="section-label">Tracked Enemy — ${esc(SRC[foe.src] || foe.src)}</summary>
+        <div class="decision-box" style="border-left-color:${cCol}">
+          <div class="meta-line">Source: <b>${esc(SRC[foe.src] || foe.src)}</b>${foe.src !== "seen" ? " · position <b>estimated</b> (sound uncertainty)" : " · exact position"}</div>
+          <div class="meta-line">Last clue${pos} · ${esc(fmtDur(foe.age_s || 0))} ago · current confidence <b style="color:${cCol}">${cNow}%</b></div>
+        </div></details>`;
+      })()}
+
+      ${(() => {
+        // Survival curriculum: learned causes of death — what killed it most
+        // is what it learned to avoid best.
+        const dl = Object.entries(b.death_lessons || {}).sort((a, c) => Number(c[1]) - Number(a[1])).slice(0, 8);
+        if (!dl.length) return "";
+        const CAUSE_EN = {cold: "❄ cold", combat: "⚔ combat", dehydrated: "💧 dehydration", starved: "🍞 starvation", predator: "🐺 predator", ranged: "🎯 sniper", heat: "🔥 heat", melee: "🗡 melee", fall: "🪂 fall", drowning: "🌊 drowned", sickness: "🤒 sickness", medical: "🩸 wounds"};
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_lessons"><summary class="section-label">Death Lessons (${Object.keys(b.death_lessons || {}).length} causes)</summary>
+        <div class="pill-list">${dl.map(([k, n]) => `<span class="item-tag" style="border-color:rgba(226,85,85,.4)">${esc(CAUSE_EN[k] || k)} ×${n}</span>`).join("")}</div>
+        <div class="empty-note">Each cause adds weight to its defensive adaptations</div></details>`;
+      })()}
+
+      ${(() => {
+        // Diet: what it has actually been eating — per-food counter + last
+        // meal, to see whether it lives on mushrooms, hunting or cans.
+        const fe = Object.entries(b.food_eaten || {}).filter(([k]) => k !== "last").sort((a, c) => Number(c[1]) - Number(a[1]));
+        if (!fe.length && !b.last_meal) return "";
+        const FOOD_EN = {setas: "🍄 mushrooms", fruta: "🍊 fruit", latas: "🥫 cans", carne: "🥩 meat", pescado: "🐟 fish", verduras: "🥬 vegetables", crudos: "⚠ raw", otros: "🍽 other"};
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_diet"><summary class="section-label">Diet (${fe.reduce((s, [, n]) => s + Number(n), 0)} meals)</summary>
+        <div class="pill-list">${fe.map(([k, n]) => `<span class="item-tag" style="border-color:rgba(82,209,138,.4)">${esc(FOOD_EN[k] || k)} ×${n}</span>`).join("")}</div>
+        ${b.last_meal ? `<div class="empty-note">Last meal: ${esc(b.last_meal)}</div>` : ""}</details>`;
+      })()}
+
+      ${(() => {
+        // Local autonomy: why its own brain decided instead of the remote
+        // advisor — a real independence profile.
+        const fr = Object.entries((b.ai_stats || {}).fallback_reasons || {}).sort((a, c) => Number(c[1]) - Number(a[1])).slice(0, 8);
+        if (!fr.length) return "";
+        const R_EN = {plan_done: "plan finished", plan_impossible: "plan unfeasible", http_429_backoff: "429 wait", step_no_progress: "no progress", step_timeout: "step expired", no_api_key: "no key", local_plan_done: "plan done", local_plan_stuck: "plan stuck", local_unavailable: "remote down", http_send_error: "send failure", empty_content: "empty response", missing_choices: "no choices", invalid_or_impossible_decision: "invalid decision", invalid_json: "invalid JSON", invalid_choice: "invalid choice", invalid_message: "invalid message"};
+        const total = fr.reduce((s, [, n]) => s + Number(n), 0);
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_local"><summary class="section-label">Local Autonomy — ${total} own decisions</summary>
+        <div class="pill-list">${fr.map(([k, n]) => `<span class="item-tag">${esc(R_EN[k] || k.replace(/^http_error_/, "HTTP "))} ×${n}</span>`).join("")}</div>
+        <div class="empty-note">It decided on its own when the advisor couldn't or shouldn't answer</div></details>`;
+      })()}
+
+      ${(() => {
+        // Learned vetoes: goals and destinations that failed and are now
+        // consciously avoided — expiry-bounded failure memory.
+        const fg = b.failed_goals_list || [];
+        const un = b.unreachable_list || [];
+        const nb = b.last_nav_block || null;
+        if (!fg.length && !un.length && !nb) return "";
+        const row = e => `<span class="item-tag" style="border-color:rgba(229,169,60,.45)"><b>${esc(e.goal)}</b> · ${esc(e.cause)} · ${e.age_min}m ago (${e.left_min}m left)</span>`;
+        const nbHtml = nb ? `<div class="empty-note" style="margin:4px 0 2px">Last route block: <b>(${nb.pos ? esc(nb.pos.join(", ")) : "?"})</b> · ${esc(nb.cause)} · ${nb.age_min}m ago</div>` : "";
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_veto"><summary class="section-label">Learned Vetoes (${fg.length + un.length} active)</summary>
+        ${nbHtml}
+        ${fg.length ? `<div class="empty-note" style="margin:2px 0">Failed goals</div><div class="pill-list">${fg.map(row).join("")}</div>` : ""}
+        ${un.length ? `<div class="empty-note" style="margin:4px 0 2px">Unreachable targets</div><div class="pill-list">${un.map(row).join("")}</div>` : ""}</details>`;
+      })()}
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_loc"><summary class="section-label">Known Locations (${b.known_locations_count || 0} — No Omniscience)</summary>
+      ${locHtml}</details>
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_mem"><summary class="section-label">Recent Memories</summary>
+      ${memHtml}</details>
+
+      <details class="chat-det" data-chat id="chats_${b.bot_id}">
+        <summary class="section-label">💬 ${esc(b.name)}'s chats (${bchat.length})</summary>
+        ${bchatHtml}
+      </details>
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_inv"><summary class="section-label">Equipped Clothing &amp; Inventory (${inv.length})</summary>
+      <div style="color:var(--muted);font-size:11px;margin-bottom:5px;">Clothing: ${esc(b.clothing || "None")}</div>
+      <div class="pill-list">${invHtml}</div></details>
+
+      <details class="sec" data-sec id="sec_${b.bot_id}_base"><summary class="section-label">Own Base &amp; Shelter Stash (${stash.length}/18)</summary>
+      ${(() => {
+        const sp = b.shelter_pos || [];
+        const cs = b.camp_spot || [];
+        if (!sp.length && !cs.length) return `<div class="empty-note">No base yet — it will gather materials and camp in a remote area</div>`;
+        return `<div style="color:var(--muted);font-size:11px;margin-bottom:5px">
+          ${sp.length ? `⛺ Shelter at (${Math.round(sp[0])}, ${Math.round(sp[2])})` : `🏕 Chosen campsite at (${Math.round(cs[0])}, ${Math.round(cs[2])}) — shelter pending`}
+          ${b.shelter_camo ? `<span class="item-tag" style="border-color:rgba(82,209,138,.5);color:#b9f5d0">🌿 Camouflaged</span>` : ""}
+          ${b.shelter_pelts ? `<span class="item-tag">🪶 Fur-lined</span>` : ""}
+        </div>`;
+      })()}
+      <div class="pill-list">${stashHtml}</div></details>
+
+      ${(() => {
+        const wl = b.wolf || {};
+        if (!wl.tamed && !wl.taming) return "";
+        const MODE_EN = {follow:"following", stay:"guarding the area", patrol:"patrolling", guard:"guarding"};
+        if (wl.taming) return `<details class="sec" data-sec id="sec_${b.bot_id}_wolf"><summary class="section-label">🐺 Taming wolf</summary>
+          <div class="meta-line">${esc(wl.name || "wolf")} — trust ${wl.progress || 0}/${wl.need || 3} meals</div></details>`;
+        return `<details class="sec" data-sec id="sec_${b.bot_id}_wolf"><summary class="section-label">🐺 Tamed wolf</summary>
+          <div class="kv-grid">
+            <div class="kv-item"><b>Name</b>${esc(wl.name || "—")}</div>
+            <div class="kv-item"><b>Mode</b>${esc(MODE_EN[wl.mode] || wl.mode || "—")}</div>
+            <div class="kv-item"><b>Last order</b>${esc(wl.order === "stay" ? "stay (guards the camp)" : "follow me")}</div>
+            <div class="kv-item"><b>Health</b>${wl.hp != null ? wl.hp + "%" : "—"}</div>
+            <div class="kv-item"><b>Hunger</b>${wl.hunger != null ? wl.hunger + "%" : "—"}</div>
+          </div></details>`;
+      })()}
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = html;
+  for (const id of loadCardUI().collapsed) {
+    const c = container.querySelector(`.bot-card[data-bot="${id}"]`);
+    if (c) c.classList.add("collapsed");
+  }
+}
+
+// Card state (order and folding) persisted in localStorage — the poll
+// re-renders every 2 s, so it is reapplied after each rebuild.
+function loadCardUI() {
+  try {
+    return {
+      order: JSON.parse(localStorage.getItem("botCardOrder") || "[]"),
+      collapsed: JSON.parse(localStorage.getItem("botCardCollapsed") || "[]"),
+    };
+  } catch (e) { return { order: [], collapsed: [] }; }
+}
+
+const _botsGrid = document.getElementById("botsContainer");
+let _dragCard = null;
+_botsGrid.addEventListener("click", e => {
+  const btn = e.target.closest(".fold-btn");
+  if (!btn) return;
+  e.preventDefault();
+  const card = btn.closest(".bot-card");
+  if (!card) return;
+  card.classList.toggle("collapsed");
+  const ui = loadCardUI();
+  const id = card.dataset.bot;
+  const i = ui.collapsed.indexOf(id);
+  if (card.classList.contains("collapsed")) { if (i < 0) ui.collapsed.push(id); }
+  else if (i >= 0) ui.collapsed.splice(i, 1);
+  localStorage.setItem("botCardCollapsed", JSON.stringify(ui.collapsed));
+});
+_botsGrid.addEventListener("dragstart", e => {
+  if (!e.target.closest(".drag-grip")) return;
+  _dragCard = e.target.closest(".bot-card");
+  if (_dragCard) {
+    _dragCard.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", "");
+  }
+});
+_botsGrid.addEventListener("dragover", e => {
+  if (!_dragCard) return;
+  e.preventDefault();
+  const over = e.target.closest(".bot-card");
+  if (!over || over === _dragCard) return;
+  const r = over.getBoundingClientRect();
+  const after = e.clientY > r.top + r.height / 2 || e.clientX > r.left + r.width / 2;
+  over.parentNode.insertBefore(_dragCard, after ? over.nextSibling : over);
+});
+_botsGrid.addEventListener("drop", e => e.preventDefault());
+_botsGrid.addEventListener("dragend", () => {
+  if (!_dragCard) return;
+  _dragCard.classList.remove("dragging");
+  const order = [..._botsGrid.querySelectorAll(".bot-card")].map(c => c.dataset.bot);
+  localStorage.setItem("botCardOrder", JSON.stringify(order));
+  _dragCard = null;
+});
+
+// Map interaction: wheel = cursor-anchored zoom, drag = pan,
+// double click = re-enable auto-focus. Any manual gesture disables auto
+// and persists the view; repaint is immediate with the last snapshot.
+const _mapCanvas = document.getElementById("mapCanvas");
+function _mapRedraw() { if (lastMapData) renderMap(lastMapData); }
+function _screenToWorld(mx, my) {
+  return [
+    mapView.cx + ((mx - 12) / (_mapCanvas.width - 24) - 0.5) * 2 * mapView.halfSpan,
+    mapView.cz + ((my - 12) / (_mapCanvas.height - 24) - 0.5) * 2 * mapView.halfSpan
+  ];
+}
+function _mapZoomStep(f) {
+  mapView.halfSpan = Math.min(mapWorldExt * MAP_PAD, Math.max(MAP_MIN_SPAN, mapView.halfSpan * f));
+  mapAuto = false;
+  saveMapView();
+  _mapRedraw();
+}
+_mapCanvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = _mapCanvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) * (_mapCanvas.width / Math.max(r.width, 1));
+  const my = (e.clientY - r.top) * (_mapCanvas.height / Math.max(r.height, 1));
+  const [wx, wz] = _screenToWorld(mx, my);
+  const nh = Math.min(mapWorldExt * MAP_PAD, Math.max(MAP_MIN_SPAN, mapView.halfSpan * (e.deltaY < 0 ? 1 / 1.25 : 1.25)));
+  const k = nh / mapView.halfSpan;
+  mapView = { cx: wx - (wx - mapView.cx) * k, cz: wz - (wz - mapView.cz) * k, halfSpan: nh };
+  mapAuto = false;
+  saveMapView();
+  _mapRedraw();
+}, { passive: false });
+let _mapDrag = null;
+_mapCanvas.addEventListener("pointerdown", e => {
+  _mapCanvas.setPointerCapture(e.pointerId);
+  const r = _mapCanvas.getBoundingClientRect();
+  _mapDrag = { x: e.clientX, y: e.clientY, cx: mapView.cx, cz: mapView.cz, w: r.width, h: r.height };
+  _mapCanvas.classList.add("dragging");
+});
+_mapCanvas.addEventListener("pointermove", e => {
+  if (!_mapDrag) return;
+  const dx = (e.clientX - _mapDrag.x) * (_mapCanvas.width / Math.max(_mapDrag.w, 1));
+  const dy = (e.clientY - _mapDrag.y) * (_mapCanvas.height / Math.max(_mapDrag.h, 1));
+  mapView.cx = _mapDrag.cx - dx / (_mapCanvas.width - 24) * 2 * mapView.halfSpan;
+  mapView.cz = _mapDrag.cz - dy / (_mapCanvas.height - 24) * 2 * mapView.halfSpan;
+  mapAuto = false;
+  _mapRedraw();
+});
+const _mapEndDrag = () => {
+  if (!_mapDrag) return;
+  _mapDrag = null;
+  _mapCanvas.classList.remove("dragging");
+  saveMapView();
+};
+_mapCanvas.addEventListener("pointerup", _mapEndDrag);
+_mapCanvas.addEventListener("pointercancel", _mapEndDrag);
+_mapCanvas.addEventListener("dblclick", () => { mapAuto = true; saveMapView(); _mapRedraw(); });
+document.getElementById("mapZoomIn").addEventListener("click", () => _mapZoomStep(1 / 1.4));
+document.getElementById("mapZoomOut").addEventListener("click", () => _mapZoomStep(1.4));
+document.getElementById("mapFit").addEventListener("click", () => {
+  mapAuto = false;
+  mapView = { cx: 0, cz: 0, halfSpan: mapWorldExt * MAP_PAD };
+  saveMapView();
+  _mapRedraw();
+});
+document.getElementById("mapAutoChk").addEventListener("change", e => { mapAuto = !!e.target.checked; saveMapView(); _mapRedraw(); });
+
+let pollInFlight = false;
+let lastStatusText = null;
+async function pollStatus() {
+  if (document.hidden || pollInFlight) return;
+  pollInFlight = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch("./status.json?t=" + Date.now(), { cache: "no-store", signal: controller.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const statusText = await res.text();
+    if (document.hidden || statusText === lastStatusText) return;
+    const data = JSON.parse(statusText);
+    renderHeader(data);
+    renderSummary(data);
+    renderMap(data);
+    renderChat(data);
+    renderBots(data);
+    restoreChatOpen();
+    lastStatusText = statusText;
+  } catch (err) {
+    lastStatusText = null; // Next successful poll also clears an error message.
+    document.getElementById("subStatus").textContent = "Waiting for the first snapshot from the server (" + err.message + ")...";
+  } finally {
+    clearTimeout(timeout);
+    pollInFlight = false;
+  }
+}
+
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollStatus(); });
+pollStatus();
+setInterval(pollStatus, 2000);
+</script>
+</body>
+</html>
