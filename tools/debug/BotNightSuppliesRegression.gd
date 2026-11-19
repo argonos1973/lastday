@@ -3,6 +3,9 @@ class Arena extends Node3D:
  var _lit_campfires: Array = []
  var world_actions_by_id: Dictionary = {}
  var net = null
+ # Franja de rio simulada: x en [100,110] es agua sombreada para las pruebas
+ # de fogata en el agua (igual que get_river_depth_at del mundo real).
+ func get_river_depth_at(pos): return 1.0 if pos.x >= 100.0 and pos.x <= 110.0 else 0.0
  func _net_campfire_built(id, pos, _pid): world_actions_by_id[id] = {"position": pos}
  func _net_campfire_lit(id, name, pos, _pid):
   if not world_actions_by_id.has(id): return false
@@ -47,7 +50,7 @@ func run():
  check(manager._bot_item_count(proxy,"Carne asada en palo") == 1, "cooking yields edible meat")
  world._lit_campfires.clear()
  check(not manager._bot_supply_goal_lit(b,Vector3(8,0,0)), "extinguished fire grants no light")
- proxy.set_meta("saved_inventory", [{"name":"Antorcha","quantity":1}])
+ proxy.set_meta("saved_inventory", [{"name":"Antorcha","quantity":1},{"name":"Cerillas","quantity":1}])
  check(not manager._bot_prepare_night_supplies(b,.1) and b.torch_lit and b.held_item == "Antorcha", "torch equipped and lit before departure")
  check(manager._bot_supply_goal_lit(b,Vector3(100,0,0)), "torch allows distant supplies")
  # --- Emergencia letal: burbuja de 6 m anclada como ultimo recurso ---
@@ -91,7 +94,7 @@ func run():
  st_nap.free()
  # Antorcha: libera el ancla.
  proxy.global_position = Vector3(50,0,50)
- proxy.set_meta("saved_inventory", [{"name":"Antorcha","quantity":1}])
+ proxy.set_meta("saved_inventory", [{"name":"Antorcha","quantity":1},{"name":"Cerillas","quantity":1}])
  check(not manager._bot_prepare_night_supplies(b2,.1) and not b2.has("_night_emergency_origin"),
    "torch clears the emergency anchor")
  # Bot iluminado tambien ancla su burbuja de emergencia (sin asimetria lit/unlit).
@@ -169,6 +172,19 @@ func run():
  proxy.global_position = Vector3(5,0,0)
  check(not manager._bot_fire_vetoed(b8, Vector3(6,0,0)), "veto ignored when already inside the ring")
  proxy.global_position = Vector3(0,0,0)
+ # --- Nunca una fogata dentro del agua: punto en el rio se reubica a suelo
+ # seco si el anillo lo permite, y rodeado de agua no gasta material ---
+ proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+ var b9 := {"proxy":proxy,"bot_id":910,"campfire_id":"","campfire_pos":Vector3.INF}
+ check(manager._bot_build_and_light_campfire(b9, Vector3(100.5,0,0)), "fire next to the river relocates to dry land")
+ check(b9["campfire_pos"].x < 100.0, "relocated fire lands outside the water band")
+ check(world.world_actions_by_id.has(b9["campfire_id"]), "relocated fire actually exists in the world")
+ proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+ var b10 := {"proxy":proxy,"bot_id":911,"campfire_id":"","campfire_pos":Vector3.INF}
+ check(not manager._bot_build_and_light_campfire(b10, Vector3(105.0,0,0)), "fully surrounded by water -> build refused")
+ check(b10["campfire_id"] == "", "refused build leaves no phantom campfire id")
+ check(manager._bot_item_count(proxy,"Palo") == 2 and manager._bot_item_count(proxy,"Piedra") == 2,
+   "refused build does not consume materials")
  world.free()
  print("BotNightSuppliesRegression errors=",errors)
  quit(1 if errors else 0)

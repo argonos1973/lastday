@@ -7234,6 +7234,11 @@ func _on_item_dropped(item_name: String, item_type: String, item_weight: float, 
 		if item_name not in ["campfire", "shelter"]:
 			pos = _spread_overlapping_drop_pos(pos)
 	if item_name == "campfire":
+		# Una fogata jamas nace dentro del agua (el jugador ya lo valida antes
+		# de gastar el material; aqui queda el cerrojo por si otro emisor la
+		# suelta en un rio o en el lago).
+		if _is_water_drop_position(pos):
+			return
 		var cf_id := "player_campfire_%d" % randi()
 		_spawn_player_campfire_with_id(cf_id, pos)
 		if net != null and net.is_connected and not net.is_host:
@@ -14625,6 +14630,10 @@ func _net_campfire_built(cf_id: String, pos: Vector3, sender_id: int = 0) -> boo
 	if net != null and net.is_host and sender_id != 0 and sender_id != net.get_my_id():
 		if not _sender_within(sender_id, pos, 15.0):
 			return false
+	# Autoridad del servidor: ningun cliente (legitimo o no) planta una
+	# fogata dentro del agua — devolver false corta ademas el reenvio del RPC.
+	if _is_water_drop_position(pos):
+		return false
 	if net != null and net.is_dedicated_server and not _tracked_has_id(_built_campfires, cf_id):
 		_built_campfires.append({"id": cf_id, "pos": pos})
 	if world_actions_by_id.has(cf_id):
@@ -15711,6 +15720,11 @@ func craft_ground_recipe(actor, recipe: Dictionary) -> bool:
 			CraftingSystemScript.craft_error = "Necesitas suelo seco para dejar lo fabricado."
 			return false
 		drop_positions.append(drop_pos)
+	# La fogata fabricada en el suelo no pasa por el bucle de drop_positions:
+	# su punto base tampoco puede caer dentro del agua.
+	if output.item_type == "campfire" and _is_water_drop_position(pos):
+		CraftingSystemScript.craft_error = "Necesitas suelo seco para dejar lo fabricado."
+		return false
 	for source in plan.sources:
 		var item = source.item
 		if int(source.quantity) == int(item.quantity) and float(source.durability) == float(item.durability):

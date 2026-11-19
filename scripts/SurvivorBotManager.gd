@@ -10990,8 +10990,29 @@ func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 		proxy.set_meta("saved_held_item", b["held_item"])
 	return moved
 
-func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> void:
+# Una hoguera nunca se planta dentro del agua: si el punto pedido cae en un
+# rio/charco se prueba un anillo de alternativas secas alrededor (un bot
+# helandose dentro de un vado intentaria encenderla bajo el agua).
+func _is_water_fire_pos(pos: Vector3) -> bool:
+	if world == null:
+		return false
+	if world.has_method("_is_water_drop_position"):
+		return bool(world._is_water_drop_position(pos))
+	return world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > 0.02
+
+func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> bool:
 	var proxy: Node3D = b["proxy"]
+	if _is_water_fire_pos(pos):
+		var dry := Vector3.INF
+		for off in [Vector3(1.8,0,0), Vector3(-1.8,0,0), Vector3(0,0,1.8), Vector3(0,0,-1.8), Vector3(2.6,0,2.6), Vector3(-2.6,0,2.6), Vector3(2.6,0,-2.6), Vector3(-2.6,0,-2.6)]:
+			var cand: Vector3 = pos + off
+			cand.y = _ground_y(cand.x, cand.z)
+			if not _is_water_fire_pos(cand):
+				dry = cand
+				break
+		if dry == Vector3.INF:
+			return false
+		pos = dry
 	_consume_bot_item(proxy, "Palo", 2)
 	_consume_bot_item(proxy, "Piedra", 2)
 	var cf_id := "bot_campfire_%d" % int(b["bot_id"])
@@ -11001,13 +11022,20 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> void:
 	b["campfire_id"] = cf_id
 	b["campfire_pos"] = pos
 	if world.has_method("_net_campfire_built"):
-		world._net_campfire_built(cf_id, pos, 0)
+		# Si el mundo rechaza el punto (agua u otra validacion) no queda
+		# ninguna estructura: limpiar la marca para no registrar una fogata
+		# fantasma que atraiga al bot y a sus companeros.
+		if world._net_campfire_built(cf_id, pos, 0) == false:
+			b["campfire_id"] = ""
+			b["campfire_pos"] = Vector3.INF
+			return false
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.campfire_built.rpc_id(pid, cf_id, pos)
 	_ensure_bot_campfire_lit(b)
+	return true
 
 # Una fogata encendida tiene objeto real (world_actions_by_id) — figurar en
 # _lit_campfires no basta: la entrada puede quedar obsoleta tras expirar el
@@ -11160,8 +11188,11 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 		if spot == Vector3.INF:
 			spot = cur + Vector3(2.2, 0.0, 0.0)
 			spot.y = _ground_y(spot.x, spot.z)
-		_bot_build_and_light_campfire(b, spot)
-		fire_pos = spot
+		if not _bot_build_and_light_campfire(b, spot):
+			return false
+		# La fogata pudo reubicarse a suelo seco junto al punto pedido: usar la
+		# posicion real registrada, no el candidato original.
+		fire_pos = b["campfire_pos"]
 	# Ensartar la carne cruda o pescado crudo con el Palo afilado antes de acercarla al fuego
 	if not _bot_skewer_raw_meat(proxy):
 		return false

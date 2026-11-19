@@ -7567,10 +7567,18 @@ func _craft_campfire() -> void:
 		else:
 			notice.emit("Necesitas 1 palo para craftear una fogata.")
 		return
+	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 1.5)
+	# Keep the player's height: _on_item_dropped raycasts down from pos.y+0.5,
+	# so a campfire crafted on a rooftop lands on the roof instead of being
+	# pinned to terrain level inside the building.
+	pos.y = global_position.y
+	var parent_node := get_parent()
+	if parent_node != null and parent_node.has_method("_is_water_drop_position") and parent_node._is_water_drop_position(pos):
+		notice.emit("No puedes hacer una fogata en el agua.")
+		return
 	play_action_animation("plant", 2.0)
 	notice.emit("Crafteando fogata...")
 	# Show countdown via parent HUD
-	var parent_node := get_parent()
 	if parent_node != null and parent_node.get("hud") != null and parent_node.hud.has_method("show_countdown"):
 		parent_node.hud.show_countdown("Crafteando fogata", 2.0)
 	# Wait for animation then spawn campfire
@@ -7580,11 +7588,6 @@ func _craft_campfire() -> void:
 		return
 	inventory.consume_item_name("Tronco", 2)
 	inventory.consume_item_name("Palo", 1)
-	var pos: Vector3 = global_position + (global_transform.basis * Vector3.FORWARD * 1.5)
-	# Keep the player's height: _on_item_dropped raycasts down from pos.y+0.5,
-	# so a campfire crafted on a rooftop lands on the roof instead of being
-	# pinned to terrain level inside the building.
-	pos.y = global_position.y
 	item_dropped.emit("campfire", "campfire", 0.0, 1, 0.0, pos, Color(0, 0, 0, 0), false, 0.0)
 	notice.emit("Has crafteado una fogata. Enciendela con cerillas.")
 
