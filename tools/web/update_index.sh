@@ -57,7 +57,7 @@ render() {
 		echo "    <h3>$H3</h3>"
 		echo '    <ul class="verlist">'
 		git log --pretty=tformat:'%h|%ad|%s' --date=format:'%d/%m/%y' -60 \
-			| grep -vEi '\|(changelog|cambios web|web es|idioma|lang(s|uage)? selector|Historial de cambios|AGENTS\.md:|Documenta que |Añade PrimitiveCarryPreview)' \
+			| grep -vEi '\|(changelog|cambios web|web es|web de descargas|web:|monitor de bots|Historial de cambios|AGENTS\.md:|Documenta que |Añade PrimitiveCarryPreview)' \
 			| awk 'NR <= 15' \
 			| while IFS='|' read -r h d s; do
 			txt="$(lookup_lang "$h" "$CL_PRIMARY")"
