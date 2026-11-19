@@ -365,6 +365,7 @@ func simulate(env: Dictionary, bots: Array, events: Array = [], max_steps := 340
 			# forrajeo/vagabundeo — solo la locomocion (nav) es simulada.
 			var bad_water_before: int = (b.get("_bad_water", []) as Array).size()
 			mgr._tick_bot(b, DT)
+			mgr.PlanManager.sync(mgr, b, Time.get_ticks_msec())
 			if st.dead or bool(proxy.get_meta("proxy_dead", false)):
 				r["cause"] = str(mgr._memory.get(int(b["bot_id"]), {}).get("last_death_cause", "unknown"))
 				r["survived_s"] = float(r["survived_s"]) + DT
@@ -437,10 +438,115 @@ func _s16() -> void:
 	check(float(inv16.get("Lata de guiso", 0.0)) < 1.0 or float(inv16.get("Lata de atun", 0.0)) < 1.0,
 		"S16 abrio al menos una lata (inv=%s)" % str(inv16))
 
+func _s17() -> void:
+	print("S17: frio y hambre sin luz no bloquean la recuperacion ni pierden la mision")
+	var env := _new_world(15.0)
+	var mgr: SurvivorBotManagerScript = env["mgr"]
+	var b: Dictionary = mgr.bots[902]
+	_place_bot(b, Vector3(300.0, 0.4, 300.0), {"hunger": 20.0, "thirst": 90.0,
+		"sleep": 90.0, "body_temperature": 34.7, "inventory": []})
+	mgr._ensure_bot_memory(902)
+	b["_mem"]["known_locations"] = {"tower:400:400": {"kind": "tower", "pos": [400.0, 0.4, 400.0]}}
+	check(mgr._ai_apply_decision(902, '{"action":"explore","target":"tower:400:400"}'),
+		"S17 adopta la mision antes del frio")
+	var plan_id := str(b["ai_directive"]["plan_id"])
+	var origin: Vector3 = b["proxy"].global_position
+	var reps := simulate(env, [b], [], 5)
+	check(int(reps[0]["acts"].get("freeze_march", 0)) > 0 and b["proxy"].global_position.distance_to(origin) > 1.5,
+		"S17 la falta de luz no bloquea la marcha real de emergencia")
+	check(b["ai_directive"]["plan_id"] == plan_id and b["ai_directive"]["state"] == "SUSPENDED",
+		"S17 mantiene la mision suspendida mientras se recupera del frio")
+	check(_inv_totals(b).is_empty(), "S17 no inventa combustible ni provisiones")
+
+func _s18() -> void:
+	print("S18: la marcha termica no vuelve a cruzar la charca")
+	var env := _new_world(15.0)
+	env["dc"].time_of_day = 14.0
+	var w: SimWorld = env["world"]
+	w.river_segs = [{"center": Vector3(60.0, 0.0, 260.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	var mgr: SurvivorBotManagerScript = env["mgr"]
+	var b: Dictionary = mgr.bots[901]
+	_place_bot(b, Vector3(58.0, 0.4, 268.0), {"hunger": 90.0, "thirst": 90.0,
+		"sleep": 90.0, "body_temperature": 34.7, "inventory": []})
+	(b["vstats"] as SurvivalStats).wetness = 1.0
+	var wet_entries := 0
+	var march_ticks := 0
+	for tick in range(120):
+		var before: Vector3 = b["proxy"].global_position
+		var before_depth := w.get_river_depth_at(before)
+		mgr._tick_bot(b, DT)
+		if str(b.get("_act", "")) == "freeze_march":
+			march_ticks += 1
+			if before_depth <= 0.05 and w.get_river_depth_at(b["proxy"].global_position) > 0.05:
+				wet_entries += 1
+		if (b["vstats"] as SurvivalStats).dead:
+			break
+	check(march_ticks > 0, "S18 ejecuta recuperacion termica real")
+	check(wet_entries == 0, "S18 no entra al agua para alcanzar otro punto seco (entradas=%d)" % wet_entries)
+	check(not (b["vstats"] as SurvivalStats).dead, "S18 sobrevive a la recuperacion junto a la charca")
+
+func _s19() -> void:
+	print("S19: el calor inmediato prevalece sobre la fogata propia distante")
+	var env := _new_world(13.0)
+	var w: SimWorld = env["world"]
+	var mgr: SurvivorBotManagerScript = env["mgr"]
+	var near_fire := Vector3(0.0, 0.4, 0.0)
+	var own_fire := Vector3(60.0, 0.4, 0.0)
+	w._net_campfire_built("s19_near", near_fire)
+	w._net_campfire_lit("s19_near", "s19_near_fire", near_fire)
+	w._net_campfire_built("s19_own", own_fire)
+	w._net_campfire_lit("s19_own", "s19_own_fire", own_fire)
+	var b: Dictionary = mgr.bots[901]
+	_place_bot(b, Vector3(3.0, 0.4, 0.0), {"sleep": 95.0, "body_temperature": 37.94, "inventory": []})
+	b["campfire_id"] = "s19_own"
+	b["campfire_pos"] = own_fire
+	b["_velada_done"] = true
+	check(mgr._bot_should_wake(b, true), "S19 el calor peligroso obliga a despertar")
+	check(not mgr._bot_try_start_sleep(b, true), "S19 no vuelve a dormir con la misma emergencia termica")
+	b["sleeping"] = false
+	check(mgr._bot_camp_fire_standoff(b, DT) and b["proxy"].global_position.distance_to(near_fire) >= 4.15,
+		"S19 se aparta del fuego cercano aunque recuerde uno propio lejano")
+	# Once safe, comfort at a remembered fire must not pull a daytime trip
+	# back home forever. Check physical progress, not just a RUNNING badge.
+	env["dc"].time_of_day = 12.0
+	b["vstats"].body_temperature = 36.0
+	b["_fire_band"] = "warm"
+	b["proxy"].global_position = Vector3(20.0, 0.4, 0.0)
+	b["camp_spot"] = b["proxy"].global_position
+	b["explore_target"] = Vector3.INF
+	b["sense_t"] = 10.0 # No unrelated encounter during the four departure ticks.
+	b["_mem"]["known_locations"] = {"tower:-200:200": {"id": "tower:-200:200", "kind": "tower", "pos": [-200.0, 0.4, 200.0]}}
+	check(mgr._ai_apply_decision(901, '{"action":"explore","target":"tower:-200:200"}'),
+		"S19 inicia viaje diurno tras recuperarse")
+	check(not mgr._bot_camp_fire_standoff(b, DT), "S19 el confort termico no sustituye la mision diurna")
+	var destination: Vector3 = b["ai_directive"]["_dest_pos"]
+	b["explore_target"] = destination # The route already selected before the interruption.
+	var distance_before: float = b["proxy"].global_position.distance_to(destination)
+	for tick in range(4):
+		mgr._tick_bot(b, DT)
+	check(b["proxy"].global_position.distance_to(destination) < distance_before - 1.0,
+		"S19 avanza fisicamente hacia su mision, no hacia la fogata recordada (act=%s, %.1f -> %.1f m)" %
+		[b.get("_act", ""), distance_before, b["proxy"].global_position.distance_to(destination)])
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
-	if "--only-s16" in OS.get_cmdline_args():
+	if "--only-s19" in OS.get_cmdline_user_args():
+		_s19()
+		print("BotNightSurvivalSimRegression S19 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
+	if "--only-s18" in OS.get_cmdline_user_args():
+		_s18()
+		print("BotNightSurvivalSimRegression S18 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
+	if "--only-s17" in OS.get_cmdline_args() or "--only-s17" in OS.get_cmdline_user_args():
+		_s17()
+		print("BotNightSurvivalSimRegression S17 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
+	if "--only-s16" in OS.get_cmdline_args() or "--only-s16" in OS.get_cmdline_user_args():
 		_s16()
 		print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 		quit(1 if failures else 0)
@@ -450,25 +556,88 @@ func run() -> void:
 	# La noche del juego es hora real (~8.5 h): la despensa del refugio es la
 	# de un superviviente asentado, no un cheat — el drenaje real exige
 	# ~700 de hambre y ~1200 de sed por noche (SurvivalStats.tick).
-	print("S1: refugio, provisiones y fogata")
+	print("S1: cuatro NPC, mision diurna, refugio, provisiones y noche completa")
 	var env := _new_world(8.0)
 	var w: SimWorld = env["world"]
 	var mgr: SurvivorBotManagerScript = env["mgr"]
 	var home := Vector3(0.0, 0.4, 0.0)
-	w._built_shelters = [{"id": "s1_sh", "pos": home, "contents": [
-		{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 60, "use_value": 14.0},
-		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 40, "use_value": 45.0}]}]
-	w._net_campfire_built("s1_cf", home + Vector3(1.5, 0.0, 0.0))
-	w._net_campfire_lit("s1_cf", "fire_s1", home + Vector3(1.5, 0.0, 0.0))
+	var roster: Array = []
+	var mission_ids := {}
+	for bid in mgr.bots:
+		var actor: Dictionary = mgr.bots[bid]
+		var origin := Vector3(float(int(bid) - 901) * 180.0 - 270.0, 0.4, 0.0)
+		var sid := "bot_shelter_%s_s1" % bid
+		w._built_shelters.append({"id": sid, "pos": origin, "contents": [
+			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 60, "use_value": 14.0},
+			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 40, "use_value": 45.0}]})
+		w._net_campfire_built("s1_cf_%s" % bid, origin + Vector3(1.5, 0.0, 0.0))
+		w._net_campfire_lit("s1_cf_%s" % bid, "fire_s1_%s" % bid, origin + Vector3(1.5, 0.0, 0.0))
+		_place_bot(actor, origin, {"shelter_id": sid, "shelter_pos": origin, "sleep": 40.0,
+			"inventory": [
+				{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 2, "use_value": 45.0},
+				{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 3, "use_value": 14.0}]})
+		mgr._ensure_bot_memory(int(bid))
+		actor["_mem"]["known_locations"] = {"tower:0:200": {"kind": "tower", "pos": [0.0, 0.4, 200.0]}}
+		env["dc"].time_of_day = 14.0
+		check(mgr._ai_apply_decision(int(bid), '{"steps":[{"action":"explore","target":"tower:0:200"},{"action":"return_home"}]}'),
+			"S1 %s inicia su mision diurna" % actor["name"])
+		mission_ids[bid] = actor["ai_directive"]["plan_id"]
+		# Real activity before the night, without resetting the plan/destination.
+		for tick in range(10):
+			mgr._tick_bot(actor, DT)
+			mgr.PlanManager.sync(mgr, actor, Time.get_ticks_msec())
+		roster.append(actor)
+	env["dc"].time_of_day = 21.5
+	var reps := simulate(env, roster)
+	for i in range(roster.size()):
+		var actor: Dictionary = roster[i]
+		print(_report_line(reps[i], actor))
+		check(not (actor["vstats"] as SurvivalStats).dead, "S1 %s sobrevive la noche completa" % actor["name"])
+		check(bool(reps[i]["slept"]), "S1 %s durmio" % actor["name"])
+		check(str(actor.get("ai_directive", {}).get("plan_id", "")) == str(mission_ids[actor["bot_id"]]),
+			"S1 %s conserva su mision al amanecer" % actor["name"])
+		check(int(actor["_mem"].get("plan_metrics", {}).get("plans_failed", 0)) == 0,
+			"S1 %s no registra fracaso por el sueño" % actor["name"])
+	# Wake/recover with real ticks, then run the remaining quiet window in
+	# monotonic time. Do not freeze hot characters during the wait or assume
+	# a SceneTree timer after a long synchronous simulation measured wall time.
+	mgr.set_physics_process(false)
+	mgr.set_process(false)
+	for tick in range(60):
+		for actor in roster:
+			mgr._tick_bot(actor, DT)
+			mgr.PlanManager.sync(mgr, actor, Time.get_ticks_msec())
+		env["dc"].time_of_day += DT / 3600.0
+	var resumed := {}
+	var recovery_start := Time.get_ticks_msec()
+	var previous_tick := recovery_start
+	while resumed.size() < roster.size() and Time.get_ticks_msec() - recovery_start < 20000:
+		await create_timer(0.05).timeout
+		var now := Time.get_ticks_msec()
+		var real_delta := float(now - previous_tick) / 1000.0
+		previous_tick = now
+		for actor in roster:
+			if resumed.has(actor["bot_id"]):
+				continue
+			mgr._tick_bot(actor, real_delta)
+			mgr.PlanManager.sync(mgr, actor, now)
+			if actor["ai_directive"]["state"] == "RUNNING":
+				resumed[actor["bot_id"]] = true
+		env["dc"].time_of_day += real_delta / 3600.0
+	for actor in roster:
+		mgr.PlanManager.sync(mgr, actor, Time.get_ticks_msec())
+		check(not bool(actor.get("sleeping", true)), "S1 %s despierta con el tick diurno real" % actor["name"])
+		check(actor["ai_directive"]["state"] == "RUNNING" and actor["ai_directive"]["plan_id"] == mission_ids[actor["bot_id"]],
+			"S1 %s reanuda la misma mision despues de la noche completa (state=%s reasons=%s act=%s temp=%.2f sleep=%.1f)" %
+			[actor["name"], actor["ai_directive"]["state"], actor["ai_directive"].get("interruptions", []),
+				actor.get("_act", ""), actor["vstats"].body_temperature, actor["vstats"].sleep])
+		check(actor["ai_directive"]["step_index"] == 0 and actor["ai_directive"]["_remaining_steps"].size() == 1,
+			"S1 %s conserva paso y regreso pendientes al reanudar" % actor["name"])
+	if "--only-s1" in OS.get_cmdline_user_args():
+		print("BotNightSurvivalSimRegression S1 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
 	var b: Dictionary = mgr.bots[901]
-	_place_bot(b, home, {"shelter_id": "s1_sh", "shelter_pos": home, "sleep": 40.0,
-		"inventory": [
-			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 2, "use_value": 45.0},
-			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 3, "use_value": 14.0}]})
-	var reps := simulate(env, [b])
-	print(_report_line(reps[0], b))
-	check(not (b["vstats"] as SurvivalStats).dead, "S1 el bot con campamento resuelto sobrevive la noche")
-	check(bool(reps[0]["slept"]), "S1 durmio en su refugio")
 
 	# ---- S2: sin refugio ni antorcha, pero con material — enciende fuego ----
 	print("S2: sin refugio ni antorcha (con material de fuego)")
@@ -951,6 +1120,9 @@ func run() -> void:
 	check(not st15.dead, "S15 sobrevive regulando por el lado libre")
 
 	_s16()
+	_s17()
+	_s18()
+	_s19()
 
 	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures else 0)

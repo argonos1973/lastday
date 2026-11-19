@@ -4,6 +4,10 @@ class_name SurvivorBotManager
 const CityExpansion = preload("res://scripts/CityExpansion.gd")
 const CityBlock = preload("res://scripts/CityBlock.gd")
 const ElevationRoutes = preload("res://scripts/BotElevationRoutes.gd")
+const PlanManager = preload("res://scripts/bot_ai/BotPlanManager.gd")
+const GoalValidator = preload("res://scripts/bot_ai/BotGoalValidator.gd")
+const PlanDiagnostics = preload("res://scripts/bot_ai/BotPlanDiagnostics.gd")
+const InterruptionManager = preload("res://scripts/bot_ai/BotInterruptionManager.gd")
 
 # Gestor de Supervivientes IA (bots con modelo, ropa, inventario y acciones reales):
 # - Todos los supervivientes IA nacen HOSTILES hacia los jugadores: los cazan a
@@ -1475,6 +1479,7 @@ func tick(delta: float) -> void:
 		var proxy: Node3D = b.get("proxy")
 		var before := proxy.global_position if is_instance_valid(proxy) else Vector3.ZERO
 		_tick_bot(b, delta)
+		PlanManager.sync(self, b, Time.get_ticks_msec())
 		_finish_bot_motion_tick(b,before,delta)
 		_pbm("actor_%s" % bot_id, bot_started)
 	_pbm("tick_bot", _pt)
@@ -2500,7 +2505,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# morir en el camino gana a patrullar en el sitio hasta congelarse. Con
 	# sueño letal el parapeto sigue mandando (dormir es el mal inminente).
 	if rest_pos == Vector3.INF and _bot_is_freezing(b) and (vst == null or vst.sleep > 8.0):
-		rest_pos = _nearest_safe_refuge(b, 1400.0)
+		rest_pos = _nearest_safe_refuge(b, GameConst.BOT_EMERGENCY_REFUGE_RADIUS)
 	# Ni refugio en todo el mapa ni fuego posible: la marcha corta es lo
 	# ultimo — moverse genera calor corporal y seca la ropa; quedarse de
 	# pie o sentado mojado es congelarse seguro.
@@ -3054,8 +3059,13 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	b["path_timer"] = 0.0
 	b["climb_route"] = []
 	var d0: Dictionary = b.get("ai_directive", {})
-	if not d0.is_empty() and str(d0.get("mode", "")) == "pos":
+	if not d0.is_empty() and str(d0.get("mode", "")) == "pos" \
+			and PlanManager.Interruptions.reasons(b, d0).is_empty() \
+			and _ai_step_target_pos(b, d0).distance_to(goal) < 6.0:
 		var bid0 := int(b.get("bot_id", 0))
+		PlanManager.finish(b, d0, "FAILED", "nav_blocked", Time.get_ticks_msec())
+		PlanDiagnostics.metric(b, "real_blocks")
+		PlanDiagnostics.metric(b, "steps_failed")
 		b["ai_directive"] = {}
 		b["_plan_last_result"] = "nav_unreachable"
 		# La ruta al objetivo no existe: fallo de NAVEGACION, no de recursos.
@@ -3111,7 +3121,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 		# vetado (lista negra/inalcanzable) se repieza otro y se refija.
 		var dpin = directive.get("_dest_pos")
 		if dpin is Vector3 and (dpin as Vector3) != Vector3.INF:
-			if not _is_goal_blacklisted(b, dpin) and not bool(directive.get("_visit_done", false)):
+			if not _is_goal_blacklisted(b, dpin) and (not bool(directive.get("_visit_done", false)) or str(directive.get("goal", "")) == "gear_up_at_military_base"):
 				return dpin
 			directive.erase("_dest_pos")
 			directive.erase("_dest_id")
@@ -6438,6 +6448,8 @@ func _bot_container_count(proxy: Node3D) -> int:
 	return total
 
 func _respawn_bot(b: Dictionary) -> void:
+	PlanManager.finish(b, b.get("ai_directive", {}), "FAILED", "actor_dead", Time.get_ticks_msec())
+	b.get("_mem", {})["pending_goals"] = []
 	var cfg: Dictionary = b["cfg"]
 	var bot_id := int(b["bot_id"])
 	var old_proxy: Node3D = b.get("proxy")
@@ -12942,9 +12954,12 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 	# validacion fisica confirma que sigue encendida — no hace falta "verla"
 	# a 5 m; un bot desplazado unos metros mas alla (cambio de meta, empujon
 	# de colision) se helaba en su sitio con el fuego vivo a 7 m.
-	var fp := Vector3.INF
+	# Cooling responds to the fire heating this body, even when its own known
+	# campfire is elsewhere. Otherwise it can wake and fall asleep beside a
+	# different fire forever without ever taking the escape step.
+	var fp := _nearest_lit_campfire_pos(proxy.global_position, 4.15 if st.body_temperature >= 36.9 else 0.85)
 	var own_fp: Vector3 = b.get("campfire_pos", Vector3.INF)
-	if not str(b.get("campfire_id", "")).is_empty() and own_fp != Vector3.INF \
+	if fp == Vector3.INF and not str(b.get("campfire_id", "")).is_empty() and own_fp != Vector3.INF \
 		and _nearest_lit_campfire_pos(own_fp, 4.5) != Vector3.INF:
 		fp = own_fp
 	# Alcance del termostato = alcance del gate de despertar por frio: un
@@ -12992,7 +13007,22 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 		b["_act"] = "cool_off"
 		_move_bot_towards(b, spot, 3.8, delta, "walk")
 		return true
+	if band == "cool" and st.body_temperature > GameConst.BOT_HEAT_RECOVERY_TEMP and d >= 4.15 and d < 6.0 \
+			and not _bot_under_immediate_threat(b):
+		# Finish cooling before a stash/camp chore pulls the bot straight back
+		# into the hot ring. This is recovery, not a permanent strategic veto.
+		b["_act"] = "cool_off"
+		b["anim"] = "idle"
+		b["sitting"] = true
+		return true
 	if band == "warm":
+		var plan: Dictionary = b.get("ai_directive", {})
+		if str(plan.get("state", "RUNNING")) == "RUNNING" \
+				and str(plan.get("action", "")) in ["explore", "scavenge", "hunt", "forage", "seek_ally", "avoid_zone"] \
+				and not _is_world_night() and not _bot_is_freezing(b):
+			# Comfort must not pull an otherwise healthy expedition back to
+			# a remembered fire. Actual cold still takes priority above it.
+			return false
 		var warm_r := _bot_fire_warm_radius(b)
 		if d > warm_r + 0.3 or d < warm_r - 0.6:
 			var spot_in := _bot_fire_ring_spot(b, fp, dir, warm_r, proxy.global_position.y)
@@ -13087,7 +13117,7 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 		# dentro se calienta durmiendo. El colapso pasa siempre (mejor
 		# inconsciente que muerto de pie).
 		if (st.body_temperature < 35.4 and not _bot_is_sheltered(b, proxy.global_position)) \
-				or st.body_temperature > 38.4:
+				or st.body_temperature > GameConst.BOT_HEAT_ALERT_TEMP:
 			b["_sleep_veto"] = "temp"
 			return false
 	if st.sleep >= 99.0 and st.energy >= 98.0:
@@ -13095,6 +13125,7 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 		return false # sueño y energia al tope: queda sentado (donde recupera vida)
 	b.erase("_sleep_veto")
 	b["sleeping"] = true
+	PlanManager.sync(self, b, Time.get_ticks_msec())
 	b["sitting"] = false
 	b["crouching"] = false
 	b["prone"] = false
@@ -13243,6 +13274,12 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 	# campo; en casa hay fogata, alijo y quien le ayude.
 	if _bot_night_home_walk(b, delta):
 		return true
+	# No light must not trap a freezing bot in idle. Use the same final
+	# emergency movement as the ordinary refuge branch, after heat/refuge
+	# options fail; lethal exhaustion still takes the sleep path.
+	var cold_stats: SurvivalStats = b.get("vstats")
+	if (cold_stats == null or cold_stats.sleep > 8.0) and _bot_freeze_march(b, delta):
+		return true
 	# Sin refugio ni luz ni nada alcanzable: dormir en el sitio gana a
 	# quedarse de pie hasta el amanecer — el desgaste dormido es x0.3 y
 	# el despertar de _bot_should_wake cubre hambre/sed letales y frio.
@@ -13260,7 +13297,8 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 func _bot_night_home_walk(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var shp_n: Vector3 = b.get("shelter_pos", Vector3.INF)
-	var refuge_n: Vector3 = shp_n if not str(b.get("shelter_id", "")).is_empty() and shp_n != Vector3.INF else _nearest_safe_refuge(b, 85.0)
+	var refuge_radius := GameConst.BOT_EMERGENCY_REFUGE_RADIUS if _bot_is_freezing(b) else 85.0
+	var refuge_n: Vector3 = shp_n if not str(b.get("shelter_id", "")).is_empty() and shp_n != Vector3.INF else _nearest_safe_refuge(b, refuge_radius)
 	if refuge_n == Vector3.INF:
 		return false
 	# El hogar puede tener la fogata pegada: el punto donde se sienta es el
@@ -13340,7 +13378,7 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	# Despertar al borde del dano termico, no dentro de el: el dano empieza
 	# a <35.4 y >37.8 — un umbral mas profundo dejaba al bot dormido
 	# sangrando hp en la banda ciega 34.8-35.4 sin despertar jamas.
-	if st.body_temperature > 37.75:
+	if st.body_temperature > GameConst.BOT_HEAT_ALERT_TEMP:
 		return true
 	if st.body_temperature < 35.45:
 		if st.body_temperature <= 34.5:
@@ -15201,19 +15239,8 @@ func _bot_gear_raid_kind(b: Dictionary) -> String:
 	var proxy = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
 		return ""
-	var inv: Array = proxy.get_meta("saved_inventory", [])
-	for w in ["Fusil de asalto", "Rifle francotirador"]:
-		for it in inv:
-			if it is Dictionary and str(it.get("name", "")) == w \
-					and int(it.get("quantity", 1)) > 0 \
-					and float(it.get("durability", 100.0)) > 0.0 \
-					and _bot_gun_any_ammo(proxy, w):
-				return ""
-	if _bot_best_bow(proxy) != "" and _bot_arrow_count(proxy) > 0:
+	if not GoalValidator.decent_weapon(self, proxy).is_empty():
 		return ""
-	for w in ["Hacha", "Cuchillo"]:
-		if _bot_item_count(proxy, w) > 0:
-			return ""
 	var known: Dictionary = (b.get("_mem", {}) as Dictionary).get("known_locations", {})
 	for kid in known.keys():
 		var k = known[kid]
@@ -15258,7 +15285,6 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	if raid_kind != "" and not threat_present and hunger >= 45.0 and thirst >= 40.0 and hp >= 40.0:
 		var raid_spec := {"action": "scavenge", "target": raid_kind, "goal": "gear_up_at_military_base"}
 		if not _ai_goal_recently_failed(b, raid_spec):
-			b["equip_mission"] = true
 			return {"action": "scavenge", "target": raid_kind, "poi_kind": raid_kind,
 				"goal": "gear_up_at_military_base", "priority": 4, "reason": "gear_raid:unarmed"}
 
@@ -15554,6 +15580,15 @@ func _ai_night_allows_remote(reason: String) -> bool:
 	return reason.begins_with("attacked_by_")
 
 func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "periodic", force: bool = false) -> void:
+	if bots.has(bot_id):
+		var b: Dictionary = bots[bot_id]
+		PlanManager.sync(self, b, Time.get_ticks_msec())
+		if bool(b.get("sleeping", false)) or str(b.get("ai_directive", {}).get("state", "")) == "SUSPENDED":
+			# Reactive actions do not require a new strategic API request.
+			PlanDiagnostics.metric(b, "suspended_queries_skipped")
+			if _is_world_night():
+				_ai_stat_inc(b, "night_skipped")
+			return
 	if not _ai_night_allows_remote(reason):
 		if bots.has(bot_id):
 			_ai_stat_inc(bots[bot_id], "night_skipped")
@@ -15669,6 +15704,9 @@ func _ai_review_local_goal(bot_id: int, now: int) -> void:
 		return
 	_ai_next_at[bot_id] = now + 10000
 	var b: Dictionary = bots[bot_id]
+	PlanManager.sync(self, b, now)
+	if str(b.get("ai_directive", {}).get("state", "")) == "SUSPENDED":
+		return
 	if not _ai_bot_eligible(b):
 		return
 	var d := _ai_active_directive(b)
@@ -15802,7 +15840,7 @@ func _ai_try_decision_cache(bot_id: int, sig: String, reason: String) -> bool:
 	var cent: Dictionary = _ai_decision_cache.get(ck, {})
 	if cent.is_empty() or Time.get_ticks_msec() - int(cent.get("t", 0)) >= int(AI_DECISION_CACHE_TTL_SEC * 1000.0):
 		return false
-	if _ai_apply_decision(bot_id, str(cent.get("content", ""))):
+	if _ai_apply_decision(bot_id, str(cent.get("content", "")), "qwen_cache"):
 		_ai_cache_hits += 1
 		if bots.has(bot_id):
 			_ai_stat_inc(bots[bot_id], "cache_hits")
@@ -15827,6 +15865,9 @@ func _ai_sig_poll(now: int) -> void:
 	_ai_rr = (_ai_rr + 1) % ids.size()
 	var bot_id: int = ids[_ai_rr]
 	var b: Dictionary = bots[bot_id]
+	PlanManager.sync(self, b, now)
+	if str(b.get("ai_directive", {}).get("state", "")) == "SUSPENDED":
+		return
 	if not _ai_bot_eligible(b):
 		return
 	var d := _ai_active_directive(b)
@@ -15853,6 +15894,9 @@ func _ai_sig_poll(now: int) -> void:
 			if int(b["_stuck_n"]) >= 2:
 				b["_stuck_n"] = 0
 				b["_stuck_sig"] = ""
+				PlanManager.finish(b, d, "FAILED", "stuck_timeout", now)
+				PlanDiagnostics.metric(b, "real_blocks")
+				PlanDiagnostics.metric(b, "steps_failed")
 				b["ai_directive"] = {}
 				b["_plan_last_result"] = "plan_impossible"
 				record_strategy_outcome(bot_id, str(d.get("action", "")), false, 0.15, "stuck_timeout")
@@ -15883,64 +15927,7 @@ func _ai_sig_poll(now: int) -> void:
 # viva aunque pase su "until" — el watchdog del sondeo la revalida si se
 # atasca, no la borra.
 func _ai_directive_completed(b: Dictionary, d: Dictionary) -> bool:
-	var proxy = b.get("proxy")
-	if proxy == null or not is_instance_valid(proxy):
-		return false
-	var pos: Vector3 = (proxy as Node3D).global_position
-	var ev0: Dictionary = d.get("_ev0", {})
-	var legacy := ev0.is_empty() # directiva previa al seguimiento: semantica vieja
-	var near := func(dp, r: float) -> bool:
-		return dp is Vector3 and (dp as Vector3).is_finite() and absf(pos.y - (dp as Vector3).y) < 2.4 and Vector2(pos.x - (dp as Vector3).x, pos.z - (dp as Vector3).z).length() < r
-	match str(d.get("action", "")):
-		"return_home":
-			# El refugio CORRECTO: el punto y, si hay refugio propio conocido,
-			# que ese punto siga correspondiendose con el (no unas ruinas).
-			if not near.call(d.get("pos"), 9.0):
-				return false
-			var sh: Vector3 = b.get("shelter_pos", Vector3.INF)
-			return sh == Vector3.INF or Vector2((d["pos"] as Vector3).x - sh.x, (d["pos"] as Vector3).z - sh.z).length() < 22.0
-		"seek_ally":
-			return near.call(d.get("pos"), 9.0)
-		"fortify_camp":
-			# Debe quedar algo fortificado: refugio o fuego — el suyo o el que
-			# ya existia al empezar el paso (mantener la base tambien cuenta).
-			if not near.call(d.get("pos"), 9.0):
-				return false
-			if legacy:
-				return true
-			return bool(ev0.get("shelter", false)) or bool(ev0.get("fire", false)) \
-				or not str(b.get("shelter_id", "")).is_empty() or not str(b.get("campfire_id", "")).is_empty()
-		"rest":
-			var st: SurvivalStats = b.get("vstats")
-			var rested := st != null and st.sleep > 78.0 and float(b.get("health", 100.0)) > 85.0
-			return rested and near.call(d.get("pos"), 10.0) if (d.get("pos") is Vector3 and (d["pos"] as Vector3) != Vector3.INF) else rested
-		"forage":
-			var got_food := int(b.get("_loot_food_n", 0)) > int(ev0.get("food", int(b.get("_loot_food_n", 0))))
-			if legacy or float(ev0.get("hunger", 0.0)) < 72.0:
-				return float(b.get("hunger", 100.0)) >= 75.0 or got_food
-			return got_food
-		"avoid_zone":
-			# Cumplida al dejar atras la zona peligrosa: ningun POI del tipo
-			# vetado queda cerca (o no queda ninguno al alcance).
-			var av: Array = d.get("avoid_kinds", [])
-			return av.is_empty() or not av.has(_poi_kind_near(pos))
-		"hunt":
-			if legacy:
-				return near.call(d.get("pos"), 10.0) or bool(d.get("_visit_done", false))
-			var stats: Dictionary = (b.get("_mem", {}) as Dictionary).get("stats", {})
-			var kills_now := int(stats.get("kills_prey", 0)) + int(stats.get("kills_predator", 0))
-			return kills_now > int(ev0.get("kills", 0)) or int(b.get("_loot_food_n", 0)) > int(ev0.get("food", 0))
-		"scavenge":
-			if legacy:
-				return near.call(d.get("pos"), 10.0) or bool(d.get("_visit_done", false))
-			# Botin util real: algo entro al inventario desde que empezo el paso.
-			return int(b.get("_loot_n", 0)) > int(ev0.get("loot", 0))
-		"explore":
-			var dp3 = d.get("pos")
-			if dp3 is Vector3 and (dp3 as Vector3) != Vector3.INF:
-				return near.call(dp3, 10.0)
-			return bool(d.get("_visit_done", false))
-	return false
+	return PlanManager.completed(self, b, d)
 
 # Destino estimado del paso para presupuestar tiempo y medir progreso real.
 func _ai_step_target_pos(b: Dictionary, d: Dictionary) -> Vector3:
@@ -15992,72 +15979,18 @@ func _ai_step_budget_msec(b: Dictionary, d: Dictionary) -> int:
 # Un paso esta parado si no gana distancia a su destino en ~50 s o si agota su
 # presupuesto sin completarse. Devuelve la causa o "" si progresa.
 func _ai_step_stalled(b: Dictionary, d: Dictionary, now_ms: int) -> String:
-	var proxy = b.get("proxy")
-	if proxy == null or not is_instance_valid(proxy):
-		return ""
-	# Primera observacion de una directiva sin metricas (reanudada o anterior
-	# al seguimiento): se le concede la ventana entera antes de juzgarla.
-	if int(d.get("_prog_ref_ms", 0)) <= 0:
-		d["_prog_ref_m"] = _ai_step_target_dist(b, d)
-		d["_prog_ref_ms"] = now_ms
-	if int(d.get("_step_deadline_ms", 0)) <= 0:
-		d["_step_deadline_ms"] = now_ms + _ai_step_budget_msec(b, d)
-	var mode := str(d.get("mode", ""))
-	var gained := false
-	var has_metric := false
-	var dist := INF
-	if mode in ["pos", "ally", "poi"]:
-		dist = _ai_step_target_dist(b, d)
-		if dist != INF:
-			has_metric = true
-			var ref := float(d.get("_prog_ref_m", INF))
-			if dist < ref - 3.0:
-				d["_prog_ref_m"] = dist
-				gained = true
-	# Ademas del viaje: la actividad misma rinde evidencia medible (botin,
-	# bajas, descanso, distancia a la zona vetada). Cualquiera de las dos
-	# senyales renueva el reloj de progreso.
-	var ev := _ai_step_evidence(b, d)
-	if ev != INF:
-		has_metric = true
-		var sref := float(d.get("_prog_sref", INF))
-		if sref == INF:
-			d["_prog_sref"] = ev # baseline: la primera observacion no es ganancia
-		elif ev > sref + 0.49:
-			d["_prog_sref"] = ev
-			gained = true
-	if gained:
-		d["_prog_ref_ms"] = now_ms
-	elif has_metric and now_ms - int(d.get("_prog_ref_ms", 0)) > 90000:
-		var arrived := dist != INF and dist <= 12.0
-		if arrived and ev == INF:
-			pass # en destino sin metrica de actividad: solo el deadline manda
-		# No progresar 90 s solo cuenta si el bot no esta ocupado con algo
-		# legitimo en el camino (looting, huida, combate, recoleccion):
-		# parado a trabajar no es estar atascado. La exencion tiene
-		# limite: un bot que se encadena trabajando sin acercarse
-		# acaba igualmente en no_progress.
-		elif _ai_step_busy(b) and int(d.get("_busy_ext", 0)) < 4:
-			d["_busy_ext"] = int(d.get("_busy_ext", 0)) + 1
-			d["_prog_ref_ms"] = now_ms
-		else:
-			return "no_progress"
-	var deadline := int(d.get("_step_deadline_ms", 0))
-	if deadline > 0 and now_ms > deadline:
-		if _ai_step_busy(b) and int(d.get("_busy_ext", 0)) < 4:
-			# Ocupado cuando expira el presupuesto: se concede una
-			# prorroga limitada antes de declarar el timeout.
-			d["_busy_ext"] = int(d.get("_busy_ext", 0)) + 1
-			d["_step_deadline_ms"] = now_ms + _ai_step_budget_msec(b, d)
-		else:
-			return "timeout"
-	return ""
+	return PlanManager.stalled(self, b, d, now_ms)
 
 # Evidencia material de que la ACTIVIDAD del paso rinde (mayor = mejor),
 # distinta de la distancia al destino: saquear produce botin, cazar produce
 # bajas o carne, descansar recupera, alejarse de una zona vetada gana metros
 # de seguridad. INF = accion sin metrica propia (viaje, visita).
 func _ai_step_evidence(b: Dictionary, d: Dictionary) -> float:
+	var purpose := GoalValidator.purpose(d)
+	if purpose == "gear" or purpose == "weapons":
+		return 1.0 if not GoalValidator.decent_weapon(self, b.get("proxy")).is_empty() else 0.0
+	if purpose != "general" and str(d.get("action", "")) in ["scavenge", "forage", "hunt"]:
+		return float(b.get("_plan_loot", {}).get(purpose, 0))
 	match str(d.get("action", "")):
 		"scavenge", "explore":
 			return float(b.get("_loot_n", 0))
@@ -16109,33 +16042,15 @@ func _ai_step_busy(b: Dictionary) -> bool:
 # intenta el siguiente paso del plan como alternativa y, si no hay, cae al
 # cerebro local y se pide una nueva decision remota.
 func _ai_fail_stalled_step(bot_id: int, b: Dictionary, d: Dictionary, cause: String) -> void:
-	var root := str(d.get("_plan_root", d.get("action", "")))
-	var rem: Array = d.get("_remaining_steps", [])
-	b["ai_directive"] = {}
-	b["_plan_last_result"] = "step_" + cause
-	_ai_note_failed_goal(b, d, cause)
-	_ensure_bot_memory(bot_id, b.get("cfg", {}))["pending_goals"] = []
-	record_strategy_outcome(bot_id, str(d.get("action", "")), false, 0.12, cause)
-	_ai_stat_inc(b, "steps_failed")
-	_ai_stat_inc(b, "blocked_recoveries")
-	if not rem.is_empty() and _ai_apply_decision(bot_id, JSON.stringify({"steps": rem})):
-		# El plan sigue vivo con los pasos restantes: su resultado global lo
-		# decide la raiz al terminar (completado o roto), no este tropiezo —
-		# pero la baja se acumula para no premiarlo como impecable.
-		(b["ai_directive"] as Dictionary)["source"] = str(d.get("source", "qwen"))
-		(b["ai_directive"] as Dictionary)["_plan_root"] = root
-		(b["ai_directive"] as Dictionary)["_plan_losses"] = int(d.get("_plan_losses", 0)) + 1
-		return
-	record_plan_outcome(bot_id, root, false, 0.08, "plan_broken")
-	_ai_stat_inc(b, "plans_failed")
-	_ai_apply_local_fallback_decision(bot_id, "step_" + cause)
-	_ai_enqueue_request(bot_id, 3, "step_" + cause, true)
+	PlanManager.fail_step(self, bot_id, b, d, cause)
 
 func _ai_bot_eligible(b: Dictionary) -> bool:
 	var proxy = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
 		return false
 	if proxy.get_meta("proxy_dead", false):
+		return false
+	if bool(b.get("sleeping", false)) or str(b.get("ai_directive", {}).get("state", "")) == "SUSPENDED":
 		return false
 	var lid := int(b.get("team_leader_id", 0))
 	if lid != 0 and not is_bot_peer_id(lid):
@@ -16167,7 +16082,7 @@ func _ai_request_decision(bot_id: int, b: Dictionary) -> void:
 		"max_tokens": 600 if ("gpt-oss" in model or model.begins_with("gemini-3")) else 360,
 		"response_format": {"type": "json_object"},
 		"messages": [
-			{"role": "system", "content": AI_SYSTEM_PROMPT},
+			{"role": "system", "content": AI_SYSTEM_PROMPT + " Optional purpose: general, gear, food, water, ammo, clothing, tools, weapons, meat. Use forage with purpose water for drinking; rest requires actual recovery. Temporary emergencies suspend the current plan locally; do not restart completed steps."},
 			{"role": "user", "content": _ai_build_prompt(b)},
 		],
 	}
@@ -16281,7 +16196,7 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"recent_events": recent_events,
 		"allowed_actions": AI_ALLOWED_ACTIONS,
 		"last_plan": cur,
-		"pending_steps": mem.get("pending_goals", []),
+		"pending_steps": PlanManager.prompt_steps(mem.get("pending_goals", [])),
 		"last_plan_result": str(b.get("_plan_last_result", "")),
 		"recent_failures": fails,
 		"unreachable": unreach,
@@ -16558,7 +16473,7 @@ func _ai_parse_decision(text: String, b: Dictionary = {}) -> Dictionary:
 	if not (parsed is Dictionary):
 		return {}
 	# Reject malformed field types before conversion (int(Dictionary) errors).
-	for field in ["action", "target", "poi_kind", "goal", "reason"]:
+	for field in ["action", "target", "poi_kind", "goal", "reason", "purpose"]:
 		if parsed.has(field) and not (parsed[field] is String):
 			return {}
 	var priority_value = parsed.get("priority", 3)
@@ -16574,6 +16489,8 @@ func _ai_parse_decision(text: String, b: Dictionary = {}) -> Dictionary:
 	var goal := str(parsed.get("goal", action)).substr(0, 64)
 	var prio := clampi(int(parsed.get("priority", 3)), 1, 5)
 	var reason := str(parsed.get("reason", "")).substr(0, 80)
+	if parsed.has("purpose") and not GoalValidator.PURPOSES.has(str(parsed["purpose"])):
+		return {}
 
 	# Anti-omnisciencia: si Qwen indica un poi_id concreto ("house:100:100") o
 	# coordenadas explícitas ("250,-250"), el bot DEBE conocer esa ubicación.
@@ -16598,6 +16515,8 @@ func _ai_parse_decision(text: String, b: Dictionary = {}) -> Dictionary:
 		"reason": reason,
 		"source": "qwen",
 	}
+	if parsed.has("purpose"):
+		out["purpose"] = str(parsed["purpose"])
 	if specific_pos != Vector3.INF:
 		out["mode"] = "pos"
 		out["pos"] = specific_pos
@@ -16781,42 +16700,7 @@ func _ai_prune_expired_memory(mem: Dictionary) -> void:
 # Run the next subgoal locally, with fresh preconditions (home/ally can vanish).
 # False means the plan ended or became impossible: the caller chooses a new plan.
 func _ai_advance_plan(bot_id: int, b: Dictionary, d: Dictionary) -> bool:
-	var remaining: Array = d.get("_remaining_steps", [])
-	var source := str(d.get("source", "qwen"))
-	var root := str(d.get("_plan_root", d.get("action", "")))
-	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
-	b["ai_directive"] = {}
-	mem["pending_goals"] = []
-	# El paso que acaba de cumplirse se evalua por si mismo; el plan entero
-	# por su raiz. Ningun paso fallido suma preferencia a su estrategia.
-	record_strategy_outcome(bot_id, str(d.get("action", "")), true, 0.05, "step_completed")
-	_ai_stat_inc(b, "steps_completed")
-	if remaining.is_empty():
-		b["_plan_last_result"] = "plan_completed"
-		# Resultado global del plan en su propio namespace (plan:<raiz>): la
-		# accion raiz no recibe un segundo exito por completar el conjunto, y
-		# con bajas por el camino el credito global es reducido.
-		var w := 0.08 if int(d.get("_plan_losses", 0)) == 0 else 0.03
-		record_plan_outcome(bot_id, root, true, w, "plan_completed")
-		_ai_stat_inc(b, "plans_completed")
-		return false
-	if not _ai_apply_decision(bot_id, JSON.stringify({"steps": remaining})):
-		b["_plan_last_result"] = "precondition_failed"
-		# El siguiente paso ya no es ejecutable (destino aliado/hogar perdido):
-		# fallo de requisitos, no de navegacion.
-		var fail_act := str((remaining[0] as Dictionary).get("action", d.get("action", ""))) if remaining[0] is Dictionary else str(d.get("action", ""))
-		record_strategy_outcome(bot_id, fail_act, false, 0.14, "precondition")
-		record_plan_outcome(bot_id, root, false, 0.10, "plan_broken")
-		if remaining[0] is Dictionary:
-			_ai_note_failed_goal(b, remaining[0] as Dictionary, "precondition")
-		_ai_stat_inc(b, "steps_failed")
-		_ai_stat_inc(b, "plans_failed")
-		return false
-	(b["ai_directive"] as Dictionary)["source"] = source
-	(b["ai_directive"] as Dictionary)["_plan_root"] = root
-	(b["ai_directive"] as Dictionary)["_plan_losses"] = int(d.get("_plan_losses", 0))
-	b["_plan_last_result"] = "step_completed"
-	return true
+	return PlanManager.advance(self, bot_id, b, d)
 
 # Fija el destino UNICO del paso al adoptarlo (_dest_pos/_dest_id): navega-
 # cion, progreso, aprendizaje y vetos trabajan desde entonces sobre el mismo
@@ -16839,16 +16723,7 @@ func _ai_pin_step_destination(bot_id: int, b: Dictionary, d: Dictionary) -> bool
 			d["_dest_pos"] = d["pos"]
 			d["_dest_id"] = "pos"
 		"ally":
-			var ally_pos := _nearest_friendly_bot_pos(bot_id)
-			if ally_pos != Vector3.INF:
-				d["mode"] = "pos"
-				d["pos"] = ally_pos
-				d["_dest_pos"] = ally_pos
-				d["_dest_id"] = "pos"
-			else:
-				d["mode"] = "poi"
-				d["only_kinds"] = ["house"]
-				return _ai_pin_poi_destination(b, d)
+			return GoalValidator.bind_ally(self, b, d)
 		"poi":
 			return _ai_pin_poi_destination(b, d)
 	return true
@@ -16865,76 +16740,8 @@ func _ai_pin_poi_destination(b: Dictionary, d: Dictionary) -> bool:
 	d["_dest_id"] = str(pick.get("id", ""))
 	return true
 
-func _ai_apply_decision(bot_id: int, content: String) -> bool:
-	if not bots.has(bot_id):
-		return false
-	var b: Dictionary = bots[bot_id]
-	var steps := _ai_parse_plan(content, b)
-	if steps.is_empty():
-		return false
-	var d := _ai_parse_decision(JSON.stringify(steps[0]), b)
-	if d.is_empty():
-		return false
-	if not _ai_pin_step_destination(bot_id, b, d):
-		return false
-	d["_remaining_steps"] = steps.slice(1)
-	var now_ms := Time.get_ticks_msec()
-	var mem := _ensure_bot_memory(bot_id, b.get("cfg", {}))
-	# Inercia de objetivo: un plan vivo no se resetea por una revalidacion
-	# remota — el mismo plan reemitido conserva progreso (_visit_done, pasos
-	# dados) y un plan joven solo se desbanca por prioridad estricta mayor.
-	var cur: Dictionary = b.get("ai_directive", {})
-	if not cur.is_empty():
-		if str(cur.get("goal", "")) == str(d.get("goal", "")) \
-				and str(cur.get("action", "")) == str(d.get("action", "")) \
-				and str(cur.get("target", "")) == str(d.get("target", "")) \
-				and (cur.get("_remaining_steps", []) as Array) == d["_remaining_steps"]:
-			cur["until"] = now_ms + AI_DIRECTIVE_TTL_MSEC
-			# Un plan vivo revalidado renueva su presupuesto: sigue en marcha.
-			cur["_step_deadline_ms"] = now_ms + _ai_step_budget_msec(b, cur)
-			b["_ai_last_apply"] = "reaffirmed"
-			return true
-		# Sin _applied_at la directiva no fue instalada por _ai_apply_decision
-		# (inyeccion externa o memoria antigua): no puede acreditar juventud —
-		# tratarla como joven congelaria cualquier plan durante los primeros
-		# AI_DIRECTIVE_MIN_COMMIT_SEC de uptime del motor.
-		var applied_at := int(cur.get("_applied_at", -1))
-		var age_sec := (now_ms - applied_at) / 1000.0 if applied_at >= 0 else AI_DIRECTIVE_MIN_COMMIT_SEC
-		if age_sec < AI_DIRECTIVE_MIN_COMMIT_SEC and int(d.get("priority", 3)) <= int(cur.get("priority", 3)):
-			cur["until"] = now_ms + AI_DIRECTIVE_TTL_MSEC
-			cur["_step_deadline_ms"] = now_ms + _ai_step_budget_msec(b, cur)
-			_ai_stat_inc(b, "plan_kept")
-			b["_ai_last_apply"] = "kept"
-			return true
-	d["_applied_at"] = now_ms
-	d["until"] = now_ms + AI_DIRECTIVE_TTL_MSEC
-	# Raiz del plan para evaluar el resultado global (los pasos sueltos la
-	# reciben del plan que los origino via _ai_advance_plan).
-	d["_plan_root"] = str(d.get("action", ""))
-	# Evidencia material al iniciar el paso: cerrar un objetivo exige que el
-	# mundo cambie (botin, bajas, refugio), no solo llegar a unas coordenadas.
-	var stats0: Dictionary = mem.get("stats", {})
-	d["_ev0"] = {
-		"loot": int(b.get("_loot_n", 0)),
-		"food": int(b.get("_loot_food_n", 0)),
-		"hunger": float(b.get("hunger", 100.0)),
-		"kills": int(stats0.get("kills_prey", 0)) + int(stats0.get("kills_predator", 0)),
-		"shelter": not str(b.get("shelter_id", "")).is_empty(),
-		"fire": not str(b.get("campfire_id", "")).is_empty(),
-	}
-	# Presupuesto adaptativo: viaje estimado + margen por tipo de accion; el
-	# progreso se mide por distancia ganada al destino.
-	d["_step_deadline_ms"] = now_ms + _ai_step_budget_msec(b, d)
-	d["_prog_ref_m"] = _ai_step_target_dist(b, d)
-	d["_prog_ref_ms"] = now_ms
-	b["ai_directive"] = d
-	b["current_goal"] = str(d.get("goal", d.get("action", "survive")))
-	mem["pending_goals"] = steps.duplicate(true)
-	_ai_stat_inc(b, "steps_started")
-	b["_ai_last_apply"] = "applied"
-	print("[AI-ADV] %s: %s -> %s (p=%d, %s)" % [str(b.get("name", bot_id)), str(d.get("goal", "?")), str(d.get("action", "?")), int(d.get("priority", 3)), str(d.get("reason", ""))])
-
-	return true
+func _ai_apply_decision(bot_id: int, content: String, source: String = "qwen") -> bool:
+	return PlanManager.apply(self, bot_id, content, source)
 
 func _ai_apply_local_fallback_decision(bot_id: int, reason: String = "local_fallback") -> Dictionary:
 	if not bots.has(bot_id):
@@ -16949,10 +16756,10 @@ func _ai_apply_local_fallback_decision(bot_id: int, reason: String = "local_fall
 		if not _ai_goal_recently_failed(b, ret_probe):
 			local_steps.append({"action": "return_home", "target": "camp", "goal": "return_after_supplies", "reason": "supplies_trip_complete"})
 	var json_str := JSON.stringify({"steps": local_steps})
-	if not _ai_apply_decision(bot_id, json_str):
+	if not _ai_apply_decision(bot_id, json_str, "local_fallback"):
 		# A local rest/home proposal may also lack a usable destination.
 		# Replace the rejected goal without recursive fallback or remote work.
-		_ai_apply_decision(bot_id, JSON.stringify({"action": "explore", "target": "wild", "reason": "local_unavailable: " + reason}))
+		_ai_apply_decision(bot_id, JSON.stringify({"action": "explore", "target": "wild", "reason": "local_unavailable: " + reason}), "local_fallback")
 	# Solo se etiqueta cuando la decision local realmente sustituyo la directiva:
 	# si la inercia conservo el plan vigente no se falsea su origen.
 	if str(b.get("_ai_last_apply", "")) == "applied" and b.get("ai_directive") is Dictionary:
@@ -16980,7 +16787,7 @@ func _ai_resume_pending_plan(bot_id: int) -> void:
 		# vetados por fallos previos): no se conserva para otro reinicio.
 		mem["pending_goals"] = []
 		return
-	if _ai_apply_decision(bot_id, JSON.stringify({"steps": steps})) \
+	if _ai_apply_decision(bot_id, JSON.stringify({"steps": steps}), "memory") \
 			and str(b.get("_ai_last_apply", "")) == "applied":
 		b["ai_directive"]["source"] = "memory"
 		b["_plan_last_result"] = "plan_resumed"
@@ -17022,6 +16829,8 @@ func _nearest_friendly_bot_pos(bot_id: int) -> Vector3:
 func _ai_active_directive(b: Dictionary) -> Dictionary:
 	var d = b.get("ai_directive", {})
 	if not (d is Dictionary) or (d as Dictionary).is_empty():
+		return {}
+	if str(d.get("state", "")) in ["SUSPENDED", "COMPLETED", "FAILED", "CANCELLED"]:
 		return {}
 	return d
 
@@ -17072,6 +16881,9 @@ func _ai_load_memory() -> void:
 			continue
 		var bid := int(key)
 		var mem: Dictionary = _ensure_bot_memory(bid)
+		for field in PlanDiagnostics.MEMORY_FIELDS:
+			if sd.has(field):
+				mem[field] = sd[field]
 		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois", "exploration_regions"]:
 			if sd.has(field):
 				mem[field] = sd[field]
@@ -17151,12 +16963,16 @@ func _ai_save_memory() -> void:
 		var bp: Node3D = b.get("proxy")
 		if bp != null and is_instance_valid(bp) and not bool(bp.get_meta("proxy_dead", false)):
 			_bot_flush_alive_time(b)
+			PlanManager.checkpoint(b, Time.get_ticks_msec())
 	var out := {"version": 3, "saved_tick_msec": Time.get_ticks_msec(), "saved_unix": Time.get_unix_time_from_system(), "bots": {}}
 	for bid in _memory.keys():
 		var mem: Dictionary = _ensure_bot_memory(int(bid))
 		_ai_prune_and_summarize_memories(mem)
 		var sd := {}
 		sd["strategy_evidence_v"] = int(mem.get("strategy_evidence_v", 1))
+		for field in PlanDiagnostics.MEMORY_FIELDS:
+			if mem.has(field):
+				sd[field] = mem[field]
 		for field in ["identity", "personality", "deaths", "last_death_cause", "last_death_killer", "last_death_weapon", "last_death_unix", "death_log", "killers", "bad_camp_spots", "base_raided", "gear_learned", "scarcity", "zone_yield", "death_spots", "death_lessons", "experience", "events", "events_summary", "known_locations", "observed_players", "relationships", "strategies", "pending_goals", "sessions", "stats", "ai_stats", "farm_plots", "milestones", "shelter", "score_reset_v", "failed_goals", "unreachable_pois", "exploration_regions"]:
 			if mem.has(field):
 				sd[field] = mem[field]
@@ -17206,9 +17022,7 @@ func _ai_note_loot(b: Dictionary, item_name: String, item_type: String) -> void:
 	var kind := _poi_kind_near(pos)
 	# Evidencia material para el cierre real de objetivos (scavenge/hunt):
 	# cuenta objetos recogidos y, aparte, los comestibles.
-	b["_loot_n"] = int(b.get("_loot_n", 0)) + 1
-	if item_type == "food" or item_type == "drink":
-		b["_loot_food_n"] = int(b.get("_loot_food_n", 0)) + 1
+	GoalValidator.note_acquisition(self, b, item_name, item_type)
 	var zy: Dictionary = mem.get("zone_yield", {})
 	var zk: Dictionary = zy.get(kind, {"n": 0, "good": 0})
 	zk["n"] = int(zk.get("n", 0)) + 1
@@ -17364,6 +17178,7 @@ func get_bot_debug_snapshot(bot_id: int) -> Dictionary:
 		"pending_goals": (mem.get("pending_goals", []) as Array).duplicate(true),
 		"last_plan_result": str(b.get("_plan_last_result", "")),
 		"ai_stats": (mem.get("ai_stats", {}) as Dictionary).duplicate(true),
+		"planning": PlanDiagnostics.snapshot(b, Time.get_ticks_msec()),
 		"blocked": int(b.get("stuck_count", 0)) > 0 or not (b.get("_unreachable", []) as Array).is_empty(),
 		"failed_goals": (mem.get("failed_goals", {}) as Dictionary).size(),
 		"unreachable_pois": (mem.get("unreachable_pois", {}) as Dictionary).size(),
@@ -18078,6 +17893,7 @@ func _bot_forage_complete(b: Dictionary, st: Dictionary) -> void:
 		proxy.set_meta("saved_hunger", float(b["hunger"]))
 		proxy.set_meta("saved_thirst", float(b["thirst"]))
 		b["eat_cooldown"] = 10.0
+		GoalValidator.note_acquisition(self, b, ename, "food")
 		_bot_log_eaten_food(b, ename)
 		if new_qty < 0 or new_qty == 0:
 			if world.has_method("_net_world_action_completed"):
@@ -19086,7 +18902,7 @@ func _bot_freeze_march(b: Dictionary, delta: float) -> bool:
 			cand.y = proxy.global_position.y
 			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
 				continue
-			if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(cand)) > 0.05:
+			if not InterruptionManager.dry_recovery_leg(world, proxy.global_position, cand):
 				continue
 			fm["pos"] = cand
 			b["_freeze_march"] = fm

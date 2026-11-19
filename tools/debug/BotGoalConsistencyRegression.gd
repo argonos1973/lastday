@@ -21,12 +21,25 @@ func run() -> void:
 	check(not manager._ai_directive_completed(b, rest), "Rested but injured bot must still recover")
 	b.health = 100.0
 	check(manager._ai_directive_completed(b, rest), "Recovered bot completes rest")
-	for action in ["return_home", "seek_ally", "fortify_camp", "explore", "rest"]:
+	for action in ["return_home", "fortify_camp", "explore", "rest"]:
 		var goal := {"action": action, "pos": Vector3(0, 4, 0)}
 		check(not manager._ai_directive_completed(b, goal), "Cannot complete %s from the floor below" % action)
 		proxy.position.y = 4.0
 		check(manager._ai_directive_completed(b, goal), "Can complete %s on the correct floor" % action)
 		proxy.position.y = 0.0
+	check(not manager._ai_directive_completed(b, {"action": "seek_ally", "pos": Vector3.ZERO}),
+		"An old ally position never proves a live meeting")
+	for category in ["ammo", "clothing", "tools"]:
+		var names := {"ammo": "Munición 5.56", "clothing": "Botas militares", "tools": "Hacha"}
+		var types := {"ammo": "ammo", "clothing": "clothing", "tools": "tool_axe"}
+		var specific := {"action": "scavenge", "purpose": category, "_ev0": {"categories": {}}}
+		b["_plan_loot"] = {"general": 1}
+		check(not manager._ai_directive_completed(b, specific), "%s search rejects irrelevant loot" % category)
+		b["_plan_loot"][category] = 1
+		proxy.set_meta("saved_inventory", [{"name": names[category], "type": types[category], "quantity": 1, "durability": 0.0}])
+		check(not manager._ai_directive_completed(b, specific), "%s search rejects unusable loot" % category)
+		proxy.set_meta("saved_inventory", [{"name": names[category], "type": types[category], "quantity": 1, "durability": 100.0}])
+		check(manager._ai_directive_completed(b, specific), "%s search verifies useful inventory" % category)
 	var seen := Vector3(8, 0, 8)
 	manager._ai_note_foe_intel(b, null, seen, "seen")
 	manager._ai_note_foe_intel(b, null, Vector3(80, 0, 80), "heard")

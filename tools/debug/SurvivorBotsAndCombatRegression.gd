@@ -988,6 +988,25 @@ func run() -> void:
 	carlos["hunger"] = 90.0
 	carlos["thirst"] = 90.0
 	carlos["hide_timer"] = 0.0
+	# Retrofit needs an undisturbed, valid building fixture. The preceding
+	# deaths/respawns use an independently randomized spawn and leave tactical
+	# work behind; neither is part of the camouflage behavior being tested.
+	carlos["health"] = 100.0
+	carlos_proxy.set_meta("proxy_health", 100.0)
+	carlos["vstats"].health = 100.0
+	carlos["vstats"].body_temperature = 36.6
+	carlos["vstats"].sleep = 90.0
+	carlos["vstats"].wetness = 0.0
+	carlos["sleeping"] = false
+	carlos["sense_t"] = 10.0
+	carlos["_s_foe"] = null
+	carlos["_s_predator"] = null
+	for task in ["_s_loot", "_gather", "_craft_state", "_forage", "_farm", "ai_directive"]:
+		carlos[task] = {}
+	carlos["shelter_id"] = ""
+	carlos["shelter_pos"] = Vector3.INF
+	carlos["camp_spot"] = mgr._find_valid_camp_spot(Vector3(-320, 0.4, 240), carlos_proxy.global_position, 0, [], 902)
+	check(mgr._is_valid_camp_pos(carlos["camp_spot"], 0, [], 902), "10f el escenario de camuflaje comienza en un solar valido")
 	carlos_proxy.set_meta("saved_inventory", [
 		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11, "use_value": 0.0},
 	])
@@ -998,6 +1017,9 @@ func run() -> void:
 		if not str(carlos["shelter_id"]).is_empty():
 			break
 	check(not str(carlos["shelter_id"]).is_empty(), "Carlos levanta su refugio en su base")
+	if str(carlos["shelter_id"]).is_empty():
+		quit(1) # Do not propagate an invalid shelter position through later cases.
+		return
 	var csh := mgr._find_shelter_dict(str(carlos["shelter_id"]))
 	check(not csh.is_empty() and not bool(csh.get("camo_covered", false)), "Sin tela el refugio queda sin camuflar")
 	# La particion mantiene la tela encima mientras el refugio no este camuflado
@@ -2134,6 +2156,19 @@ func run() -> void:
 		var qb: Dictionary = mgr.bots[qbid]
 		qb["flee_until"] = 0.0
 		qb["hide_timer"] = 0.0
+		qb["sleeping"] = false
+		qb["aggro_target"] = null
+		qb["_s_foe"] = null
+		qb["_s_predator"] = null
+		qb["ai_directive"] = {}
+		qb["_act"] = "explore"
+		qb["hunger"] = 80.0
+		qb["thirst"] = 80.0
+		var queue_stats: SurvivalStats = qb.get("vstats")
+		if queue_stats != null:
+			queue_stats.sleep = 85.0
+			queue_stats.body_temperature = 36.6
+			queue_stats.bleeding = 0.0
 		qb["_craft_state"] = {}
 		qb["team_leader_id"] = 0
 		var qpx = qb.get("proxy")
@@ -2185,13 +2220,18 @@ func run() -> void:
 	elena["hunger"] = 80.0
 	check(mgr._ai_directive_completed(elena, elena["ai_directive"]), "Asesor: forage completa al recuperar hambre")
 	elena["hunger"] = 90.0
-	elena["ai_directive"] = {"action": "scavenge", "mode": "poi", "only_kinds": ["military"]}
+	elena["ai_directive"] = {"action": "scavenge", "mode": "poi", "only_kinds": ["military"],
+		"_ev0": mgr.GoalValidator.baseline(elena)}
 	elena_proxy.global_position = Vector3(150.0, 0.4, 150.0)
 	mgr._mark_poi_visited(elena, elena_proxy.global_position)
 	check(bool((elena["ai_directive"] as Dictionary).get("_visit_done", false)),
-		"Asesor: visitar el POI militar marca el plan como cumplido")
+		"Asesor: visitar el POI militar registra la visita")
+	check(not mgr._ai_directive_completed(elena, elena["ai_directive"]),
+		"Asesor: visitar el POI sin botin no completa scavenge")
+	elena_proxy.set_meta("saved_inventory", [{"name": "Trapos", "type": "resource", "quantity": 1}])
+	mgr._ai_note_loot(elena, "Trapos", "resource")
 	check(mgr._ai_directive_completed(elena, elena["ai_directive"]),
-		"Asesor: scavenge al POI visitado completa el plan")
+		"Asesor: scavenge general completa con botin adquirido")
 	# El sondeo por turnos cierra el plan cumplido pidiendo el siguiente, y un
 	# plan que no termina pasado el TTL+gracia fuerza una revalidacion.
 	var ids_s: Array = mgr.bots.keys()
@@ -4188,6 +4228,10 @@ func run() -> void:
 	# ella (rest), no marcha en el sitio — la marcha es el ultimo recurso.
 	var wb_bak9b: Array = world.wildlife_blockers.duplicate()
 	world.wildlife_blockers.clear()
+	var shelters_bak9b: Array = world._built_shelters.duplicate()
+	world._built_shelters.clear()
+	fresh_b["_s_raid_shelter"] = {}
+	fresh_b["sense_t"] = 0.0
 	var lc_bak9b: Array = world._lit_campfires.duplicate() if "_lit_campfires" in world else []
 	if "_lit_campfires" in world:
 		world._lit_campfires.clear()
@@ -4204,6 +4248,7 @@ func run() -> void:
 		"SpawnReal 10w9b: helado sin fuego ni lena marcha para calentarse (act=%s)" % str(fresh_b.get("_act", "")))
 	world.world_actions_by_id = wa_bak9b
 	world.wildlife_blockers = wb_bak9b
+	world._built_shelters = shelters_bak9b
 	if "_lit_campfires" in world:
 		world._lit_campfires = lc_bak9b
 	fresh_b.erase("_freeze_march")
@@ -5532,6 +5577,15 @@ func run() -> void:
 	fb_flee["pos"] = fb_flee["proxy"].global_position
 	fb_flee["crouching"] = false
 	fb_flee["_speed"] = 0.0
+	# Independent movement check: no old formation heading or wolf encounter.
+	fb_flee["_escort"] = {}
+	fb_flee["_s_loot"] = {}
+	fb_flee["aggro_target"] = null
+	fb_flee["_s_predator"] = null
+	fb_flee["_s_foe"] = null
+	fb_flee["hide_timer"] = 0.0
+	fb_flee["flee_until"] = 0.0
+	fb_flee["follow_mode"] = "follow"
 	mgr._tick_teammate_behavior(fb_flee, lead_p, 0.1)
 	check(str(fb_flee["anim"]) == "run" and float(fb_flee["_speed"]) >= 5.0,
 		"10J2a: Bot aliado cerca del humano corre con velocidad real de sprint (anim=%s, spd=%.2f)" % [str(fb_flee["anim"]), float(fb_flee["_speed"])])
@@ -5743,6 +5797,17 @@ func run() -> void:
 	b_log["energy"] = 100.0
 	b_log["sleep"] = 100.0
 	var vs_log: SurvivalStats = b_log["vstats"]
+	# SurvivalStats is authoritative; updating only the mirrored dictionary
+	# lets hunger/thirst/death state from previous scenarios steal these ticks.
+	vs_log.dead = false
+	vs_log.health = 100.0
+	vs_log.hunger = 90.0
+	vs_log.thirst = 90.0
+	vs_log.bleeding = 0.0
+	vs_log.blood = 100.0
+	vs_log.wetness = 0.0
+	vs_log.sick = false
+	p_log.set_meta("proxy_dead", false)
 	vs_log.energy = 100.0
 	vs_log.sleep = 100.0
 	vs_log.body_temperature = 36.5
@@ -5771,7 +5836,7 @@ func run() -> void:
 		if not str(b_log.get("shelter_id", "")).is_empty():
 			break
 	check(not str(b_log.get("shelter_id", "")).is_empty() and mgr._bot_item_count(p_log, "Tronco") == 0,
-		"10J5i: Con 6 Troncos + Cuchillo raja los 12 palos y construye su refugio (sh=%s)" % str(b_log.get("shelter_id", "")))
+		"10J5i: Con 6 Troncos + Cuchillo raja los 12 palos y construye su refugio (sh=%s act=%s)" % [str(b_log.get("shelter_id", "")), str(b_log.get("_act", ""))])
 
 	# 10J5j: Recuperacion de energia al caminar/descansar y freno de sprint con
 	# energia <=12 (evita quedar a energy=0 perpetuo y morir de agotamiento).
@@ -7503,8 +7568,12 @@ func run() -> void:
 	var grd := mgr.decide_situational_action(rb, {"hp": 95.0, "hunger": 80.0, "thirst": 80.0, "threat": false})
 	check(str(grd.get("action", "")) == "scavenge" and str(grd.get("target", "")) == "military",
 		"10Y3: la decision forzada es scavenge a la base militar (act=%s)" % grd.get("action", ""))
-	check(bool(rb.get("equip_mission", false)),
-		"10Y4: la incursion levanta equip_mission")
+	check(not bool(rb.get("equip_mission", false)),
+		"10Y4a: proponer la incursion no altera una directiva aun no aceptada")
+	rb["ai_directive"] = {}
+	rb["_unreachable"] = []
+	check(mgr._ai_apply_decision(901, JSON.stringify(grd), "local_fallback") and bool(rb.get("equip_mission", false)),
+		"10Y4b: aceptar la incursion levanta equip_mission")
 	var grd2 := mgr.decide_situational_action(rb, {"hp": 95.0, "hunger": 10.0, "thirst": 80.0, "threat": false})
 	check(str(grd2.get("action", "")) != "scavenge",
 		"10Y5: famelico (hambre=10) no sale de incursion (act=%s)" % grd2.get("action", ""))

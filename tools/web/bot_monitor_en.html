@@ -377,6 +377,7 @@
 
 <div class="bots-grid" id="botsContainer"></div>
 
+<script src="./bot_plans.js"></script>
 <script>
 const BOT_COLORS = { 901: "#4ecdc4", 902: "#f7b731", 903: "#ff5e57" };
 const TRAIT_LABELS = {
@@ -1073,6 +1074,7 @@ function renderBots(data) {
         </div>`;
       })()}
 
+      ${typeof BotPlans !== "undefined" ? BotPlans.render(b, "en") : ""}
       <div class="section-label">Goal &amp; Last Decision (Qwen / Local Brain)</div>
       <div class="decision-box" style="border-left-color:${col}">
         <div class="goal-line">🎯 ${esc(b.current_goal || "survival_patrol")}</div>

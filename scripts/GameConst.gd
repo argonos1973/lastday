@@ -9,6 +9,11 @@ const WORLD_LIMIT := 480.0
 const WORLD_LIMIT_Z := 892.0
 const WORLD_SEED := 1337
 
+# -- Survivor emergency recovery -----------------------------------------
+const BOT_EMERGENCY_REFUGE_RADIUS := 1400.0
+const BOT_HEAT_ALERT_TEMP := 37.75
+const BOT_HEAT_RECOVERY_TEMP := 37.5
+
 # -- Network -------------------------------------------------------------
 const GAME_PORT := 5005
 const DISCOVERY_PORT := 5006

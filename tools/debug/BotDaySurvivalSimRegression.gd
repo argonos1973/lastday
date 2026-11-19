@@ -583,6 +583,10 @@ func run() -> void:
 	check(int(reps[0]["acts"].get("ambush", 0)) == 0 and (kael.get("_ambush", {}) as Dictionary).is_empty(), "D5 no monta emboscada contra quien no percibe")
 	check((kael.get("_foe_mem", {}) as Dictionary).is_empty(), "D5 no guarda ninguna pista del oculto")
 	# Ahora camina: los pasos SI son una pista sonora valida
+	# The observer was free to patrol for 30 simulated seconds. Put this
+	# independent hearing check back at the documented 8m separation.
+	_place_bot(kael, Vector3(0.0, 0.4, 0.0), {"inventory": [_m4(), _knife()], "held": "Fusil de asalto",
+		"rifle_ammo": {"m4_magazine": 30, "m4_reserve": 30, "magazine": 0, "reserve": 0}})
 	hidden.set_meta("moving", true)
 	reps = simulate(env, [kael], {"dt": 0.2, "steps": 25})
 	print(_report(env, reps[0], kael))

@@ -50,6 +50,8 @@ const mapContext = {Math, JSON, Number, String, isFinite, BOT_COLORS:{},
  localStorage:{getItem:()=>null,setItem:()=>{}},
  document:{getElementById:id=>id==='mapCanvas' ? canvas : {}}};
 vm.createContext(mapContext);vm.runInContext(mapSource,mapContext);
+assert.equal(vm.runInContext("mapAuto", mapContext), false, "default view remains the full world");
+vm.runInContext("mapAuto=true", mapContext); // Auto framing is an explicit UI option.
 const aliveBot = {bot_id:901,name:'Bot',hp:100,pos:[10,0,20]};
 const human = {id:2,name:'Jugador',pos:[800,0,700]};
 mapContext.renderMap({bots:[aliveBot],players:[human]});

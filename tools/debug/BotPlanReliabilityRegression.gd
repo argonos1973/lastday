@@ -477,6 +477,8 @@ func run() -> void:
 	check(not (carlos.get("ai_directive", {}) as Dictionary).is_empty(),
 		"El plan sobrevive a la emergencia y se reanuda despues")
 	carlos["flee_until"] = 0.0
+	mgr.PlanManager.sync(mgr, carlos, Time.get_ticks_msec() + 95000)
+	mgr.PlanManager.sync(mgr, carlos, Time.get_ticks_msec() + 98000)
 	check(mgr._ai_bot_eligible(carlos),
 		"Pasada la emergencia el asesor vuelve a evaluar al bot")
 
