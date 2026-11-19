@@ -18,3 +18,4 @@ cf73a2a|The world costs less at rest: ticks only run on actions that actually ch
 390e81b|Crafting is channeled like in DayZ: making things takes real time with animation and is interrupted if you move, tools wear out per recipe instead of always breaking, and water is only collected when you truly reach the shore
 75b9fb3|Bots learn from real history: they remember who cooperated and who did not, their decisions leave verifiable evidence of strategy instead of improvising every tick, and their movement is honest — they walk where they say they go
 cd2a96f|Wildlife moves with measure: real per-species speeds and turns, the bear finally has a gallop animation and the tamed wolf keeps pace with its owner without running ahead or falling behind
+004a364|Bots remember their missions: they interrupt, sleep, fight and resume the plan where they left it, and the monitor shows what they want, what they do, what stops them and how they continue

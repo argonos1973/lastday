@@ -271,3 +271,4 @@ cf73a2a|El mundo cuesta menos en reposo: los ticks solo corren en las acciones q
 390e81b|El crafteo es canalizado como en DayZ: fabricar lleva su tiempo real con animacion y se interrumpe si te mueves, las herramientas se gastan por receta en vez de romperse siempre, y el agua se recoge solo cuando de verdad llegas a la orilla
 75b9fb3|Los bots aprenden del historial real: recuerdan con quien cooperaron y con quien no, sus decisiones dejan evidencia verificable de estrategia en vez de improvisar cada tick, y su movimiento es honesto — caminan a donde dicen que van
 cd2a96f|La fauna se mueve con medida: velocidades y giros reales por especie, el oso por fin tiene animacion de galope y el lobo domestico acompaña al paso del dueño sin adelantar ni quedarse atras
+004a364|Los bots recuerdan sus misiones: interrumpen, duermen, combaten y retoman el plan desde donde lo dejaron, y el monitor muestra que quieren, que hacen, que los frena y con que resultado siguen
