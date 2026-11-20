@@ -18,6 +18,16 @@
       "title": "Bear Angry Growl",
       "url": "https://freesound.org/people/celldroid/sounds/763026/",
       "sha256": "0e4f317fdfa9562e1c9778231ff0f34903c6da501138149a0ae097eeec3ce868"
+    },
+    "lobos_corriendo": {
+      "author": "supplied recording",
+      "title": "lobos_corriendo.mp3",
+      "sha256": "791393d0b5e925f2bf3fc480939f5420ad23e10244b9bead5c49db05d5d51817"
+    },
+    "lobos_luchando": {
+      "author": "supplied recording",
+      "title": "lobos_luchando.mp3",
+      "sha256": "b130115839a750926f5a4b7a65f883b38254a43b372970a10546c7d714c6e0a9"
     }
   },
   "clips": {
@@ -108,6 +118,90 @@
       "filters": "highpass=f=65,lowpass=f=7500,volume=0dB,afade=t=in:d=0.004,afade=t=out:st=1.215:d=0.035,alimiter=limit=0.8:level=false",
       "peak_dbfs": -6,
       "normalization_db": 8.688
+    },
+    "wolf_run_1.wav": {
+      "source": "lobos_corriendo",
+      "start": 1.70,
+      "duration": 0.46,
+      "filters": "afade=t=in:st=0:d=0.012,afade=t=out:st=0.30:d=0.16,volume=2.2",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_run_2.wav": {
+      "source": "lobos_corriendo",
+      "start": 3.12,
+      "duration": 0.46,
+      "filters": "afade=t=in:st=0:d=0.012,afade=t=out:st=0.30:d=0.16,volume=2.2",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_run_3.wav": {
+      "source": "lobos_corriendo",
+      "start": 6.68,
+      "duration": 0.46,
+      "filters": "afade=t=in:st=0:d=0.012,afade=t=out:st=0.30:d=0.16,volume=2.2",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_growl_1.wav": {
+      "source": "lobos_luchando",
+      "start": 1.56,
+      "duration": 1.17,
+      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.85:d=0.32,volume=1.9",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_growl_2.wav": {
+      "source": "lobos_luchando",
+      "start": 30.05,
+      "duration": 1.30,
+      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.95:d=0.35,volume=1.9",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_growl_3.wav": {
+      "source": "lobos_luchando",
+      "start": 33.70,
+      "duration": 0.82,
+      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.55:d=0.27,volume=2.2",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_growl_4.wav": {
+      "source": "lobos_luchando",
+      "start": 36.60,
+      "duration": 1.30,
+      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.95:d=0.35,volume=4.5",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_attack_1.wav": {
+      "source": "lobos_luchando",
+      "start": 4.95,
+      "duration": 1.50,
+      "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=1.10:d=0.40,volume=1.6",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_attack_2.wav": {
+      "source": "lobos_luchando",
+      "start": 13.60,
+      "duration": 1.75,
+      "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=1.35:d=0.40,volume=2.0",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_attack_3.wav": {
+      "source": "lobos_luchando",
+      "start": 17.85,
+      "duration": 1.85,
+      "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=1.45:d=0.40,volume=1.4",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_attack_4.wav": {
+      "source": "lobos_luchando",
+      "start": 25.30,
+      "duration": 1.40,
+      "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=1.00:d=0.40,volume=1.4",
+      "rate": "22050 Hz mono s16"
+    },
+    "wolf_attack_5.wav": {
+      "source": "lobos_luchando",
+      "start": 39.40,
+      "duration": 1.35,
+      "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=0.95:d=0.40,volume=1.4",
+      "rate": "22050 Hz mono s16"
     }
   }
 }

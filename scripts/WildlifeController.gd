@@ -4183,10 +4183,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 		return
 	var path := ""
 	match sound_type:
-		"growl", "howl", "growl_low":
+		"growl", "growl_low":
+			path = WildlifeAudio.WOLF_GROWL[randi() % WildlifeAudio.WOLF_GROWL.size()]
+		"howl":
 			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
 		"attack":
-			path = "res://assets/external/audio/downloaded/wolf_growl.wav"
+			path = WildlifeAudio.WOLF_ATTACK[randi() % WildlifeAudio.WOLF_ATTACK.size()]
 		"bite":
 			path = "res://assets/audio/wolf_bite.wav"
 		"hungry":

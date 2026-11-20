@@ -913,7 +913,7 @@ func _play_remote_step(key: String, pos: Vector3, kind: String, is_animal: bool)
 	var idx := int(_remote_step_phase.get(key, 0))
 	var scene := get_tree().current_scene
 	var hard: bool = not in_water and (_pos_inside_building(pos) or (scene != null and scene.has_method("_is_on_road") and scene._is_on_road(pos)))
-	var sample: AudioStream = water_step_shots[idx % water_step_shots.size()] if in_water and not water_step_shots.is_empty() else WildlifeAudio.step(species, hard, idx)
+	var sample: AudioStream = water_step_shots[idx % water_step_shots.size()] if in_water and not water_step_shots.is_empty() else WildlifeAudio.step(species, hard, idx, kind == "run")
 	if sample == null: return
 	# Prefer a free voice. Never interrupt another animal's paw mid-contact.
 	var ap: AudioStreamPlayer3D = null

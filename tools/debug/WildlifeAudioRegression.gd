@@ -33,12 +33,16 @@ func run():
 	world.net = Net.new(); world.add_child(world.net)
 	var actor := Actor.new(); actor.name = "Player"; world.add_child(actor); world.player = actor
 	Bank.prepare()
-	for path in Bank.PAW_SOFT + Bank.PAW_HARD + Bank.HOOF + [Bank.BEAR_ATTACK, Bank.BEAR_GROWL, Bank.BITE]:
+	for path in Bank.PAW_SOFT + Bank.PAW_HARD + Bank.HOOF + Bank.WOLF_RUN + Bank.WOLF_GROWL + Bank.WOLF_ATTACK + [Bank.BEAR_ATTACK, Bank.BEAR_GROWL, Bank.BITE]:
 		var sample := Bank.stream(path)
 		check(sample is AudioStreamWAV and sample.loop_mode == AudioStreamWAV.LOOP_DISABLED, path+" non-looping PCM")
 		check(sample != null and sample.get_length() > .08 and sample.get_length() < 4.0, path+" bounded clip")
 		check(sample == Bank.stream(path), path+" cached")
 	check(Bank.step("wolf",false,0) != Bank.step("deer",false,0),"paws and hooves have distinct recordings")
+	var wolf_run_streams := Bank.WOLF_RUN.map(func(p): return Bank.stream(p))
+	check(Bank.step("wolf",true,0,true) in wolf_run_streams,"running wolf uses its own gallop bank")
+	check(Bank.step("wolf",true,0,false) in Bank.PAW_HARD.map(func(p): return Bank.stream(p)),"walking wolf keeps shared paw bank")
+	check(Bank.step("fox",true,0,true) in Bank.PAW_HARD.map(func(p): return Bank.stream(p)),"wolf run bank does not leak to fox")
 	var camera := Camera3D.new(); world.add_child(camera); camera.position = Vector3(0,1.5,4); camera.make_current()
 	var audio := AudioSystem.new(); world.add_child(audio); audio.set_process(false)
 	audio._create_players(); audio._load_footstep_audio(); audio.player = actor
@@ -64,6 +68,8 @@ func run():
 		audio._remote_actor_steps({},key,animal,"run",1.0/60,animal.position,true)
 		check(int(audio._remote_step_phase.get(key,0)) <= phase,species+" teleport does not create steps")
 		animal._play_wolf_sound("attack") if species in ["wolf","bear"] else animal._play_pain_sound()
+		if species == "wolf":
+			check(animal._wolf_audio_player.stream in Bank.WOLF_ATTACK.map(func(p): return Bank.stream(p)),"wolf attack uses the supplied fight bank")
 		if species == "bear":
 			check(animal._wolf_audio_player.stream == Bank.stream(Bank.BEAR_ATTACK),"bear no longer uses a pitched wolf growl")
 		if species in ["deer","fox"]:
