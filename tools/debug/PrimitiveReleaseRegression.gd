@@ -91,7 +91,7 @@ func run():
 	actor._throw_aim_hold = false
 	actor._throw_aim_frozen = false
 	actor._update_third_person_animation(false,.016)
-	check(actor.third_person_animation_player.speed_scale == 1, "Release resumes animation")
+	check(is_equal_approx(actor.third_person_animation_player.speed_scale, 1.45), "Release resumes animation at the current attack clip speed")
 	actor.third_person_hand_item_root = Node3D.new()
 	actor.third_person_model.add_child(actor.third_person_hand_item_root)
 	var bow_item = ItemData.create("Arco reforzado", "weapon_bow", 0.9, 1, 0)

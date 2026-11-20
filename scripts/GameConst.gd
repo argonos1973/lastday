@@ -16,6 +16,12 @@ const M4_BURST_ROUNDS := 3
 const GUN_RELOAD_TIME := 2.2
 const GUN_START_RESERVE_MAGS := 3
 
+# -- Hand-thrown weapons (same flight for players and bots) ----------------
+const SPEAR_THROW_SPEED := 25.0
+const BOLA_THROW_SPEED := 22.0
+const THROW_MAX_DISTANCE := 45.0
+const BOT_THROW_EFFECTIVE_RANGE := 22.0
+
 # -- Survivor emergency recovery -----------------------------------------
 const BOT_EMERGENCY_REFUGE_RADIUS := 1400.0
 const BOT_HEAT_ALERT_TEMP := 37.75

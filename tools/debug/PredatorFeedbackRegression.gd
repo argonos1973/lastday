@@ -54,7 +54,7 @@ func actor_with_rig(world, puppet: bool):
 func run():
 	var world := Fixture.World.new(); root.add_child(world); current_scene = world
 	world.net = Fixture.Net.new(); world.add_child(world.net)
-	for bite in ["wolf_bite", "bear_bite"]:
+	for bite in ["wolf_bite", "bear_bite", "lanza", "arco", "arco_head"]:
 		var actor = actor_with_rig(world, false); world.player = actor
 		actor.is_moving = true; actor.is_sprinting = true; actor._is_aiming = true
 		actor.velocity = Vector3(0, 0, -6)
@@ -241,6 +241,41 @@ func network_attack() -> void:
 		await create_timer(.08).timeout
 		check(actor.stats.health == 100, scenario + " prevents the pending bite")
 		if wall != null: wall.free()
+	# Same reliable channel, now a bot spear arriving before its avatar.
+	# The fixture disables player processing: advance the previous bite's
+	# remaining animation time before modelling a later, independent hit.
+	for i in 40:
+		actor._update_third_person_animation(true, 1.0/60)
+		ap.advance(1.0/60)
+	world.damage_events.clear()
+	actor._is_aiming = true
+	actor._pain_sound_timer = 1.5
+	actor.stats.health = 100
+	host.primitive_shot.rpc_id(pid, 901, Vector3(0, 3, -10), Vector3.FORWARD, "Lanza", GameConst.SPEAR_THROW_SPEED)
+	await create_timer(.05).timeout
+	var spear_visuals := world.get_children().filter(func(n): return n.get_script() == preload("res://scripts/RifleProjectile.gd") and n.has_node("ProjectileVisual"))
+	check(spear_visuals.size() == 1, "real reliable bot-launch RPC produces a spear even before the avatar snapshot")
+	for capture in captures: capture.clear_buffer()
+	host.apply_damage_to_client.rpc_id(pid, 30.0, "lanza")
+	await create_timer(.08).timeout
+	check(world.damage_events == [[30.0, "lanza"]] and actor.stats.health == 70, "network spear damages the victim once")
+	check(actor._forced_hit_reaction_active() and not actor._is_aiming, "network spear interrupts ADS with the real hurt clip")
+	check(actor._pain_audio_player.playing, "network spear delivers the recorded pain voice despite generic cooldown")
+	ap.seek(0, true)
+	ap.advance(0)
+	head_before = skel.get_bone_pose_rotation(head)
+	for i in 21:
+		actor._update_third_person_animation(true, 1.0/60)
+		ap.advance(1.0/60)
+	var spear_head_angle := head_before.angle_to(skel.get_bone_pose_rotation(head))
+	check(spear_head_angle > .4, "spear reaction reaches the real rig's visible flinch peak (%.3f rad)" % spear_head_angle)
+	await create_timer(.55).timeout
+	if DisplayServer.get_name() != "headless":
+		var pain_peak := 0.0
+		for sample in captures[0].get_buffer(captures[0].get_frames_available()):
+			pain_peak = maxf(pain_peak, maxf(absf(sample.x), absf(sample.y)))
+		print("WIRE_SPEAR_PAIN peak=", pain_peak)
+		check(pain_peak > .005, "network spear pain voice reaches the actual audio mixer")
 	world.queue_free()
 	client.close_connection(); host.close_connection(); scope.queue_free()
 	for i in 4: await process_frame

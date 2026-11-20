@@ -1554,6 +1554,8 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 		return "rifle_motion/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION
 	if bool(b.get("sleeping", false)):
 		return "sleep"
+	if b.get("_throw_pending") is Dictionary or Time.get_ticks_msec() < int(b.get("_throw_anim_until", 0)):
+		return "attack"
 	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw == "idle":
 		return str(b.get("consume_anim", "eat"))
 	# Posturas de tiro con fusil: el nombre exacto resuelve directo en el
@@ -4354,6 +4356,9 @@ func _hunt_prey(b: Dictionary, prey: Node3D, delta: float) -> void:
 		return
 
 	if wkind in ["thrown", "bola"] and dist > 4.5:
+		if b.get("_throw_pending") is Dictionary:
+			_stop_bot_motion(b)
+			return
 		b["is_aiming"] = true
 		b["crouching"] = stalk_crouch
 		proxy.set_meta("crouching", stalk_crouch)
@@ -5465,7 +5470,10 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 
 	# Arrojadizas (lanzas, palo afilado, boleadoras): un lanzamiento cada pocos
 	# segundos; el proyectil vuela de verdad en el servidor y se ve en clientes.
-	if wkind in ["thrown", "bola"] and dist > 4.5 and dist <= 38.0:
+	if wkind in ["thrown", "bola"] and dist > 4.5 and dist <= GameConst.BOT_THROW_EFFECTIVE_RANGE:
+		if b.get("_throw_pending") is Dictionary:
+			_stop_bot_motion(b)
+			return
 		b["is_aiming"] = clear_los
 		var sidet := Vector3(-to_foe.z, 0.0, to_foe.x).normalized() if to_foe.length_squared() > 0.01 else Vector3.RIGHT
 		if dist > 26.0 or not clear_los:
@@ -5487,7 +5495,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			b["shoot_cooldown"] = 2.6 if wkind == "bola" else 2.1
 			_bot_fire_thrown(b, foe, weapon, wkind == "bola")
 		return
-	if wkind in ["thrown", "bola"] and dist > 38.0:
+	if wkind in ["thrown", "bola"] and dist > GameConst.BOT_THROW_EFFECTIVE_RANGE:
 		_move_bot_towards(b, fpos, 6.4, delta, "run")
 		return
 
@@ -5624,7 +5632,7 @@ func _bot_aim_weapon_params(kind: String) -> Dictionary:
 		"bow":
 			return {"speed": 80.0, "drag": 0.30, "mag": 1.45, "primitive": true}
 		_:
-			return {"speed": 58.0, "drag": 0.28, "mag": 1.25, "primitive": true}
+			return {"speed": GameConst.SPEAR_THROW_SPEED, "drag": 0.20, "mag": 1.0, "primitive": true}
 
 func _bot_projectile_flight_time(dist: float, speed: float, drag: float) -> float:
 	# x(t) = v0/k·(1-e^-kt) -> t = -ln(1-x·k/v0)/k (misma forma que el jugador)
@@ -5637,7 +5645,11 @@ func _bot_projectile_flight_time(dist: float, speed: float, drag: float) -> floa
 # velocidad medida (nunca posiciones futuras) + compensacion de caida.
 func _bot_aim_point(b: Dictionary, target: Node3D, dist: float, kind: String) -> Vector3:
 	var params := _bot_aim_weapon_params(kind)
-	var pt := target.global_position + Vector3(0.0, 1.02, 0.0)
+	if kind == "throw":
+		var held := str(b.get("held_item", "Lanza"))
+		params["speed"] = GameConst.BOLA_THROW_SPEED if held == "Boleadoras" else GameConst.SPEAR_THROW_SPEED
+		params["drag"] = _bot_projectile_drag(held)
+	var pt := _bot_target_torso(target)
 	var vel := _bot_target_velocity(b, target)
 	var ft := _bot_projectile_flight_time(dist, float(params["speed"]), float(params["drag"]))
 	# Adelanto imperfecto: mejora con la experiencia (bajas acreditadas),
@@ -5653,6 +5665,14 @@ func _bot_aim_point(b: Dictionary, target: Node3D, dist: float, kind: String) ->
 		var k := float(params["drag"])
 		pt.y += 9.81 / maxf(0.02, k) * (ft - dist / v0)
 	return pt
+
+func _bot_target_torso(target: Node3D) -> Vector3:
+	var prone: bool = target.get("is_prone") == true or target.get("is_sleeping") == true \
+		or target.get_meta("prone", false) == true or target.get_meta("sleeping", false) == true
+	var low: bool = target.get("is_crouching") == true or target.get("is_sitting") == true \
+		or target.get_meta("crouching", false) == true or target.get_meta("sitting", false) == true \
+		or target.get_meta("saved_sitting", false) == true
+	return target.global_position + Vector3.UP * (0.22 if prone else (0.65 if low else 1.02))
 
 # Un tick de punteria: gira la mira hacia el punto deseado con velocidad
 # angular limitada y devuelve el error angular actual en grados. Sin linea de
@@ -6005,24 +6025,87 @@ func _bot_bow_release(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 		world._net_primitive_shot(bot_id, origin, dir, arrow_name, speed)
 	_bot_launch_projectile(b, origin, dir, arrow_name, speed, 140.0, dmg, false, "arco")
 
-# Lanzas, palo afilado y boleadoras: el arma no se consume (solo durabilidad),
-# como al recogerla del suelo tras el lanzamiento. La direccion sale de la
-# mira real — preparacion, oscilacion y fatiga como cualquier otro arma.
+# El arma queda en la mano durante la preparacion y sale del inventario
+# al soltarla. Solo vuelve si alguien recoge el objeto donde haya caido.
 func _bot_fire_thrown(b: Dictionary, foe: Node3D, item_name: String, is_bola: bool) -> void:
-	var proxy: Node3D = b["proxy"]
-	var bot_id := int(b["bot_id"])
-	# Energia para lanzar: la misma puerta que el jugador (6.0).
-	if not _bot_pay_shot_energy(b, "throw"):
+	if b.get("_throw_pending") is Dictionary:
 		return
-	_reduce_bot_item_durability(proxy, item_name, 3.0)
+	if not _bot_can_release_throw(b, foe, item_name):
+		return
+	var proxy: Node3D = b["proxy"]
+	b["_throw_pending"] = {"item": item_name, "origin": proxy.global_position, "health": float(b.get("health", 100.0))}
+	_stop_bot_motion(b)
+	b["is_aiming"] = false
+	get_tree().create_timer(PlayerController.THROW_RELEASE_DELAY, false).timeout.connect(func():
+		if is_instance_valid(self):
+			_bot_release_thrown(b, foe, item_name, is_bola))
+
+func _bot_can_release_throw(b: Dictionary, foe: Node3D, item_name: String) -> bool:
+	var proxy: Node3D = b.get("proxy")
+	if not is_instance_valid(proxy) or not is_instance_valid(foe) or world == null \
+			or proxy.get_meta("proxy_dead", false) == true or float(b.get("health", 100.0)) <= 0.0 \
+			or b.get("sleeping", false) == true or foe.get("is_dead") == true or foe.get_meta("proxy_dead", false) == true \
+			or str(b.get("held_item", "")) != item_name or _bot_item_count(proxy, item_name) <= 0 \
+			or _bot_energy(b) < 6.0 or proxy.global_position.distance_to(foe.global_position) > GameConst.BOT_THROW_EFFECTIVE_RANGE:
+		return false
+	if not _has_clear_shot(proxy.global_position, foe.global_position):
+		return false
+	# The target's actual crouched/prone torso must be visible too. A fixed
+	# head-height sight ray cannot authorize a throw through low cover.
+	var start := proxy.global_position + Vector3.UP * (1.0 if bool(b.get("crouching", false)) else 1.4)
+	var end := _bot_target_torso(foe)
+	var q := PhysicsRayQueryParameters3D.create(start, end, 5)
+	q.collide_with_areas = false
+	q.hit_from_inside = true
+	if proxy is CollisionObject3D: q.exclude = [proxy.get_rid()]
+	if not proxy.get_world_3d().direct_space_state.intersect_ray(q).is_empty():
+		return false
+	return not world.has_method("raycast_distant_props") or world.raycast_distant_props(start, end).is_empty()
+
+func _bot_release_thrown(b: Dictionary, foe: Node3D, item_name: String, is_bola: bool) -> void:
+	var pending: Dictionary = b.get("_throw_pending", {})
+	b.erase("_throw_pending")
+	if pending.is_empty() or not _bot_can_release_throw(b, foe, item_name):
+		return
+	var proxy: Node3D = b["proxy"]
+	if proxy.global_position.distance_to(pending["origin"]) > 0.15 or _bot_is_moving(b) \
+			or float(b.get("health", 100.0)) < float(pending["health"]):
+		return
+	var thrown: Dictionary = {}
+	var inventory: Array = proxy.get_meta("saved_inventory", [])
+	for index in inventory.size():
+		var item = inventory[index]
+		if item is Dictionary and str(item.get("name", "")) == item_name \
+				and float(item.get("durability", 100.0)) > 0.0 and int(item.get("quantity", 1)) > 0:
+			thrown = item.duplicate(true)
+			# Remove the exact item whose condition travels with this flight;
+			# a name-only consume could remove a different or broken spear.
+			if int(item.get("quantity", 1)) == 1:
+				inventory.remove_at(index)
+			else:
+				item["quantity"] = int(item["quantity"]) - 1
+			proxy.set_meta("saved_inventory", inventory)
+			break
+	if thrown.is_empty():
+		return
+	thrown["quantity"] = 1
+	thrown["durability"] = maxf(0.0, float(thrown.get("durability", 100.0)) - (20.0 if item_name == "Palo afilado" else 2.0))
+	thrown["max_durability"] = float(thrown.get("max_durability", 100.0))
+	_bot_pay_shot_energy(b, "throw")
+	b["_throw_anim_until"] = Time.get_ticks_msec() + 250
+	b["held_item"] = ""
+	b["has_rifle"] = false
+	proxy.set_meta("saved_held_item", "")
+	var bot_id := int(b["bot_id"])
 	var origin := proxy.global_position + Vector3(0.0, 1.0 if bool(b.get("crouching", false)) else 1.4, 0.0)
-	var dir := _bot_aim_fire_dir(b, "throw", _bot_current_spread_deg(b, false) * 0.6)
-	var speed := 55.0 if is_bola else 60.0
-	_bot_log_shot(b, item_name, origin, dir, 0.0, foe)
+	var spread := maxf(2.5, _bot_current_spread_deg(b, false) * 1.5)
+	var dir := _bot_aim_fire_dir(b, "throw", spread)
+	var speed := GameConst.BOLA_THROW_SPEED if is_bola else GameConst.SPEAR_THROW_SPEED
+	_bot_log_shot(b, item_name, origin, dir, spread, foe)
 	_broadcast_bot_projectile(bot_id, origin, dir, item_name, speed)
 	if world.has_method("_net_primitive_shot"):
 		world._net_primitive_shot(bot_id, origin, dir, item_name, speed)
-	_bot_launch_projectile(b, origin, dir, item_name, speed, 65.0, 65.0, is_bola, "bola" if is_bola else "lanza")
+	_bot_launch_projectile(b, origin, dir, item_name, speed, GameConst.THROW_MAX_DISTANCE, 65.0, is_bola, "bola" if is_bola else "lanza", -1.0, Vector3.ZERO, thrown)
 
 # Proyectil visual en los clientes: mismo RPC que usan los jugadores.
 func _broadcast_bot_projectile(bot_id: int, origin: Vector3, dir: Vector3, item_name: String, speed: float) -> void:
@@ -6037,7 +6120,7 @@ func _broadcast_bot_projectile(bot_id: int, origin: Vector3, dir: Vector3, item_
 # aplica el daño. Los clientes ven la copia visual del RPC anterior.
 # weapon_kind etiqueta el daño ("rifle"/"bow"/"melee"/"bola"); -1 en drag usa
 # la tabla por tipo de proyectil; wind es la velocidad de viento del disparo.
-func _bot_launch_projectile(b: Dictionary, origin: Vector3, dir: Vector3, item_name: String, speed: float, max_dist: float, dmg_base: float, is_bola: bool, weapon_kind := "", drag := -1.0, wind := Vector3.ZERO) -> void:
+func _bot_launch_projectile(b: Dictionary, origin: Vector3, dir: Vector3, item_name: String, speed: float, max_dist: float, dmg_base: float, is_bola: bool, weapon_kind := "", drag := -1.0, wind := Vector3.ZERO, recover_item: Dictionary = {}) -> void:
 	if world == null or not (world is Node3D):
 		return
 	var proxy: Node3D = b["proxy"]
@@ -6059,7 +6142,28 @@ func _bot_launch_projectile(b: Dictionary, origin: Vector3, dir: Vector3, item_n
 	projectile.look_at(origin + dir.normalized(), Vector3.UP if absf(dir.normalized().y) < 0.97 else Vector3.FORWARD)
 	var bot_ref: Dictionary = b
 	projectile.impact.connect(func(collider, hit_pos: Vector3, _dist: float, _normal: Vector3):
-		_on_bot_projectile_impact(bot_ref, projectile, collider, hit_pos, dmg_base, is_bola, weapon_kind))
+		_on_bot_projectile_impact(bot_ref, projectile, collider, hit_pos, dmg_base, is_bola, weapon_kind)
+		if not recover_item.is_empty():
+			_bot_recover_thrown_item(bot_ref, recover_item, hit_pos))
+	if not recover_item.is_empty():
+		projectile.expired.connect(func(pos: Vector3): _bot_recover_thrown_item(bot_ref, recover_item, pos))
+
+func _bot_recover_thrown_item(b: Dictionary, item: Dictionary, pos: Vector3) -> void:
+	if not is_instance_valid(world):
+		return
+	pos.y = _ground_y(pos.x, pos.z, pos.y)
+	var pre_n: int = world._dropped_items.size() if "_dropped_items" in world else -1
+	_bot_drop_to_ground(b, item, pos)
+	if pre_n < 0 or world._dropped_items.size() <= pre_n:
+		return
+	var drop: Dictionary = world._dropped_items[-1].duplicate(true)
+	if world.has_method("_apply_ground_pickup_condition"):
+		world._apply_ground_pickup_condition(drop)
+	var net = world.get("net")
+	if net != null and net.is_host and net.peer != null:
+		for pid in net.players:
+			if pid != net.get_my_id() and not is_bot_peer_id(pid) and net.peer_alive(pid):
+				net.world_action_completed.rpc_id(pid, "", [drop], "", Vector3.ZERO)
 
 func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_pos: Vector3, dmg_base: float, is_bola: bool, weapon_kind := "") -> void:
 	var proxy: Node3D = b.get("proxy")
@@ -6096,6 +6200,8 @@ func _on_bot_projectile_impact(b: Dictionary, projectile: Node3D, collider, hit_
 	# puede matar por flecha.
 	if is_human_actor and weapon_kind in ["arco", "lanza", "bola"]:
 		dmg = 18.0 if is_bola or weapon_kind == "bola" else (120.0 if is_headshot else 55.0)
+		if weapon_kind == "lanza":
+			dmg = PlayerController.spear_actor_damage(is_headshot, projectile.velocity.length() / maxf(projectile.launch_speed, 1.0))
 	if is_bola and target is Node3D:
 		target.set_meta("bola_slow_until", Time.get_unix_time_from_system() + 6.0)
 	if is_wildlife_tgt:
@@ -6134,7 +6240,7 @@ func _apply_bot_damage_to_target(b: Dictionary, target: Node3D, amount: float, w
 		if weapon in ["rifle", "m4"] and target.has_method("_play_shot_reaction"):
 			target._play_shot_reaction()
 		elif target.has_method("_play_hit_reaction"):
-			target._play_hit_reaction(weapon == "melee")
+			target._play_hit_reaction(weapon == "melee", weapon in ["lanza", "arco", "arco_head"])
 
 func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String = "melee") -> void:
 	if not bots.has(bot_id):
@@ -14092,10 +14198,10 @@ func _loot_entry_item_dict(entry: Dictionary) -> Dictionary:
 
 # Lo que no le cabe cae al suelo a sus pies, igual que al jugador: queda
 # saqueable por cualquiera como pickup real sincronizado.
-func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary) -> void:
+func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vector3.INF) -> void:
 	if world == null:
 		return
-	var p: Vector3 = (b["proxy"] as Node3D).global_position + Vector3(randf_range(-0.7, 0.7), 0.0, randf_range(-0.7, 0.7))
+	var p: Vector3 = at if at != Vector3.INF else (b["proxy"] as Node3D).global_position + Vector3(randf_range(-0.7, 0.7), 0.0, randf_range(-0.7, 0.7))
 	if world.has_method("_spawn_ground_pickup"):
 		var pre_n: int = (world._dropped_items as Array).size() if "_dropped_items" in world else -1
 		world._spawn_ground_pickup(str(item_dict.get("name", "")), str(item_dict.get("type", "resource")), p, float(item_dict.get("weight", 0.2)), int(item_dict.get("quantity", 1)), float(item_dict.get("use_value", 0.0)))

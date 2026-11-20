@@ -3375,8 +3375,8 @@ func _net_apply_damage(amount: float, weapon: String = "") -> void:
 		elif weapon in ["rifle", "m4"] and player.has_method("_play_shot_reaction"):
 			player._play_shot_reaction()
 		elif weapon in ["melee", "wolf_bite", "bear_bite", "arco", "arco_head", "lanza"] and player.has_method("_play_hit_reaction"):
-			var is_bite := weapon.ends_with("_bite")
-			player._play_hit_reaction(weapon == "melee", is_bite)
+			var force_hurt := weapon.ends_with("_bite") or weapon in ["lanza", "arco", "arco_head"]
+			player._play_hit_reaction(weapon == "melee", force_hurt)
 		if weapon in ["rifle", "m4"]:
 			player._recoil_pitch -= deg_to_rad(5.5)
 			player.notice.emit("¡Impacto de fusil recibido! (-%d HP)" % int(round(amount)))
@@ -3399,9 +3399,9 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 			if player.has_method("_attach_bola_snare_visual"):
 				player._attach_bola_snare_visual(player, 6.0)
 		elif kind in ["melee", "wolf_bite", "bear_bite", "arco", "arco_head", "lanza"]:
-			var is_bite_local := kind.ends_with("_bite")
+			var force_hurt_local := kind.ends_with("_bite") or kind in ["lanza", "arco", "arco_head"]
 			player._spawn_blood_splatter(pos, 0.8)
-			player._play_hit_reaction(kind == "melee", is_bite_local)
+			player._play_hit_reaction(kind == "melee", force_hurt_local)
 		return
 	if not remote_players.has(peer_id):
 		return
@@ -3420,9 +3420,9 @@ func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
 		if rp.has_method("_play_hit_reaction"):
 			rp._play_hit_reaction(false)
 	elif kind in ["melee", "wolf_bite", "bear_bite", "arco", "arco_head", "lanza"]:
-		var is_bite_rp := kind.ends_with("_bite")
+		var force_hurt_rp := kind.ends_with("_bite") or kind in ["lanza", "arco", "arco_head"]
 		rp._spawn_blood_splatter(pos, 0.8)
-		rp._play_hit_reaction(kind == "melee", is_bite_rp)
+		rp._play_hit_reaction(kind == "melee", force_hurt_rp)
 
 func _net_player_condition_audio(peer_id: int, condition: String) -> void:
 	var target: Node = player if net != null and peer_id == net.get_my_id() else remote_players.get(peer_id)
@@ -8775,6 +8775,7 @@ const _HOUSE_SHELL_LAYOUT := [
 # (muros con huecos reales de ventana, suelo, techo y el nodo Door que
 # _net_door_state_changed ya sabe abrir/cerrar), sin mallas ni rng draws.
 func _create_server_structure_colliders() -> void:
+	_create_road_vehicle_colliders()
 	for h in _HOUSE_SHELL_LAYOUT:
 		_create_house(Vector3(float(h[2]), 0.0, float(h[3])), String(h[0]), String(h[1]), float(h[4]), float(h[5]), float(h[6]), true)
 	for b_origin in [Vector3(45.0, 0.0, 120.0), Vector3(-340.0, 0.0, 280.0)]:
@@ -9617,7 +9618,22 @@ func _create_barn_grass(origin: Vector3, half_w: float, half_d: float, ground_y:
 		var c := base_color.lerp(color_var, _world_rng.randf()).darkened(_world_rng.randf_range(0.0, 0.12))
 		_queue_grass_instance(pos, h, r, c)
 
+func _create_road_vehicle_colliders() -> void:
+	# This shell is shared by clients and the headless server. The old road
+	# cars only existed in the visual world, so server projectiles crossed them.
+	for spec in [
+			["JunkCarCollision0", Vector3(9, 0, -30), Vector3(2, 2.0, 4), 70.0],
+			["ScrapBarricadeCarCollision", Vector3(9, 0, 20), Vector3(2, 1.6, 4), -40.0]]:
+		if get_node_or_null(NodePath(spec[0])) != null:
+			continue
+		var pos: Vector3 = spec[1]
+		pos.y = _get_exact_ground_y(pos.x, pos.z)
+		var body := _create_invisible_collision_box_rotated(spec[0], pos, spec[2], spec[3])
+		body.add_to_group("prop_collision")
+		_register_wildlife_blocker(pos, 2.4)
+
 func _create_new_world_props() -> void:
+	_create_road_vehicle_colliders()
 	var space_state := get_world_3d().direct_space_state
 	# Abandoned junk car on the road (angled across road)
 	var car_s := Vector3.ONE * 2.0
@@ -9626,17 +9642,10 @@ func _create_new_world_props() -> void:
 	var car_ground_y := NodeUtils.raycast_ground_y(space_state, car_pos)
 	if _try_instance_external_scene([ABANDONED_JUNK_CAR_MODEL], "JunkCar0", car_pos, car_s, car_rot, true, car_ground_y):
 		var junk_node := get_node_or_null("JunkCar0")
-		var junk_height := 2.0
-		var junk_coll_pos := car_pos
 		if junk_node != null and junk_node is Node3D:
 			var jn := junk_node as Node3D
 			jn.force_update_transform()
-			junk_coll_pos = Vector3(car_pos.x, jn.position.y, car_pos.z)
 			_disable_emission_recursive(jn)
-		_create_invisible_collision_box_rotated("JunkCarCollision0", junk_coll_pos, Vector3(2.0, junk_height, 4.0), float(car_rot.y))
-		var _jc := get_node_or_null("JunkCarCollision0")
-		if _jc != null:
-			_jc.add_to_group("prop_collision")
 	# Scrap barricade car abandoned on the road (different angle)
 	var scrap_s := Vector3.ONE * 0.5
 	var scrap_pos := Vector3(9.0, 0.0, 20.0)
@@ -9645,17 +9654,11 @@ func _create_new_world_props() -> void:
 	var scrap_ok := _try_instance_external_scene([SCRAP_BARRICADE_CAR_MODEL], "ScrapBarricadeCar", scrap_pos, scrap_s, scrap_rot, true, scrap_ground_y)
 	if scrap_ok:
 		var scrap_node := get_node_or_null("ScrapBarricadeCar")
-		var scrap_height := 2.5
 		if scrap_node != null and scrap_node is Node3D:
 			var sn := scrap_node as Node3D
 			sn.force_update_transform()
 			sn.position.y += SCRAP_CAR_Y_CORRECTION
 			_disable_emission_recursive(sn)
-			scrap_height = 1.0
-		_create_invisible_collision_box_rotated("ScrapBarricadeCarCollision", Vector3(scrap_pos.x, scrap_pos.y + 1.885811 + SCRAP_CAR_Y_CORRECTION, scrap_pos.z), Vector3(2.0, scrap_height, 4.0), float(scrap_rot.y))
-		var _sc := get_node_or_null("ScrapBarricadeCarCollision")
-		if _sc != null:
-			_sc.add_to_group("prop_collision")
 	var cont_s := Vector3.ONE * 1.0
 	var cont_positions := [
 		{"pos": Vector3(14.0, 0.0, -50.0), "rot": Vector3(0, 0, 0)},
@@ -12659,6 +12662,18 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 				tracked["color"] = [color.r, color.g, color.b, color.a]
 			_dropped_items.append(tracked)
 
+func _apply_ground_pickup_condition(entry: Dictionary) -> void:
+	var action = world_actions_by_id.get(str(entry.get("id", "")))
+	for key in ["durability", "max_durability"]:
+		if not entry.has(key):
+			continue
+		if is_instance_valid(action):
+			action.set_meta("item_" + key, float(entry[key]))
+		for drop in _dropped_items:
+			if str(drop.get("id", "")) == str(entry.get("id", "")):
+				drop[key] = float(entry[key])
+				break
+
 func _net_world_action_completed(action_id: String, spawns: Array, extra_visual: String, extra_pos: Vector3, sender_id: int = 0) -> bool:
 	# Host: validate the client-originated payload before applying or relaying
 	# — spawn entries must be sane and land near the sender, or arbitrary items
@@ -12769,6 +12784,7 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 						sname, stype, spos,
 						float(spawn.get("weight", 0.1)), int(spawn.get("qty", 1)), float(spawn.get("use", 0.0)), spawn_id
 					)
+			_apply_ground_pickup_condition(spawn)
 	# Create extra visual if specified
 	if extra_visual == "tree_remains":
 		_create_cut_tree_remains(extra_pos)
@@ -22726,8 +22742,13 @@ func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, i
 				var closest := origin + ndir * along
 				if wpos.distance_to(closest) <= 15.0:
 					w.flee_from_gunshot(closest, 18.0)
+	if net != null and net.is_dedicated_server:
+		return
 	var actor = remote_players.get(shooter_id)
-	if not is_instance_valid(actor) or not actor.has_method("_launch_primitive_projectile"):
+	# The reliable shot may arrive before the shooter's lossy avatar snapshot.
+	# Use the local actor's visual factory rather than discarding that projectile.
+	var renderer = actor if is_instance_valid(actor) else player
+	if not is_instance_valid(renderer) or not renderer.has_method("_launch_primitive_projectile"):
 		return
 	# Un arco/lanza que suelta a distancia debe oirse: whoosh posicional en el
 	# tirador (el estampido de fusil ya tiene su propio canal por puppet).
@@ -22744,7 +22765,11 @@ func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, i
 		_primitive_shot_player.volume_db = 2.0
 		_primitive_shot_player.pitch_scale = randf_range(1.15, 1.35) if item_name.begins_with("Flecha") else randf_range(0.9, 1.05)
 		_primitive_shot_player.play()
-	var excluded: Array[RID] = [actor.get_rid()]
-	actor._collect_child_collision_rids(actor, excluded)
+	var excluded: Array[RID] = []
+	if is_instance_valid(actor):
+		excluded.append(actor.get_rid())
+		actor._collect_child_collision_rids(actor, excluded)
+		if not item_name.begins_with("Flecha"):
+			actor.play_action_animation("attack", 0.65)
 	var arrow := item_name.begins_with("Flecha")
-	actor._launch_primitive_projectile(origin, direction, speed, 140.0 if arrow else 65.0, excluded, 0.0, item_name, "ammo_arrow" if arrow else "weapon", 0.0, 0.0, item_name == "Boleadoras", true, wind)
+	renderer._launch_primitive_projectile(origin, direction, speed, 140.0 if arrow else GameConst.THROW_MAX_DISTANCE, excluded, 0.0, item_name, "ammo_arrow" if arrow else "weapon", 0.0, 0.0, item_name == "Boleadoras", true, wind)

@@ -1763,16 +1763,21 @@ func run() -> void:
 			bow_dur = float(it.get("durability", -1.0))
 	check(bow_dur > 0.0 and bow_dur < 100.0, "El arco pierde durabilidad al disparar (%.0f)" % bow_dur)
 	foe_npc.queue_free()
-	# La lanza no se consume al lanzarla, solo pierde durabilidad
+	# Una lanza lanzada sale del inventario: recuperarla exige recogerla.
 	elena_proxy.set_meta("saved_inventory", [
 		{"name": "Lanza", "type": "weapon", "weight": 0.8, "quantity": 1, "use_value": 15.0, "durability": 80.0, "max_durability": 80.0},
 	])
 	var foe_npc2 := Node3D.new()
 	world.add_child(foe_npc2)
 	foe_npc2.global_position = elena_proxy.global_position + Vector3(12.0, 0.0, 0.0)
+	elena["held_item"] = "Lanza"
+	elena["anim"] = "idle"
 	mgr._bot_fire_thrown(elena, foe_npc2, "Lanza", false)
 	check(mgr._bot_item_count(elena_proxy, "Lanza") == 1,
-		"La lanza no se consume al lanzarla (se recupera como en el juego)")
+		"La lanza sigue en la mano durante la preparacion")
+	await create_timer(PlayerController.THROW_RELEASE_DELAY + 0.1).timeout
+	check(mgr._bot_item_count(elena_proxy, "Lanza") == 0,
+		"La lanza sale del inventario al soltarla; no puede lanzarla de nuevo sin recogerla")
 	foe_npc2.queue_free()
 
 	# --- 20) Crafteo: mismos RECIPES que un jugador ---

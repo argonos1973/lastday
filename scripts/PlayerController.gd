@@ -669,6 +669,7 @@ var _unwell_audio_player = null
 var _whistle_audio_player = null
 var _bite_audio_player: Node = null
 var _last_bite_audio_msec := -10000
+var _last_primitive_hurt_audio_msec := -999999
 var _pain_sound_timer := 0.0
 var _critical_sound_timer := 0.0
 var _was_critical := false
@@ -13916,11 +13917,11 @@ func apply_damage(amount: float, cause: String = "") -> void:
 		# Un zarpazo o golpe te quita la mira como ya quita la comida, la pesca
 		# o la recarga: sin esto, morder a quien apunta al depredador (lo mas
 		# comun en combate) jamas mostraba la reaccion de impacto.
-		if _is_aiming and (cause == "melee" or cause.ends_with("_bite")):
+		if _is_aiming and (cause == "melee" or cause.ends_with("_bite") or cause in ["lanza", "arco", "arco_head"]):
 			_cancel_aim()
 		# En primera persona la animacion 3P propia es invisible: la sacudida
 		# de camara es la "animacion" que el jugador ve al ser mordido.
-		if cause == "melee" or cause.ends_with("_bite"):
+		if cause == "melee" or cause.ends_with("_bite") or cause in ["lanza", "arco", "arco_head"]:
 			_recoil_pitch -= deg_to_rad(5.0 if cause == "bear_bite" else 3.5)
 			_recoil_yaw += deg_to_rad(randf_range(-3.5, 3.5))
 		if is_performing_interruptible_action():
@@ -15698,7 +15699,7 @@ func _finish_aimed_throw() -> void:
 		inventory.remove_index(idx, 1)
 	_sync_held_item()
 	var is_bola := item_type == "weapon_bola" or item_name == "Boleadoras"
-	var proj_speed := 32.0 if is_bola else 38.0
+	var proj_speed := GameConst.BOLA_THROW_SPEED if is_bola else GameConst.SPEAR_THROW_SPEED
 	var base_dmg := 35.0 if is_bola else (110.0 if item_name == "Palo afilado" else (165.0 if item_name == "Lanza" else 210.0))
 	var aim_target := _throw_release_target
 	var aim_dist := minf(release_origin.distance_to(aim_target), 32.0)
@@ -15711,7 +15712,7 @@ func _finish_aimed_throw() -> void:
 	var throw_dir := (aim_target - release_origin).normalized()
 	if throw_dir.length_squared() < 0.001:
 		throw_dir = -camera.global_basis.z
-	_launch_primitive_projectile(release_origin, throw_dir, proj_speed, 65.0, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
+	_launch_primitive_projectile(release_origin, throw_dir, proj_speed, GameConst.THROW_MAX_DISTANCE, exclude_arr, base_dmg, item_name, item_type, item_weight, item_use, is_bola)
 	_play_primitive_release_sound(false)
 	notice.emit("Lanzas %s." % item_name)
 	var main := get_tree().current_scene
@@ -15801,6 +15802,11 @@ func _primitive_projectile_drag(item_type: String, item_name: String) -> float:
 			return 0.40
 	return 0.30 if item_type == "ammo_arrow" else 0.24
 
+static func spear_actor_damage(headshot: bool, speed_ratio: float) -> float:
+	# Impact energy falls with v². A distant, spent shaft cannot retain
+	# the point-blank headshot damage merely because it touched a head.
+	return (120.0 if headshot else 55.0) * pow(clampf(speed_ratio, 0.0, 1.0), 2.0)
+
 func _build_arrow_or_spear_visual(item_name: String, item_type: String, for_flight: bool = false) -> Node3D:
 	var wrapper := Node3D.new()
 	wrapper.name = "ProjectileVisual"
@@ -15854,6 +15860,7 @@ func _launch_primitive_projectile(origin: Vector3, direction: Vector3, speed: fl
 	if direction.length_squared() < 0.001 or get_tree().current_scene == null:
 		return
 	var projectile := preload("res://scripts/RifleProjectile.gd").new()
+	projectile.shooter = self
 	projectile.velocity = direction.normalized() * speed
 	projectile.wind_velocity = remote_wind if visual_only else _wind_dir * _wind_strength * 0.35
 	projectile.max_distance = max_dist
@@ -15926,6 +15933,8 @@ func _on_primitive_projectile_impact(collider, hit_pos: Vector3, hit_dist: float
 		if target_node.is_in_group("remote_player") or target_node.is_in_group("net_player_proxy") or target_node.is_in_group("ai_survivor_bot"):
 			var is_arrow := item_name.begins_with("Flecha")
 			var pvp_dmg := (18.0 if is_bola else (120.0 if is_headshot else 55.0))
+			if not is_bola and not is_arrow:
+				pvp_dmg = spear_actor_damage(is_headshot, energy_mult)
 			var wtag := "bola" if is_bola else (("arco_head" if is_headshot else "arco") if is_arrow else "lanza")
 			_apply_rifle_target_damage(target_node, pvp_dmg, wtag)
 			if not is_bola:
@@ -16245,6 +16254,12 @@ func _play_damage_audio(cause: String) -> void:
 	if cause in ["rifle", "m4"]:
 		_play_shot_received_sound()
 		return
+	if cause in ["lanza", "arco", "arco_head", "bola"]:
+		var now := Time.get_ticks_msec()
+		if now - _last_primitive_hurt_audio_msec < 100:
+			return
+		_last_primitive_hurt_audio_msec = now
+		_pain_sound_timer = 0.0
 	if cause.ends_with("_bite"):
 		# A confirmed bite must carry both the teeth impact and the victim's
 		# voice, even during the generic fall/shot pain cooldown. Deduplicate

@@ -161,6 +161,11 @@ func _refresh_proxy_candidates() -> void:
 		for n in tree.get_nodes_in_group(grp):
 			if not (n is Node3D) or n == shooter or not is_instance_valid(n):
 				continue
+			# A listen host can have both a puppet and its authoritative proxy.
+			# Excluding the puppet RID alone must not hit its invisible twin.
+			if is_instance_valid(shooter) and int(shooter.get_meta("peer_id", 0)) > 0 \
+					and int(n.get_meta("peer_id", 0)) == int(shooter.get_meta("peer_id", 0)):
+				continue
 			var nid := int(n.get_instance_id())
 			if seen.has(nid):
 				continue
@@ -173,9 +178,13 @@ func _refresh_proxy_candidates() -> void:
 			var top := PROXY_HIT_TOP_STAND
 			if n.get("is_prone") == true or bool(n.get_meta("prone", false)) or bool(n.get_meta("sleeping", false)):
 				top = PROXY_HIT_TOP_LYING
-			elif bool(n.get_meta("crouching", false)) or bool(n.get_meta("sitting", false)) or bool(n.get_meta("saved_sitting", false)):
+			elif n.get("is_crouching") == true or n.get("is_sitting") == true \
+					or bool(n.get_meta("crouching", false)) or bool(n.get_meta("sitting", false)) or bool(n.get_meta("saved_sitting", false)):
 				top = PROXY_HIT_TOP_LOW
-			_proxy_candidates.append([n, base, base + Vector3(0.0, 0.10, 0.0), base + Vector3(0.0, top, 0.0), top])
+			# top is the OUTSIDE of the capsule, not the end of its axis.
+			# Extending an axis to top added another 36 cm of invisible head.
+			var radius := minf(PROXY_HIT_RADIUS, top * 0.5)
+			_proxy_candidates.append([n, base, base + Vector3.UP * radius, base + Vector3.UP * (top - radius), top, radius])
 
 func _proxy_segment_hit(from: Vector3, to: Vector3) -> Dictionary:
 	var best := {}
@@ -188,7 +197,7 @@ func _proxy_segment_hit(from: Vector3, to: Vector3) -> Dictionary:
 		if base.distance_to(from) - top > best_from:
 			continue
 		var pair := _seg_seg_closest(from, to, cand[2], cand[3])
-		if (pair[0] as Vector3).distance_to(pair[1]) > PROXY_HIT_RADIUS:
+		if (pair[0] as Vector3).distance_to(pair[1]) > float(cand[5]):
 			continue
 		var d_from := from.distance_to(pair[0])
 		if d_from < best_from:

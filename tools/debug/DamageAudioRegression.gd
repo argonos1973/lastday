@@ -28,6 +28,15 @@ func run() -> void:
 	# existir para que ningun codigo pueda volver a cargarlo por error.
 	check(not ResourceLoader.exists("res://assets/audio/mordedura.mp3"),
 		"mordedura.mp3 (el bong) no existe en el proyecto")
+	# These paths used to be synthetic tones. They now contain short edits
+	# of the supplied hurt voice; check the imported duration, not just file
+	# presence (WAV import uses QOA compression, so its bytes differ from PCM).
+	var voice_durations := {"pain1": 0.56, "pain2": 0.48, "pain3": 0.50}
+	for voice in voice_durations:
+		var path := "res://assets/external/audio/downloaded/%s.wav" % voice
+		var sample := PlayerController._load_audio_stream(path) as AudioStreamWAV
+		check(sample != null and sample.get_length() >= 0.4 and sample.get_length() <= 0.6
+			and absf(sample.get_length() - float(voice_durations[voice])) < 0.015, voice+" uses the new recorded voice, with no stale imported tone")
 
 	var shot_scene: PackedScene = load("res://assets/animations/RecibirDisparo.glb")
 	check(shot_scene != null, "RecibirDisparo.glb loads as PackedScene")
@@ -147,6 +156,14 @@ func run() -> void:
 	pc_bite._play_hit_reaction(false, true)
 	check(pc_bite._impact_audio_player == null or not pc_bite._impact_audio_player.playing,
 		"mordedura en víctima no reproduce sonido de puñetazo")
+	pc_bite._pain_sound_timer = 1.5
+	pc_bite._play_damage_audio("lanza")
+	var first_hurt: int = pc_bite._last_primitive_hurt_audio_msec
+	check(pc_bite._pain_audio_player != null and pc_bite._pain_audio_player.playing,
+		"impacto de lanza confirma voz de dolor aunque haya cooldown")
+	pc_bite._play_damage_audio("lanza")
+	check(pc_bite._last_primitive_hurt_audio_msec == first_hurt,
+		"evento de presentacion duplicado no reinicia el grito")
 	# Flechas fuera de la cabeza nunca bajan de 1 HP; en la cabeza sí matan
 	pc_bite.stats.health = 25.0
 	pc_bite.apply_damage(55.0, "arco")

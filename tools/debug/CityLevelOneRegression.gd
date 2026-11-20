@@ -10,7 +10,7 @@ func _initialize():call_deferred("run")
 func run():
  var world:=World.new();root.add_child(world);current_scene=world
  world.river_segments_data=world._default_river_segments()
- var district:=preload("res://scripts/CityExpansion.gd").create(world,true)
+ var district:=await preload("res://scripts/CityExpansion.gd").create(world,true)
  check(district.buildings.size()==preload("res://scripts/CityBlock.gd").BUILDINGS.size(),"all resident houses")
  var ids:Dictionary={}
  for i in range(district.buildings.size()):
@@ -26,8 +26,14 @@ func run():
  for pos in [Vector3(73,0,720),Vector3(41,0,776),Vector3(9,0,810)]:
   check(world.CityExpansion.on_road(pos),"secondary road query")
   check(world.get_river_depth_at(pos)<=0,"new street is dry")
+ await physics_frame
+ await physics_frame
  for i in range(8):
   check(world.has_node("DistrictParkedCar%dCollision"%i),"server parked car collision")
+  var car:Node3D=world.get_node("DistrictParkedCar%dCollision"%i)
+  var ray:=PhysicsRayQueryParameters3D.create(car.global_position+Vector3(-3,.65,0),car.global_position+Vector3(3,.65,0),5)
+  var impact:=world.get_world_3d().direct_space_state.intersect_ray(ray)
+  check(not impact.is_empty() and impact.collider==car,"parked car protects a crouched torso (no floating collision)")
   var car_pos:Vector3=preload("res://scripts/CityStreetscape.gd").CAR_POSITIONS[i]
   var nearest_lane:=minf(absf(car_pos.x),absf(car_pos.x-64))
   check(nearest_lane-1.0>6.0,"parked car leaves pavement clear")

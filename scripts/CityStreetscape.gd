@@ -75,7 +75,7 @@ static func create(world: Node3D, server: bool) -> void:
   var factor: float=2.0 if i%2==0 else .5
   var yaw: float=0.0 if i%2==0 else 180.0
   # Both hosts and clients receive the same solid footprint.
-  world._create_invisible_collision_box_rotated(name+"Collision",pos+Vector3(0,.8,0),Vector3(2,1.6,4.2),yaw)
+  world._create_invisible_collision_box_rotated(name+"Collision",pos,Vector3(2,1.6,4.2),yaw)
   world._register_wildlife_blocker(pos,2.4)
   if not server:
    world._try_instance_external_scene(paths,name,pos,Vector3.ONE*factor,Vector3(0,yaw,0),true,0.0)
