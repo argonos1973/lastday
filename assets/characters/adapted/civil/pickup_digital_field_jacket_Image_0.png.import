@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://drahmybk46avr"
-path="res://.godot/imported/pickup_digital_field_jacket_Image_0.png-1b202780444c6f4eda3e249394235102.ctex"
+path.s3tc="res://.godot/imported/pickup_digital_field_jacket_Image_0.png-1b202780444c6f4eda3e249394235102.s3tc.ctex"
+path.etc2="res://.godot/imported/pickup_digital_field_jacket_Image_0.png-1b202780444c6f4eda3e249394235102.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "e692f9f8b56367fbe5e5ec3551dc3226"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/civil/pickup_digital_field_jacket_Image_0.png"
-dest_files=["res://.godot/imported/pickup_digital_field_jacket_Image_0.png-1b202780444c6f4eda3e249394235102.ctex"]
+dest_files=["res://.godot/imported/pickup_digital_field_jacket_Image_0.png-1b202780444c6f4eda3e249394235102.s3tc.ctex", "res://.godot/imported/pickup_digital_field_jacket_Image_0.png-1b202780444c6f4eda3e249394235102.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

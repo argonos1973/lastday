@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b5wc7enn5edd3"
-path="res://.godot/imported/building_2_ceiling_ruin.png-fae5852aa01eb47f86312d091d1b7458.ctex"
+path.s3tc="res://.godot/imported/building_2_ceiling_ruin.png-fae5852aa01eb47f86312d091d1b7458.s3tc.ctex"
+path.etc2="res://.godot/imported/building_2_ceiling_ruin.png-fae5852aa01eb47f86312d091d1b7458.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "9cbe84679f07d14a264891983f000289"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/building_2_ceiling_ruin.png"
-dest_files=["res://.godot/imported/building_2_ceiling_ruin.png-fae5852aa01eb47f86312d091d1b7458.ctex"]
+dest_files=["res://.godot/imported/building_2_ceiling_ruin.png-fae5852aa01eb47f86312d091d1b7458.s3tc.ctex", "res://.godot/imported/building_2_ceiling_ruin.png-fae5852aa01eb47f86312d091d1b7458.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dhhm0n8hg757l"
-path="res://.godot/imported/pickup_military_boots_garment_mboots_albedo.png-1bef19f2e0fda668b2c8a59dc3712d6c.ctex"
+path.s3tc="res://.godot/imported/pickup_military_boots_garment_mboots_albedo.png-1bef19f2e0fda668b2c8a59dc3712d6c.s3tc.ctex"
+path.etc2="res://.godot/imported/pickup_military_boots_garment_mboots_albedo.png-1bef19f2e0fda668b2c8a59dc3712d6c.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "f1525b5d6e598d01e53fdcf534b6991f"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/pickup_military_boots_garment_mboots_albedo.png"
-dest_files=["res://.godot/imported/pickup_military_boots_garment_mboots_albedo.png-1bef19f2e0fda668b2c8a59dc3712d6c.ctex"]
+dest_files=["res://.godot/imported/pickup_military_boots_garment_mboots_albedo.png-1bef19f2e0fda668b2c8a59dc3712d6c.s3tc.ctex", "res://.godot/imported/pickup_military_boots_garment_mboots_albedo.png-1bef19f2e0fda668b2c8a59dc3712d6c.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

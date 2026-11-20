@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bd1a5bdgy5jeh"
-path="res://.godot/imported/lake_boulder_1_lake_granite_wet.jpg-6bad6a328946094fae126adb2c40ef2f.ctex"
+path.s3tc="res://.godot/imported/lake_boulder_1_lake_granite_wet.jpg-6bad6a328946094fae126adb2c40ef2f.s3tc.ctex"
+path.etc2="res://.godot/imported/lake_boulder_1_lake_granite_wet.jpg-6bad6a328946094fae126adb2c40ef2f.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "f5214a57f9714c7c8ea3a8ad5f06aa66"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/lake/lake_boulder_1_lake_granite_wet.jpg"
-dest_files=["res://.godot/imported/lake_boulder_1_lake_granite_wet.jpg-6bad6a328946094fae126adb2c40ef2f.ctex"]
+dest_files=["res://.godot/imported/lake_boulder_1_lake_granite_wet.jpg-6bad6a328946094fae126adb2c40ef2f.s3tc.ctex", "res://.godot/imported/lake_boulder_1_lake_granite_wet.jpg-6bad6a328946094fae126adb2c40ef2f.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

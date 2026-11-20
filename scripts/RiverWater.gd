@@ -74,6 +74,8 @@ func _process(delta: float) -> void:
 		var camera := get_viewport().get_camera_3d()
 		var lighting_changed := absf(_night_amount - _captured_night_amount) >= 0.1 or absf(_cloud_darkness - _captured_cloud_darkness) >= 0.1
 		if (_reflection_dirty or (_reflection_timer > 30.0 and lighting_changed)) and Time.get_ticks_msec() >= _next_capture_msec and camera != null and global_position.distance_to(camera.global_position) < _reflection.max_distance:
+			if CombatProf.enabled:
+				CombatProf.event("water.reflection_capture")
 			_reflection_timer = 0.0
 			_reflection_dirty = false
 			_captured_night_amount = _night_amount

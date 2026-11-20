@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dktfeimp8jl8i"
-path="res://.godot/imported/military_comms_tower_GM_concrete_rib_Normal.png-4585922ebe39880c40b84fb1d3bc874c.ctex"
+path.s3tc="res://.godot/imported/military_comms_tower_GM_concrete_rib_Normal.png-4585922ebe39880c40b84fb1d3bc874c.s3tc.ctex"
+path.etc2="res://.godot/imported/military_comms_tower_GM_concrete_rib_Normal.png-4585922ebe39880c40b84fb1d3bc874c.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "5afd6ee605e07aec2eae645ed98f8617"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/military_comms_tower_GM_concrete_rib_Normal.png"
-dest_files=["res://.godot/imported/military_comms_tower_GM_concrete_rib_Normal.png-4585922ebe39880c40b84fb1d3bc874c.ctex"]
+dest_files=["res://.godot/imported/military_comms_tower_GM_concrete_rib_Normal.png-4585922ebe39880c40b84fb1d3bc874c.s3tc.ctex", "res://.godot/imported/military_comms_tower_GM_concrete_rib_Normal.png-4585922ebe39880c40b84fb1d3bc874c.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

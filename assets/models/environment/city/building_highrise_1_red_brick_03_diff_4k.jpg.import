@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://07x50mu31o5u"
-path="res://.godot/imported/building_highrise_1_red_brick_03_diff_4k.jpg-f97fcc9e53497ed2683a48f9015ea2ac.ctex"
+path.s3tc="res://.godot/imported/building_highrise_1_red_brick_03_diff_4k.jpg-f97fcc9e53497ed2683a48f9015ea2ac.s3tc.ctex"
+path.etc2="res://.godot/imported/building_highrise_1_red_brick_03_diff_4k.jpg-f97fcc9e53497ed2683a48f9015ea2ac.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "4299c5c75b3cde7ee1339b9ce8ed9b60"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/building_highrise_1_red_brick_03_diff_4k.jpg"
-dest_files=["res://.godot/imported/building_highrise_1_red_brick_03_diff_4k.jpg-f97fcc9e53497ed2683a48f9015ea2ac.ctex"]
+dest_files=["res://.godot/imported/building_highrise_1_red_brick_03_diff_4k.jpg-f97fcc9e53497ed2683a48f9015ea2ac.s3tc.ctex", "res://.godot/imported/building_highrise_1_red_brick_03_diff_4k.jpg-f97fcc9e53497ed2683a48f9015ea2ac.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

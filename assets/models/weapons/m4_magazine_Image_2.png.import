@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c0u5pdd7iw847"
-path="res://.godot/imported/m4_magazine_Image_2.png-019d8fc0849f89b211f9f96137687631.ctex"
+path.s3tc="res://.godot/imported/m4_magazine_Image_2.png-019d8fc0849f89b211f9f96137687631.s3tc.ctex"
+path.etc2="res://.godot/imported/m4_magazine_Image_2.png-019d8fc0849f89b211f9f96137687631.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "9e07dbbd2ad7d50ca0ffa3e995a5d64f"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/weapons/m4_magazine_Image_2.png"
-dest_files=["res://.godot/imported/m4_magazine_Image_2.png-019d8fc0849f89b211f9f96137687631.ctex"]
+dest_files=["res://.godot/imported/m4_magazine_Image_2.png-019d8fc0849f89b211f9f96137687631.s3tc.ctex", "res://.godot/imported/m4_magazine_Image_2.png-019d8fc0849f89b211f9f96137687631.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

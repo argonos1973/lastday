@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dtoybkhln5n3"
-path="res://.godot/imported/watchtower_camo_net_camo_net_camo_net_normal.png-e09b2a0ef1d700be309d2aeac510c1d2.ctex"
+path.s3tc="res://.godot/imported/watchtower_camo_net_camo_net_camo_net_normal.png-e09b2a0ef1d700be309d2aeac510c1d2.s3tc.ctex"
+path.etc2="res://.godot/imported/watchtower_camo_net_camo_net_camo_net_normal.png-e09b2a0ef1d700be309d2aeac510c1d2.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "b8b55a941d6fdf8c3c07d23d923e5537"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/watchtower_camo_net_camo_net_camo_net_normal.png"
-dest_files=["res://.godot/imported/watchtower_camo_net_camo_net_camo_net_normal.png-e09b2a0ef1d700be309d2aeac510c1d2.ctex"]
+dest_files=["res://.godot/imported/watchtower_camo_net_camo_net_camo_net_normal.png-e09b2a0ef1d700be309d2aeac510c1d2.s3tc.ctex", "res://.godot/imported/watchtower_camo_net_camo_net_camo_net_normal.png-e09b2a0ef1d700be309d2aeac510c1d2.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

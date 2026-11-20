@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cyh34t0jmmfjb"
-path="res://.godot/imported/clock_tower_ceiling_ruin.png-12d71ad6257cd52d5e9f8730ceab2578.ctex"
+path.s3tc="res://.godot/imported/clock_tower_ceiling_ruin.png-12d71ad6257cd52d5e9f8730ceab2578.s3tc.ctex"
+path.etc2="res://.godot/imported/clock_tower_ceiling_ruin.png-12d71ad6257cd52d5e9f8730ceab2578.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "9cbe84679f07d14a264891983f000289"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/clock_tower_ceiling_ruin.png"
-dest_files=["res://.godot/imported/clock_tower_ceiling_ruin.png-12d71ad6257cd52d5e9f8730ceab2578.ctex"]
+dest_files=["res://.godot/imported/clock_tower_ceiling_ruin.png-12d71ad6257cd52d5e9f8730ceab2578.s3tc.ctex", "res://.godot/imported/clock_tower_ceiling_ruin.png-12d71ad6257cd52d5e9f8730ceab2578.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

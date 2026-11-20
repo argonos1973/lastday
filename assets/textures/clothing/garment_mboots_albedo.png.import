@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://clq3iea414nky"
-path="res://.godot/imported/garment_mboots_albedo.png-ceed94c82c1020a9d60e76e39f063470.ctex"
+path.s3tc="res://.godot/imported/garment_mboots_albedo.png-ceed94c82c1020a9d60e76e39f063470.s3tc.ctex"
+path.etc2="res://.godot/imported/garment_mboots_albedo.png-ceed94c82c1020a9d60e76e39f063470.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/clothing/garment_mboots_albedo.png"
-dest_files=["res://.godot/imported/garment_mboots_albedo.png-ceed94c82c1020a9d60e76e39f063470.ctex"]
+dest_files=["res://.godot/imported/garment_mboots_albedo.png-ceed94c82c1020a9d60e76e39f063470.s3tc.ctex", "res://.godot/imported/garment_mboots_albedo.png-ceed94c82c1020a9d60e76e39f063470.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

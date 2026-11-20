@@ -88,6 +88,10 @@ func update_observer(position_world: Vector3) -> void:
 func load_visual(entry: Dictionary) -> void:
  if not is_instance_valid(entry.anchor) or is_instance_valid(entry.visual):
   return
+ var started := Time.get_ticks_usec() if CombatProf.enabled else 0
  var visual: Node3D = entry.scene.instantiate()
  entry.anchor.add_child(visual)
  entry.visual = visual
+ if CombatProf.enabled:
+  CombatProf.event("city.interior_load")
+  CombatProf.mark("city.interior_load", started)

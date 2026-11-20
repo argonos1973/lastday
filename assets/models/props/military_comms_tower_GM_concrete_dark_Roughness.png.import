@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bf34qpc0u85gb"
-path="res://.godot/imported/military_comms_tower_GM_concrete_dark_Roughness.png-d76ab89be3b0c28acdbda7d7ba6ec173.ctex"
+path.s3tc="res://.godot/imported/military_comms_tower_GM_concrete_dark_Roughness.png-d76ab89be3b0c28acdbda7d7ba6ec173.s3tc.ctex"
+path.etc2="res://.godot/imported/military_comms_tower_GM_concrete_dark_Roughness.png-d76ab89be3b0c28acdbda7d7ba6ec173.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "ea0af5d89ecc1cd2ac18fc042c09a6e1"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/military_comms_tower_GM_concrete_dark_Roughness.png"
-dest_files=["res://.godot/imported/military_comms_tower_GM_concrete_dark_Roughness.png-d76ab89be3b0c28acdbda7d7ba6ec173.ctex"]
+dest_files=["res://.godot/imported/military_comms_tower_GM_concrete_dark_Roughness.png-d76ab89be3b0c28acdbda7d7ba6ec173.s3tc.ctex", "res://.godot/imported/military_comms_tower_GM_concrete_dark_Roughness.png-d76ab89be3b0c28acdbda7d7ba6ec173.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -1,6 +1,11 @@
 extends SceneTree
 class Cover extends Node3D:
 	var pending := [0,1,2,3,4,5,6,7]
+	var focus := Vector3.INF
+	var focus_updates := 0
+	func update_focus(position_world: Vector3, _detail: float):
+		focus = position_world
+		focus_updates += 1
 class Player extends Node3D:
 	var third_person_model := Node3D.new()
 	var third_person_ground_offset := 0.0
@@ -19,8 +24,11 @@ class Net extends Node:
 class World extends "res://scripts/Main.gd":
 	func _ready(): set_process(false); set_physics_process(false)
 	func _exit_tree(): pass
+	func _world_entry_render_positions(original_position: Vector3) -> Array[Vector3]:
+		return [Vector3(20, 2, 20), original_position]
 	func _update_near_ground_cover():
 		if not _near_ground_cover.pending.is_empty(): _near_ground_cover.pending.pop_front()
+	func update_cover_real(): super._update_near_ground_cover()
 func _initialize(): call_deferred("run")
 func run():
 	var world := World.new(); root.add_child(world); current_scene = world
@@ -58,21 +66,46 @@ func run():
 	var original_view := camera.global_transform
 	var original_player: Transform3D = world.player.transform
 	var directions := {}
+	var positions := {}
 	var view_settings := [true]
 	var observe_draw := func():
 		var active := root.get_camera_3d()
 		if active != null and active != camera:
 			directions[active.global_basis.z.snapped(Vector3.ONE * .001)] = true
-			view_settings[0] = view_settings[0] and active.fov == camera.fov and active.cull_mask == camera.cull_mask and active.global_position.is_equal_approx(camera.global_position)
+			positions[active.global_position] = true
+			view_settings[0] = view_settings[0] and active.fov == camera.fov and active.cull_mask == camera.cull_mask and world.player.transform.is_equal_approx(original_player)
 	RenderingServer.frame_post_draw.connect(observe_draw)
 	await world._prepare_world_entry_render()
 	RenderingServer.frame_post_draw.disconnect(observe_draw)
-	if DisplayServer.get_name() != "headless" and (directions.size() != 8 or not view_settings[0]):
-		errors += 1;push_error("Entry must render all eight directions with the real view settings")
+	if DisplayServer.get_name() != "headless" and (directions.size() != 8 or positions.size() != 2 or not positions.has(original_view.origin) or not view_settings[0]):
+		errors += 1;push_error("Entry must render distant views and spawn in eight directions without moving the player")
 	if root.get_camera_3d() != camera or not camera.global_transform.is_equal_approx(original_view) or not world.player.transform.is_equal_approx(original_player):
 		errors += 1;push_error("Render warmup must restore the camera without moving the player or changing their view")
 	if world.get_node_or_null("EntryRenderWarmup") != null:
 		errors += 1;push_error("Render warmup must release its temporary camera")
+	var grass := MultiMeshInstance3D.new()
+	world.add_child(grass)
+	world._grass_batch_nodes.append(grass)
+	world.update_cover_real()
+	var cover = world._near_ground_cover
+	if cover.focus != world.player.global_position:
+		errors += 1;push_error("Normal camera anchors ground cover to the player")
+	camera.global_position = Vector3(-7,3,0)
+	world.update_cover_real()
+	if cover.focus != world.player.global_position:
+		errors += 1;push_error("Orbiting the camera must not move ground-cover focus")
+	camera.global_position = Vector3(100,30,100)
+	world.update_cover_real()
+	if cover.focus != camera.global_position:
+		errors += 1;push_error("Detached views still request ground cover at the camera")
+	var updates: int = cover.focus_updates
+	world._entry_render_focus = Vector3.ONE
+	world.update_cover_real()
+	if cover.focus_updates != updates:
+		errors += 1;push_error("Render preparation must not rebuild distant ground cover")
+	world._entry_render_focus = Vector3.INF
+	camera.global_transform = original_view
+	world._grass_batch_nodes.clear()
 	world._near_ground_cover.pending=[1,2,3]
 	world._scene_quitting=true
 	await world._prepare_world_entry_details()

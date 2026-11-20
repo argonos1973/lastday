@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c8g1ns1vmerqh"
-path="res://.godot/imported/gas_stove_Image_1.png-451b7472b9300c8cbf9e04d7be8cf4b5.ctex"
+path.s3tc="res://.godot/imported/gas_stove_Image_1.png-451b7472b9300c8cbf9e04d7be8cf4b5.s3tc.ctex"
+path.etc2="res://.godot/imported/gas_stove_Image_1.png-451b7472b9300c8cbf9e04d7be8cf4b5.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "7b5902b8794ee3aa55b769153bcbaebc"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/interior_kit/gas_stove_Image_1.png"
-dest_files=["res://.godot/imported/gas_stove_Image_1.png-451b7472b9300c8cbf9e04d7be8cf4b5.ctex"]
+dest_files=["res://.godot/imported/gas_stove_Image_1.png-451b7472b9300c8cbf9e04d7be8cf4b5.s3tc.ctex", "res://.godot/imported/gas_stove_Image_1.png-451b7472b9300c8cbf9e04d7be8cf4b5.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

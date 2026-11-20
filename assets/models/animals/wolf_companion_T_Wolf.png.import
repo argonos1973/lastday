@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://clbcfkccg0mrj"
-path="res://.godot/imported/wolf_companion_T_Wolf.png-7dac4b101776723b2fecb75d29d50fb0.ctex"
+path.s3tc="res://.godot/imported/wolf_companion_T_Wolf.png-7dac4b101776723b2fecb75d29d50fb0.s3tc.ctex"
+path.etc2="res://.godot/imported/wolf_companion_T_Wolf.png-7dac4b101776723b2fecb75d29d50fb0.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "819dbcd5e1b85789c0c00ec4a1710a89"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/animals/wolf_companion_T_Wolf.png"
-dest_files=["res://.godot/imported/wolf_companion_T_Wolf.png-7dac4b101776723b2fecb75d29d50fb0.ctex"]
+dest_files=["res://.godot/imported/wolf_companion_T_Wolf.png-7dac4b101776723b2fecb75d29d50fb0.s3tc.ctex", "res://.godot/imported/wolf_companion_T_Wolf.png-7dac4b101776723b2fecb75d29d50fb0.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

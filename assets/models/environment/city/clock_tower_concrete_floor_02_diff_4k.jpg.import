@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dygo7ta34ubao"
-path="res://.godot/imported/clock_tower_concrete_floor_02_diff_4k.jpg-7ab4492aaf3a44d7c49c88c4148d4bbb.ctex"
+path.s3tc="res://.godot/imported/clock_tower_concrete_floor_02_diff_4k.jpg-7ab4492aaf3a44d7c49c88c4148d4bbb.s3tc.ctex"
+path.etc2="res://.godot/imported/clock_tower_concrete_floor_02_diff_4k.jpg-7ab4492aaf3a44d7c49c88c4148d4bbb.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "86009a1147538047e7828152136c3579"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/clock_tower_concrete_floor_02_diff_4k.jpg"
-dest_files=["res://.godot/imported/clock_tower_concrete_floor_02_diff_4k.jpg-7ab4492aaf3a44d7c49c88c4148d4bbb.ctex"]
+dest_files=["res://.godot/imported/clock_tower_concrete_floor_02_diff_4k.jpg-7ab4492aaf3a44d7c49c88c4148d4bbb.s3tc.ctex", "res://.godot/imported/clock_tower_concrete_floor_02_diff_4k.jpg-7ab4492aaf3a44d7c49c88c4148d4bbb.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

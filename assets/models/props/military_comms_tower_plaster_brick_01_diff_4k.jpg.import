@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c4ru88xuvd84p"
-path="res://.godot/imported/military_comms_tower_plaster_brick_01_diff_4k.jpg-0a938c1e2704ca31d29a678a74c46171.ctex"
+path.s3tc="res://.godot/imported/military_comms_tower_plaster_brick_01_diff_4k.jpg-0a938c1e2704ca31d29a678a74c46171.s3tc.ctex"
+path.etc2="res://.godot/imported/military_comms_tower_plaster_brick_01_diff_4k.jpg-0a938c1e2704ca31d29a678a74c46171.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "409ab9a9be3381130486964e9634307a"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/military_comms_tower_plaster_brick_01_diff_4k.jpg"
-dest_files=["res://.godot/imported/military_comms_tower_plaster_brick_01_diff_4k.jpg-0a938c1e2704ca31d29a678a74c46171.ctex"]
+dest_files=["res://.godot/imported/military_comms_tower_plaster_brick_01_diff_4k.jpg-0a938c1e2704ca31d29a678a74c46171.s3tc.ctex", "res://.godot/imported/military_comms_tower_plaster_brick_01_diff_4k.jpg-0a938c1e2704ca31d29a678a74c46171.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

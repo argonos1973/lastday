@@ -4175,7 +4175,9 @@ func _physics_process_impl(delta: float) -> void:
 		if _stats_emit_timer >= 0.25:
 			_stats_emit_timer = 0.0
 			stats.changed.emit()
+	var traversal_started := Time.get_ticks_usec() if CombatProf.enabled else 0
 	_update_water_state(delta)
+	if CombatProf.enabled: CombatProf.mark("player.water_state", traversal_started)
 	if is_in_water:
 		speed = crouch_speed if is_crouching else walk_speed
 		speed *= lerp(0.72, 0.48, _water_depth)
@@ -4235,12 +4237,16 @@ func _physics_process_impl(delta: float) -> void:
 		velocity.y = 0.0
 
 	_update_barefoot(delta)
+	traversal_started = Time.get_ticks_usec() if CombatProf.enabled else 0
 	_update_walk_motion(delta, input_dir.length())
+	if CombatProf.enabled: CombatProf.mark("player.walk_camera", traversal_started)
 	_update_rod_visual_overlay()
 	_interaction_prompt_timer += delta
 	if _interaction_prompt_timer >= 0.1:
 		_interaction_prompt_timer = 0.0
+		traversal_started = Time.get_ticks_usec() if CombatProf.enabled else 0
 		_update_interaction_prompt()
+		if CombatProf.enabled: CombatProf.mark("player.interaction_prompt", traversal_started)
 	_update_flashlight(delta)
 	_update_torch(delta)
 	_update_backpack_socket()

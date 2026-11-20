@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bp8puem2lmxq4"
-path="res://.godot/imported/military_comms_tower_GM_dish_white_Normal.png-40152cadb149203e55ff1ad96a23ba03.ctex"
+path.s3tc="res://.godot/imported/military_comms_tower_GM_dish_white_Normal.png-40152cadb149203e55ff1ad96a23ba03.s3tc.ctex"
+path.etc2="res://.godot/imported/military_comms_tower_GM_dish_white_Normal.png-40152cadb149203e55ff1ad96a23ba03.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "3869436bb2b36f7aeb99cc5c09a2339e"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/military_comms_tower_GM_dish_white_Normal.png"
-dest_files=["res://.godot/imported/military_comms_tower_GM_dish_white_Normal.png-40152cadb149203e55ff1ad96a23ba03.ctex"]
+dest_files=["res://.godot/imported/military_comms_tower_GM_dish_white_Normal.png-40152cadb149203e55ff1ad96a23ba03.s3tc.ctex", "res://.godot/imported/military_comms_tower_GM_dish_white_Normal.png-40152cadb149203e55ff1ad96a23ba03.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

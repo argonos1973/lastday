@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b62oylu7kfbdc"
-path="res://.godot/imported/fishing_end_catch_Image_21.png-df9b2a6d51e6a8a1c08988ade6f263d1.ctex"
+path.s3tc="res://.godot/imported/fishing_end_catch_Image_21.png-df9b2a6d51e6a8a1c08988ade6f263d1.s3tc.ctex"
+path.etc2="res://.godot/imported/fishing_end_catch_Image_21.png-df9b2a6d51e6a8a1c08988ade6f263d1.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "5aed0cbeab007db5bdc5d8a9c9e5c7ac"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/fishing_end_catch_Image_21.png"
-dest_files=["res://.godot/imported/fishing_end_catch_Image_21.png-df9b2a6d51e6a8a1c08988ade6f263d1.ctex"]
+dest_files=["res://.godot/imported/fishing_end_catch_Image_21.png-df9b2a6d51e6a8a1c08988ade6f263d1.s3tc.ctex", "res://.godot/imported/fishing_end_catch_Image_21.png-df9b2a6d51e6a8a1c08988ade6f263d1.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bvhvsptai0aco"
-path="res://.godot/imported/pickup_autumn_jacket_Jacket_N.jpg-9645a70767751b07d72853eabd7e6d82.ctex"
+path.s3tc="res://.godot/imported/pickup_autumn_jacket_Jacket_N.jpg-9645a70767751b07d72853eabd7e6d82.s3tc.ctex"
+path.etc2="res://.godot/imported/pickup_autumn_jacket_Jacket_N.jpg-9645a70767751b07d72853eabd7e6d82.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "032fb29a4b32742ba2e26daad6364f1d"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/civil/pickup_autumn_jacket_Jacket_N.jpg"
-dest_files=["res://.godot/imported/pickup_autumn_jacket_Jacket_N.jpg-9645a70767751b07d72853eabd7e6d82.ctex"]
+dest_files=["res://.godot/imported/pickup_autumn_jacket_Jacket_N.jpg-9645a70767751b07d72853eabd7e6d82.s3tc.ctex", "res://.godot/imported/pickup_autumn_jacket_Jacket_N.jpg-9645a70767751b07d72853eabd7e6d82.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

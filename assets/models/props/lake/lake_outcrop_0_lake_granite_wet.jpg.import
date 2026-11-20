@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://y4lblqav556b"
-path="res://.godot/imported/lake_outcrop_0_lake_granite_wet.jpg-96e9703e7a2784dc0eff39a34e2aa63c.ctex"
+path.s3tc="res://.godot/imported/lake_outcrop_0_lake_granite_wet.jpg-96e9703e7a2784dc0eff39a34e2aa63c.s3tc.ctex"
+path.etc2="res://.godot/imported/lake_outcrop_0_lake_granite_wet.jpg-96e9703e7a2784dc0eff39a34e2aa63c.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "f5214a57f9714c7c8ea3a8ad5f06aa66"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/lake/lake_outcrop_0_lake_granite_wet.jpg"
-dest_files=["res://.godot/imported/lake_outcrop_0_lake_granite_wet.jpg-96e9703e7a2784dc0eff39a34e2aa63c.ctex"]
+dest_files=["res://.godot/imported/lake_outcrop_0_lake_granite_wet.jpg-96e9703e7a2784dc0eff39a34e2aa63c.s3tc.ctex", "res://.godot/imported/lake_outcrop_0_lake_granite_wet.jpg-96e9703e7a2784dc0eff39a34e2aa63c.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cnspmvad1msny"
-path="res://.godot/imported/pickup_autumn_pants_Pants_BC.jpg-214d54078fdb5a2335eb0ae6b363903b.ctex"
+path.s3tc="res://.godot/imported/pickup_autumn_pants_Pants_BC.jpg-214d54078fdb5a2335eb0ae6b363903b.s3tc.ctex"
+path.etc2="res://.godot/imported/pickup_autumn_pants_Pants_BC.jpg-214d54078fdb5a2335eb0ae6b363903b.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "506e618a56db4a8a48ca898f0f829e42"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/civil/pickup_autumn_pants_Pants_BC.jpg"
-dest_files=["res://.godot/imported/pickup_autumn_pants_Pants_BC.jpg-214d54078fdb5a2335eb0ae6b363903b.ctex"]
+dest_files=["res://.godot/imported/pickup_autumn_pants_Pants_BC.jpg-214d54078fdb5a2335eb0ae6b363903b.s3tc.ctex", "res://.godot/imported/pickup_autumn_pants_Pants_BC.jpg-214d54078fdb5a2335eb0ae6b363903b.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://un174lddfl3p"
-path="res://.godot/imported/military_backpack_Image_15.png-6bbc5101c77a7db1f1babc74f2f20b1a.ctex"
+path.s3tc="res://.godot/imported/military_backpack_Image_15.png-6bbc5101c77a7db1f1babc74f2f20b1a.s3tc.ctex"
+path.etc2="res://.godot/imported/military_backpack_Image_15.png-6bbc5101c77a7db1f1babc74f2f20b1a.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "892286b80fc03f39a9123b86b7498e59"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/military_backpack_Image_15.png"
-dest_files=["res://.godot/imported/military_backpack_Image_15.png-6bbc5101c77a7db1f1babc74f2f20b1a.ctex"]
+dest_files=["res://.godot/imported/military_backpack_Image_15.png-6bbc5101c77a7db1f1babc74f2f20b1a.s3tc.ctex", "res://.godot/imported/military_backpack_Image_15.png-6bbc5101c77a7db1f1babc74f2f20b1a.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

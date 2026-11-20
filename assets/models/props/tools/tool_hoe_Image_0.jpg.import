@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cmady3bwv5qee"
-path="res://.godot/imported/tool_hoe_Image_0.jpg-4d09b24b2c263c89a78e254ddfeb9235.ctex"
+path.s3tc="res://.godot/imported/tool_hoe_Image_0.jpg-4d09b24b2c263c89a78e254ddfeb9235.s3tc.ctex"
+path.etc2="res://.godot/imported/tool_hoe_Image_0.jpg-4d09b24b2c263c89a78e254ddfeb9235.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "7cbca1611942b86e8d4f5f95404235d6"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/tools/tool_hoe_Image_0.jpg"
-dest_files=["res://.godot/imported/tool_hoe_Image_0.jpg-4d09b24b2c263c89a78e254ddfeb9235.ctex"]
+dest_files=["res://.godot/imported/tool_hoe_Image_0.jpg-4d09b24b2c263c89a78e254ddfeb9235.s3tc.ctex", "res://.godot/imported/tool_hoe_Image_0.jpg-4d09b24b2c263c89a78e254ddfeb9235.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

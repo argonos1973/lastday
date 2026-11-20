@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://s12i51bp1p0s"
-path="res://.godot/imported/pickup_cargo_kneepad_pants_Image_0.jpg-980e6feaa60b4a71ddf6b74d1a161528.ctex"
+path.s3tc="res://.godot/imported/pickup_cargo_kneepad_pants_Image_0.jpg-980e6feaa60b4a71ddf6b74d1a161528.s3tc.ctex"
+path.etc2="res://.godot/imported/pickup_cargo_kneepad_pants_Image_0.jpg-980e6feaa60b4a71ddf6b74d1a161528.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "a885ea1c84c3bb6af8958bab24a8b4d6"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/characters/adapted/civil/pickup_cargo_kneepad_pants_Image_0.jpg"
-dest_files=["res://.godot/imported/pickup_cargo_kneepad_pants_Image_0.jpg-980e6feaa60b4a71ddf6b74d1a161528.ctex"]
+dest_files=["res://.godot/imported/pickup_cargo_kneepad_pants_Image_0.jpg-980e6feaa60b4a71ddf6b74d1a161528.s3tc.ctex", "res://.godot/imported/pickup_cargo_kneepad_pants_Image_0.jpg-980e6feaa60b4a71ddf6b74d1a161528.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

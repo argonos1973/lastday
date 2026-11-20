@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dtlqulps4mj1d"
-path="res://.godot/imported/clock_tower_floor_ruin.png-f70e2e5c8d317a24124e0a5de2e217a0.ctex"
+path.s3tc="res://.godot/imported/clock_tower_floor_ruin.png-f70e2e5c8d317a24124e0a5de2e217a0.s3tc.ctex"
+path.etc2="res://.godot/imported/clock_tower_floor_ruin.png-f70e2e5c8d317a24124e0a5de2e217a0.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "a53e3306160f148362b9edcd07a3d488"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/clock_tower_floor_ruin.png"
-dest_files=["res://.godot/imported/clock_tower_floor_ruin.png-f70e2e5c8d317a24124e0a5de2e217a0.ctex"]
+dest_files=["res://.godot/imported/clock_tower_floor_ruin.png-f70e2e5c8d317a24124e0a5de2e217a0.s3tc.ctex", "res://.godot/imported/clock_tower_floor_ruin.png-f70e2e5c8d317a24124e0a5de2e217a0.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

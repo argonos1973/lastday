@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://use85at42vdj"
-path="res://.godot/imported/building_2_concrete_floor_02_diff_4k.jpg-efcdd551a8af310db399849625dc8558.ctex"
+path.s3tc="res://.godot/imported/building_2_concrete_floor_02_diff_4k.jpg-efcdd551a8af310db399849625dc8558.s3tc.ctex"
+path.etc2="res://.godot/imported/building_2_concrete_floor_02_diff_4k.jpg-efcdd551a8af310db399849625dc8558.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "86009a1147538047e7828152136c3579"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/building_2_concrete_floor_02_diff_4k.jpg"
-dest_files=["res://.godot/imported/building_2_concrete_floor_02_diff_4k.jpg-efcdd551a8af310db399849625dc8558.ctex"]
+dest_files=["res://.godot/imported/building_2_concrete_floor_02_diff_4k.jpg-efcdd551a8af310db399849625dc8558.s3tc.ctex", "res://.godot/imported/building_2_concrete_floor_02_diff_4k.jpg-efcdd551a8af310db399849625dc8558.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

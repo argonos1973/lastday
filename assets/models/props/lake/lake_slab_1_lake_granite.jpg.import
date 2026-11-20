@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bcy2iuo2bootg"
-path="res://.godot/imported/lake_slab_1_lake_granite.jpg-40310004e1c68f97ca900d9e7bea37e9.ctex"
+path.s3tc="res://.godot/imported/lake_slab_1_lake_granite.jpg-40310004e1c68f97ca900d9e7bea37e9.s3tc.ctex"
+path.etc2="res://.godot/imported/lake_slab_1_lake_granite.jpg-40310004e1c68f97ca900d9e7bea37e9.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "2710dab993f6f4af2916e2de485e3a94"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/lake/lake_slab_1_lake_granite.jpg"
-dest_files=["res://.godot/imported/lake_slab_1_lake_granite.jpg-40310004e1c68f97ca900d9e7bea37e9.ctex"]
+dest_files=["res://.godot/imported/lake_slab_1_lake_granite.jpg-40310004e1c68f97ca900d9e7bea37e9.s3tc.ctex", "res://.godot/imported/lake_slab_1_lake_granite.jpg-40310004e1c68f97ca900d9e7bea37e9.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -135,7 +135,10 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 			_cached_fell_trees = player.get_tree().get_nodes_in_group(WorldAction.TREE_GROUP)
 		candidates.append_array(_cached_fell_trees)
 	candidates.append_array(_cached_interactables)
-	candidates = candidates.filter(func(node): return is_instance_valid(node) and node.is_inside_tree() and node.is_in_group("interactable"))
+	# Tree-order comparisons walk ancestors. Sorting every distant bed, door
+	# and container in the city at 10 Hz cost several milliseconds per prompt.
+	# Preserve the same tie order, but only sort candidates within actual reach.
+	candidates = candidates.filter(func(node): return is_instance_valid(node) and node.is_inside_tree() and node.is_in_group("interactable") and node is Node3D and _is_close_enough(player, node))
 	candidates.sort_custom(func(a: Node, b: Node): return b.is_greater_than(a))
 	var best: Object = null
 	var best_dist := 999.0
@@ -151,8 +154,6 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 			# Only use fallback for choppable objects and pickup items
 			if wa.action_type != "fell_tree" and wa.action_type != "fell_bush" and wa.action_type != "cut_log" and wa.action_type != "pickup_item" and wa.action_type != "eat_food" and wa.action_type != "light_campfire" and wa.action_type != "cook" and wa.action_type != "gut_wolf":
 				continue
-		if not _is_close_enough(player, node):
-			continue
 		var node_pos := (node as Node3D).global_position
 		var dx := player_pos.x - node_pos.x
 		var dz := player_pos.z - node_pos.z

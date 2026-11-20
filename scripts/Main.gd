@@ -941,6 +941,25 @@ func _prepare_world_entry_details() -> void:
 		if not pending: break
 		await get_tree().process_frame
 
+var _entry_render_focus := Vector3.INF
+
+func _world_entry_render_positions(original_position: Vector3) -> Array[Vector3]:
+	var positions: Array[Vector3] = []
+	# These views exercise the distinct world materials, including interiors
+	# and the lake cubemap. A spin at spawn alone never draws the southern city.
+	if not river_segments_data.is_empty():
+		positions.append(Vector3(26, 2.2, 36))
+		positions.append(Vector3(9, 2.2, 75))
+		for segment in river_segments_data:
+			if segment.size.x >= 60.0:
+				positions.append(segment.center + Vector3(0, 2.2, segment.size.y * .5 + 3.0))
+	if get_node_or_null("SouthernCity") != null:
+		for offset in [Vector3(0, 2.2, 0), Vector3(64, 2.2, 96), Vector3(117, 5.5, 48)]:
+			positions.append(CityExpansion.CENTER + offset)
+	# Finish at the real spawn, so distance streaming also returns there.
+	positions.append(original_position)
+	return positions
+
 func _prepare_world_entry_render() -> void:
 	if _scene_quitting or DisplayServer.get_name() == "headless" or OS.has_feature("dedicated_server"):
 		return
@@ -959,15 +978,36 @@ func _prepare_world_entry_render() -> void:
 	var view := original.global_transform
 	warm.global_transform = view
 	warm.make_current()
-	for step in range(8):
+	# A zero-energy light still selects the positional-light shader variant.
+	# Prepare that too: every actor carries a pooled muzzle light, and entering
+	# its radius used to compile previously unseen building/water materials.
+	var light := OmniLight3D.new()
+	light.name = "EntryLightWarmup"
+	light.light_energy = 0.0
+	light.omni_range = 80.0
+	light.shadow_enabled = false
+	warm.add_child(light)
+	for position_world in _world_entry_render_positions(view.origin):
 		if _scene_quitting or not is_instance_valid(original):
 			break
-		warm.global_basis = Basis(Vector3.UP, TAU * float(step) / 8.0) * view.basis
-		await get_tree().process_frame
-		await RenderingServer.frame_post_draw
+		_entry_render_focus = position_world
+		warm.global_position = position_world
+		_update_forest_visibility()
+		_update_grass_visibility()
+		for lit in [false, true]:
+			light.visible = lit
+			for step in range(8):
+				if _scene_quitting or not is_instance_valid(original):
+					break
+				warm.global_basis = Basis(Vector3.UP, TAU * float(step) / 8.0) * view.basis
+				await get_tree().process_frame
+				await RenderingServer.frame_post_draw
+	_entry_render_focus = Vector3.INF
 	if is_instance_valid(original) and original.is_inside_tree():
 		original.make_current()
 	warm.free()
+	_update_forest_visibility()
+	_update_grass_visibility()
 
 func _start_loading_countdown() -> void:
 	_loading_countdown = 3.0
@@ -1262,12 +1302,19 @@ func _update_near_ground_cover() -> void:
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
 		return
+	if _entry_render_focus.is_finite():
+		return
 	if not is_instance_valid(_near_ground_cover):
 		_near_ground_cover = preload("res://scripts/NearGroundCover.gd").new()
 		_near_ground_cover.name = "NearGroundCover"
 		add_child(_near_ground_cover)
 		_near_ground_cover.setup(self)
-	_near_ground_cover.update_focus(camera.global_position, GraphicsSettings.detail_factor())
+	# Orbiting the normal third-person camera must not stream/rebuild grass
+	# chunks on either side of a cell boundary around a stationary player.
+	var focus: Vector3 = player.global_position
+	if focus.distance_squared_to(camera.global_position) > 12.0 * 12.0:
+		focus = camera.global_position # detached/aerial views still need detail
+	_near_ground_cover.update_focus(focus, GraphicsSettings.detail_factor())
 
 func _process(delta: float) -> void:
 	if _scene_quitting:
@@ -19652,7 +19699,7 @@ func _update_forest_visibility() -> void:
 		return
 	if player == null or not is_instance_valid(player):
 		return
-	var ppos: Vector3 = player.global_position
+	var ppos: Vector3 = _entry_render_focus if _entry_render_focus.is_finite() else player.global_position
 	var detail := GraphicsSettings.detail_factor()
 	if ppos == _forest_visibility_focus and detail == _forest_visibility_detail and _shadow_quality == _forest_visibility_quality and _forest_multimesh_nodes.size() == _forest_visibility_count:
 		return
@@ -20525,7 +20572,7 @@ func _update_grass_visibility() -> void:
 		return
 	if player == null or not is_instance_valid(player):
 		return
-	var ppos: Vector3 = player.global_position
+	var ppos: Vector3 = _entry_render_focus if _entry_render_focus.is_finite() else player.global_position
 	var detail := GraphicsSettings.detail_factor()
 	var focus := Vector2(ppos.x, ppos.z)
 	# Looking around does not change distance-based visibility or mesh LOD.
@@ -20549,7 +20596,7 @@ func _update_grass_visibility() -> void:
 		if node.visible != should_show:
 			node.visible = should_show
 		var lod = _grass_batch_lod[i] if i < _grass_batch_lod.size() else null
-		if lod != null:
+		if should_show and lod != null:
 			var want: Mesh = lod[0] if dist < (float(lod[2]) * detail) + batch_radius else lod[1]
 			if node.multimesh.mesh != want:
 				node.multimesh.mesh = want

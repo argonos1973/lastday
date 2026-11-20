@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://u61lhnh7sxw2"
-path="res://.godot/imported/deer_T_Antler.png-6bfaf964304ef376fe28a2a1226c6666.ctex"
+path.s3tc="res://.godot/imported/deer_T_Antler.png-6bfaf964304ef376fe28a2a1226c6666.s3tc.ctex"
+path.etc2="res://.godot/imported/deer_T_Antler.png-6bfaf964304ef376fe28a2a1226c6666.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "3c11ef6ebc664c986467725718481aff"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/wildlife/deer_T_Antler.png"
-dest_files=["res://.godot/imported/deer_T_Antler.png-6bfaf964304ef376fe28a2a1226c6666.ctex"]
+dest_files=["res://.godot/imported/deer_T_Antler.png-6bfaf964304ef376fe28a2a1226c6666.s3tc.ctex", "res://.godot/imported/deer_T_Antler.png-6bfaf964304ef376fe28a2a1226c6666.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

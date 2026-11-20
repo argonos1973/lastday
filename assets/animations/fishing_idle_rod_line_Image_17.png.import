@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b3f1rb3yyh2no"
-path="res://.godot/imported/fishing_idle_rod_line_Image_17.png-aa0fb76d849ef5d70c14ce2c49e67f0a.ctex"
+path.s3tc="res://.godot/imported/fishing_idle_rod_line_Image_17.png-aa0fb76d849ef5d70c14ce2c49e67f0a.s3tc.ctex"
+path.etc2="res://.godot/imported/fishing_idle_rod_line_Image_17.png-aa0fb76d849ef5d70c14ce2c49e67f0a.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "d4dbd73e0ac718ee6b31531224b96af7"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/fishing_idle_rod_line_Image_17.png"
-dest_files=["res://.godot/imported/fishing_idle_rod_line_Image_17.png-aa0fb76d849ef5d70c14ce2c49e67f0a.ctex"]
+dest_files=["res://.godot/imported/fishing_idle_rod_line_Image_17.png-aa0fb76d849ef5d70c14ce2c49e67f0a.s3tc.ctex", "res://.godot/imported/fishing_idle_rod_line_Image_17.png-aa0fb76d849ef5d70c14ce2c49e67f0a.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

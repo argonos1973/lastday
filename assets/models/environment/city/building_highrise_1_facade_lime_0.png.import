@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dte0pcjr1g6ce"
-path="res://.godot/imported/building_highrise_1_facade_lime_0.png-1998b30dc3404c184dfaa390000f4a4d.ctex"
+path.s3tc="res://.godot/imported/building_highrise_1_facade_lime_0.png-1998b30dc3404c184dfaa390000f4a4d.s3tc.ctex"
+path.etc2="res://.godot/imported/building_highrise_1_facade_lime_0.png-1998b30dc3404c184dfaa390000f4a4d.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "4288e97945e3897b5e00932f7cfa7ee4"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/building_highrise_1_facade_lime_0.png"
-dest_files=["res://.godot/imported/building_highrise_1_facade_lime_0.png-1998b30dc3404c184dfaa390000f4a4d.ctex"]
+dest_files=["res://.godot/imported/building_highrise_1_facade_lime_0.png-1998b30dc3404c184dfaa390000f4a4d.s3tc.ctex", "res://.godot/imported/building_highrise_1_facade_lime_0.png-1998b30dc3404c184dfaa390000f4a4d.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

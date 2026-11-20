@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c2q677v4p2f4r"
-path="res://.godot/imported/military_comms_tower_GM_steel_galv_Roughness.png-91adaf127edb93a1f679408da79c3994.ctex"
+path.s3tc="res://.godot/imported/military_comms_tower_GM_steel_galv_Roughness.png-91adaf127edb93a1f679408da79c3994.s3tc.ctex"
+path.etc2="res://.godot/imported/military_comms_tower_GM_steel_galv_Roughness.png-91adaf127edb93a1f679408da79c3994.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "662d73ce2244d020147ab5a9ac1773d9"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/military_comms_tower_GM_steel_galv_Roughness.png"
-dest_files=["res://.godot/imported/military_comms_tower_GM_steel_galv_Roughness.png-91adaf127edb93a1f679408da79c3994.ctex"]
+dest_files=["res://.godot/imported/military_comms_tower_GM_steel_galv_Roughness.png-91adaf127edb93a1f679408da79c3994.s3tc.ctex", "res://.godot/imported/military_comms_tower_GM_steel_galv_Roughness.png-91adaf127edb93a1f679408da79c3994.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

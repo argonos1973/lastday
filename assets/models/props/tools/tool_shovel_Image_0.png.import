@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bcy01ya30ocpy"
-path="res://.godot/imported/tool_shovel_Image_0.png-70f96b7eb3b1cd8cf1f3ebb361774123.ctex"
+path.s3tc="res://.godot/imported/tool_shovel_Image_0.png-70f96b7eb3b1cd8cf1f3ebb361774123.s3tc.ctex"
+path.etc2="res://.godot/imported/tool_shovel_Image_0.png-70f96b7eb3b1cd8cf1f3ebb361774123.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "cc7aaacd94b8169e989d3fcd3bebaaea"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/tools/tool_shovel_Image_0.png"
-dest_files=["res://.godot/imported/tool_shovel_Image_0.png-70f96b7eb3b1cd8cf1f3ebb361774123.ctex"]
+dest_files=["res://.godot/imported/tool_shovel_Image_0.png-70f96b7eb3b1cd8cf1f3ebb361774123.s3tc.ctex", "res://.godot/imported/tool_shovel_Image_0.png-70f96b7eb3b1cd8cf1f3ebb361774123.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

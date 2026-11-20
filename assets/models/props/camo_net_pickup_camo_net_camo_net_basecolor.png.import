@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bbfqqtkceqdl4"
-path="res://.godot/imported/camo_net_pickup_camo_net_camo_net_basecolor.png-e4d1899f78a4981a8f29b62c63cad3cd.ctex"
+path.s3tc="res://.godot/imported/camo_net_pickup_camo_net_camo_net_basecolor.png-e4d1899f78a4981a8f29b62c63cad3cd.s3tc.ctex"
+path.etc2="res://.godot/imported/camo_net_pickup_camo_net_camo_net_basecolor.png-e4d1899f78a4981a8f29b62c63cad3cd.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "72581a171bd57d4bf225309555340f4c"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/camo_net_pickup_camo_net_camo_net_basecolor.png"
-dest_files=["res://.godot/imported/camo_net_pickup_camo_net_camo_net_basecolor.png-e4d1899f78a4981a8f29b62c63cad3cd.ctex"]
+dest_files=["res://.godot/imported/camo_net_pickup_camo_net_camo_net_basecolor.png-e4d1899f78a4981a8f29b62c63cad3cd.s3tc.ctex", "res://.godot/imported/camo_net_pickup_camo_net_camo_net_basecolor.png-e4d1899f78a4981a8f29b62c63cad3cd.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

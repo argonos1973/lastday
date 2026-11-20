@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dbdca6pxhj8df"
-path="res://.godot/imported/military_comms_tower_concrete_floor_02_diff_4k_22.jpg-f377ec3ee07afb54fd71d9f1125730fd.ctex"
+path.s3tc="res://.godot/imported/military_comms_tower_concrete_floor_02_diff_4k_22.jpg-f377ec3ee07afb54fd71d9f1125730fd.s3tc.ctex"
+path.etc2="res://.godot/imported/military_comms_tower_concrete_floor_02_diff_4k_22.jpg-f377ec3ee07afb54fd71d9f1125730fd.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "80f2530155634a22cc86b96c78592dac"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/military_comms_tower_concrete_floor_02_diff_4k_22.jpg"
-dest_files=["res://.godot/imported/military_comms_tower_concrete_floor_02_diff_4k_22.jpg-f377ec3ee07afb54fd71d9f1125730fd.ctex"]
+dest_files=["res://.godot/imported/military_comms_tower_concrete_floor_02_diff_4k_22.jpg-f377ec3ee07afb54fd71d9f1125730fd.s3tc.ctex", "res://.godot/imported/military_comms_tower_concrete_floor_02_diff_4k_22.jpg-f377ec3ee07afb54fd71d9f1125730fd.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

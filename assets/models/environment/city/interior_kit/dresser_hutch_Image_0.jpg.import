@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b4hgyrtaepsmn"
-path="res://.godot/imported/dresser_hutch_Image_0.jpg-e338ab16d599b532f8fa3330f7aad168.ctex"
+path.s3tc="res://.godot/imported/dresser_hutch_Image_0.jpg-e338ab16d599b532f8fa3330f7aad168.s3tc.ctex"
+path.etc2="res://.godot/imported/dresser_hutch_Image_0.jpg-e338ab16d599b532f8fa3330f7aad168.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "90465e8875fa0e14ee1cd0c12aa5eb2b"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/interior_kit/dresser_hutch_Image_0.jpg"
-dest_files=["res://.godot/imported/dresser_hutch_Image_0.jpg-e338ab16d599b532f8fa3330f7aad168.ctex"]
+dest_files=["res://.godot/imported/dresser_hutch_Image_0.jpg-e338ab16d599b532f8fa3330f7aad168.s3tc.ctex", "res://.godot/imported/dresser_hutch_Image_0.jpg-e338ab16d599b532f8fa3330f7aad168.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bggqgsh4jg28e"
-path="res://.godot/imported/inicio_pesca_2_Image_9.png-b90f9362dfc3eb45ad7b6f3185e0fabf.ctex"
+path.s3tc="res://.godot/imported/inicio_pesca_2_Image_9.png-b90f9362dfc3eb45ad7b6f3185e0fabf.s3tc.ctex"
+path.etc2="res://.godot/imported/inicio_pesca_2_Image_9.png-b90f9362dfc3eb45ad7b6f3185e0fabf.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "aa51a1b5787d6892141f28ad0c9d16df"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/animations/inicio_pesca_2_Image_9.png"
-dest_files=["res://.godot/imported/inicio_pesca_2_Image_9.png-b90f9362dfc3eb45ad7b6f3185e0fabf.ctex"]
+dest_files=["res://.godot/imported/inicio_pesca_2_Image_9.png-b90f9362dfc3eb45ad7b6f3185e0fabf.s3tc.ctex", "res://.godot/imported/inicio_pesca_2_Image_9.png-b90f9362dfc3eb45ad7b6f3185e0fabf.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

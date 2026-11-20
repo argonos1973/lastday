@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cc3gku7q8ivs7"
-path="res://.godot/imported/fridge_Image_1.png-e6f69645998a3a619bae72023dbd3126.ctex"
+path.s3tc="res://.godot/imported/fridge_Image_1.png-e6f69645998a3a619bae72023dbd3126.s3tc.ctex"
+path.etc2="res://.godot/imported/fridge_Image_1.png-e6f69645998a3a619bae72023dbd3126.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "f26c57c1a247be61945aab0b7a942259"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/interior_kit/fridge_Image_1.png"
-dest_files=["res://.godot/imported/fridge_Image_1.png-e6f69645998a3a619bae72023dbd3126.ctex"]
+dest_files=["res://.godot/imported/fridge_Image_1.png-e6f69645998a3a619bae72023dbd3126.s3tc.ctex", "res://.godot/imported/fridge_Image_1.png-e6f69645998a3a619bae72023dbd3126.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

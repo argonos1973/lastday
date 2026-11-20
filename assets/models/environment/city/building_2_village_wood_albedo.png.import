@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://xipm1d8klgfe"
-path="res://.godot/imported/building_2_village_wood_albedo.png-d0674819267f5efac952bb3a2323bb8a.ctex"
+path.s3tc="res://.godot/imported/building_2_village_wood_albedo.png-d0674819267f5efac952bb3a2323bb8a.s3tc.ctex"
+path.etc2="res://.godot/imported/building_2_village_wood_albedo.png-d0674819267f5efac952bb3a2323bb8a.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "387453d8f2ab174a9584e6cb78ec908c"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/building_2_village_wood_albedo.png"
-dest_files=["res://.godot/imported/building_2_village_wood_albedo.png-d0674819267f5efac952bb3a2323bb8a.ctex"]
+dest_files=["res://.godot/imported/building_2_village_wood_albedo.png-d0674819267f5efac952bb3a2323bb8a.s3tc.ctex", "res://.godot/imported/building_2_village_wood_albedo.png-d0674819267f5efac952bb3a2323bb8a.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

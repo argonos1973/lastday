@@ -17,6 +17,8 @@ extends Node
 ## --client-visuals --noon samples idle_house/client_turn/idle_forest with
 ## passive remote actors instead of server AI. Entry render preparation runs
 ## at the measured spawn point, as it does when joining a real game.
+## --traversal --client-visuals --noon measures village/city/water approaches
+## and rapid turns/view switches, first visit and repeat, with no save writes.
 
 const ItemScript = preload("res://scripts/Item.gd")
 const GraphicsSettings = preload("res://scripts/GraphicsSettings.gd")
@@ -42,10 +44,18 @@ class ProbeWorld extends "res://scripts/Main.gd":
 	func _create_player() -> void:
 		if OS.get_cmdline_user_args().has("--client-visuals"):
 			_has_pending_spawn_pos = true
-			_pending_spawn_pos = PROFILE_HOME + Vector3.UP * (_get_exact_ground_y(PROFILE_HOME.x, PROFILE_HOME.z) + 0.3)
+			var spawn := Vector3(26, 0, 130) if OS.get_cmdline_user_args().has("--traversal") else PROFILE_HOME
+			_pending_spawn_pos = spawn + Vector3.UP * (_get_exact_ground_y(spawn.x, spawn.z) + 0.3)
 		super._create_player()
 	func _save_world_change_silent() -> void:
 		pass
+	func _create_map() -> void:
+		await super._create_map()
+		if OS.get_cmdline_user_args().has("--ab-no-reflections"):
+			for water in get_tree().get_nodes_in_group("river_water"):
+				if water is RiverWater and water._reflection != null:
+					water._reflection.visible = false
+					water.set_process(false)
 	func _on_player_died() -> void:
 		game_over = true # keep the scene: the harness measures the death frames
 
@@ -259,6 +269,7 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 	if not only.is_empty() and not only.has(label) and not label.begins_with("idle_forest_adj"):
 		return
 	await _wait_drawable()
+	print("SCN_START ", label)
 	CombatProf.reset()
 	CombatProf.spike_ms = _spike_ms
 	var frames: Array = []
@@ -266,6 +277,8 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 	var process: Array = []
 	var render_cpu: Array = []
 	var render_gpu: Array = []
+	var draws: Array = []
+	var primitives: Array = []
 	# Frame classes: frames with a shot, with a projectile impact, the frame
 	# right after a shot, and quiet frames (the scenario's own baseline).
 	var classes := {"shot": [], "impact": [], "after_shot": [], "quiet": []}
@@ -279,7 +292,9 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 	_burst_queue.clear()
 	while elapsed < seconds:
 		_keep_alive()
+		var tick_started := Time.get_ticks_usec()
 		tick.call(elapsed)
+		CombatProf.mark("profile.route_tick", tick_started)
 		_pump_bursts()
 		await get_tree().process_frame
 		var now := Time.get_ticks_usec()
@@ -300,6 +315,8 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 		var rg := RenderingServer.viewport_get_measured_render_time_gpu(vp)
 		render_cpu.append(rc)
 		render_gpu.append(rg)
+		draws.append(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
+		primitives.append(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 		var ev: Dictionary = CombatProf.frame_events()
 		var is_shot := ev.has("shot.local") or ev.has("rpc.shot_rifle")
 		if is_shot:
@@ -338,6 +355,8 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 	process.sort()
 	render_cpu.sort()
 	render_gpu.sort()
+	draws.sort()
+	primitives.sort()
 	var class_stats := {}
 	for key: String in classes:
 		var values: Array = classes[key]
@@ -365,6 +384,11 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 		"memory_mb": float(OS.get_static_memory_usage()) / 1048576.0, "occluded_frames": occluded,
 		"render_cpu_p50": _pct(render_cpu, 0.5), "render_cpu_p95": _pct(render_cpu, 0.95), "render_cpu_max": float(render_cpu.back()),
 		"render_gpu_p50": _pct(render_gpu, 0.5), "render_gpu_p95": _pct(render_gpu, 0.95), "frame_classes": class_stats,
+		"draws_p95": _pct(draws, .95), "primitives_p95": _pct(primitives, .95),
+		"player_position": str(player.global_position), "camera_position": str(player.camera.global_position),
+		"video_mb": Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
+		"texture_mb": Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0,
+		"buffer_mb": Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED) / 1048576.0,
 		"events": events, "sections": combat, "spikes": spikes.samples, "spike_count": int(spikes.count),
 	}
 	rows.append(row)
@@ -372,6 +396,8 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 		label, row.fps, row.p50, row.p95, row.p99, row.max, over_50, over_100, threshold, hitches, row.physics_p95, row.physics_max,
 		row.projectile_ms, proj_ticks, row.impact_ms, row.impacts, row.memory_mb])
 	print("  RENDER cpu_p50=%.2f cpu_p95=%.2f cpu_max=%.2f gpu_p50=%.2f gpu_p95=%.2fms" % [row.render_cpu_p50, row.render_cpu_p95, row.render_cpu_max, row.render_gpu_p50, row.render_gpu_p95])
+	print("  POSE player=", player.global_position, " camera=", player.camera.global_position, " basis=", player.camera.global_basis)
+	print("  MEMORY video_mb=", row.video_mb, " texture_mb=", row.texture_mb, " buffer_mb=", row.buffer_mb)
 	var class_parts: Array = []
 	for key: String in class_stats:
 		class_parts.append("%s[n=%d p50=%.1f mean=%.1f max=%.1f]" % [key, int(class_stats[key].n), float(class_stats[key].p50), float(class_stats[key].mean), float(class_stats[key].max)])
@@ -391,6 +417,10 @@ func _scenario(label: String, seconds: float, tick: Callable) -> void:
 			parts.append("%s=%.2f" % [key, float(spike.sections_usec[key]) / 1000.0])
 		var extra: Dictionary = spike.get("extra", {})
 		print("  SPIKE %7.1fms render_cpu=%6.1f render_gpu=%6.1f events=%s sections_ms=[%s]" % [float(spike.ms), float(extra.get("render_cpu_ms", 0.0)), float(extra.get("render_gpu_ms", 0.0)), str(spike.events) if not (spike.events as Dictionary).is_empty() else "none", ", ".join(parts)])
+	var capture_path := _arg("--out=")
+	if OS.get_cmdline_user_args().has("--captures") and not capture_path.is_empty():
+		await RenderingServer.frame_post_draw
+		get_tree().root.get_texture().get_image().save_png(capture_path.get_basename() + "_" + label + ".png")
 
 # Diagnosis: does the first positional light on a set of materials stall the
 # draw, and does a zero-energy light already count? Bare lights, no gameplay.
@@ -741,7 +771,7 @@ func run() -> void:
 	if not only_arg.is_empty():
 		only = Array(only_arg.split(","))
 	var client_visuals := OS.get_cmdline_user_args().has("--client-visuals")
-	if client_visuals and only.is_empty():
+	if client_visuals and only.is_empty() and not OS.get_cmdline_user_args().has("--traversal"):
 		only = ["idle_house", "client_turn", "idle_forest"]
 	var soak := float(_arg("--soak=", "0"))
 	_ab_no_flash = OS.get_cmdline_user_args().has("--ab-no-flash")
@@ -789,6 +819,14 @@ func run() -> void:
 	print("COMBAT_PROFILE_READY nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " wildlife=", get_tree().get_nodes_in_group("wildlife").size(),
 		" renderer=", ProjectSettings.get_setting("rendering/renderer/rendering_method"), " viewport=", get_tree().root.size,
 		" graphics=", GraphicsSettings.effective_snapshot(get_tree().root), " LastDayNav=", ClassDB.class_exists("LastDayNav"))
+	if OS.get_cmdline_user_args().has("--traversal"):
+		# This runner owns the frame clock/reset. Keep the normal script section
+		# measurements, but do not let the periodic reporter consume our samples.
+		if world._client_profiler != null:
+			world._client_profiler.set_process(false)
+		await _traversal()
+		await _finish_profile(soak)
+		return
 	_rifle_item = ItemScript.create("Rifle francotirador", "weapon_rifle", 3.5, 1, 0.0)
 	_m4_item = ItemScript.create(PlayerController.M4_NAME, "weapon_rifle", 3.0, 1, 0.0)
 	_hold(_rifle_item)
@@ -940,11 +978,86 @@ func run() -> void:
 			world._net_apply_damage(30.0, "arco")
 			world._net_force_death(""))
 
+	await _finish_profile(soak)
+
+func _traversal() -> void:
+	player.set_process_input(false)
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	var routes := [
+		["village", Vector3(26, 0, 130), Vector3(26, 0, 36)],
+		["river", Vector3(9, 0, 345), Vector3(9, 0, 435)],
+		["city", Vector3(9, 0, 600), Vector3(9, 0, 705)],
+		["lake", Vector3(245, 0, -160), Vector3(245, 0, -280)],
+	]
+	for route in routes:
+		if not _arg("--route=").is_empty() and _arg("--route=") != route[0]:
+			continue
+		for visit in ["first", "repeat"]:
+			var from: Vector3 = route[1]
+			var to: Vector3 = route[2]
+			var duration := maxf(secs, 16.0)
+			player.rotation.y = atan2(from.x - to.x, from.z - to.z)
+			player._pitch = -.12
+			await _scenario("%s_approach_%s" % [route[0], visit], duration, func(t: float) -> void:
+				var pos := from.lerp(to, minf(t / (duration - 2.0), 1.0))
+				# A sky ray at the moving player's XZ can hit the player's own
+				# capsule and lift it again every frame. These routes stay on
+				# outdoor terrain/roads; use analytic ground and let physics
+				# handle the surface, never sample the actor as its own floor.
+				pos.y = world._get_ground_height(pos) + .3
+				player.global_position = pos
+				player.velocity = Vector3.ZERO)
+			var state := {"view": -1}
+			await _scenario("%s_views_%s" % [route[0], visit], secs, func(t: float) -> void:
+				player.rotation.y = t * TAU / 1.5
+				var view := int(t / .35) % 5
+				if view != int(state.view):
+					state.view = view
+					var key := InputEventKey.new()
+					key.pressed = true
+					key.keycode = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_6][view]
+					player._input(key)
+					CombatProf.event("camera.switch"))
+			var reset := InputEventKey.new()
+			reset.pressed = true
+			reset.keycode = KEY_6
+			player._input(reset)
+
+func _cached_texture_report() -> Array:
+	var result: Array = []
+	var directories: Array[String] = ["res://assets"]
+	while not directories.is_empty():
+		var directory := directories.pop_back() as String
+		for child in DirAccess.get_directories_at(directory):
+			directories.append(directory.path_join(child))
+		for child in DirAccess.get_files_at(directory):
+			if child.get_extension().to_lower() not in ["png", "jpg", "jpeg", "webp", "hdr", "exr"]:
+				continue
+			var path := directory.path_join(child)
+			if not ResourceLoader.has_cached(path):
+				continue
+			var texture := load(path) as Texture2D
+			if texture == null:
+				continue
+			var config := ConfigFile.new()
+			config.load(path + ".import")
+			var width := texture.get_width()
+			var height := texture.get_height()
+			var mipmaps: bool = config.get_value("params", "mipmaps/generate", false)
+			result.append({"path": path, "width": width, "height": height,
+				"compression": config.get_value("params", "compress/mode", -1),
+				"rgba8_mb": width * float(height) * 4.0 * (4.0 / 3.0 if mipmaps else 1.0) / 1048576.0})
+	result.sort_custom(func(a, b): return a.rgba8_mb > b.rgba8_mb)
+	return result
+
+func _finish_profile(soak: float) -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	var out_path := _arg("--out=")
 	if not out_path.is_empty():
 		var file := FileAccess.open(out_path, FileAccess.WRITE)
 		if file != null:
-			file.store_string(JSON.stringify({"rows": rows, "probes": probe_rows, "secs": secs, "soak": soak}, "  "))
+			var textures: Array = _cached_texture_report() if OS.get_cmdline_user_args().has("--memory-report") else []
+			file.store_string(JSON.stringify({"rows": rows, "probes": probe_rows, "secs": secs, "soak": soak, "textures": textures}, "  "))
 			file.close()
 			print("COMBAT_PROFILE_SAVED ", out_path)
 	print("COMBAT_PROFILE_DONE scenarios=", rows.size())

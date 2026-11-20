@@ -51,12 +51,15 @@ static func event(tag: String) -> void:
 static func end_frame(frame_ms: float, extra: Dictionary = {}) -> void:
 	if frame_ms >= spike_ms:
 		_spike_count += 1
-		if _spikes.size() < SPIKE_CAPACITY:
+		# Retain early context plus the worst later spike when the buffer fills.
+		if _spikes.size() < SPIKE_CAPACITY or frame_ms > float(_spikes.back().ms):
 			var segs := _frame.keys()
 			segs.sort_custom(func(a, b): return int(_frame[a]) > int(_frame[b]))
 			var top := {}
 			for i in range(mini(SPIKE_TOP_SECTIONS, segs.size())):
 				top[segs[i]] = int(_frame[segs[i]])
+			if _spikes.size() == SPIKE_CAPACITY:
+				_spikes.pop_back()
 			_spikes.append({"ms": frame_ms, "events": _frame_ev.duplicate(), "sections_usec": top, "extra": extra})
 	if not _frame.is_empty():
 		_frame.clear()

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://x0qqd6i6kaoq"
-path="res://.godot/imported/sink_cabinet_Image_12.png-d0a480535d1b819a02309b50ed54a7da.ctex"
+path.s3tc="res://.godot/imported/sink_cabinet_Image_12.png-d0a480535d1b819a02309b50ed54a7da.s3tc.ctex"
+path.etc2="res://.godot/imported/sink_cabinet_Image_12.png-d0a480535d1b819a02309b50ed54a7da.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "e2509fc8ccc5dbda4c61da9912068ce0"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/environment/city/interior_kit/sink_cabinet_Image_12.png"
-dest_files=["res://.godot/imported/sink_cabinet_Image_12.png-d0a480535d1b819a02309b50ed54a7da.ctex"]
+dest_files=["res://.godot/imported/sink_cabinet_Image_12.png-d0a480535d1b819a02309b50ed54a7da.s3tc.ctex", "res://.godot/imported/sink_cabinet_Image_12.png-d0a480535d1b819a02309b50ed54a7da.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

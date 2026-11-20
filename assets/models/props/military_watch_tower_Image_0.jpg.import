@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b8lihb50wc5g7"
-path="res://.godot/imported/military_watch_tower_Image_0.jpg-7eb51ac465c6a43af834bd9ff4b4ab9b.ctex"
+path.s3tc="res://.godot/imported/military_watch_tower_Image_0.jpg-7eb51ac465c6a43af834bd9ff4b4ab9b.s3tc.ctex"
+path.etc2="res://.godot/imported/military_watch_tower_Image_0.jpg-7eb51ac465c6a43af834bd9ff4b4ab9b.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "d7f19fe798201e0c35c810a309cf68ac"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/military_watch_tower_Image_0.jpg"
-dest_files=["res://.godot/imported/military_watch_tower_Image_0.jpg-7eb51ac465c6a43af834bd9ff4b4ab9b.ctex"]
+dest_files=["res://.godot/imported/military_watch_tower_Image_0.jpg-7eb51ac465c6a43af834bd9ff4b4ab9b.s3tc.ctex", "res://.godot/imported/military_watch_tower_Image_0.jpg-7eb51ac465c6a43af834bd9ff4b4ab9b.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
