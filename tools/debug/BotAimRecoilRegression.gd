@@ -16,6 +16,9 @@ func check(ok: bool, msg: String) -> void:
 class Arena extends Node3D:
 	var distant_cover := false
 	var shots: Array = []
+	var day_cycle: DayNightCycle
+	var _lit_campfires: Array = []
+	var world_actions_by_id: Dictionary = {}
 	func _has_clear_shot(_a: Vector3, _b: Vector3) -> bool:
 		return not distant_cover
 	func raycast_distant_props(_a: Vector3, _b: Vector3) -> Dictionary:
@@ -68,9 +71,159 @@ func _aim_err_deg(b: Dictionary, desired_from: Node3D, origin: Vector3) -> float
 	var desired := (desired_from.global_position + Vector3(0, 1.02, 0) - origin).normalized()
 	return rad_to_deg(Vector3(a["dir"]).angle_to(desired))
 
+func _sample_hits(mgr: Manager, arena: Arena, options: Dictionary) -> int:
+	# Use the game's actual proxy-capsule intersection for the aim comparison.
+	# This deliberately gives the bot perfect breath control and recovered recoil:
+	# even this best case must not produce perfect tracking in poor visibility.
+	seed(73129)
+	var dist := float(options.get("distance", 25.0))
+	var kind := str(options.get("kind", "m4"))
+	arena.day_cycle.time_of_day = 23.0 if bool(options.get("night", false)) else 12.0
+	var shooter := _mk_proxy()
+	var target := _mk_proxy()
+	arena.add_child(shooter)
+	arena.add_child(target)
+	shooter.position = Vector3(300, 0, 0)
+	target.set_meta("torch_lit", bool(options.get("lit", false)))
+	target.set_meta("crouching", bool(options.get("target_low", false)))
+	target.add_to_group("net_player_proxy")
+	var b := _mk_bot(shooter, {"is_aiming": true,
+		"held_item": "Rifle francotirador" if kind == "sniper" else "Fusil de asalto",
+		"prone": bool(options.get("prone", false)),
+		"crouching": bool(options.get("crouching", false)),
+		"anim": "walk" if bool(options.get("moving", false)) else ""})
+	var probe := preload("res://scripts/RifleProjectile.gd").new()
+	arena.add_child(probe)
+	probe.set_physics_process(false)
+	probe.shooter = shooter
+	var origin := shooter.position + Vector3.UP * (0.3 if b.prone else (1.0 if b.crouching else 1.4))
+	var hits := 0
+	var unavailable := 0
+	var t := 0.0
+	for sample in 420:
+		for tick in 17:
+			t += 0.07
+			var speed := float(options.get("target_speed", 0.0))
+			var lateral := sin(t * 1.5) * speed / 1.5
+			target.position = shooter.position + Vector3(lateral, 0, dist)
+			# Supply a measured velocity history to the accelerated simulation;
+			# the production tracker uses wall time, not this test's simulated time.
+			b["_foe_track"] = {"id": target.get_instance_id(), "msec": Time.get_ticks_msec(),
+				"tpos": target.position, "vel": Vector3(cos(t * 1.5) * speed, 0, 0)}
+			mgr._bot_aim_tick(b, target, dist, true, 0.07, kind)
+		if not mgr._bot_within_aim_sight(b, target, shooter.position.distance_to(target.position)):
+			unavailable += 1
+			continue
+		var a: Dictionary = b["_aim"]
+		a["hold_on"] = true
+		a["rp"] = 0.0
+		a["ry"] = 0.0
+		if bool(options.get("exact_reference", false)):
+			a["dir"] = (mgr._bot_aim_point(b, target, dist, kind) - origin).normalized()
+		var dir := mgr._bot_aim_fire_dir(b, kind, mgr._bot_current_spread_deg(b, kind == "m4"))
+		probe._refresh_proxy_candidates()
+		if probe._proxy_segment_hit(origin, origin + dir * (dist + 10.0)).get("node") == target:
+			hits += 1
+	print("AIM_SAMPLE ", options, " hits=", hits, "/420 not_visible=", unavailable)
+	check(unavailable == 0, "comparison target remains inside its effective visibility range")
+	probe.free()
+	target.free()
+	shooter.free()
+	arena.day_cycle.time_of_day = 12.0
+	return hits
+
+func _check_night_aim(mgr: Manager, arena: Arena) -> void:
+	var proxy := _mk_proxy([{"name": "Fusil de asalto", "type": "weapon", "quantity": 1}],
+		{"m4_magazine": 30, "m4_reserve": 0, "magazine": 0, "reserve": 0})
+	var target := _mk_proxy()
+	arena.add_child(proxy)
+	arena.add_child(target)
+	target.position = Vector3(0, 0, 45)
+	var b := _mk_bot(proxy, {"is_aiming": true})
+	for i in 10:
+		mgr._bot_aim_tick(b, target, 45.0, true, 0.1, "m4")
+	var seen: Vector3 = b["_aim"]["last_pt"]
+	arena.day_cycle.time_of_day = 23.0
+	target.position.x += 2.0
+	check(not mgr._bot_fire_ready(b, target, 45.0, true, 0.2, "m4"),
+		"clear geometric LOS is insufficient for an unlit distant target at night")
+	check(Vector3(b["_aim"]["last_pt"]).is_equal_approx(seen),
+		"losing night visibility preserves the last observation instead of tracking the live torso")
+	check(float(b["_aim"]["settle"]) == 0.0, "loss of visibility requires reacquisition")
+	b["prone"] = true
+	check(not mgr._bot_within_aim_sight(b, target, 45.0),
+		"lying prone on the ground cannot grant extra night vision")
+	b["prone"] = false
+	mgr._ai_note_foe_scan(b, target)
+	check((b["_foe_mem"] as Dictionary).is_empty(),
+		"hearing a target in darkness cannot record its live position as visually seen")
+	var ammo := mgr._bot_gun_loaded(mgr._bot_gun_ammo(proxy), "Fusil de asalto")
+	check(not mgr._bot_fire_rifle_round(b, target, 26.0, "Fusil de asalto"),
+		"an already queued burst round revalidates night visibility")
+	check(mgr._bot_gun_loaded(mgr._bot_gun_ammo(proxy), "Fusil de asalto") == ammo and b.energy == 100.0,
+		"an invisible target costs neither a round nor shot energy")
+	target.set_meta("torch_lit", true)
+	var reacquired := false
+	for i in 12:
+		reacquired = mgr._bot_fire_ready(b, target, 45.0, true, 0.1, "m4") or reacquired
+	check(reacquired, "a torch reveals the target again after acquisition")
+	mgr._bot_fire_rifle_at(b, target, 26.0, "Fusil de asalto")
+	var after_first := mgr._bot_gun_loaded(mgr._bot_gun_ammo(proxy), "Fusil de asalto")
+	target.set_meta("torch_lit", false)
+	await create_timer(0.22).timeout
+	check(after_first == ammo - 1 and mgr._bot_gun_loaded(mgr._bot_gun_ammo(proxy), "Fusil de asalto") == after_first,
+		"the real burst callbacks stop when the target extinguishes its light")
+	target.set_meta("torch_lit", true)
+	arena.distant_cover = true
+	check(not mgr._bot_fire_rifle_round(b, target, 26.0, "Fusil de asalto"),
+		"a target's light never authorizes shooting through a wall")
+	arena.distant_cover = false
+	target.set_meta("torch_lit", false)
+	var fire := Node3D.new()
+	arena.add_child(fire)
+	fire.set_meta("lit", true)
+	arena.world_actions_by_id["test_fire"] = fire
+	arena._lit_campfires = [{"id": "test_fire", "pos": target.position}]
+	check(mgr._bot_within_aim_sight(b, target, 45.0), "a nearby burning campfire makes the target visible")
+	fire.set_meta("lit", false)
+	check(not mgr._bot_within_aim_sight(b, target, 45.0), "an extinguished fire gives no visibility bonus")
+	arena._lit_campfires.clear()
+	arena.world_actions_by_id.clear()
+	fire.free()
+	target.free()
+	proxy.free()
+	arena.day_cycle.time_of_day = 12.0
+	var reference := _sample_hits(mgr, arena, {"exact_reference": true})
+	var daylight := _sample_hits(mgr, arena, {})
+	var darkness := _sample_hits(mgr, arena, {"night": true})
+	var illuminated := _sample_hits(mgr, arena, {"night": true, "lit": true})
+	var sprinting := _sample_hits(mgr, arena, {"night": true, "target_speed": 6.0})
+	var near := _sample_hits(mgr, arena, {"night": true, "distance": 10.0})
+	var far := _sample_hits(mgr, arena, {"distance": 40.0})
+	var moving := _sample_hits(mgr, arena, {"moving": true})
+	var low := _sample_hits(mgr, arena, {"night": true, "distance": 20.0, "target_low": true})
+	var sniper_day := _sample_hits(mgr, arena, {"kind": "sniper", "distance": 50.0, "prone": true})
+	var sniper_night := _sample_hits(mgr, arena, {"kind": "sniper", "distance": 50.0, "prone": true, "night": true})
+	check(reference == 420, "the previous exact-torso reference hits every stationary capsule")
+	check(daylight < reference and daylight > 210, "daylight aim remains dangerous but is not a perfect lock")
+	check(darkness < daylight * 0.75 and darkness > 20, "darkness reduces hits without forcing every shot to miss")
+	check(illuminated > darkness * 1.2 and illuminated < reference, "lighting helps without granting perfect aim")
+	check(sprinting < darkness * 0.85, "target movement defeats delayed night tracking")
+	check(near > darkness * 1.5, "close targets remain easier to hit than distant silhouettes")
+	check(far < daylight * 0.85, "aim error grows with distance")
+	check(moving < daylight * 0.9, "moving the shooter worsens aim")
+	check(low < near, "a smaller crouched target is not given a standing hit capsule")
+	check(sniper_night < sniper_day * 0.75 and sniper_night > 10,
+		"prone sniper and held breath still have night recognition error")
+
 func _initialize() -> void:
+	seed(73129)
 	var arena := Arena.new()
 	root.add_child(arena)
+	arena.day_cycle = DayNightCycle.new()
+	arena.add_child(arena.day_cycle)
+	arena.day_cycle.set_process(false)
+	arena.day_cycle.time_of_day = 12.0
 	var mgr := Manager.new()
 	arena.add_child(mgr)
 	mgr.world = arena
@@ -184,9 +337,16 @@ func _initialize() -> void:
 	for i in 8:
 		mgr._bot_aim_tick(b5, foe1, 20.0, true, 0.05, "m4")
 	var err_static := mgr._bot_aim_tick(b5, foe1, 20.0, true, 0.05, "m4")
+	var last_sample: Vector3 = b5["_aim"]["sample_pt"]
+	b5["_aim"]["sample_t"] = 0.16
 	foe1.global_position += Vector3(6.0, 0.0, 0.0)  # sprint lateral brusco
-	var err_move := mgr._bot_aim_tick(b5, foe1, 20.0, true, 0.05, "m4")
-	check(err_move > err_static + 0.5, "el blanco en carrera rompe la mira (%.2f -> %.2f deg)" % [err_static, err_move])
+	mgr._bot_aim_tick(b5, foe1, 20.0, true, 0.05, "m4")
+	check(Vector3(b5["_aim"]["sample_pt"]).is_equal_approx(last_sample),
+		"un cambio brusco no actualiza la observacion antes del tiempo de reaccion")
+	var err_move := 0.0
+	for i in 4:
+		err_move = maxf(err_move, mgr._bot_aim_tick(b5, foe1, 20.0, true, 0.05, "m4"))
+	check(err_move > err_static + 0.5, "el blanco en carrera rompe la mira al ser observado de nuevo (%.2f -> %.2f deg)" % [err_static, err_move])
 	foe2.global_position = foe1.global_position + Vector3(10, 0, 5)
 	mgr._bot_aim_tick(b5, foe2, 20.0, true, 0.05, "m4")
 	check(float(b5["_aim"]["settle"]) < 0.1, "cambiar de blanco reinicia la adquisicion")
@@ -206,6 +366,7 @@ func _initialize() -> void:
 	# ---- 12) Impacto recibido: la sacudida frena el giro
 	# Misma mira inicial fija: solo cambia la sacudida — el error residual
 	# tras un tick mide directamente la velocidad de correccion.
+	foe1.global_position = Vector3(0, 0, 30)
 	var b7 := _mk_bot(p1)
 	mgr._bot_aim_st(b7)
 	b7["_aim"]["dir"] = Vector3(1.0, 0.0, 0.0)
@@ -213,7 +374,9 @@ func _initialize() -> void:
 	var b8 := _mk_bot(p1)
 	mgr._bot_aim_st(b8)
 	b8["_aim"]["dir"] = Vector3(1.0, 0.0, 0.0)
+	seed(201)
 	var err7 := mgr._bot_aim_tick(b7, foe1, 20.0, true, 0.016, "m4")
+	seed(201)
 	var err8 := mgr._bot_aim_tick(b8, foe1, 20.0, true, 0.016, "m4")
 	check(err7 > err8, "recibir un impacto frena la correccion de la mira (%.2f vs %.2f deg)" % [err7, err8])
 	# 14) El retroceso se recupera con el tiempo
@@ -271,5 +434,6 @@ func _initialize() -> void:
 		var dev: float = tan(deg_to_rad(worst)) * dist
 		check(dev < dist * 0.06, "dispersion acotada a %.0f m (peor %.2f m)" % [dist, dev])
 
+	await _check_night_aim(mgr, arena)
 	print("BotAimRecoilRegression failures=%d" % failures)
 	quit(1 if failures > 0 else 0)

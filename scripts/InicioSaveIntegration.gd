@@ -414,9 +414,10 @@ static func _mat(m: MeshInstance3D, c: Color) -> void:
 			grow = -0.5
 		m.material_override = MaterialFactory.make_clothing_material(kind, c, grow)
 		return
-	var mat := StandardMaterial3D.new()
+	var original := m.get_active_material(0) as StandardMaterial3D
+	var mat := original.duplicate() as StandardMaterial3D if original != null else StandardMaterial3D.new()
 	mat.albedo_color = c
-	mat.roughness = 0.8
+	MaterialFactory.skin_detail(mat)
 	# Skin/body meshes shrink slightly so they stay under the clothing meshes.
 	mat.grow = true
 	mat.grow_amount = -0.8
@@ -889,8 +890,8 @@ static func _extract_and_add_head_mesh(_src_mi: MeshInstance3D, model: Node3D, s
 	head_mi.visible = true
 	skeleton.add_child(head_mi)
 	head_mi.skeleton = head_mi.get_path_to(skeleton)
-	var mat := StandardMaterial3D.new()
+	var mat := orig_mat.duplicate() as StandardMaterial3D if orig_mat is StandardMaterial3D else StandardMaterial3D.new()
 	mat.albedo_color = skin_color
-	mat.roughness = 0.8
+	MaterialFactory.skin_detail(mat)
 	head_mi.material_override = mat
 	src_instance.queue_free()

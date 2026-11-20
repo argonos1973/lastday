@@ -1,0 +1,2147 @@
+{
+  "walk_forward": {
+    "role": "walk_forward",
+    "mixamo_name": "Walk Forward",
+    "motion_id": "c9ce9616-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Forward",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620917,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_forward.fbx",
+    "bytes": 343920,
+    "sha256": "831313da8b59cf47c5b66ffce28a1b62871209e945cf8cbdc7d2e75f74c9ce9b"
+  },
+  "stand_idle": {
+    "role": "stand_idle",
+    "mixamo_name": "Idle",
+    "motion_id": "c9ce8927-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Standing Idle",
+    "duration": 2.1,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620933,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "stand_idle.fbx",
+    "bytes": 427984,
+    "sha256": "67131d3a05610aaaa2f6799a934109b361752f2fdcbd33cd6e6c1fb76deee10a"
+  },
+  "stand_aim_idle": {
+    "role": "stand_aim_idle",
+    "mixamo_name": "Idle Aiming",
+    "motion_id": "c9cea19a-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Standing Idle Aiming",
+    "duration": 2.1,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620934,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "stand_aim_idle.fbx",
+    "bytes": 425712,
+    "sha256": "4e2920051209c40cae53ada50c905d0079331f6e768b5f30dce2c78bab3b4067"
+  },
+  "crouch_idle": {
+    "role": "crouch_idle",
+    "mixamo_name": "Idle Crouching",
+    "motion_id": "c9ce8aaf-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Idle",
+    "duration": 2.1,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620950,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_idle.fbx",
+    "bytes": 427984,
+    "sha256": "70e4ebddf369cbb9d8808633bf6b4faf1f3f8653d222c8811781f925b4019f10"
+  },
+  "crouch_aim_idle": {
+    "role": "crouch_aim_idle",
+    "mixamo_name": "Idle Crouching Aiming",
+    "motion_id": "c9ceac02-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Idle Aiming",
+    "duration": 2.1,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620949,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_aim_idle.fbx",
+    "bytes": 427984,
+    "sha256": "6cc65f9a29bb32e557c7171da7035bf6173b26e6882578ba1a1d87922513025a"
+  },
+  "walk_backward": {
+    "role": "walk_backward",
+    "mixamo_name": "Walk Backward",
+    "motion_id": "c9ce99ef-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Backward",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620922,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_backward.fbx",
+    "bytes": 343424,
+    "sha256": "df59868c00777e3c61c377dc5b5c7f7e496855d401c368884167a94f425e8fa3"
+  },
+  "walk_left": {
+    "role": "walk_left",
+    "mixamo_name": "Walk Left",
+    "motion_id": "c9ce9930-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Left",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620921,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_left.fbx",
+    "bytes": 343568,
+    "sha256": "c394d31516b6b0ce071562e61124cebf728a5ad942d96727762e0385fffc1b10"
+  },
+  "walk_right": {
+    "role": "walk_right",
+    "mixamo_name": "Walk Right",
+    "motion_id": "c9ce986c-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Right",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620920,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_right.fbx",
+    "bytes": 343568,
+    "sha256": "2c76501483807074e0b4958cabe8edbe3244c53e248dd7aceb72fea2232fbbbe"
+  },
+  "walk_forward_left": {
+    "role": "walk_forward_left",
+    "mixamo_name": "Walk Forward Left",
+    "motion_id": "c9ce97a2-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Forward Left",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620919,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_forward_left.fbx",
+    "bytes": 343424,
+    "sha256": "eb29103952dde5ea320efaca031cd8bffadb92ed05b431274df6e95d9c6e3104"
+  },
+  "walk_forward_right": {
+    "role": "walk_forward_right",
+    "mixamo_name": "Walk Forward Right",
+    "motion_id": "c9ce96df-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Forward Right",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620918,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_forward_right.fbx",
+    "bytes": 343424,
+    "sha256": "c98f2a392f4d47e182a10904264cb4dcd62e498c6f3e96e0a883974df7a81a79"
+  },
+  "walk_backward_left": {
+    "role": "walk_backward_left",
+    "mixamo_name": "Walk Backward Left",
+    "motion_id": "c9ce9b78-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Backward Left",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620924,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_backward_left.fbx",
+    "bytes": 343408,
+    "sha256": "0be908773b41041f1b0c7bf9760804cd1164f5673cdd4a5a93d32467640ca45b"
+  },
+  "walk_backward_right": {
+    "role": "walk_backward_right",
+    "mixamo_name": "Walk Backward Right",
+    "motion_id": "c9ce9ab2-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Walk Backward Right",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620923,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "walk_backward_right.fbx",
+    "bytes": 343424,
+    "sha256": "6118c7e46b8b02bf43601779524335c5060b822dd218d496e5c9389d760c4a14"
+  },
+  "run_forward": {
+    "role": "run_forward",
+    "mixamo_name": "Run Forward",
+    "motion_id": "c9ce8798-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Forward",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_forward.fbx",
+    "bytes": 383264,
+    "sha256": "2c7442091c324f84fe6c06e672aab419f08c075bbff4074a5f53191e20046fdb"
+  },
+  "run_backward": {
+    "role": "run_backward",
+    "mixamo_name": "Run Backward",
+    "motion_id": "c9ce8b7b-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Backward",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620902,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_backward.fbx",
+    "bytes": 381360,
+    "sha256": "92effc2153117196d5ed8d8648fa1158d52263b036379621d2ccfae3a6ed36ad"
+  },
+  "run_left": {
+    "role": "run_left",
+    "mixamo_name": "Run Left",
+    "motion_id": "c9ce8c37-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Left",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620903,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_left.fbx",
+    "bytes": 383920,
+    "sha256": "6a556c5537cbda9edc3b656176ea0d63026dbb9bc5b5c7c63d51000d05679e5d"
+  },
+  "run_right": {
+    "role": "run_right",
+    "mixamo_name": "Run Right",
+    "motion_id": "c9ce8cf6-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Right",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620904,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_right.fbx",
+    "bytes": 382912,
+    "sha256": "7d14b89fa894ab9f76342de432600fd691638454407725beaa83025d8370985d"
+  },
+  "run_forward_left": {
+    "role": "run_forward_left",
+    "mixamo_name": "Run Forward Left",
+    "motion_id": "c9ce8e76-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Forward Left",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620906,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_forward_left.fbx",
+    "bytes": 383920,
+    "sha256": "303bf0c8907f2739858c80c7fa86d67221dbce2ff7cd31640bb0880fde0cd70f"
+  },
+  "run_forward_right": {
+    "role": "run_forward_right",
+    "mixamo_name": "Run Forward Right",
+    "motion_id": "c9ce8db2-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Forward Right",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620905,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_forward_right.fbx",
+    "bytes": 383120,
+    "sha256": "819a2ab65bacddd53bbaa6abb6cd04b2df130b2e6d26772bde1db82bed71d364"
+  },
+  "run_backward_left": {
+    "role": "run_backward_left",
+    "mixamo_name": "Run Backward Left",
+    "motion_id": "c9ce8f34-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Backward Left",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620907,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_backward_left.fbx",
+    "bytes": 382976,
+    "sha256": "44858cf5578f1a74f874c5c37a0c4e93e84d4e94e3ecf7f46dbef96610bf96d1"
+  },
+  "run_backward_right": {
+    "role": "run_backward_right",
+    "mixamo_name": "Run Backward Right",
+    "motion_id": "c9ce8ffa-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "choose_fast_family",
+    "description": "Rifle Run Backward Right",
+    "duration": 0.5,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620908,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "run_backward_right.fbx",
+    "bytes": 383920,
+    "sha256": "ce10b04313cf15f2cae1d7ec82e2bbc0f2231569ed74ca90a67da0dc33d4ddfb"
+  },
+  "crouch_walk_forward": {
+    "role": "crouch_walk_forward",
+    "mixamo_name": "Walk Crouching Forward",
+    "motion_id": "c9ce9c39-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Forward",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620925,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_forward.fbx",
+    "bytes": 343632,
+    "sha256": "ed758d7508ad30da322909c4a570d536a9ff307b3ee47550c95ae1d66b14176b"
+  },
+  "crouch_walk_backward": {
+    "role": "crouch_walk_backward",
+    "mixamo_name": "Walk Crouching Backward",
+    "motion_id": "c9ce9f47-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Backward",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620930,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_backward.fbx",
+    "bytes": 343600,
+    "sha256": "56cc881a346a16a706da5a65f2210aafd0b9fd20a9d581efb62f286f619ba187"
+  },
+  "crouch_walk_left": {
+    "role": "crouch_walk_left",
+    "mixamo_name": "Walk Crouching Left",
+    "motion_id": "c9ce9dc5-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Left",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620927,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_left.fbx",
+    "bytes": 343600,
+    "sha256": "ab9b52c2b031140569b478bc699084bb7ff5478c0586b8db2c82a3f82182cc22"
+  },
+  "crouch_walk_right": {
+    "role": "crouch_walk_right",
+    "mixamo_name": "Walk Crouching Right",
+    "motion_id": "c9ce9d03-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Right",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620926,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_right.fbx",
+    "bytes": 343664,
+    "sha256": "4694fbd7ce03a2c7ad2832f0e5cc7014b0d18ee4d2881d13a481e5472da7e823"
+  },
+  "crouch_walk_forward_left": {
+    "role": "crouch_walk_forward_left",
+    "mixamo_name": "Walk Crouching Forward Left",
+    "motion_id": "c9ce9e88-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Forward Left",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620929,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_forward_left.fbx",
+    "bytes": 343712,
+    "sha256": "76666603c6fc5aed4bb20d8f978598be56cab4b32a891218333707e01f1a50d5"
+  },
+  "crouch_walk_forward_right": {
+    "role": "crouch_walk_forward_right",
+    "mixamo_name": "Walk Crouching Forward Right",
+    "motion_id": "c9ce8860-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Forward Right",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620928,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_forward_right.fbx",
+    "bytes": 343424,
+    "sha256": "5ff4f4ed43e2e00d7d8a44b81ae209e2458019115cf0a711e24d5d198c927e03"
+  },
+  "crouch_walk_backward_left": {
+    "role": "crouch_walk_backward_left",
+    "mixamo_name": "Walk Crouching Backward Left",
+    "motion_id": "c9cea00a-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Backward Left",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620931,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_backward_left.fbx",
+    "bytes": 343424,
+    "sha256": "3a11d93b4b7707974abdc05f5036a62f921ea11f65f7ccbe341c390070758503"
+  },
+  "crouch_walk_backward_right": {
+    "role": "crouch_walk_backward_right",
+    "mixamo_name": "Walk Crouching Backward Right",
+    "motion_id": "c9cea0d3-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Walk Backward Right",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 128620932,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_walk_backward_right.fbx",
+    "bytes": 343712,
+    "sha256": "46a2fcb1a5024675de44c79eb5f0e8db74acd672febda9bb7b050779c1b135b7"
+  },
+  "turn_left": {
+    "role": "turn_left",
+    "mixamo_name": "Turn 90 Left",
+    "motion_id": "c9ce89ec-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Turn 90 Left",
+    "duration": 0.97,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620936,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "turn_left.fbx",
+    "bytes": 343424,
+    "sha256": "e4ff44a72afab131ed1dc590f26409e9aeadcf3e662a83a69e8735da768cb156"
+  },
+  "turn_right": {
+    "role": "turn_right",
+    "mixamo_name": "Turn 90 Right",
+    "motion_id": "c9cea265-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Turn 90 Right",
+    "duration": 0.97,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620937,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "turn_right.fbx",
+    "bytes": 344432,
+    "sha256": "9153f8ed95b4c8ad0d4e9ca1e7be025671fbc83386bc22224f6c5e9ec9f71132"
+  },
+  "crouch_turn_left": {
+    "role": "crouch_turn_left",
+    "mixamo_name": "Crouching Turn 90 Left",
+    "motion_id": "c9cea330-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Crouched Turn 90 Left",
+    "duration": 1.23,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620938,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_turn_left.fbx",
+    "bytes": 365200,
+    "sha256": "b5fa582fbe3f5b072167ce9be48fd2f05175dbd6a613e0f1ed4b453ab95592d1"
+  },
+  "crouch_turn_right": {
+    "role": "crouch_turn_right",
+    "mixamo_name": "Crouching Turn 90 Right",
+    "motion_id": "c9cea44b-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "verify_direction_metadata_conflict",
+    "description": "Rifle Crouched Turn 90 Left",
+    "duration": 1.23,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620939,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_turn_right.fbx",
+    "bytes": 365024,
+    "sha256": "ba97c6734381e9052be638f7875456e4d4ec1a5fa88fe414a251e6713aa6c60a"
+  },
+  "jump_up": {
+    "role": "jump_up",
+    "mixamo_name": "Jump Up",
+    "motion_id": "c9cea51f-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Jump Up",
+    "duration": 0.53,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620940,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "jump_up.fbx",
+    "bytes": 305904,
+    "sha256": "8761a05779b3a02e8761e9b34ed7c514a1f429129dc4ca23c0bbb4ef9a272d3e"
+  },
+  "jump_air": {
+    "role": "jump_air",
+    "mixamo_name": "Jump Loop",
+    "motion_id": "c9cea5e9-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Jump Idle",
+    "duration": 1.0,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620941,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "jump_air.fbx",
+    "bytes": 339104,
+    "sha256": "c3f31949a77d3494c24fba83f65c769bf5c52191b963006d56c59bea006c89dd"
+  },
+  "jump_land": {
+    "role": "jump_land",
+    "mixamo_name": "Jump Down",
+    "motion_id": "c9cea6ae-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Rifle Jump Down",
+    "duration": 0.67,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 128620942,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "jump_land.fbx",
+    "bytes": 316704,
+    "sha256": "d446fa4ffbe7594ea78bd6e6a5aa54c989c57a961a70cdbb2de16be75572c3d8"
+  },
+  "raise_to_aim": {
+    "role": "raise_to_aim",
+    "mixamo_name": "Rifle Down To Aim",
+    "motion_id": "c9cd5407-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_transition",
+    "description": "Rifle Down To Aiming",
+    "duration": 0.87,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126030901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "raise_to_aim.fbx",
+    "bytes": 360704,
+    "sha256": "927f8b36430fe814f7ff7c13e25c648be0efbaafef4784547d7b1897fc852faf"
+  },
+  "lower_from_aim": {
+    "role": "lower_from_aim",
+    "mixamo_name": "Rifle Aim To Down",
+    "motion_id": "c9cd54bf-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_transition",
+    "description": "Rifle Aiming To Down",
+    "duration": 1.5,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126040901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "lower_from_aim.fbx",
+    "bytes": 432512,
+    "sha256": "6e2981ccd4f54bddc5f22bf852dfd457671a648d78b8392b1812285c4a5aefb7"
+  },
+  "stand_to_crouch": {
+    "role": "stand_to_crouch",
+    "mixamo_name": "Stand To Crouch",
+    "motion_id": "c9c877e6-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "verify_armed_pose",
+    "description": "Standing To Crouching Transition",
+    "duration": 1.5,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 115910901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "1.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "stand_to_crouch.fbx",
+    "bytes": 406592,
+    "sha256": "f456b849394b2e97f09ecfb0b09446ee33f1af28ecb6d308d0181a82dbf0150a"
+  },
+  "crouch_to_stand": {
+    "role": "crouch_to_stand",
+    "mixamo_name": "Crouch To Standing With Rifle",
+    "motion_id": "c9c87c58-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_transition",
+    "description": "Standing Up From A Crouched Position With An Aimed Rifle",
+    "duration": 2.07,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 115760901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "1.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "crouch_to_stand.fbx",
+    "bytes": 361024,
+    "sha256": "d2948d366aa5db243ad2ac8ac1a018386de821a888e41f4f717ac77eb7ba212a"
+  },
+  "stand_to_kneel": {
+    "role": "stand_to_kneel",
+    "mixamo_name": "Rifle Stand To Kneel",
+    "motion_id": "c9cd5e7d-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Standing To Kneeling",
+    "duration": 1.23,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126210901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "stand_to_kneel.fbx",
+    "bytes": 348096,
+    "sha256": "7b434c63112621fd06750f5880805bb7a6f2f135ab18c9ca1c26d0061afa26ea"
+  },
+  "kneel_to_stand": {
+    "role": "kneel_to_stand",
+    "mixamo_name": "Rifle Kneel To Stand",
+    "motion_id": "c9cd60ba-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Kneeling To Standing",
+    "duration": 1.23,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126220901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "kneel_to_stand.fbx",
+    "bytes": 379632,
+    "sha256": "56efe93f720b1450993048b3a37dff24f0a501737fbcf62c16387b50c115d5e2"
+  },
+  "kneel_idle": {
+    "role": "kneel_idle",
+    "mixamo_name": "Rifle Kneel Idle",
+    "motion_id": "c9cd79d4-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Kneeling Idle",
+    "duration": 1.7,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126540901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "kneel_idle.fbx",
+    "bytes": 398272,
+    "sha256": "6223d61a3c76697bf96cd07d15efe1bfca11eb4b5d47ef1690ae598d7f0b6ddc"
+  },
+  "kneel_to_prone": {
+    "role": "kneel_to_prone",
+    "mixamo_name": "Rifle Kneel To Prone",
+    "motion_id": "c9cd6196-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Kneeling To Prone",
+    "duration": 1.97,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126230901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "kneel_to_prone.fbx",
+    "bytes": 487632,
+    "sha256": "e0871c62ce29daf1a3bd16c2c5dfb1a281d8c10d008b280d9c3f3dc259e79b75"
+  },
+  "prone_to_kneel": {
+    "role": "prone_to_kneel",
+    "mixamo_name": "Rifle Prone To Kneel",
+    "motion_id": "c9cd6254-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Prone To Kneeling",
+    "duration": 1.97,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126240901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "prone_to_kneel.fbx",
+    "bytes": 487664,
+    "sha256": "42242c6654c1f1d221bdbbb299c3f645dadabfa2cd4bea23fda3fc1aad16ca32"
+  },
+  "prone_idle": {
+    "role": "prone_idle",
+    "mixamo_name": "Prone Idle",
+    "motion_id": "c9c875ba-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Lying Down Prone With Rifle",
+    "duration": 3.5,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 113000901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "-1.0,-1.0,0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "prone_idle.fbx",
+    "bytes": 705488,
+    "sha256": "561d96def7095a9ded6afcaa3437f4fb6d2d5e18c600af96727e3c4f32b49dcb"
+  },
+  "fire_stand": {
+    "role": "fire_stand",
+    "mixamo_name": "Firing Rifle",
+    "motion_id": "c9c863fe-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Firing A Rifle While Standing",
+    "duration": 0.97,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 112960901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "-1.0,-1.0,1.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "fire_stand.fbx",
+    "bytes": 388416,
+    "sha256": "cea0d18378b85fc95b5a03a985ae4aa310771dd760c286e8545aea459cbc221c"
+  },
+  "fire_crouch": {
+    "role": "fire_crouch",
+    "mixamo_name": "Fire Rifle",
+    "motion_id": "c9c86f03-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Fire Rifle While Crouched",
+    "duration": 1.03,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 115710901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "fire_crouch.fbx",
+    "bytes": 377360,
+    "sha256": "875d5162c4ec4301212ad4e1428a450a588defed32319f4a17792183fb8c7e38"
+  },
+  "fire_prone": {
+    "role": "fire_prone",
+    "mixamo_name": "Prone Firing Rifle",
+    "motion_id": "c9c85afc-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Firing A Rifle While Prone",
+    "duration": 0.77,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 112990901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "1.0,0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "fire_prone.fbx",
+    "bytes": 346112,
+    "sha256": "41d7dc5fe73fc4b5a7d323e4a4ed863ca75c654e5ee0fa4c4e6f792cad162f67"
+  },
+  "reload_stand": {
+    "role": "reload_stand",
+    "mixamo_name": "Reloading",
+    "motion_id": "c9c8939f-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Reloading Rifle While Standing",
+    "duration": 6.4,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 113030901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "1.0,1.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "reload_stand.fbx",
+    "bytes": 639312,
+    "sha256": "13f017ec59949b91930a29f66a0388594b7e3edd397d07bf61dd29e9c99e9ff5"
+  },
+  "reload_crouch": {
+    "role": "reload_crouch",
+    "mixamo_name": "Reload",
+    "motion_id": "c9c86923-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Reload Rifle While In Crouch Position",
+    "duration": 6.83,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 115730901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "reload_crouch.fbx",
+    "bytes": 877072,
+    "sha256": "15a7a20e15302aeeaff3bba34ca58419bc2a76a5749e989731b534b529f9050a"
+  },
+  "reload_prone": {
+    "role": "reload_prone",
+    "mixamo_name": "Prone Reloading",
+    "motion_id": "c9c87673-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "core",
+    "description": "Reloading Rifle In Prone",
+    "duration": 6.33,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 115780901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "reload_prone.fbx",
+    "bytes": 831696,
+    "sha256": "cbb6166b21305402f772ef252d2c2eeb7b3be74cc0c8acff677607d7d61e78dc"
+  },
+  "equip": {
+    "role": "equip",
+    "mixamo_name": "Rifle Pull Out",
+    "motion_id": "c9cd57c4-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "verify_attachment_route",
+    "description": "Pulling Out Rifle",
+    "duration": 2.03,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126080901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "equip.fbx",
+    "bytes": 490976,
+    "sha256": "d9c5479e926b975304ce223142fe3cb292fec1506a70393fb9e18be6cffaa27f"
+  },
+  "holster": {
+    "role": "holster",
+    "mixamo_name": "Rifle Put Away",
+    "motion_id": "c9cd5708-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "verify_attachment_route",
+    "description": "Putting Rifle Away",
+    "duration": 2.3,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 126070901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "holster.fbx",
+    "bytes": 521696,
+    "sha256": "de08fff16ec20888a423df362a40e8cb5bf0d7db4cb9cdc245358c174469ebab"
+  },
+  "hit_stand": {
+    "role": "hit_stand",
+    "mixamo_name": "Hit Reaction",
+    "motion_id": "c9c6bd18-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Hit Reaction While Holding A Rifle",
+    "duration": 2.4,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 104250908,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0,0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "hit_stand.fbx",
+    "bytes": 450016,
+    "sha256": "eb908d039444232c835296a19ac79c2eca6010c44e4ea7fdfbdc1939460ea9e4"
+  },
+  "hit_crouch": {
+    "role": "hit_crouch",
+    "mixamo_name": "Hit Reaction",
+    "motion_id": "c9c86340-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Hit Reaction From Rifle Crouched",
+    "duration": 1.87,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 115720901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "1.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "hit_crouch.fbx",
+    "bytes": 395072,
+    "sha256": "5228e7b1b6672fde450d3c2039e071ac9d184bd148952a6ff75360f9a6614766"
+  },
+  "hit_prone": {
+    "role": "hit_prone",
+    "mixamo_name": "Rifle Prone Hit Reaction",
+    "motion_id": "c9c89e21-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Rifle Prone Hit Reaction",
+    "duration": 1.83,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 116790901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "-1.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "hit_prone.fbx",
+    "bytes": 400944,
+    "sha256": "c58a8b219571c8bf018f841b516c234c060eaded82421c25713bda397e8e015a"
+  },
+  "death_stand": {
+    "role": "death_stand",
+    "mixamo_name": "Rifle Death",
+    "motion_id": "c9c871f6-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Dying Reaction While Standing Holding A Rifle",
+    "duration": 3.17,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 115860901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "death_stand.fbx",
+    "bytes": 693584,
+    "sha256": "acfbff8ac641fd1f4db213ec9b95c2bd6586b8a36fd7a920bd0dd092372b11f8"
+  },
+  "death_prone": {
+    "role": "death_prone",
+    "mixamo_name": "Prone Death",
+    "motion_id": "c9c8a3f3-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "compare_existing",
+    "description": "Dying From A Prone Position",
+    "duration": 1.73,
+    "loopable": false,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 116780901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "1.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "death_prone.fbx",
+    "bytes": 451232,
+    "sha256": "057fa060b125710410b99bd9816306566f20b714f357aca1d9e95e436f96a129"
+  },
+  "prone_turn_left": {
+    "role": "prone_turn_left",
+    "mixamo_name": "Prone Left Turn",
+    "motion_id": "c9c94a11-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "verify_armed_pose",
+    "description": "Turning Left While Prone",
+    "duration": 1.03,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 117510901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "prone_turn_left.fbx",
+    "bytes": 373152,
+    "sha256": "f1e856b4bd485c43512b8215f198c0f5c5d0d279ef317dc38248a26f8aac0bc8"
+  },
+  "prone_turn_right": {
+    "role": "prone_turn_right",
+    "mixamo_name": "Prone Right Turn",
+    "motion_id": "c9c944a4-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "verify_armed_pose",
+    "description": "Turning Right While Prone",
+    "duration": 1.27,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 117520901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "prone_turn_right.fbx",
+    "bytes": 408576,
+    "sha256": "537fdb97dceb5cc17bbfeac536b52ffca152de7099173f7b5c25e660447d0d62"
+  },
+  "throw_object": {
+    "role": "throw_object",
+    "mixamo_name": "Throw",
+    "motion_id": "c9cb09fa-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_general",
+    "description": "Throwing An Object From A Standard Pose",
+    "duration": 2.17,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 120560901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "throw_object.fbx",
+    "bytes": 511904,
+    "sha256": "55bcc5f3dce72eebc7111d09d895966bb54285f35940c99e78bd76ee8c624ed0"
+  },
+  "dig": {
+    "role": "dig",
+    "mixamo_name": "Digging",
+    "motion_id": "c9c6cd3e-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_general",
+    "description": "Digging Hole With Shovel",
+    "duration": 4.83,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 106480901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0,0.0,0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "dig.fbx",
+    "bytes": 576048,
+    "sha256": "da9a6592fa1a47bf7881d6004a80236df47c306796c6163165f9961d7c733d13"
+  },
+  "pick_fruit": {
+    "role": "pick_fruit",
+    "mixamo_name": "Pick Fruit",
+    "motion_id": "c9cda6af-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_general",
+    "description": "Picking Fruit At Eye Level",
+    "duration": 6.2,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 127010901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "pick_fruit.fbx",
+    "bytes": 806256,
+    "sha256": "b7d031797b20eaac16587664c897da8db9b371244d53110f8b1c1b70df5e948d"
+  },
+  "injured_walk": {
+    "role": "injured_walk",
+    "mixamo_name": "Injured Walk",
+    "motion_id": "c9cdc569-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_general",
+    "description": "Injured Walking",
+    "duration": 1.63,
+    "loopable": true,
+    "supports_inplace": true,
+    "gms_hash": [
+      {
+        "model-id": 125180901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": true,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "injured_walk.fbx",
+    "bytes": 442352,
+    "sha256": "f810df3f142618432e70f7907400a0d7469cf9900bcc5026db0823ff416b50a5"
+  },
+  "injured_idle": {
+    "role": "injured_idle",
+    "mixamo_name": "Injured Idle",
+    "motion_id": "c9ce52f6-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_general",
+    "description": "Injured Standard Idle",
+    "duration": 9.33,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 125300901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "injured_idle.fbx",
+    "bytes": 1003808,
+    "sha256": "caf54d17606251f4509354ef704c1bb3cb3569c340486c74215812a1cf08c9b5"
+  }
+}

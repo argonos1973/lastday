@@ -1,9 +1,10 @@
 extends SceneTree
 
-const PlayerScript = preload("res://scripts/PlayerController.gd")
+class TestPlayer extends "res://scripts/PlayerController.gd":
+	func _play_consumption_audio(_drinking: bool, _duration: float, _serial: int) -> void:
+		pass
 
 class FakeWorld extends Node3D:
-	# The puppet's _ready runs the local-player path which touches main.hud.
 	var hud = null
 
 var failures := 0
@@ -20,7 +21,8 @@ func run() -> void:
 	var world := FakeWorld.new()
 	root.add_child(world)
 	current_scene = world
-	var puppet = PlayerScript.new()
+	var puppet = TestPlayer.new()
+	puppet.is_puppet = true
 	world.add_child(puppet)
 	puppet.setup_as_puppet()
 	# The puppet must own a torch light before any sync packet arrives.
@@ -49,7 +51,30 @@ func run() -> void:
 	check(puppet.flashlight != null and puppet.flashlight.visible, "puppet flashlight spot light works")
 	puppet.puppet_set_flashlight(false)
 	check(not puppet.flashlight.visible, "puppet flashlight turns off")
+	puppet.puppet_apply_visuals("", "Botella de agua", "")
+	check(puppet._generic_hand_grip, "remote bottle uses the local palm grip")
+	puppet._sync_puppet_action_audio("drink/DrinkExternal")
+	check(puppet._drink_hand_root != null and puppet._drink_hand_root.get_child_count() == 1, "drinking builds one left-hand bottle")
+	check(not puppet.third_person_hand_item_root.visible, "drinking hides the carry bottle")
+	var bottle = puppet._drink_hand_root.get_child(0)
+	puppet._sync_puppet_action_audio("drink/DrinkExternal")
+	check(puppet._drink_hand_root.get_child(0) == bottle, "repeated snapshots reuse the bottle")
+	puppet._sync_puppet_action_audio("idle")
+	check(puppet._drink_hand_root.get_child_count() == 0 and puppet.third_person_hand_item_root.visible, "cancelling drink restores carry")
+	puppet.puppet_apply_visuals("", "", "")
+	puppet._sync_puppet_action_audio("drink")
+	check(puppet._drink_hand_root.get_child_count() == 0, "drinking from the world does not invent a bottle")
+	puppet.puppet_apply_visuals("", "Naranja", "")
+	puppet._sync_puppet_action_audio("eat")
+	check(puppet._drink_hand_root.get_child_count() == 1 and not puppet.third_person_hand_item_root.visible, "remote food follows the mouth gesture")
+	puppet._sync_puppet_action_audio("idle")
+	check(puppet._drink_hand_root.get_child_count() == 0 and puppet.third_person_hand_item_root.visible and puppet._generic_hand_grip, "eating ends with the original carry grip")
+	puppet.puppet_apply_visuals("", "Botella de agua", "")
+	puppet._sync_puppet_action_audio("drink")
+	puppet.is_dead = true
+	puppet._sync_puppet_action_audio("dead")
+	check(puppet._drink_hand_root.get_child_count() == 0, "death clears the drink prop")
 	world.free()
 	if failures == 0:
-		print("PASS: remote players show lit torch (model + light + flames) and flashlight")
+		print("PASS: remote torch, flashlight and consumption props")
 	quit(1 if failures else 0)

@@ -4,6 +4,8 @@ class Manager extends "res://scripts/SurvivorBotManager.gd":
 	var blocked := false
 	var moves := 0
 	var destination := Vector3.INF
+	var night := false
+	func _is_world_night() -> bool: return night
 	func _ground_y(_x: float, _z: float, _from_y: float = -INF) -> float: return 0.0
 	func _is_step_blocked(_a: Vector3, _b: Vector3, _deep: bool = false) -> bool: return blocked
 	func _has_clear_shot(_a: Vector3, b: Vector3) -> bool: return not cover or b.x < 3.0
@@ -55,6 +57,13 @@ func run():
 	foe.position = Vector3(40, 0, 0)
 	manager.cover = false
 	check(manager._find_combat_foe(b2) == foe, "aggro with clear LOS keeps tracking the foe")
+	var night_b := b2.duplicate(true)
+	manager.night = true
+	check(manager._find_combat_foe(night_b) == null and night_b["aggro_target"] == null,
+		"existing aggro cannot track a quiet distant actor in darkness merely because no wall blocks it")
+	check(night_b["_lost_foe_pos"] == last_seen,
+		"losing night visibility searches the remembered location, not the hidden actor's current position")
+	manager.night = false
 	manager.cover = true # LOS cortada, el enemigo no corre ni se oye
 	check(manager._find_combat_foe(b2) == null, "aggro behind cover is NOT tracked (no wallhack)")
 	check(b2["aggro_target"] == null, "lost aggro drops the live target handle")
@@ -153,10 +162,14 @@ func run():
 	check((b9["_foe_mem"] as Dictionary).get("pos") == heard_pos9
 			and str((b9["_foe_mem"] as Dictionary).get("src")) == "heard",
 		"hidden foe's live position never overwrites the heard clue")
-	manager.cover = false # LOS libre: la vista si fija la posicion exacta
+	manager.cover = false
+	manager._ai_note_foe_scan(b9, foe)
+	check(str((b9["_foe_mem"] as Dictionary).get("src")) == "heard",
+		"geometric LOS outside recognition range cannot turn a heard clue into a sighting")
+	foe.position = Vector3(40, 0, 0) # entra en alcance visual con LOS libre
 	manager._ai_note_foe_scan(b9, foe)
 	check(str((b9["_foe_mem"] as Dictionary).get("src")) == "seen"
-			and (b9["_foe_mem"] as Dictionary).get("pos") == Vector3(70, 0, 0),
+			and (b9["_foe_mem"] as Dictionary).get("pos") == Vector3(40, 0, 0),
 		"direct sight updates the clue to the exact live position")
 	# ------------------------------------------------------------------
 	# Sentidos propios: un bandido a 5 m del lider pero a 100 m del miembro

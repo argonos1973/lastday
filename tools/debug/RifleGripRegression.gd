@@ -12,6 +12,22 @@ func check(ok: bool, label: String):
 	if not ok:
 		errors += 1
 		push_error(label)
+func hand_contact(actor, skeleton: Skeleton3D, side: String) -> Vector3:
+	var middle := skeleton.find_bone("mixamorig_" + side + "HandMiddle1")
+	var rig: Dictionary = actor._grip_rig_for(skeleton, skeleton.get_bone_parent(middle), side == "Left")
+	return skeleton.global_transform * skeleton.get_bone_global_pose(middle) * (rig["middle_pivot"] as Vector3)
+func check_contacts(actor, skeleton: Skeleton3D, label: String) -> void:
+	for side in ["Right", "Left"]:
+		var marker: Vector3 = actor._rg_right_knuckle if side == "Right" else actor._rg_left_knuckle
+		check(hand_contact(actor, skeleton, side).distance_to(actor._rifle_weapon_offset.global_transform * marker) < 0.015,
+			label + "/" + side)
+func check_pivots(actor, skeleton: Skeleton3D) -> void:
+	for rig in actor._grip_rig.values():
+		for entry in rig["fingers"]:
+			var rest := skeleton.get_bone_rest(entry[0])
+			var pose := skeleton.get_bone_pose(entry[0])
+			var expected := rest.origin + rest.basis * (entry[4] as Vector3) - pose.basis * (entry[4] as Vector3)
+			check(pose.origin.distance_to(expected) < 0.001, "Held finger pivots stay compensated without accumulation")
 func _initialize(): call_deferred("run")
 func run():
 	var actor := Actor.new()
@@ -35,8 +51,13 @@ func run():
 			check(actor._ik_skeleton_connected, "Remote process installs post-animation rifle alignment")
 			check(actor._rifle_aim_pose_active == aiming, "Remote process follows synced aim state")
 			if not aiming:
-				var palm := (remote_skel.global_transform * remote_skel.get_bone_global_pose(remote_skel.find_bone("mixamorig_RightHand"))).origin
-				check(absf(actor._rifle_right_grip.global_position.distance_to(palm) - 0.40) < 0.02, "Remote idle rifle follows the hand at world position/yaw")
+				for side in ["Right", "Left"]:
+					var middle := remote_skel.find_bone("mixamorig_" + side + "HandMiddle1")
+					var rig := actor._grip_rig_for(remote_skel, remote_skel.get_bone_parent(middle), side == "Left")
+					var contact: Vector3 = remote_skel.global_transform * remote_skel.get_bone_global_pose(middle) * rig["middle_pivot"]
+					var marker: Vector3 = actor._rg_right_knuckle if side == "Right" else actor._rg_left_knuckle
+					check(contact.distance_to(actor._rifle_weapon_offset.global_transform * marker) < 0.015,
+						"Remote idle sniper keeps real " + side + " hand contact")
 			check(actor._rifle_strap_system != null, "Remote process updates the worn sling")
 	actor.puppet_apply_visuals("", "Cuchillo", "")
 	actor.process_remote(1.0 / 30.0)
@@ -132,12 +153,11 @@ func run():
 		actor._input(rmb)
 	check(not actor._is_aiming and actor.third_person_model.visible, "Releasing right button restores third person")
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	# No animation advance is needed to undo corrected finger pivots.
+	# Leaving ADS keeps the physical grip; compensation must not accumulate.
 	actor._is_aiming = false
 	actor._update_rifle_ik(skel, 0.016)
-	for rig in actor._grip_rig.values():
-		for entry in rig["fingers"]:
-			check(skel.get_bone_pose_position(entry[0]).distance_to(skel.get_bone_rest(entry[0]).origin) < 0.001, "Aim exit restores pivots immediately")
+	check_contacts(actor, skel, "Aim exit keeps measured contacts")
+	check_pivots(actor, skel)
 	actor._is_aiming = true
 	actor._update_rifle_ik(skel, 0.016)
 	actor._on_skeleton_updated()
@@ -152,13 +172,7 @@ func run():
 			actor.third_person_animation_player.advance(.016)
 			skel.force_update_all_bone_transforms()
 			actor._on_skeleton_updated()
-			for pair in [[actor._rifle_right_grip,"mixamorig_RightHand"],[actor._rifle_left_hand_grip,"mixamorig_LeftHand"]]:
-				var palm: Vector3 = (skel.global_transform*skel.get_bone_global_pose(skel.find_bone(pair[1]))).origin
-				# Carry pushes the whole rifle 0.40 m along the barrel so the
-				# stock reaches the shoulder — the grips sit rigidly at that
-				# fixed offset. A lagging frame changes the distance; a
-				# detached rifle lands metres away.
-				check(absf(pair[0].global_position.distance_to(palm)-0.40)<0.02,"Third-person turn retains grip: "+clip+"/"+pair[1])
+			check_contacts(actor, skel, "Third-person turn retains measured grip: " + clip)
 	actor._is_aiming = true
 	# Sitting/prone use the fallback solver: an unreachable grip must not
 	# teleport the wrist beyond the physical length of the forearm.
@@ -191,11 +205,9 @@ func run():
 	player.play(actor._rifle_idle_animation, 0.0)
 	player.advance(0.1)
 	actor._update_rifle_ik(skel, 0.016)
-	check(absf(actor._rifle_right_grip.global_position.distance_to((skel.global_transform * skel.get_bone_global_pose(actor._ik_rh_idx)).origin)-0.40)<0.02, "Un-aim restores right-hand carry offset")
+	check_contacts(actor, skel, "Un-aim preserves both real contacts")
 	check(not actor._rifle_aim_pose_active, "Un-aim disables aim solver")
-	for rig in actor._grip_rig.values():
-		for entry in rig["fingers"]:
-			check(skel.get_bone_pose_position(entry[0]).distance_to(skel.get_bone_rest(entry[0]).origin) < 0.001, "Un-aim restores finger origins")
+	check_pivots(actor, skel)
 	# --- M4: the same rig path must mount the assault rifle with its own
 	# geometry (180° flip, ~x55 scale, separate grip/eye points).
 	actor.is_puppet = true
@@ -266,6 +278,48 @@ func run():
 	var sn_hip_l: Vector3 = skel.global_transform * skel.get_bone_global_pose(lidx) * lrig["middle_pivot"]
 	check(sn_hip_l.distance_to(actor._rifle_weapon_offset.global_transform * actor._rg_left_knuckle) < 0.02, "Sniper hip-fire keeps left hand on handguard")
 	actor._is_firing = false
+	# Posture-specific reloads keep the firing hand attached, free the support
+	# hand through the action and re-grip without changing the 2.2 s ammo window.
+	for weapon in [actor.M4_NAME, "Rifle francotirador"]:
+		actor.puppet_apply_visuals("", weapon, "")
+		for posture in ["stand", "crouch", "prone"]:
+			actor.is_crouching = posture == "crouch"
+			actor.is_prone = posture == "prone"
+			player.play(actor._rifle_idle_animation, 0.0)
+			player.advance(0.1)
+			actor._update_rifle_ik(skel, 0.016)
+			var reload_clip: String = actor._pick_rifle_reload_animation()
+			check(reload_clip == "motion/reload_" + posture, "Reload follows posture: " + posture)
+			check(is_equal_approx(actor._rifle_reload_speed(reload_clip) * GameConst.GUN_RELOAD_TIME, player.get_animation(reload_clip).length),
+				"Reload matches authoritative duration")
+			player.play(reload_clip, 0.0)
+			var released := false
+			var clip: Animation = player.get_animation(reload_clip)
+			for frame in 61:
+				player.seek(clip.length * float(frame) / 60.0, true)
+				actor._update_rifle_ik(skel, 0.016)
+				skel.force_update_all_bone_transforms()
+				var right_gap := hand_contact(actor, skel, "Right").distance_to(actor._rifle_weapon_offset.global_transform * actor._rg_right_knuckle)
+				check(right_gap < 0.015, "Reload firing hand stays attached: %s/%s frame %d gap %.4f" % [weapon, posture, frame, right_gap])
+				var reload_barrel: Vector3 = (actor._rifle_muzzle.global_position - actor._rifle_stock_ref.global_position).normalized()
+				check(reload_barrel.dot(-actor.global_basis.z) > 0.25, "Reload muzzle stays forward of the body")
+				var left_gap := hand_contact(actor, skel, "Left").distance_to(actor._rifle_weapon_offset.global_transform * actor._rg_left_knuckle)
+				if frame > 10 and frame < 50 and left_gap > 0.06:
+					released = true
+				if frame == 0 or frame == 60:
+					check(left_gap < 0.02, "Reload support hand returns: %s/%s frame %d gap %.4f" % [weapon, posture, frame, left_gap])
+			check(released, "Reload actually releases support hand: " + weapon + "/" + posture)
+			player.play(actor._rifle_idle_animation, 0.08)
+			player.advance(0.2)
+			actor._update_rifle_ik(skel, 0.016)
+			check_contacts(actor, skel, "Reload exit restores normal grip")
+	actor.is_crouching = false
+	actor.is_prone = false
+	actor.puppet_apply_visuals("", "", "")
+	for rig in actor._grip_rig.values():
+		for entry in rig["fingers"]:
+			check(skel.get_bone_pose_position(entry[0]).distance_to(skel.get_bone_rest(entry[0]).origin) < 0.001,
+				"Unequip restores finger origins")
 	# Regression: vestir ropa en un puppet no debe desmontar el rifle. Antes,
 	# equip_clothing->_sync_held_item->_clear_rifle_attachment dejaba a los
 	# bots con pose de rifle y las manos vacias hasta el siguiente cambio de

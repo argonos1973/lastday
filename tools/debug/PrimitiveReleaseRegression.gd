@@ -9,6 +9,7 @@ class Actor extends "res://scripts/PlayerController.gd":
 	func get_held_item(): return test_item
 	func play_action_animation(_action: String, _duration: float = 0.55): pass
 	func _schedule_melee_swing_sound(_delay: float): pass
+	func _play_primitive_release_sound(_is_arrow := true): pass
 	func _sync_held_item(): pass
 	func _launch_primitive_projectile(o: Vector3, d: Vector3, speed: float, distance: float, excluded: Array[RID], damage: float, item: String, type: String, weight: float, use: float, bola: bool, visual: bool = false, wind: Vector3 = Vector3.ZERO):
 		launches.append({"origin":o,"item":item})
@@ -92,6 +93,21 @@ func run():
 	actor._throw_aim_frozen = false
 	actor._update_third_person_animation(false,.016)
 	check(is_equal_approx(actor.third_person_animation_player.speed_scale, 1.45), "Release resumes animation at the current attack clip speed")
+	var motions := AnimationLibrary.new()
+	motions.add_animation("throw_object", clip.duplicate())
+	actor.third_person_animation_player.add_animation_library("motion", motions)
+	actor._motion_animations["throw_object"] = "motion/throw_object"
+	actor._start_throw_animation()
+	check(actor.third_person_action_animation == "motion/throw_object", "Throw uses its own motion")
+	actor._throw_aim_hold = true
+	actor._throw_aim_frozen = true
+	actor.third_person_animation_player.seek(.4, true)
+	actor._update_third_person_animation(false, .016)
+	check(actor._get_current_anim() == "throw_aim" and actor.third_person_animation_player.speed_scale == 0.0, "Frozen throw intent reaches remote actors")
+	actor._throw_aim_hold = false
+	actor._throw_aim_frozen = false
+	actor._update_third_person_animation(false, .016)
+	check(actor._get_current_anim() == "throw" and actor.third_person_animation_player.speed_scale == 1.0, "New throw reaches release at the existing 0.42 second delay")
 	actor.third_person_hand_item_root = Node3D.new()
 	actor.third_person_model.add_child(actor.third_person_hand_item_root)
 	var bow_item = ItemData.create("Arco reforzado", "weapon_bow", 0.9, 1, 0)

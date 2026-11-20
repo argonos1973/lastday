@@ -1,19 +1,6 @@
 extends SkeletonModifier3D
 ## Applies the grip after animation, without baking it into the idle/walk pose.
 var controller: Node3D
-var joints: Array[Dictionary] = []
-
-func _ready() -> void:
-	var skeleton := get_skeleton()
-	if skeleton == null:
-		return
-	for finger in ["Index", "Middle", "Ring", "Pinky", "Thumb"]:
-		for segment in range(1, 4):
-			for prefix in ["mixamorig:", "mixamorig_", ""]:
-				var index := skeleton.find_bone(prefix + "RightHand" + finger + str(segment))
-				if index >= 0:
-					joints.append({"index": index, "finger": finger, "segment": segment})
-					break
 
 func _process_modification() -> void:
 	if not is_instance_valid(controller) or bool(controller.get("is_dead")):
@@ -27,21 +14,16 @@ func _process_modification() -> void:
 	controller._m4_saved_left_arm_poses.clear()
 	controller._processing_held_grip = true
 	if controller._generic_hand_grip or (controller._has_fishing_rod and not controller._is_fishing):
-		for joint in joints:
-			var index: int = joint.index
-			var segment: int = joint.segment
-			var angle: float = [48.0, 68.0, 42.0][segment - 1]
-			var axis := Vector3.RIGHT
-			if joint.finger == "Thumb":
-				axis = Vector3(0.0, 0.0, 1.0) if segment == 1 else Vector3.RIGHT
-				angle = 42.0 if segment == 1 else 25.0
-			var rest := skeleton.get_bone_rest(index).basis.get_rotation_quaternion()
-			var target := rest * Quaternion(axis, deg_to_rad(angle * controller._hand_grip_curl))
-			skeleton.set_bone_pose_rotation(index, target)
+		var rig: Dictionary = controller._grip_rig_for(skeleton, controller._hand_bone_idx, false)
+		controller._apply_grip_fingers(skeleton, rig, true, controller._hand_grip_curl)
 	if skeleton != controller._hand_skeleton:
 		controller._apply_aim_pitch_pose(skeleton)
 	# Read the final animated wrist, so props don't trail behind it by one frame.
 	controller._update_hand_socket()
+	if is_instance_valid(controller._torch_hand_root) and controller._torch_hand_root.get_child_count() > 0:
+		controller._update_torch_hand_socket()
+	if is_instance_valid(controller._drink_hand_root) and controller._drink_hand_root.get_child_count() > 0:
+		controller._update_drink_hand_socket()
 	if is_instance_valid(controller._rifle_weapon_offset):
 		controller._update_rifle_visuals(0.0)
 

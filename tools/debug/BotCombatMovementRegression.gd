@@ -167,7 +167,7 @@ func run() -> void:
 	check(manager.cover_calls > 0 and not b.is_aiming and manager.shots == before, "reloading bot seeks cover and suspends firing")
 	check(manager._bot_effective_net_anim(b) == "riflerun", "running reload keeps moving legs rather than a static full-body clip")
 	manager._stop_bot_motion(b)
-	check(manager._bot_effective_net_anim(b).contains(PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION), "stationary standing reload still uses its reload clip")
+	check(manager._bot_effective_net_anim(b) == "reload", "stationary reload sends the intent that the client resolves for its posture")
 	manager.cover_goal = Vector3.INF
 	b["_cover_goal"] = Vector3.INF
 	b["_cover_scan_t"] = 0.0

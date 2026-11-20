@@ -141,7 +141,7 @@ func _check_bot_and_vehicle_cover(world) -> void:
 	var aim := manager._bot_aim_point(b, victim, 15.0, "throw")
 	manager._bot_aim_st(b)["dir"] = (aim - (shooter.position + Vector3.UP*1.4)).normalized()
 	manager._bot_fire_thrown(b, victim, "Lanza", false)
-	check(b.has("_throw_pending") and manager._bot_effective_net_anim(b) == "attack", "throw has a visible windup")
+	check(b.has("_throw_pending") and manager._bot_effective_net_anim(b) == "throw", "throw has its own visible windup")
 	check(manager._bot_item_count(shooter, "Lanza") == 1, "windup has not spent the spear yet")
 	await create_timer(PlayerController.THROW_RELEASE_DELAY + 0.05).timeout
 	check(manager._bot_item_count(shooter, "Lanza") == 0 and b.held_item == "", "release removes exactly one spear from the hand and inventory")

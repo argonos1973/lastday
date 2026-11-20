@@ -1,0 +1,1507 @@
+{
+  "source": "https://www.mixamo.com/",
+  "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+  "preferences": {
+    "format": "fbx7_2019",
+    "skin": "false",
+    "fps": "30",
+    "reducekf": "0"
+  },
+  "motions": [
+    {
+      "role": "stand_idle",
+      "mixamo_name": "Idle",
+      "motion_id": "c9ce8927-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Standing Idle",
+      "duration": 2.1,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620933,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "stand_aim_idle",
+      "mixamo_name": "Idle Aiming",
+      "motion_id": "c9cea19a-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Standing Idle Aiming",
+      "duration": 2.1,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620934,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_idle",
+      "mixamo_name": "Idle Crouching",
+      "motion_id": "c9ce8aaf-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Idle",
+      "duration": 2.1,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620950,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_aim_idle",
+      "mixamo_name": "Idle Crouching Aiming",
+      "motion_id": "c9ceac02-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Idle Aiming",
+      "duration": 2.1,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620949,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_forward",
+      "mixamo_name": "Walk Forward",
+      "motion_id": "c9ce9616-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Forward",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620917,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_backward",
+      "mixamo_name": "Walk Backward",
+      "motion_id": "c9ce99ef-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Backward",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620922,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_left",
+      "mixamo_name": "Walk Left",
+      "motion_id": "c9ce9930-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Left",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620921,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_right",
+      "mixamo_name": "Walk Right",
+      "motion_id": "c9ce986c-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Right",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620920,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_forward_left",
+      "mixamo_name": "Walk Forward Left",
+      "motion_id": "c9ce97a2-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Forward Left",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620919,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_forward_right",
+      "mixamo_name": "Walk Forward Right",
+      "motion_id": "c9ce96df-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Forward Right",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620918,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_backward_left",
+      "mixamo_name": "Walk Backward Left",
+      "motion_id": "c9ce9b78-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Backward Left",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620924,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "walk_backward_right",
+      "mixamo_name": "Walk Backward Right",
+      "motion_id": "c9ce9ab2-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Walk Backward Right",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620923,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_forward",
+      "mixamo_name": "Run Forward",
+      "motion_id": "c9ce8798-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Forward",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_backward",
+      "mixamo_name": "Run Backward",
+      "motion_id": "c9ce8b7b-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Backward",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620902,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_left",
+      "mixamo_name": "Run Left",
+      "motion_id": "c9ce8c37-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Left",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620903,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_right",
+      "mixamo_name": "Run Right",
+      "motion_id": "c9ce8cf6-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Right",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620904,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_forward_left",
+      "mixamo_name": "Run Forward Left",
+      "motion_id": "c9ce8e76-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Forward Left",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620906,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_forward_right",
+      "mixamo_name": "Run Forward Right",
+      "motion_id": "c9ce8db2-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Forward Right",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620905,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_backward_left",
+      "mixamo_name": "Run Backward Left",
+      "motion_id": "c9ce8f34-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Backward Left",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620907,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "run_backward_right",
+      "mixamo_name": "Run Backward Right",
+      "motion_id": "c9ce8ffa-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "choose_fast_family",
+      "description": "Rifle Run Backward Right",
+      "duration": 0.5,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620908,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_forward",
+      "mixamo_name": "Walk Crouching Forward",
+      "motion_id": "c9ce9c39-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Forward",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620925,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_backward",
+      "mixamo_name": "Walk Crouching Backward",
+      "motion_id": "c9ce9f47-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Backward",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620930,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_left",
+      "mixamo_name": "Walk Crouching Left",
+      "motion_id": "c9ce9dc5-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Left",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620927,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_right",
+      "mixamo_name": "Walk Crouching Right",
+      "motion_id": "c9ce9d03-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Right",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620926,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_forward_left",
+      "mixamo_name": "Walk Crouching Forward Left",
+      "motion_id": "c9ce9e88-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Forward Left",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620929,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_forward_right",
+      "mixamo_name": "Walk Crouching Forward Right",
+      "motion_id": "c9ce8860-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Forward Right",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620928,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_backward_left",
+      "mixamo_name": "Walk Crouching Backward Left",
+      "motion_id": "c9cea00a-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Backward Left",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620931,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_walk_backward_right",
+      "mixamo_name": "Walk Crouching Backward Right",
+      "motion_id": "c9cea0d3-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Walk Backward Right",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 128620932,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "turn_left",
+      "mixamo_name": "Turn 90 Left",
+      "motion_id": "c9ce89ec-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Turn 90 Left",
+      "duration": 0.97,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620936,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "turn_right",
+      "mixamo_name": "Turn 90 Right",
+      "motion_id": "c9cea265-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Turn 90 Right",
+      "duration": 0.97,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620937,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_turn_left",
+      "mixamo_name": "Crouching Turn 90 Left",
+      "motion_id": "c9cea330-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Crouched Turn 90 Left",
+      "duration": 1.23,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620938,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_turn_right",
+      "mixamo_name": "Crouching Turn 90 Right",
+      "motion_id": "c9cea44b-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "verify_direction_metadata_conflict",
+      "description": "Rifle Crouched Turn 90 Left",
+      "duration": 1.23,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620939,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "jump_up",
+      "mixamo_name": "Jump Up",
+      "motion_id": "c9cea51f-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Jump Up",
+      "duration": 0.53,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620940,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "jump_air",
+      "mixamo_name": "Jump Loop",
+      "motion_id": "c9cea5e9-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Jump Idle",
+      "duration": 1.0,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620941,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "jump_land",
+      "mixamo_name": "Jump Down",
+      "motion_id": "c9cea6ae-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Rifle Jump Down",
+      "duration": 0.67,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 128620942,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "raise_to_aim",
+      "mixamo_name": "Rifle Down To Aim",
+      "motion_id": "c9cd5407-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_transition",
+      "description": "Rifle Down To Aiming",
+      "duration": 0.87,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126030901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "lower_from_aim",
+      "mixamo_name": "Rifle Aim To Down",
+      "motion_id": "c9cd54bf-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_transition",
+      "description": "Rifle Aiming To Down",
+      "duration": 1.5,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126040901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "stand_to_crouch",
+      "mixamo_name": "Stand To Crouch",
+      "motion_id": "c9c877e6-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "verify_armed_pose",
+      "description": "Standing To Crouching Transition",
+      "duration": 1.5,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 115910901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "1.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "crouch_to_stand",
+      "mixamo_name": "Crouch To Standing With Rifle",
+      "motion_id": "c9c87c58-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_transition",
+      "description": "Standing Up From A Crouched Position With An Aimed Rifle",
+      "duration": 2.07,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 115760901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "1.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "stand_to_kneel",
+      "mixamo_name": "Rifle Stand To Kneel",
+      "motion_id": "c9cd5e7d-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Standing To Kneeling",
+      "duration": 1.23,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126210901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "kneel_to_stand",
+      "mixamo_name": "Rifle Kneel To Stand",
+      "motion_id": "c9cd60ba-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Kneeling To Standing",
+      "duration": 1.23,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126220901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "kneel_idle",
+      "mixamo_name": "Rifle Kneel Idle",
+      "motion_id": "c9cd79d4-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Kneeling Idle",
+      "duration": 1.7,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126540901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "kneel_to_prone",
+      "mixamo_name": "Rifle Kneel To Prone",
+      "motion_id": "c9cd6196-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Kneeling To Prone",
+      "duration": 1.97,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126230901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "prone_to_kneel",
+      "mixamo_name": "Rifle Prone To Kneel",
+      "motion_id": "c9cd6254-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Prone To Kneeling",
+      "duration": 1.97,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126240901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "prone_idle",
+      "mixamo_name": "Prone Idle",
+      "motion_id": "c9c875ba-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Lying Down Prone With Rifle",
+      "duration": 3.5,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 113000901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "-1.0,-1.0,0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "fire_stand",
+      "mixamo_name": "Firing Rifle",
+      "motion_id": "c9c863fe-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Firing A Rifle While Standing",
+      "duration": 0.97,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 112960901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "-1.0,-1.0,1.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "fire_crouch",
+      "mixamo_name": "Fire Rifle",
+      "motion_id": "c9c86f03-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Fire Rifle While Crouched",
+      "duration": 1.03,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 115710901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "fire_prone",
+      "mixamo_name": "Prone Firing Rifle",
+      "motion_id": "c9c85afc-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Firing A Rifle While Prone",
+      "duration": 0.77,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 112990901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "1.0,0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "reload_stand",
+      "mixamo_name": "Reloading",
+      "motion_id": "c9c8939f-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Reloading Rifle While Standing",
+      "duration": 6.4,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 113030901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "1.0,1.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "reload_crouch",
+      "mixamo_name": "Reload",
+      "motion_id": "c9c86923-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Reload Rifle While In Crouch Position",
+      "duration": 6.83,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 115730901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "reload_prone",
+      "mixamo_name": "Prone Reloading",
+      "motion_id": "c9c87673-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "core",
+      "description": "Reloading Rifle In Prone",
+      "duration": 6.33,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 115780901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "equip",
+      "mixamo_name": "Rifle Pull Out",
+      "motion_id": "c9cd57c4-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "verify_attachment_route",
+      "description": "Pulling Out Rifle",
+      "duration": 2.03,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126080901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "holster",
+      "mixamo_name": "Rifle Put Away",
+      "motion_id": "c9cd5708-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "verify_attachment_route",
+      "description": "Putting Rifle Away",
+      "duration": 2.3,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 126070901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "hit_stand",
+      "mixamo_name": "Hit Reaction",
+      "motion_id": "c9c6bd18-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Hit Reaction While Holding A Rifle",
+      "duration": 2.4,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 104250908,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0,0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "hit_crouch",
+      "mixamo_name": "Hit Reaction",
+      "motion_id": "c9c86340-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Hit Reaction From Rifle Crouched",
+      "duration": 1.87,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 115720901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "1.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "hit_prone",
+      "mixamo_name": "Rifle Prone Hit Reaction",
+      "motion_id": "c9c89e21-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Rifle Prone Hit Reaction",
+      "duration": 1.83,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 116790901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "-1.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "death_stand",
+      "mixamo_name": "Rifle Death",
+      "motion_id": "c9c871f6-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Dying Reaction While Standing Holding A Rifle",
+      "duration": 3.17,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 115860901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "death_prone",
+      "mixamo_name": "Prone Death",
+      "motion_id": "c9c8a3f3-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "compare_existing",
+      "description": "Dying From A Prone Position",
+      "duration": 1.73,
+      "loopable": false,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 116780901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "1.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "prone_turn_left",
+      "mixamo_name": "Prone Left Turn",
+      "motion_id": "c9c94a11-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "verify_armed_pose",
+      "description": "Turning Left While Prone",
+      "duration": 1.03,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 117510901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "prone_turn_right",
+      "mixamo_name": "Prone Right Turn",
+      "motion_id": "c9c944a4-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "verify_armed_pose",
+      "description": "Turning Right While Prone",
+      "duration": 1.27,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 117520901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "throw_object",
+      "mixamo_name": "Throw",
+      "motion_id": "c9cb09fa-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_general",
+      "description": "Throwing An Object From A Standard Pose",
+      "duration": 2.17,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 120560901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "dig",
+      "mixamo_name": "Digging",
+      "motion_id": "c9c6cd3e-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_general",
+      "description": "Digging Hole With Shovel",
+      "duration": 4.83,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 106480901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0,0.0,0.0"
+        }
+      ]
+    },
+    {
+      "role": "pick_fruit",
+      "mixamo_name": "Pick Fruit",
+      "motion_id": "c9cda6af-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_general",
+      "description": "Picking Fruit At Eye Level",
+      "duration": 6.2,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 127010901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "injured_walk",
+      "mixamo_name": "Injured Walk",
+      "motion_id": "c9cdc569-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_general",
+      "description": "Injured Walking",
+      "duration": 1.63,
+      "loopable": true,
+      "supports_inplace": true,
+      "gms_hash": [
+        {
+          "model-id": 125180901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": true,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    },
+    {
+      "role": "injured_idle",
+      "mixamo_name": "Injured Idle",
+      "motion_id": "c9ce52f6-b96c-11e4-a802-0aaa78deedf9",
+      "selection_status": "review_general",
+      "description": "Injured Standard Idle",
+      "duration": 9.33,
+      "loopable": true,
+      "supports_inplace": false,
+      "gms_hash": [
+        {
+          "model-id": 125300901,
+          "mirror": false,
+          "trim": [
+            0.0,
+            100.0
+          ],
+          "inplace": false,
+          "arm-space": 0,
+          "params": "0.0"
+        }
+      ]
+    }
+  ]
+}

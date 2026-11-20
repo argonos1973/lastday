@@ -1546,16 +1546,14 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	var raw := str(b.get("anim", "idle"))
 	if raw.begins_with("dead"):
 		return raw
-	# Recarga de fusil: clip propio de la libreria rifle_motion. De pie se ve;
-	# arrodillado/tumbado mantiene la postura (no hay clip de recarga bajo).
+	# The client selects the matching reload for the authoritative posture.
 	if bool(b.get("gun_reloading", false)) and bool(b.get("has_rifle", false)) \
-			and raw == "idle" and not bool(b.get("crouching", false)) \
-			and not bool(b.get("sitting", false)) and not bool(b.get("prone", false)):
-		return "rifle_motion/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_RELOAD_ANIMATION
+			and raw == "idle":
+		return "reload"
 	if bool(b.get("sleeping", false)):
 		return "sleep"
 	if b.get("_throw_pending") is Dictionary or Time.get_ticks_msec() < int(b.get("_throw_anim_until", 0)):
-		return "attack"
+		return "throw"
 	if float(b.get("consume_anim_t", 0.0)) > 0.0 and raw == "idle":
 		return str(b.get("consume_anim", "eat"))
 	# Posturas de tiro con fusil: el nombre exacto resuelve directo en el
@@ -4664,6 +4662,7 @@ func _ai_note_foe_scan(b: Dictionary, foe: Node3D) -> void:
 		return
 	var proxy: Node3D = b.get("proxy")
 	if proxy != null and is_instance_valid(proxy) \
+			and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)) \
 			and _has_clear_shot(proxy.global_position, foe.global_position):
 		_ai_note_foe_intel(b, foe, foe.global_position, "seen")
 
@@ -4915,8 +4914,7 @@ func _effective_human_sight(target: Node3D, base_sight: float) -> float:
 		return 8.0
 	var s := base_sight
 	if _is_world_night():
-		var lit: bool = bool(target.get_meta("torch_lit", false)) or target.get("_torch_lit") == true or bool(target.get_meta("flashlight_on", false))
-		s *= 1.2 if lit else 0.62
+		s *= 1.2 if _bot_target_is_lit(target) else 0.62
 	var is_prone_t: bool = (target.get("is_prone") == true) or bool(target.get_meta("prone", false))
 	var is_crouch_t: bool = (target.get("is_crouching") == true) or bool(target.get_meta("crouching", false))
 	if is_prone_t:
@@ -4924,6 +4922,18 @@ func _effective_human_sight(target: Node3D, base_sight: float) -> float:
 	elif is_crouch_t:
 		s *= 0.65
 	return maxf(8.0, s)
+
+func _bot_target_is_lit(target: Node3D) -> bool:
+	return bool(target.get_meta("torch_lit", false)) or target.get("_torch_lit") == true \
+		or bool(target.get_meta("flashlight_on", false)) or target.get("_flashlight_on") == true \
+		or _is_near_any_lit_campfire(target.global_position, 6.0)
+
+func _bot_within_aim_sight(b: Dictionary, target: Node3D, dist: float) -> bool:
+	# An acquired enemy still needs to be visible. A scope/overwatch position
+	# extends recognition, but neither grants night vision or sees through cover.
+	var scoped := str(b.get("held_item", "")) == "Rifle francotirador"
+	var elevated := (b["proxy"] as Node3D).global_position.y - target.global_position.y >= BOT_ROOF_MIN_ELEV
+	return dist <= _effective_human_sight(target, 85.0 if scoped or elevated else 52.0)
 
 # Percepcion auditiva entre bots y jugadores: disparos (220 m), esprints/tala
 # (34-55 m), puertas (30 m) y pasos normales (16 m) se oyen aunque haya muros
@@ -5068,6 +5078,8 @@ func _find_rooftop_foe(b: Dictionary, radius: float = BOT_ROOF_WATCH_RANGE) -> N
 		var d := cur.distance_to(pp)
 		if d >= best_d:
 			continue
+		if _is_world_night() and d > _effective_human_sight(p3, radius):
+			continue
 		if not _has_clear_shot(cur, pp):
 			continue
 		best_d = d
@@ -5077,7 +5089,9 @@ func _find_rooftop_foe(b: Dictionary, radius: float = BOT_ROOF_WATCH_RANGE) -> N
 	if local_p is Node3D and is_instance_valid(local_p) and _bot_considers_foe(b, local_p as Node3D):
 		var lp: Vector3 = (local_p as Node3D).global_position
 		var dl := cur.distance_to(lp)
-		if lp.y - cur.y >= BOT_ROOF_MIN_ELEV and dl < best_d and _has_clear_shot(cur, lp):
+		if lp.y - cur.y >= BOT_ROOF_MIN_ELEV and dl < best_d \
+				and (not _is_world_night() or dl <= _effective_human_sight(local_p as Node3D, radius)) \
+				and _has_clear_shot(cur, lp):
 			best_d = dl
 			best = local_p as Node3D
 	return best
@@ -5152,7 +5166,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 		if d_aggro < 130.0:
 			# El aggro no es un radar: sigue al enemigo solo mientras lo ve u
 			# oye. Si lo pierde, recuerda DONDE desaparecio y cuanto buscarlo.
-			if _can_bot_hear_actor(b, aggro, d_aggro) or _has_clear_shot(proxy.global_position, aggro.global_position):
+			if _can_bot_hear_actor(b, aggro, d_aggro) or (_bot_within_aim_sight(b, aggro, d_aggro) and _has_clear_shot(proxy.global_position, aggro.global_position)):
 				return aggro
 			if int(b.get("_lost_foe_until_msec", 0)) <= 0:
 				var pers_lf := _get_bot_personality(b)
@@ -5389,6 +5403,8 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	# Limitar a |dy|<3.2 impedia responder a un francotirador en un tejado y a
 	# una vigia disparar desde su puesto elevado.
 	var clear_los := _has_clear_shot(proxy.global_position, fpos)
+	if wkind == "rifle":
+		clear_los = clear_los and _bot_within_aim_sight(b, foe, dist)
 	if wkind == "rifle" and bool(b.get("gun_reloading", false)):
 		_bot_seek_ballistic_cover(b, foe, delta)
 		return
@@ -5583,6 +5599,9 @@ const BOT_AIM_SHOCK_DECAY := 1.4    # la sacudida por impacto se va a este ritmo
 const BOT_BULLET_DRAG := 0.12       # = RifleProjectile.drag_coeff por defecto
 const BOT_LEAD_MIN := 0.45
 const BOT_LEAD_MAX := 0.92
+const BOT_RIFLE_AIM_ERROR_DEG := 0.9
+const BOT_SNIPER_AIM_ERROR_DEG := 0.65
+const BOT_NIGHT_AIM_ERROR_DEG := 1.4
 
 func _bot_aim_st(b: Dictionary) -> Dictionary:
 	var a = b.get("_aim")
@@ -5590,7 +5609,8 @@ func _bot_aim_st(b: Dictionary) -> Dictionary:
 		return a
 	a = {"dir": Vector3.ZERO, "rp": 0.0, "ry": 0.0, "breath_t": randf() * 7.0,
 		"hold_on": false, "hold_t": 0.0, "hold_rec": 0.0, "settle": 0.0,
-		"tgt": 0, "shock": 0.0, "last_pt": Vector3.INF}
+		"tgt": 0, "shock": 0.0, "last_pt": Vector3.INF,
+		"sample_pt": Vector3.INF, "sample_t": 0.0, "observation_age": 0.0}
 	b["_aim"] = a
 	return a
 
@@ -5602,6 +5622,7 @@ func _bot_aim_decay(b: Dictionary, delta: float) -> void:
 		return
 	if not bool(b.get("is_aiming", false)):
 		a["hold_on"] = false
+		a["sample_t"] = 0.0
 	var decay := 1.0 - exp(-BOT_RECOIL_RECOVER * delta)
 	a["rp"] = lerpf(float(a["rp"]), 0.0, decay)
 	a["ry"] = lerpf(float(a["ry"]), 0.0, decay * 0.6)
@@ -5674,6 +5695,43 @@ func _bot_target_torso(target: Node3D) -> Vector3:
 		or target.get_meta("saved_sitting", false) == true
 	return target.global_position + Vector3.UP * (0.22 if prone else (0.65 if low else 1.02))
 
+func _bot_rifle_aim_estimate(b: Dictionary, target: Node3D, origin: Vector3, dist: float, delta: float, kind: String) -> Vector3:
+	# Human weapon dispersion assumes the player has placed the crosshair.
+	# A bot must estimate that placement too; holding breath cannot remove this
+	# error. Reuse an observation briefly instead of reading a perfect live torso
+	# every tick. Sudden movement can outrun the last observed position.
+	var a := _bot_aim_st(b)
+	a["sample_t"] = float(a.get("sample_t", 0.0)) - delta
+	a["observation_age"] = float(a.get("observation_age", 0.0)) + delta
+	if float(a["sample_t"]) <= 0.0 or Vector3(a.get("sample_pt", Vector3.INF)) == Vector3.INF:
+		var dark := 0.0
+		if _is_world_night():
+			var nearby_torch := dist <= 8.0 and bool(b.get("torch_lit", false))
+			dark = 0.25 if _bot_target_is_lit(target) or nearby_torch else 1.0
+		var error_deg := BOT_SNIPER_AIM_ERROR_DEG if kind == "sniper" else BOT_RIFLE_AIM_ERROR_DEG
+		error_deg = (error_deg + dark * BOT_NIGHT_AIM_ERROR_DEG) * (0.75 + minf(dist / 80.0, 1.0))
+		if bool(b.get("prone", false)):
+			error_deg *= 0.75
+		elif bool(b.get("crouching", false)) or bool(b.get("sitting", false)):
+			error_deg *= 0.85
+		if _bot_is_moving(b):
+			error_deg *= 1.6
+		error_deg *= 1.0 + (1.0 - clampf(_bot_energy(b) / 100.0, 0.0, 1.0)) * 0.5
+		var point := _bot_aim_point(b, target, dist, kind)
+		var forward := (point - origin).normalized()
+		var right := forward.cross(Vector3.UP).normalized()
+		if right.length_squared() < 0.01:
+			right = Vector3.RIGHT
+		var up := right.cross(forward).normalized()
+		var angle := randf() * TAU
+		var radius := sqrt(randf()) * tan(deg_to_rad(error_deg)) * origin.distance_to(point)
+		a["sample_pt"] = point + (right * cos(angle) + up * sin(angle)) * radius
+		a["sample_t"] = 0.16 + dark * 0.20
+		a["observation_age"] = 0.0
+		a["visual_darkness"] = dark
+		a["uncertainty_deg"] = error_deg
+	return a["sample_pt"]
+
 # Un tick de punteria: gira la mira hacia el punto deseado con velocidad
 # angular limitada y devuelve el error angular actual en grados. Sin linea de
 # tiro, el punto deseado es la ULTIMA posicion conocida — la posicion viva del
@@ -5688,14 +5746,27 @@ func _bot_aim_tick(b: Dictionary, foe: Node3D, dist: float, clear_los: bool, del
 		a["tgt"] = tid
 		a["settle"] = 0.0
 		a["shock"] = minf(1.8, float(a["shock"]) + 0.25)
+		a["sample_t"] = 0.0
+		a["sample_pt"] = Vector3.INF
+	var rifle := kind == "m4" or kind == "sniper"
+	if str(a.get("kind", "")) != kind:
+		a["sample_t"] = 0.0
+	a["kind"] = kind
+	if not rifle:
+		a["visual_darkness"] = 0.0
+		a["uncertainty_deg"] = 0.0
+	var visible := clear_los and (not rifle or _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)))
+	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 1.4), 0.0)
 	var pt := Vector3.INF
-	if clear_los:
-		pt = _bot_aim_point(b, foe, dist, kind)
+	if visible:
+		pt = _bot_rifle_aim_estimate(b, foe, origin, dist, delta, kind) if rifle else _bot_aim_point(b, foe, dist, kind)
 	else:
+		a["settle"] = 0.0
+		a["sample_t"] = 0.0
+		a["hold_on"] = false
 		var fm: Dictionary = b.get("_foe_mem", {})
 		var fpos = fm.get("pos", Vector3.INF)
 		pt = fpos if fpos is Vector3 and fpos != Vector3.INF else Vector3(a["last_pt"])
-	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 1.4), 0.0)
 	if pt == Vector3.INF:
 		pt = origin + Vector3(a["dir"]).normalized() * maxf(dist, 10.0)
 	a["last_pt"] = pt
@@ -5719,15 +5790,16 @@ func _bot_aim_tick(b: Dictionary, foe: Node3D, dist: float, clear_los: bool, del
 	cur = cur.slerp(desired, t).normalized()
 	a["dir"] = cur
 	a["breath_t"] = float(a["breath_t"]) + delta
-	a["settle"] = float(a["settle"]) + delta
+	if visible:
+		a["settle"] = float(a["settle"]) + delta
 	# Contencion de respiracion: el prudente la usa en tiros largos con la
 	# mira ya asentada — mismos 15 s + 4 s de recuperacion que el jugador.
-	if bool(b.get("is_aiming", false)) and not _bot_is_moving(b) and not bool(a["hold_on"]):
+	if visible and bool(b.get("is_aiming", false)) and not _bot_is_moving(b) and not bool(a["hold_on"]):
 		var careful := float(pers.get("survival_instinct", 0.5)) > 0.55 or float(pers.get("aggression", 0.5)) < 0.4
 		if careful and dist > 18.0 and float(a["settle"]) > 0.8 and float(a["hold_rec"]) <= 0.0:
 			a["hold_on"] = true
 			a["hold_t"] = 0.0
-	return rad_to_deg(cur.angle_to(desired))
+	return INF if rifle and not visible else rad_to_deg(cur.angle_to(desired))
 
 # Oscilacion de respiracion en el instante (misma formula del jugador):
 # amplitud por arma y aumento, fatiga, postura; cero bajo contencion.
@@ -5818,7 +5890,8 @@ func _bot_trigger_tolerance_deg(b: Dictionary, dist: float) -> float:
 
 func _bot_acquire_sec(b: Dictionary) -> float:
 	var pers: Dictionary = _get_bot_personality(b)
-	return BOT_AIM_ACQUIRE_SEC * (1.35 - float(pers.get("aggression", 0.5)) * 0.9)
+	return BOT_AIM_ACQUIRE_SEC * (1.35 - float(pers.get("aggression", 0.5)) * 0.9) \
+		+ float(_bot_aim_st(b).get("visual_darkness", 0.0)) * 0.35
 
 # Puerta comun del gatillo: un tick de punteria + mira asentada + alineada
 # dentro de la tolerancia. Devuelve true cuando el disparo fisico puede salir.
@@ -5858,7 +5931,8 @@ func _bot_log_shot(b: Dictionary, weapon: String, origin: Vector3, dir: Vector3,
 		"aim_dir": Vector3(a["dir"]), "recoil": Vector2(float(a["rp"]), float(a["ry"])),
 		"spread": spread, "dist": origin.distance_to(foe.global_position) if foe != null else -1.0,
 		"moving": _bot_is_moving(b), "crouch": bool(b.get("crouching", false)), "prone": bool(b.get("prone", false)),
-		"energy": _bot_energy(b)})
+		"energy": _bot_energy(b), "aim_uncertainty_deg": float(a.get("uncertainty_deg", 0.0)),
+		"visual_darkness": float(a.get("visual_darkness", 0.0)), "observation_age": float(a.get("observation_age", 0.0))})
 	if log_arr.size() > 24:
 		log_arr.pop_front()
 	b["_shot_log"] = log_arr
@@ -5916,6 +5990,9 @@ func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: St
 			or bool(b.get("gun_reloading", false)) or str(b.get("held_item", "")) != weapon \
 			or not _has_clear_shot(proxy.global_position, target.global_position):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.recheck_fail", _cpt)
+		return false
+	if not _bot_within_aim_sight(b, target, proxy.global_position.distance_to(target.global_position)):
+		if CombatProf.enabled: CombatProf.mark("bot_fire.not_visible", _cpt)
 		return false
 	var is_m4 := _bot_gun_is_m4(weapon)
 	var kind := "m4" if is_m4 else "sniper"

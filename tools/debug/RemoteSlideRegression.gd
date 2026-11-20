@@ -121,6 +121,48 @@ func run() -> void:
 	world.add_child(real_puppet)
 	real_puppet.setup_as_puppet()
 	real_puppet.global_position = Vector3(0.0, 2.0, 0.0)
+	# A generic network tag must still select all rifle directions, including
+	# changes of direction while the tag is unchanged and the local mouse is free.
+	real_puppet.puppet_apply_visuals("", real_puppet.M4_NAME, "")
+	real_puppet.puppet_set_rifle(true)
+	real_puppet._puppet_motion_initialized = true
+	for yaw in [0.0, PI / 2.0]:
+		real_puppet.rotation.y = yaw
+		for crouched in [false, true]:
+			real_puppet.puppet_set_state_flags(false, false, false, crouched)
+			for direction_index in 8:
+				var angle := direction_index * PI / 4.0
+				var direction := Vector3(sin(angle), 0.0, -cos(angle))
+				var step: Vector3 = real_puppet.global_basis * direction * 0.12
+				real_puppet.puppet_apply(real_puppet.global_position + step, yaw, "walk")
+				var role: String = ("crouch_walk_" if crouched else "walk_") + real_puppet.CharacterMotions.DIRECTIONS[direction_index]
+				check(real_puppet.third_person_animation_player.current_animation == real_puppet._motion(role),
+					"remote rifle follows body-relative direction: " + role)
+	real_puppet.puppet_set_state_flags(false, false, false, true)
+	real_puppet.puppet_apply(real_puppet.global_position + real_puppet.global_basis.x * 0.12, real_puppet.rotation.y, "sneak")
+	check(real_puppet.third_person_animation_player.current_animation == real_puppet._motion("crouch_walk_right"),
+		"generic bot sneak tag uses actual lateral displacement")
+	real_puppet._puppet_motion = Vector3.ZERO
+	real_puppet._motion_posture = "stand"
+	real_puppet._puppet_anim = "sneak"
+	real_puppet._process(0.016)
+	var transition: String = real_puppet._motion("stand_to_crouch")
+	check(real_puppet.third_person_animation_player.current_animation == transition
+		and is_equal_approx(real_puppet.third_person_animation_player.speed_scale, real_puppet._cosmetic_rifle_speed(transition)),
+		"bot crouch transition uses the shared duration, not the sneak walk speed")
+	real_puppet.puppet_apply(real_puppet.global_position, real_puppet.rotation.y, "reload")
+	real_puppet._process(0.016)
+	check(real_puppet.third_person_animation_player.current_animation == real_puppet._motion("reload_crouch"),
+		"reload interrupts a cosmetic posture change")
+	real_puppet._cosmetic_rifle_time = 0.2
+	real_puppet._cosmetic_rifle_motion = transition
+	real_puppet.puppet_apply(real_puppet.global_position, real_puppet.rotation.y, "eat")
+	check(real_puppet.third_person_animation_player.current_animation == real_puppet.third_person_eat_animation,
+		"consumption also interrupts a cosmetic posture change immediately")
+	real_puppet.puppet_set_state_flags(false, false, false, false)
+	real_puppet.puppet_apply_visuals("", "", "")
+	real_puppet.puppet_set_rifle(false)
+	real_puppet.global_position = Vector3(0.0, 2.0, 0.0)
 	for clip in [real_puppet.third_person_idle_animation, real_puppet.third_person_plant_animation, real_puppet.third_person_gather_animation, real_puppet.third_person_drink_animation, real_puppet.third_person_attack_animation]:
 		if str(clip).is_empty():
 			continue

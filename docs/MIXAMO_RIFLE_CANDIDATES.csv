@@ -1,0 +1,72 @@
+role,mixamo_name,motion_id,selection_status
+stand_idle,Idle,c9ce8927-b96c-11e4-a802-0aaa78deedf9,compare_existing
+stand_aim_idle,Idle Aiming,c9cea19a-b96c-11e4-a802-0aaa78deedf9,compare_existing
+crouch_idle,Idle Crouching,c9ce8aaf-b96c-11e4-a802-0aaa78deedf9,core
+crouch_aim_idle,Idle Crouching Aiming,c9ceac02-b96c-11e4-a802-0aaa78deedf9,core
+walk_forward,Walk Forward,c9ce9616-b96c-11e4-a802-0aaa78deedf9,core
+walk_backward,Walk Backward,c9ce99ef-b96c-11e4-a802-0aaa78deedf9,core
+walk_left,Walk Left,c9ce9930-b96c-11e4-a802-0aaa78deedf9,core
+walk_right,Walk Right,c9ce986c-b96c-11e4-a802-0aaa78deedf9,core
+walk_forward_left,Walk Forward Left,c9ce97a2-b96c-11e4-a802-0aaa78deedf9,core
+walk_forward_right,Walk Forward Right,c9ce96df-b96c-11e4-a802-0aaa78deedf9,core
+walk_backward_left,Walk Backward Left,c9ce9b78-b96c-11e4-a802-0aaa78deedf9,core
+walk_backward_right,Walk Backward Right,c9ce9ab2-b96c-11e4-a802-0aaa78deedf9,core
+run_forward,Run Forward,c9ce8798-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+run_backward,Run Backward,c9ce8b7b-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+run_left,Run Left,c9ce8c37-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+run_right,Run Right,c9ce8cf6-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+run_forward_left,Run Forward Left,c9ce8e76-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+run_forward_right,Run Forward Right,c9ce8db2-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+run_backward_left,Run Backward Left,c9ce8f34-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+run_backward_right,Run Backward Right,c9ce8ffa-b96c-11e4-a802-0aaa78deedf9,choose_fast_family
+sprint_forward,Sprint Forward,c9ce86d8-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+sprint_backward,Sprint Backward,c9ce93c8-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+sprint_left,Sprint Left,c9ce9302-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+sprint_right,Sprint Right,c9ce9239-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+sprint_forward_left,Sprint Forward Left,c9ce917b-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+sprint_forward_right,Sprint Forward Right,c9ce90bc-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+sprint_backward_left,Sprint Backward Left,c9ce9553-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+sprint_backward_right,Sprint Backward Right,c9ce9493-b96c-11e4-a802-0aaa78deedf9,alternative_fast_family
+crouch_walk_forward,Walk Crouching Forward,c9ce9c39-b96c-11e4-a802-0aaa78deedf9,core
+crouch_walk_backward,Walk Crouching Backward,c9ce9f47-b96c-11e4-a802-0aaa78deedf9,core
+crouch_walk_left,Walk Crouching Left,c9ce9dc5-b96c-11e4-a802-0aaa78deedf9,core
+crouch_walk_right,Walk Crouching Right,c9ce9d03-b96c-11e4-a802-0aaa78deedf9,core
+crouch_walk_forward_left,Walk Crouching Forward Left,c9ce9e88-b96c-11e4-a802-0aaa78deedf9,core
+crouch_walk_forward_right,Walk Crouching Forward Right,c9ce8860-b96c-11e4-a802-0aaa78deedf9,core
+crouch_walk_backward_left,Walk Crouching Backward Left,c9cea00a-b96c-11e4-a802-0aaa78deedf9,core
+crouch_walk_backward_right,Walk Crouching Backward Right,c9cea0d3-b96c-11e4-a802-0aaa78deedf9,core
+turn_left,Turn 90 Left,c9ce89ec-b96c-11e4-a802-0aaa78deedf9,compare_existing
+turn_right,Turn 90 Right,c9cea265-b96c-11e4-a802-0aaa78deedf9,compare_existing
+crouch_turn_left,Crouching Turn 90 Left,c9cea330-b96c-11e4-a802-0aaa78deedf9,core
+crouch_turn_right,Crouching Turn 90 Right,c9cea44b-b96c-11e4-a802-0aaa78deedf9,verify_direction_metadata_conflict
+jump_up,Jump Up,c9cea51f-b96c-11e4-a802-0aaa78deedf9,core
+jump_air,Jump Loop,c9cea5e9-b96c-11e4-a802-0aaa78deedf9,core
+jump_land,Jump Down,c9cea6ae-b96c-11e4-a802-0aaa78deedf9,core
+raise_to_aim,Rifle Down To Aim,c9cd5407-b96c-11e4-a802-0aaa78deedf9,review_transition
+lower_from_aim,Rifle Aim To Down,c9cd54bf-b96c-11e4-a802-0aaa78deedf9,review_transition
+stand_to_crouch,Stand To Crouch,c9c877e6-b96c-11e4-a802-0aaa78deedf9,verify_armed_pose
+crouch_to_stand,Crouch To Standing With Rifle,c9c87c58-b96c-11e4-a802-0aaa78deedf9,review_transition
+stand_to_kneel,Rifle Stand To Kneel,c9cd5e7d-b96c-11e4-a802-0aaa78deedf9,compare_existing
+kneel_to_stand,Rifle Kneel To Stand,c9cd60ba-b96c-11e4-a802-0aaa78deedf9,compare_existing
+kneel_idle,Rifle Kneel Idle,c9cd79d4-b96c-11e4-a802-0aaa78deedf9,compare_existing
+kneel_to_prone,Rifle Kneel To Prone,c9cd6196-b96c-11e4-a802-0aaa78deedf9,compare_existing
+prone_to_kneel,Rifle Prone To Kneel,c9cd6254-b96c-11e4-a802-0aaa78deedf9,compare_existing
+prone_idle,Prone Idle,c9c875ba-b96c-11e4-a802-0aaa78deedf9,compare_existing
+fire_stand,Firing Rifle,c9c863fe-b96c-11e4-a802-0aaa78deedf9,compare_existing
+fire_crouch,Fire Rifle,c9c86f03-b96c-11e4-a802-0aaa78deedf9,compare_existing
+fire_prone,Prone Firing Rifle,c9c85afc-b96c-11e4-a802-0aaa78deedf9,compare_existing
+reload_stand,Reloading,c9c8939f-b96c-11e4-a802-0aaa78deedf9,compare_existing
+reload_crouch,Reload,c9c86923-b96c-11e4-a802-0aaa78deedf9,core
+reload_prone,Prone Reloading,c9c87673-b96c-11e4-a802-0aaa78deedf9,core
+equip,Rifle Pull Out,c9cd57c4-b96c-11e4-a802-0aaa78deedf9,verify_attachment_route
+holster,Rifle Put Away,c9cd5708-b96c-11e4-a802-0aaa78deedf9,verify_attachment_route
+hit_stand,Hit Reaction,c9c6bd18-b96c-11e4-a802-0aaa78deedf9,compare_existing
+hit_crouch,Hit Reaction,c9c86340-b96c-11e4-a802-0aaa78deedf9,compare_existing
+hit_prone,Rifle Prone Hit Reaction,c9c89e21-b96c-11e4-a802-0aaa78deedf9,compare_existing
+death_stand,Rifle Death,c9c871f6-b96c-11e4-a802-0aaa78deedf9,compare_existing
+death_crouch_headshot,Death Crouching Headshot Front,c9cea8f6-b96c-11e4-a802-0aaa78deedf9,cause_specific
+death_prone,Prone Death,c9c8a3f3-b96c-11e4-a802-0aaa78deedf9,compare_existing
+prone_forward,Prone Forward,c9c878a5-b96c-11e4-a802-0aaa78deedf9,requires_crawl_gameplay_and_armed_review
+prone_backward,Crawl Backwards In Prone,c9c962ca-b96c-11e4-a802-0aaa78deedf9,requires_crawl_gameplay_and_armed_review
+prone_turn_left,Prone Left Turn,c9c94a11-b96c-11e4-a802-0aaa78deedf9,verify_armed_pose
+prone_turn_right,Prone Right Turn,c9c944a4-b96c-11e4-a802-0aaa78deedf9,verify_armed_pose

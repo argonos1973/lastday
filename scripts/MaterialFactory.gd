@@ -255,23 +255,64 @@ static func _cloth_prefix(kind: String) -> String:
 		return "garment_" + kind
 	return "cloth_" + kind
 
+static func skin_detail(material: StandardMaterial3D) -> void:
+	# These FBX materials used the same gloss image as roughness AND metalness.
+	# Skin is dielectric; keep its authored color/normal atlas and user tint.
+	material.metallic = 0.0
+	material.metallic_texture = null
+	material.roughness_texture = null
+	material.roughness = 0.58
+	material.metallic_specular = 0.35
+	material.normal_enabled = material.normal_texture != null
+	material.normal_scale = 0.65
+	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+
+static func character_face_detail(model: Node3D) -> void:
+	if model.has_meta("face_detail_ready"):
+		return
+	model.set_meta("face_detail_ready", true)
+	var eyes := model.find_child("Eyes", true, false) as MeshInstance3D
+	if eyes != null and eyes.get_active_material(0) is StandardMaterial3D:
+		var source := eyes.get_active_material(0) as StandardMaterial3D
+		var key := "eyes_" + str(source.get_instance_id())
+		if not _mat_cache.has(key):
+			var material := source.duplicate() as StandardMaterial3D
+			skin_detail(material)
+			material.roughness = 0.2
+			material.metallic_specular = 0.5
+			material.normal_scale = 0.15
+			_mat_cache[key] = material
+		eyes.material_override = _mat_cache[key]
+	var lashes := model.find_child("Eyelashes", true, false) as MeshInstance3D
+	if lashes != null:
+		if not _mat_cache.has("eyelashes"):
+			var material := StandardMaterial3D.new()
+			material.albedo_texture = load_texture("res://assets/textures/clothing/eyelashes.png")
+			material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			material.alpha_scissor_threshold = 0.35
+			material.cull_mode = BaseMaterial3D.CULL_DISABLED
+			material.roughness = 0.7
+			material.metallic_specular = 0.2
+			_mat_cache["eyelashes"] = material
+		lashes.material_override = _mat_cache["eyelashes"]
+
 static func cloth_detail(m: StandardMaterial3D, kind: String, unit_scale: float = 1.0) -> void:
 	var prefix := _cloth_prefix(kind)
 	m.normal_enabled = true
 	m.normal_texture = load_texture(CLOTH_DIR + prefix + "_normal.png")
 	# Leather has broader grain; woven fabric needs subtler relief at game distance.
-	m.normal_scale = 0.4 if kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots", "mboots"] else 0.25
+	m.normal_scale = 0.65 if kind in ["shoes", "gloves", "boots", "mboots", "leather"] else 0.4
 	m.roughness_texture = load_texture(CLOTH_DIR + prefix + "_roughness.png")
 	m.roughness = 1.0
 	m.metallic = 0.0
-	m.metallic_specular = 0.35 if kind in ["shoes", "boots", "mboots", "gloves", "leather"] else 0.2
+	m.metallic_specular = 0.45 if kind in ["shoes", "boots", "mboots", "gloves", "leather"] else 0.25
 	# Baked AO darkens pockets, seams and folds; a touch of parallax lets the
 	# garment relief shift with the view angle.
 	var baked := kind in ["top", "bottom", "shoes", "soldier", "gloves", "boots", "mboots"]
 	if baked:
 		m.ao_enabled = true
 		m.ao_texture = load_texture(CLOTH_DIR + prefix + "_ao.png")
-		m.ao_light_affect = 0.1
+		m.ao_light_affect = 0.2
 		m.heightmap_enabled = true
 		m.heightmap_texture = load_texture(CLOTH_DIR + prefix + "_height.png")
 		m.heightmap_scale = 0.001

@@ -104,6 +104,7 @@ static func apply(model: Node3D, style: String, color: Color, stage: int) -> voi
 	if model.get_meta("grooming_key", "") == key:
 		return
 	model.set_meta("grooming_key", key)
+	MaterialFactory.character_face_detail(model)
 
 	if hair != null and hair.mesh != null:
 		if not hair.has_meta("grooming_original"):
@@ -139,9 +140,9 @@ static func apply(model: Node3D, style: String, color: Color, stage: int) -> voi
 		tinted.metallic = 0.0
 		tinted.metallic_texture = null
 		tinted.roughness_texture = null
-		tinted.roughness = 0.78
-		tinted.metallic_specular = 0.20
-		tinted.normal_scale = 0.35
+		tinted.roughness = 0.68
+		tinted.metallic_specular = 0.26
+		tinted.normal_scale = 0.4
 		hair.material_override = tinted
 
 	var beard := model.find_child("GrowingBeard", true, false) as MeshInstance3D

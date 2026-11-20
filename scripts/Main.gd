@@ -5574,6 +5574,8 @@ func _spawn_remote_player(id: int) -> void:
 	avatar.position = spawn_pos
 	avatar.is_puppet = true
 	avatar.set_meta("peer_id", id)
+	if SurvivorBotManagerScript.is_bot_peer_id(id) or (net != null and net.players.has(id) and bool(net.players[id].get("is_ai_bot", false))):
+		avatar.set_meta("is_ai_bot", true)
 	add_child(avatar)
 	remote_players[id] = avatar
 	# Defer setup — if local player hasn't loaded model yet, _pending_puppets will retry
@@ -13682,7 +13684,7 @@ func _execute_world_action(action, actor) -> void:
 				var remaining := int(ceil(ready_time - now))
 				actor.notice.emit("El arbol aun no tiene fruta madura. (%ds)" % remaining)
 				return
-			_play_actor_action(actor, "forage", 3.0)
+			_play_actor_action(actor, "pick_fruit", 3.0)
 			actor.notice.emit("Recolectando fruta...")
 			if hud != null:
 				hud.show_countdown("Recolectando fruta", 3.0)
@@ -13838,7 +13840,7 @@ func _execute_world_action(action, actor) -> void:
 			if get_river_depth_at(action.position) > 0.0 or not _can_place_ground_vegetation(action.position, -1.0):
 				actor.notice.emit("Este terreno no sirve para plantar.")
 				return
-			_play_actor_action(actor, "plant", 4.0)
+			_play_actor_action(actor, "dig", 4.0)
 			actor.notice.emit("Plantando semillas... (4s)")
 			if hud != null:
 				hud.show_countdown("Plantando semillas", 4.0)
@@ -14409,7 +14411,7 @@ func _execute_world_action_eat(action, actor) -> void:
 			# Una pila con varias unidades se come de una en una: solo se
 			# consume el ultimo trozo cuando la cantidad llega a cero.
 			var pile_partial: bool = not is_portioned_can and pile_qty > 1
-			_play_actor_action(actor, "plant", 1.2)
+			_play_actor_action(actor, "eat", 1.2)
 			if actor.has_method("_play_consumption_audio"):
 				actor._play_consumption_audio(false, 1.2, int(actor.get("_action_serial")))
 			if hud != null:
@@ -14505,7 +14507,7 @@ func _execute_world_action_eat(action, actor) -> void:
 				if actor.has_method("die"):
 					actor.die()
 		"wolf_meat_raw", "bird_meat_raw":
-			_play_actor_action(actor, "plant", 3.0)
+			_play_actor_action(actor, "eat", 3.0)
 			if actor.has_method("_play_consumption_audio"):
 				actor._play_consumption_audio(false, 3.0, int(actor.get("_action_serial")))
 			if hud != null:
@@ -14627,7 +14629,7 @@ func _handle_farm_plot(action, actor) -> void:
 				actor.notice.emit("Necesitas semillas. Recolecta bayas o busca comida.")
 				return
 			action.set_meta("farm_busy", true)
-			_play_actor_action(actor, "plant", 1.35)
+			_play_actor_action(actor, "dig", 1.35)
 			if hud != null:
 				hud.show_countdown("Plantando semillas", 1.35)
 			var plant_ok := await _await_actor_action(actor, 1.35)

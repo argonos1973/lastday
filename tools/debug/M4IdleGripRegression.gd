@@ -25,6 +25,8 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func run() -> void:
+	if DisplayServer.get_name() != "headless":
+		root.always_on_top = true
 	var aiming := false
 	var use_m4 := true
 	var actor := Actor.new()
@@ -184,13 +186,14 @@ func test_live_pipeline() -> void:
 		actor.equip_clothing("Chaleco táctico")
 		actor.equip_clothing("Pantalones camuflaje")
 		actor.equip_clothing("Botas militares")
-		actor.puppet_apply_visuals("", actor.M4_NAME, "")
+		var weapon_name: String = "Rifle francotirador" if "--sniper" in OS.get_cmdline_user_args() else actor.M4_NAME
+		actor.puppet_apply_visuals("", weapon_name, "")
 		actor.puppet_set_rifle(true)
 		if local_player:
 			actor.is_puppet = false
 			actor.camera = Camera3D.new()
 			actor.add_child(actor.camera)
-			var item = ItemData.create(actor.M4_NAME, "weapon_rifle", 3.5)
+			var item = ItemData.create(weapon_name, "weapon_rifle", 3.5)
 			actor.inventory.items.append(item)
 			actor._held_item_reference = item
 			actor._rifle_in_hands = true
@@ -220,14 +223,38 @@ func test_live_pipeline() -> void:
 		var clips := [actor._rifle_aim_idle_animation, actor._rifle_walk_animation,
 			actor._rifle_left_turn_animation, actor._rifle_aim_idle_animation,
 			actor._rifle_fire_animation, actor._rifle_aim_idle_animation]
+		if "--directions" in OS.get_cmdline_user_args():
+			for family in ["walk", "run", "crouch_walk"]:
+				for direction in actor.CharacterMotions.DIRECTIONS:
+					var clip: String = actor._motion(family + "_" + direction)
+					check_live(not clip.is_empty(), "Directional rifle clip exists: " + family + "/" + direction)
+					if not clip.is_empty():
+						clips.append(clip)
+		if "--actions" in OS.get_cmdline_user_args():
+			for role in ["prone_idle", "kneel_idle", "crouch_turn_left", "crouch_turn_right",
+					"prone_turn_left", "prone_turn_right", "reload_stand", "reload_crouch", "reload_prone", "fire_crouch", "fire_prone",
+					"jump_up", "jump_air", "jump_land", "stand_to_crouch", "crouch_to_stand",
+					"stand_to_kneel", "kneel_to_stand", "kneel_to_prone", "prone_to_kneel"]:
+				clips.append(actor._motion(role))
 		for phase in clips.size():
-			ap.play(clips[phase], 0.12)
+			actor._puppet_anim = clips[phase]
+			print("RIFLE_CLIP local=", local_player, " clip=", clips[phase])
+			ap.play(clips[phase], 0.12 if phase < 6 else 0.0)
 			actor._is_aiming = phase == 3
-			actor._is_firing = phase == 4
+			actor._is_firing = phase == 4 or str(clips[phase]).contains("/fire_")
+			actor.is_crouching = str(clips[phase]).contains("crouch")
+			actor.is_prone = str(clips[phase]).contains("prone")
+			actor.is_sitting = str(clips[phase]).contains("kneel")
+			var running := str(clips[phase]).begins_with("motion/run_")
+			# Local sprint is a controller flag; puppets only receive the tag.
+			actor.is_sprinting = local_player and running
+			var is_reload: bool = actor._is_rifle_reload_clip(clips[phase])
 			if local_player:
 				# Debug camera looks sideways, but ready pose must face forward.
 				actor._side_camera = not actor._is_aiming
 			for frame in 24:
+				if phase >= 6:
+					ap.seek(ap.get_animation(clips[phase]).length * float(frame) / 24.0, true)
 				await process_frame
 				actor.rotation.y = frame * 0.015
 				actor._pitch = deg_to_rad(20.0 if phase == 0 else 55.0 * sin(frame * TAU / 24.0))
@@ -242,6 +269,12 @@ func test_live_pipeline() -> void:
 					await process_frame
 				if rendered.is_empty():
 					continue
+				if running and actor._mounted_rifle_is_m4:
+					var barrel := (actor._rifle_muzzle.global_position - actor._rifle_stock_ref.global_position).normalized()
+					check_live(not actor._m4_camera_ready() and not actor._rifle_aim_pose_active,
+						"Running M4 must use carry, not shoulder aim (local=%s)" % local_player)
+					check_live(barrel.dot(-actor.global_basis.z) < 0.85 and barrel.dot(actor.global_basis.y) < -0.12,
+						"Running M4 must point across/down in its actual rendered pose (local=%s)" % local_player)
 				for side in ["Right", "Left"]:
 					var bone := skel.find_bone("mixamorig_" + side + "HandMiddle1")
 					var rig := actor._grip_rig_for(skel, skel.get_bone_parent(bone), side == "Left")
@@ -251,11 +284,22 @@ func test_live_pipeline() -> void:
 						pose = RenderingServer.skeleton_bone_get_transform(skin.get_skeleton(), bind) * mesh.skin.get_bind_pose(bind).affine_inverse()
 					var point: Vector3 = skel.global_transform * pose * rig["middle_pivot"]
 					var contact: Vector3 = actor._rg_right_knuckle if side == "Right" else actor._rg_left_knuckle
-					var gap := point.distance_to(actor._rifle_weapon_offset.global_transform * contact)
+					var expected_contact: Vector3 = actor._rifle_weapon_offset.global_transform * contact
+					if is_reload and side == "Left":
+						var progress := ap.current_animation_position / ap.get_animation(clips[phase]).length
+						var grip = actor._rifle_action_grip
+						if progress >= 0.08 and progress <= 0.55 and not grip._magazine.is_empty():
+							var part: Dictionary = grip._magazine[0]
+							expected_contact = part.node.global_transform * (part.root as Transform3D).affine_inverse() * grip._mag_contact
+						elif progress >= 0.64 and progress <= 0.76 and not grip._bolt.is_empty():
+							expected_contact = grip._bolt.node.global_transform * (grip._bolt.root as Transform3D).affine_inverse() * grip._bolt_contact
+						elif progress > 0.04 and progress < 0.96:
+							continue # Free travel between actual contacts.
+					var gap := point.distance_to(expected_contact)
 					worst_render_gap = maxf(worst_render_gap, gap)
-					check_live(gap < 0.015, "Rendered M4 %s hand detached: %.4f m (local=%s phase=%d)" % [side, gap, local_player, phase])
+					check_live(gap < 0.015, "Rendered %s %s hand detached: %.4f m (local=%s clip=%s)" % [weapon_name, side, gap, local_player, clips[phase]])
 				var axis := skel.global_basis.orthonormalized().inverse() * actor.global_basis.x.normalized()
-				var expected := Basis(axis, actor._pitch if not actor._is_aiming else 0.0) * (rendered["spine_input"] as Basis)
+				var expected := Basis(axis, actor._pitch if actor._m4_camera_ready() and not actor._is_aiming else 0.0) * (rendered["spine_input"] as Basis)
 				var angle := expected.get_rotation_quaternion().angle_to((rendered["spine"] as Basis).get_rotation_quaternion())
 				check_live(angle < 0.005, "M4 spine pitch applied more than once (%.2f degrees)" % rad_to_deg(angle))
 				if gpu and phase in [0, 3] and frame == 12 and "--preview" in OS.get_cmdline_user_args():

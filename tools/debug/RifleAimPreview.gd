@@ -16,7 +16,15 @@ func _initialize() -> void:
 func run() -> void:
 	var aiming := not ("--idle" in OS.get_cmdline_user_args())
 	var use_m4 := "--m4" in OS.get_cmdline_user_args()
-	var prefix := "/tmp/m4_aim" if use_m4 else "/tmp/rifle_aim"
+	DirAccess.make_dir_recursive_absolute("res://build/tmp")
+	var prefix := "res://build/tmp/m4_aim" if use_m4 else "res://build/tmp/rifle_aim"
+	var requested_role := ""
+	var requested_phase := -1.0
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--motion="):
+			requested_role = argument.trim_prefix("--motion=")
+		if argument.begins_with("--phase="):
+			requested_phase = clampf(float(argument.trim_prefix("--phase=")), 0.0, 1.0)
 	var actor := Actor.new()
 	root.add_child(actor)
 	actor.set_process(false)
@@ -46,24 +54,38 @@ func run() -> void:
 		anim = actor._rifle_left_turn_animation
 	if "--turn-right" in OS.get_cmdline_user_args():
 		anim = actor._rifle_right_turn_animation
+	if not requested_role.is_empty():
+		anim = actor._motion(requested_role)
+		actor.is_crouching = requested_role.contains("crouch")
+		actor.is_prone = requested_role.contains("prone")
+		prefix += "_" + requested_role + "_%02d" % int(maxf(0.0, requested_phase) * 100.0)
 	print("ANIM=", anim, " has=", player != null and player.has_animation(anim))
+	actor._puppet_anim = anim
 	if player != null and player.has_animation(anim):
 		player.play(anim, 0.0)
-		player.advance(0.4)
+		if requested_phase >= 0.0:
+			player.seek(0.0, true)
+			player.speed_scale = 0.0
+			await process_frame
+			player.seek(player.get_animation(anim).length * requested_phase, true)
+			player.speed_scale = 0.0
+		else:
+			player.advance(0.4)
 	var skel: Skeleton3D = actor._find_skeleton(actor.third_person_model)
 	for i in 10:
-		player.advance(0.016)
+		if requested_phase < 0.0:
+			player.advance(0.016)
 		skel.force_update_all_bone_transforms()
 		actor._update_rifle_ik(skel, 1.0 / 60.0)
 		await process_frame
 	# Freeze the animation and converge manually so the measurements reflect the
 	# steady pose, not per-frame anim drift. _solve_aim_arms only runs when
 	# aiming — calling it in idle drags the hands to the aim markers.
-	player.pause()
+	player.speed_scale = 0.0
 	for i in 6:
 		actor._update_rifle_ik(skel, 1.0 / 60.0)
 		skel.force_update_all_bone_transforms()
-		if aiming:
+		if aiming and not requested_role.begins_with("reload_"):
 			actor._solve_aim_arms()
 		else:
 			actor._on_skeleton_updated()
