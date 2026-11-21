@@ -222,7 +222,10 @@ func _initialize() -> void:
 	root.add_child(arena)
 	arena.day_cycle = DayNightCycle.new()
 	arena.add_child(arena.day_cycle)
-	arena.day_cycle.set_process(false)
+	# _initialize runs before READY enables _process automatically. Disable
+	# the node's process mode so real wall time cannot replace the test night
+	# while the delayed burst callbacks run.
+	arena.day_cycle.process_mode = Node.PROCESS_MODE_DISABLED
 	arena.day_cycle.time_of_day = 12.0
 	var mgr := Manager.new()
 	arena.add_child(mgr)

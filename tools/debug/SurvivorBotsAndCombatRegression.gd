@@ -2580,11 +2580,11 @@ func run() -> void:
 	elena["prone"] = false
 	elena["gun_reloading"] = true
 	elena["anim"] = "idle"
-	check(mgr._bot_effective_net_anim(elena) == "rifle_motion/RifleReloadExternal",
-		"Reloading rifle bot sends RifleReloadExternal (got %s)" % mgr._bot_effective_net_anim(elena))
+	check(mgr._bot_effective_net_anim(elena) == "reload",
+		"Standing rifle bot sends the posture-aware reload action (got %s)" % mgr._bot_effective_net_anim(elena))
 	elena["sitting"] = true
-	check(mgr._bot_effective_net_anim(elena) != "rifle_motion/RifleReloadExternal",
-		"Kneeling reload keeps the posture clip instead of standing reload")
+	check(mgr._bot_effective_net_anim(elena) == "reload",
+		"Kneeling rifle bot also sends reload; the client resolves the authoritative posture")
 	elena["sitting"] = false
 	elena["gun_reloading"] = false
 	elena["anim"] = "walk"
@@ -5836,10 +5836,15 @@ func run() -> void:
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.35, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
 		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 6},
 	])
+	# Isolate construction from wildlife left alive by previous scenarios.
+	# Clearing the cache alone allowed the next sense tick to find it again.
+	var previous_sense_t := float(b_log["sense_t"])
+	b_log["sense_t"] = 31.0
 	for i in range(120):
 		mgr._tick_bot(b_log, 0.25)
 		if not str(b_log.get("shelter_id", "")).is_empty():
 			break
+	b_log["sense_t"] = previous_sense_t
 	check(not str(b_log.get("shelter_id", "")).is_empty() and mgr._bot_item_count(p_log, "Tronco") == 0,
 		"10J5i: Con 6 Troncos + Cuchillo raja los 12 palos y construye su refugio (sh=%s act=%s)" % [str(b_log.get("shelter_id", "")), str(b_log.get("_act", ""))])
 

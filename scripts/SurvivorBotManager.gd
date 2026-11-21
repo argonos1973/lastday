@@ -1780,7 +1780,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var hunt_dir := str(_ai_active_directive(b).get("action", "")) == "hunt"
 		b["_s_prey"] = _find_huntable_prey(b, 44.0 if hunt_dir else 32.0)
 		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
+		var loot_started := Time.get_ticks_usec()
 		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
+		_pbm("sense_loot", loot_started)
 		# Preparacion nocturna: al caer la tarde, quien no tiene el fuego ni la
 		# luz resueltos sale a por lo que le falta (trapos, palos, piedras) mas
 		# alla del radio de saqueo oportunista — antes de que se haga de noche.
@@ -10188,6 +10190,7 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 	if world == null or not ("_dropped_items" in world):
 		return {}
 	var proxy: Node3D = b["proxy"]
+	var origin := proxy.global_position
 	var r_sq := radius * radius
 	var best := {}
 	var best_score := -1.0
@@ -10197,6 +10200,18 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 	var now_ms := Time.get_ticks_msec()
 	for entry in world._dropped_items:
 		if not (entry is Dictionary):
+			continue
+		# Reject distant drops before inspecting recipes, inventory capacity or
+		# equipment. Those decisions are expensive and cannot affect the choice
+		# outside this search radius. Keep the existing upstairs exception.
+		var pos := _loot_entry_pos(entry)
+		var offset := pos - origin
+		var dy_loot := absf(offset.y)
+		var flat_sq := offset.x * offset.x + offset.z * offset.z
+		# Upper floors remain reachable when beside/inside their building.
+		if dy_loot > 2.4 and flat_sq > 18.0 * 18.0:
+			continue
+		if offset.length_squared() > r_sq and not (dy_loot > 2.4 and flat_sq <= 18.0 * 18.0):
 			continue
 		var id := str(entry.get("id", ""))
 		if id.is_empty() or depleted.has(id):
@@ -10223,23 +10238,11 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 		# Orden "equip": solo armas, ropa y mochilas — comida y materiales no
 		if bool(b.get("equip_mission", false)) and not _is_gear_item(nm, tp):
 			continue
-		var pos := _loot_entry_pos(entry)
-		var dy_loot := absf(pos.y - proxy.global_position.y)
-		var flat_d := Vector2(pos.x - proxy.global_position.x, pos.z - proxy.global_position.z).length()
-		# Permitir botín en pisos superiores de las casas de la ciudad, el bloque
-		# de 4 plantas y la Torre del Reloj cuando el bot está junto o dentro del
-		# edificio: primero limpia su planta actual (penalización suave por dy) y
-		# luego sube las escaleras para saquear los pisos superiores.
-		if dy_loot > 2.4 and flat_d > 18.0:
-			continue
 		if _is_goal_blacklisted(b, pos):
-			continue
-		var d_sq := proxy.global_position.distance_squared_to(pos)
-		if d_sq > r_sq and not (dy_loot > 2.4 and flat_d <= 18.0):
 			continue
 		# Un superviviente prioriza: arma/medicina > comida > equipo > materiales
 		# > reserva de agua. La distancia y el cambio de planta desempatan.
-		var score := _loot_priority(b, nm, tp) * 1000.0 - flat_d - dy_loot * 14.0
+		var score := _loot_priority(b, nm, tp) * 1000.0 - sqrt(flat_sq) - dy_loot * 14.0
 		if score > best_score:
 			best_score = score
 			best = entry

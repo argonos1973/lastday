@@ -1,9 +1,57 @@
 extends SceneTree
 class Manager extends "res://scripts/SurvivorBotManager.gd":
+	var loot_item_builds := 0
+	func _loot_entry_item_dict(entry: Dictionary) -> Dictionary:
+		loot_item_builds += 1
+		return super._loot_entry_item_dict(entry)
 	func _peer_id_for_actor(actor: Node3D) -> int:
 		return int(actor.get_meta("peer_id", 0))
 	var los := true
 	func _has_clear_shot(_a: Vector3, _b: Vector3) -> bool: return los
+class LootWorld extends Node3D:
+	var _dropped_items: Array = []
+	var _depleted_action_ids: Array = []
+	var _pickup_claims := {}
+	var _pickup_claim_until := {}
+	var world_actions_by_id := {}
+
+func test_loot_search(manager: Manager, proxy: Node3D) -> void:
+	var world := LootWorld.new()
+	root.add_child(world)
+	manager.world = world
+	proxy.set_meta("saved_inventory", [])
+	var bot := {"bot_id": 901, "proxy": proxy, "backpack": "Mochila militar", "hunger": 90.0, "health": 100.0}
+	var near := {"id": "near", "name": "Fusil de asalto", "type": "weapon_rifle", "weight": 3.6, "qty": 1, "pos": [28.0, 0.0, 0.0]}
+	world._dropped_items = [near]
+	var chosen := manager._find_nearby_valuable_loot(bot, 28.0)
+	check(chosen.get("id") == "near", "loot exactly at the radius remains reachable")
+	for i in range(2000):
+		var far := near.duplicate(true)
+		far["id"] = "far_%d" % i
+		far["pos"] = [60.0 + i, 0.0, 0.0]
+		world._dropped_items.append(far)
+	manager.loot_item_builds = 0
+	check(manager._find_nearby_valuable_loot(bot, 28.0) == chosen, "distant drops cannot change the selected local loot")
+	check(manager.loot_item_builds == 1, "thousands of distant drops do not trigger recipe/inventory evaluations")
+	world._dropped_items = [near]
+	near["pos"] = [28.01, 0.0, 0.0]
+	check(manager._find_nearby_valuable_loot(bot, 28.0).is_empty(), "loot just outside the radius is excluded")
+	near["pos"] = [18.0, 35.0, 0.0]
+	check(manager._find_nearby_valuable_loot(bot, 28.0).get("id") == "near", "upper floors remain reachable beyond the spherical radius")
+	near["pos"] = [18.01, 3.0, 0.0]
+	check(manager._find_nearby_valuable_loot(bot, 28.0).is_empty(), "upper-floor loot requires proximity to the building")
+	near["pos"] = [3.0, 0.0, 0.0]
+	world._pickup_claims["near"] = 902
+	world._pickup_claim_until["near"] = Time.get_ticks_msec() + 10000
+	check(manager._find_nearby_valuable_loot(bot, 28.0).is_empty(), "another bot's live claim still prevents selection")
+	world._pickup_claims.clear()
+	near["weight"] = 1000.0
+	check(manager._find_nearby_valuable_loot(bot, 28.0).is_empty(), "nearby loot must still fit in the inventory")
+	near["weight"] = 3.6
+	world._depleted_action_ids.append("near")
+	check(manager._find_nearby_valuable_loot(bot, 28.0).is_empty(), "depleted loot remains excluded")
+	manager.world = null
+	world.free()
 var errors := 0
 func check(ok: bool, label: String):
 	if not ok:
@@ -82,6 +130,7 @@ func run():
 			monotonic = false
 		prev_light = lt
 	check(monotonic and prev_light == 0.0, "light falls smoothly through dusk with no jumps")
+	test_loot_search(manager, me)
 	me.free()
 	actor.free()
 	manager.free()
