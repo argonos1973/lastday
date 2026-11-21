@@ -195,7 +195,11 @@ const CLOTHING_PRIORITY := {
 
 var world: Node = null
 var bots: Dictionary = {} # bot_id -> Dictionary state
+var _pelt_clothing_recipes: Array = []
 var _sync_accum := 0.0
+var _sense_budget_active := false
+var _sense_owner := 0
+var _sense_cursor := 0
 var _ai_accum := 0.0
 var _bot_shelter_seq := 0
 # Aprendizaje persistente por personaje: sobrevive a la muerte/respawn, asi el
@@ -1375,7 +1379,7 @@ func _publish_bot_to_net_players(b: Dictionary) -> void:
 		"pos": b["pos"],
 		"rot": float(b["rot"]),
 		"anim": str(b["anim"]),
-		"equipped_clothing": str(b["clothing"]),
+		"equipped_clothing": _bot_clothing_sync(b),
 		"clothing_colors": b["clothing_colors"],
 		"held_item": str(b["held_item"]),
 		"equipped_backpack": str(b["backpack"]),
@@ -1473,16 +1477,31 @@ func tick(delta: float) -> void:
 	_voice_tick(delta)
 	_pbm("voice", _pt)
 	_pt = Time.get_ticks_usec()
-	for bot_id in bots.keys():
+	var bot_ids := bots.keys()
+	_sense_budget_active = true
+	_sense_owner = 0
+	for offset in bot_ids.size():
+		var index := (_sense_cursor + offset) % bot_ids.size()
+		var candidate: Dictionary = bots[bot_ids[index]]
+		var observer = candidate.get("proxy")
+		if is_instance_valid(observer) and not bool(observer.get_meta("proxy_dead", false)) \
+				and float(candidate.get("sense_t", 0.0)) <= delta:
+			_sense_owner = int(bot_ids[index])
+			_sense_cursor = (index + 1) % bot_ids.size()
+			break
+	for bot_id in bot_ids:
 		var bot_started := Time.get_ticks_usec()
 		var b: Dictionary = bots[bot_id]
 		var proxy: Node3D = b.get("proxy")
 		var before := proxy.global_position if is_instance_valid(proxy) else Vector3.ZERO
 		_tick_bot(b, delta)
+		if b.has("_ground_claim") and int(b.get("_ground_last_tick", -1)) != int(b.get("_ground_tick", 0)):
+			_cancel_bot_ground_pickup(b)
 		PlanManager.sync(self, b, Time.get_ticks_msec())
 		_finish_bot_motion_tick(b,before,delta)
 		_pbm("actor_%s" % bot_id, bot_started)
 	_pbm("tick_bot", _pt)
+	_sense_budget_active = false
 	_pt = Time.get_ticks_usec()
 	_ai_tick(delta)
 	_pbm("ai_tick", _pt)
@@ -1628,7 +1647,7 @@ func _broadcast_bots() -> void:
 					continue
 				net.sync_player_state.rpc_id(
 					pid, bot_id, b["pos"], float(b["rot"]), net_anim,
-					str(b["clothing"]), str(b["held_item"]), str(b["backpack"]),
+					_bot_clothing_sync(b), str(b["held_item"]), str(b["backpack"]),
 					bool(b.get("is_aiming", false)), bool(b["has_rifle"]),
 					bool(b["sleeping"]), bool(b.get("sitting", false)), bool(b["prone"]), bool(b.get("crouching", false)),
 					bool(b["torch_lit"]), bool(b["flashlight_on"]), b["clothing_colors"]
@@ -1656,6 +1675,9 @@ func _emit_bot_condition_audio(b: Dictionary, condition: String) -> void:
 		world._net_player_condition_audio(int(b["bot_id"]),condition)
 
 func _tick_bot(b: Dictionary, delta: float) -> void:
+	b["_ground_tick"] = int(b.get("_ground_tick", 0)) + 1
+	if b.has("_ground_claim") and int(b.get("_ground_last_tick", -1)) < int(b["_ground_tick"]) - 1:
+		_cancel_bot_ground_pickup(b)
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
 		return
@@ -1749,8 +1771,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# en ~0.2 s; escanear toda la fauna, jugadores y botin cada frame por bot
 	# era el mayor coste de la IA (get_nodes_in_group + distancias x3/frame).
 	b["sense_t"] = float(b.get("sense_t", 0.0)) - delta
-	if float(b["sense_t"]) <= 0.0:
+	if float(b["sense_t"]) <= 0.0 and (not _sense_budget_active or int(b["bot_id"]) == _sense_owner):
 		b["sense_t"] = 0.21 + fmod(float(b["bot_id"]) * 0.037, 0.08)
+		var sense_started := Time.get_ticks_usec()
 		var pred_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("predator", 0))
 		var pred_bonus := minf(12.0, float(pred_lessons) * 4.0)
 		b["_s_predator"] = _find_threatening_predator(b, (30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0) + pred_bonus)
@@ -1770,6 +1793,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			if int(b.get("_roof_threat_msec", -999999)) < 0:
 				record_zone_hazard(int(b["bot_id"]), (roof_foe as Node3D).global_position, "tower", 0.6, true)
 			b["_roof_threat_msec"] = Time.get_ticks_msec()
+		_pbm("sense_threats", sense_started)
+		sense_started = Time.get_ticks_usec()
 		b["_s_leader"] = _resolve_team_leader(b)
 		var has_wolf := _bot_has_tamed_wolf(b)
 		b["_s_has_wolf"] = has_wolf
@@ -1780,6 +1805,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var hunt_dir := str(_ai_active_directive(b).get("action", "")) == "hunt"
 		b["_s_prey"] = _find_huntable_prey(b, 44.0 if hunt_dir else 32.0)
 		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
+		_pbm("sense_supplies", sense_started)
 		var loot_started := Time.get_ticks_usec()
 		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
 		_pbm("sense_loot", loot_started)
@@ -2300,7 +2326,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		var lpos := _loot_entry_pos(loot_action)
 		if _bot_can_reach_loot(proxy.global_position, lpos):
 			_stop_bot_motion(b)
-			_collect_loot_entry(b, loot_action)
+			_tick_loot_pickup(b, loot_action, delta)
 		else:
 			_move_bot_towards(b, lpos, 4.6 if roof_wary else 6.2, delta, "walk" if roof_wary else "run")
 		return
@@ -3511,6 +3537,8 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var worn: Array = str(b["clothing"]).split(",")
+	var extra: Dictionary = proxy.get_meta("saved_extra", {})
+	var worn_items: Dictionary = extra.get("worn_clothing", {})
 	var worn_changed := false
 	var to_remove: Array = []
 	for it in inv.duplicate():
@@ -3529,18 +3557,24 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 				to_remove.append(it)
 			if not old_bp.is_empty():
 				_bot_add_inventory_item(inv, {"name": old_bp, "type": "backpack", "weight": 0.9, "quantity": 1, "use_value": 0.0})
-		elif tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm):
+		elif tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm) and float(it.get("durability", 100.0)) > 0.0:
 			var slot := str(PlayerController.CLOTHING_SLOTS[nm])
 			var cur := _worn_in_slot(worn, slot)
 			if int(CLOTHING_PRIORITY.get(nm, 0)) > int(CLOTHING_PRIORITY.get(cur, 0)):
+				var new_piece: Dictionary = it.duplicate(true)
+				new_piece["quantity"] = 1
+				var old_piece: Dictionary = (worn_items.get(cur, {"name": cur, "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0}) as Dictionary).duplicate(true)
+				worn_items.erase(cur)
+				worn_items[nm] = new_piece
 				worn = _swap_worn_slot(worn, slot, nm)
-				if not cur.is_empty():
-					var old_piece := {"name": cur, "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0}
-					if not _bot_try_add_inventory_item(b, inv, old_piece):
-						_bot_drop_to_ground(b, old_piece) # no le cabe: la vieja queda tirada
+				# Free the equipped item's slot before stowing the old garment.
 				it["quantity"] = int(it.get("quantity", 1)) - 1
 				if int(it["quantity"]) <= 0:
-					to_remove.append(it)
+					inv.erase(it)
+				b["clothing"] = ",".join(worn)
+				if not cur.is_empty():
+					if not _bot_try_add_inventory_item(b, inv, old_piece):
+						_bot_drop_to_ground(b, old_piece) # no le cabe: la vieja queda tirada
 				worn_changed = true
 				if nm.contains("piel"):
 					(b.get("_mem", {}) as Dictionary)["gear_learned"] = true
@@ -3548,8 +3582,22 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 		inv.erase(it)
 	if worn_changed:
 		b["clothing"] = ",".join(worn)
-		proxy.set_meta("saved_clothing", b["clothing"])
+		extra["worn_clothing"] = worn_items
+		proxy.set_meta("saved_extra", extra)
+		proxy.set_meta("saved_clothing", _bot_clothing_sync(b))
+		b["_want_cache"] = {}
 		proxy.set_meta("saved_inventory", inv)
+
+func _bot_clothing_sync(b: Dictionary) -> String:
+	# Keep plain names for AI/carry/thermal rules; reuse the human wire format.
+	var proxy: Node3D = b["proxy"]
+	var extra: Dictionary = proxy.get_meta("saved_extra", {})
+	var items: Dictionary = extra.get("worn_clothing", {})
+	var labels := PackedStringArray()
+	for nm in str(b.get("clothing", "")).split(",", false):
+		var species := str((items.get(nm, {}) as Dictionary).get("pelt_species", ""))
+		labels.append(nm + "|" + species if not species.is_empty() else nm)
+	return ",".join(labels)
 
 func _worn_in_slot(worn: Array, slot: String) -> String:
 	for nm in worn:
@@ -4061,18 +4109,49 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 # Un humano no destripa cada cadáver que mata: solo le interesa si le falta
 # algo — carne cuando tiene hambre o sin reserva, piel mientras le falte
 # equipo de abrigo. Y necesita un filo igual que el jugador.
-func _bot_wants_pelts(b: Dictionary, proxy: Node3D) -> bool:
-	const FUR := ["Chaqueta de piel", "Pantalones de piel", "Botas de piel", "Guantes de piel", "Tocado de piel animal", "Gorro de piel"]
-	var fur_worn := 0
-	for it in b["clothing"]:
-		if str(it) in FUR:
-			fur_worn += 1
+func _bot_wants_pelts(b: Dictionary, proxy: Node3D, candidate: String = "") -> bool:
+	if _pelt_clothing_recipes.is_empty():
+		for recipe in CraftingSystem.RECIPES:
+			if recipe.inputs.has("ANY_PELT") and str(recipe.output.get("type", "")) == "clothing":
+				_pelt_clothing_recipes.append(recipe)
+	var owned := {}
+	for nm in str(b.get("clothing", "")).split(",", false):
+		owned[str(PlayerController.CLOTHING_SLOTS.get(nm, ""))] = int(CLOTHING_PRIORITY.get(nm, 0))
 	var pelts := 0
+	var trophy_pelts := 0
 	for it in proxy.get_meta("saved_inventory", []):
-		var entry: Dictionary = it
-		if str(entry.get("name", "")).begins_with("Piel de "):
-			pelts += int(entry.get("quantity", 1))
-	return fur_worn * 3 + pelts < 9
+		if not (it is Dictionary) or int(it.get("quantity", 1)) <= 0:
+			continue
+		var nm := str(it.get("name", ""))
+		if CraftingSystem._is_pelt_name(nm):
+			pelts += int(it.get("quantity", 1))
+			if GameConst.PELT_HEADDRESS.has(CraftingSystem.pelt_species_of(nm)):
+				trophy_pelts += int(it.get("quantity", 1))
+		elif str(it.get("type", "")) == "clothing" and float(it.get("durability", 100.0)) > 0.0:
+			var slot := str(PlayerController.CLOTHING_SLOTS.get(nm, ""))
+			owned[slot] = maxi(int(owned.get(slot, 0)), int(CLOTHING_PRIORITY.get(nm, 0)))
+	var needed_by_slot := {}
+	var trophy_needed := 0
+	for recipe in _pelt_clothing_recipes:
+		var nm := str(recipe.output.name)
+		var slot := str(PlayerController.CLOTHING_SLOTS.get(nm, ""))
+		if int(CLOTHING_PRIORITY.get(nm, 0)) <= int(owned.get(slot, 0)):
+			continue
+		var cost := int(recipe.inputs.ANY_PELT)
+		needed_by_slot[slot] = maxi(cost, int(needed_by_slot.get(slot, 0)))
+		if nm == "Tocado de piel animal":
+			trophy_needed = cost
+	var total_needed := 0
+	for cost in needed_by_slot.values():
+		total_needed += int(cost)
+	if not candidate.is_empty() and int(owned.get("head", 0)) >= int(CLOTHING_PRIORITY["Gorro de piel"]) \
+			and not GameConst.PELT_HEADDRESS.has(CraftingSystem.pelt_species_of(candidate)):
+		return pelts < total_needed - trophy_needed
+	if pelts < total_needed:
+		return true
+	# Bird hides can clothe the body, but cannot supply an animal head.
+	return trophy_pelts < trophy_needed and (candidate.is_empty() \
+		or GameConst.PELT_HEADDRESS.has(CraftingSystem.pelt_species_of(candidate)))
 
 func _bot_wants_animal_loot(b: Dictionary, proxy: Node3D) -> bool:
 	if not _bot_has_can_opener(proxy):
@@ -4110,7 +4189,7 @@ func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 	var kind := str(animal.get("animal_type"))
 	var meat_name := "Carne cruda de lobo"
 	var meat_qty := 3
-	var hide_name := "Piel de lobo"
+	var hide_name := "Piel de lobo negro" if animal.get("black_coat") == true else "Piel de lobo"
 	var hide_qty := 1
 	var part_qty := 1
 	match kind:
@@ -6769,7 +6848,7 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 			var loot_reach := _bot_can_reach_loot(cur, lp)
 			if loot_reach:
 				_stop_bot_motion(b)
-				_collect_loot_entry(b, nearby_loot)
+				_tick_loot_pickup(b, nearby_loot, delta)
 				return
 			# Botin de camino o de la zona de escolta: desvio corto (<=4 m) si
 			# el leader va en marcha, recado completo si esta quieto — el rol
@@ -10366,7 +10445,8 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 		return _bot_wants_craft_input(b, nm)
 	# Pieles: para ropa de piel o forro; unas pocas bastan para empezar
 	if CraftingSystem._is_pelt_name(nm):
-		return _bot_wants_craft_input(b, "ANY_PELT") or _bot_pelt_count(b["proxy"]) < 4
+		return _bot_wants_pelts(b, b["proxy"], nm) \
+			or (str(b.get("shelter_id", "")).is_empty() and _bot_pelt_count(b["proxy"]) < 4)
 	# Mochilas: cualquier modelo sirve, pero solo se recoge si es mejor que la
 	# que ya lleva equipada (sin mochila < pequeña < militar) — nunca repuestos.
 	if tp == "backpack" or nm.begins_with("Mochila"):
@@ -10530,6 +10610,58 @@ func _loot_clear(b: Dictionary) -> void:
 	b["_loot_claim"] = ""
 	b["_s_loot"] = {}
 
+func _cancel_bot_ground_pickup(b: Dictionary) -> void:
+	var id := str(b.get("_ground_claim", ""))
+	if not id.is_empty() and world != null and "_pickup_claims" in world \
+			and int(world._pickup_claims.get(id, 0)) == int(b.get("bot_id", 0)):
+		world._pickup_claims.erase(id)
+		if "_pickup_claim_until" in world:
+			world._pickup_claim_until.erase(id)
+	b.erase("_ground_claim")
+	b.erase("_loot_pickup")
+	var forage: Dictionary = b.get("_forage", {})
+	if str(forage.get("kind", "")) == "eat":
+		forage["t"] = 0.0
+	if str(b.get("anim", "")).begins_with(PlayerController.GroundGesture.PREFIX):
+		b["anim"] = "idle"
+
+func _claim_bot_ground_pickup(b: Dictionary, id: String) -> bool:
+	if world == null or id.is_empty():
+		return false
+	if "_depleted_action_ids" in world and world._depleted_action_ids.has(id):
+		return false
+	if world.has_method("_claim_world_pickup") and not world._claim_world_pickup(id, int(b["bot_id"])):
+		return false
+	b["_ground_claim"] = id
+	b["_ground_last_tick"] = int(b.get("_ground_tick", 0))
+	return true
+
+func _tick_loot_pickup(b: Dictionary, entry: Dictionary, delta: float) -> void:
+	var id := str(entry.get("id", ""))
+	if not _bot_can_reach_loot((b["proxy"] as Node3D).global_position, _loot_entry_pos(entry)) \
+			or _loot_claimed_by_other(b, id) or not _claim_bot_ground_pickup(b, id):
+		_cancel_bot_ground_pickup(b)
+		return
+	var state: Dictionary = b.get("_loot_pickup", {})
+	if str(state.get("id", "")) != id:
+		state = {"id": id, "t": 0.0}
+	# Starvation/cold can drain health while collecting lifesaving supplies;
+	# use the actual hit reaction, not every passive health change.
+	if float(b.get("flinch_timer", 0.0)) > 0.0 or float(b.get("health", 100.0)) <= 0.0:
+		_cancel_bot_ground_pickup(b)
+		return
+	state["t"] = float(state["t"]) + delta
+	b["_loot_pickup"] = state
+	b["sitting"] = false
+	b["crouching"] = false
+	b["is_aiming"] = false
+	b["anim"] = PlayerController.GroundGesture.packet("pickup", id, str(entry.get("name", "")), str(entry.get("type", "resource")), float(state["t"]))
+	var offset := _loot_entry_pos(entry) - (b["proxy"] as Node3D).global_position
+	b["rot"] = atan2(-offset.x, -offset.z)
+	if float(state["t"]) >= PlayerController.GroundGesture.DURATION:
+		_collect_loot_entry(b, entry)
+		_cancel_bot_ground_pickup(b)
+
 func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	var id := str(entry.get("id", ""))
 	if id.is_empty() or world == null:
@@ -10641,7 +10773,7 @@ func _bot_build_shelter(b: Dictionary, pos: Vector3) -> void:
 	var has_pelts := _bot_pelt_count(proxy) >= 4
 	if has_pelts:
 		var used := 0
-		for pelt_nm in ["Piel de lobo", "Piel de ciervo", "Piel de oso", "Piel de zorro"]:
+		for pelt_nm in ["Piel de lobo", "Piel de lobo negro", "Piel de ciervo", "Piel de oso", "Piel de zorro"]:
 			while used < 4 and _bot_item_count(proxy, pelt_nm) > 0:
 				_consume_bot_item(proxy, pelt_nm, 1)
 				used += 1
@@ -14274,6 +14406,11 @@ func _loot_entry_item_dict(entry: Dictionary) -> Dictionary:
 		out["max_durability"] = maxf(dmax, dcur)
 	if entry.has("spoilage"):
 		out["spoilage"] = float(entry["spoilage"])
+	var pelt := str(entry.get("pelt_species", entry.get("pelt", "")))
+	if not pelt.is_empty():
+		out["pelt_species"] = pelt
+	if entry.has("wetness"):
+		out["wetness"] = float(entry["wetness"])
 	return out
 
 # Lo que no le cabe cae al suelo a sus pies, igual que al jugador: queda
@@ -14293,6 +14430,16 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vec
 				dropped["max_durability"] = float(item_dict["max_durability"])
 			if item_dict.has("spoilage"):
 				dropped["spoilage"] = float(item_dict["spoilage"])
+			var action = world.get("world_actions_by_id").get(str(dropped.get("id", ""))) if "world_actions_by_id" in world else null
+			if is_instance_valid(action):
+				for key in ["durability", "max_durability"]:
+					if item_dict.has(key):
+						action.set_meta("item_" + key, item_dict[key])
+			var pelt := str(item_dict.get("pelt_species", ""))
+			if not pelt.is_empty():
+				dropped["pelt"] = pelt
+				if world.has_method("_apply_ground_pickup_pelt"):
+					world._apply_ground_pickup_pelt(dropped, pelt)
 	elif "_dropped_items" in world:
 		var did := "bot_drop_%d_%d" % [int(b["bot_id"]), int(Time.get_ticks_msec()) % 1000000]
 		var rec := {"id": did, "name": str(item_dict.get("name", "")), "type": str(item_dict.get("type", "resource")), "weight": float(item_dict.get("weight", 0.2)), "qty": int(item_dict.get("quantity", 1)), "use": float(item_dict.get("use_value", 0.0)), "pos": [p.x, p.y, p.z], "action_type": "drop"}
@@ -14302,6 +14449,8 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vec
 			rec["max_durability"] = float(item_dict["max_durability"])
 		if item_dict.has("spoilage"):
 			rec["spoilage"] = float(item_dict["spoilage"])
+		if item_dict.has("pelt_species"):
+			rec["pelt"] = str(item_dict["pelt_species"])
 		world._dropped_items.append(rec)
 
 # La entrada de "keep" mas prescindible (para recortar lo que se queda encima
@@ -14351,15 +14500,44 @@ func _bot_can_craft(recipe: Dictionary, inv: Array) -> bool:
 			return false
 	return true
 
+func _bot_recipe_pelt_sources(recipe: Dictionary, inv: Array) -> Array:
+	var usable: Array = []
+	var other: Array = []
+	var trophy := str(recipe.get("output", {}).get("name", "")) == "Tocado de piel animal"
+	for it in inv:
+		if not (it is Dictionary) or not CraftingSystem._is_pelt_name(str(it.get("name", ""))) or int(it.get("quantity", 1)) <= 0:
+			continue
+		if trophy and not GameConst.PELT_HEADDRESS.has(CraftingSystem.pelt_species_of(str(it.name))):
+			other.append(it)
+		else:
+			usable.append(it)
+	return usable + other
+
+func _bot_recipe_output(recipe: Dictionary, inv: Array) -> Dictionary:
+	var remaining := int(recipe.get("inputs", {}).get("ANY_PELT", 0))
+	var consumed := {}
+	if remaining > 0:
+		for it in _bot_recipe_pelt_sources(recipe, inv):
+			var take := mini(remaining, int(it.get("quantity", 1)))
+			consumed[str(it.name)] = int(consumed.get(str(it.name), 0)) + take
+			remaining -= take
+			if remaining <= 0:
+				break
+	return CraftingSystem._pelt_output(recipe.get("output", {}), CraftingSystem._dominant_species(consumed))
+
 # Aplica la receta sobre saved_inventory: consume insumos (o desgasta
 # herramientas), produce la salida con especie de piel dominante y re-equipa.
 func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
+	# Work may have been interrupted after choosing the recipe.
+	if recipe.is_empty() or not _bot_can_craft(recipe, inv):
+		return
 	var consumed_pelts := {}
 	for input_name in recipe.get("inputs", {}):
 		var needed := int(recipe["inputs"][input_name])
-		for it in inv.duplicate():
+		var sources := _bot_recipe_pelt_sources(recipe, inv) if input_name == "ANY_PELT" else inv.duplicate()
+		for it in sources:
 			if needed <= 0:
 				break
 			if not (it is Dictionary) or not _bot_matches_input(input_name, it):
@@ -14404,9 +14582,22 @@ func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 		entry["species"] = str(out["species"])
 	if not pelt_species.is_empty():
 		entry["pelt_species"] = pelt_species
-	if not _bot_try_add_inventory_item(b, inv, entry):
+	# A newly sewn upgrade can go straight onto the body even when the
+	# remaining hides still occupy the last backpack slot.
+	var slot := str(PlayerController.CLOTHING_SLOTS.get(str(entry.name), ""))
+	var best_owned := int(CLOTHING_PRIORITY.get(_worn_in_slot(str(b.get("clothing", "")).split(","), slot), 0))
+	for carried in inv:
+		if carried is Dictionary and str(PlayerController.CLOTHING_SLOTS.get(str(carried.get("name", "")), "")) == slot \
+				and float(carried.get("durability", 100.0)) > 0.0:
+			best_owned = maxi(best_owned, int(CLOTHING_PRIORITY.get(str(carried.get("name", "")), 0)))
+	var wear_now := str(entry.type) == "clothing" and not slot.is_empty() \
+		and int(CLOTHING_PRIORITY.get(str(entry.name), 0)) > best_owned
+	if wear_now:
+		_bot_add_inventory_item(inv, entry) # _auto_equip removes it below.
+	elif not _bot_try_add_inventory_item(b, inv, entry):
 		_bot_drop_to_ground(b, entry) # mochila llena: la pieza cae a sus pies
 	proxy.set_meta("saved_inventory", inv)
+	b["_want_cache"] = {}
 	_auto_equip_best_gear(b)
 	_evolve_personality(b, "craft_success", 0.22)
 	record_strategy_outcome(int(b["bot_id"]), "forage" if str(entry.get("type", "")) in ["food", "tool_hoe"] else "explore", true, 0.06)
@@ -14446,17 +14637,28 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	if otype in gear_types and _bot_item_count(proxy, oname) > 0:
 		return -1.0
 	if otype == "clothing":
+		out = _bot_recipe_output(recipe, proxy.get_meta("saved_inventory", []))
+		oname = str(out.get("name", ""))
 		if oname in str(b.get("clothing", "")).split(","):
 			return -1.0
+		for it in proxy.get_meta("saved_inventory", []):
+			if it is Dictionary and str(it.get("name", "")) == oname \
+					and int(it.get("quantity", 1)) > 0 and float(it.get("durability", 100.0)) > 0.0:
+				return -1.0
+		var improvement := 0
 		if PlayerController.CLOTHING_SLOTS.has(oname):
 			var slot := str(PlayerController.CLOTHING_SLOTS[oname])
 			var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
-			if int(CLOTHING_PRIORITY.get(oname, 0)) <= int(CLOTHING_PRIORITY.get(cur, 0)):
+			improvement = int(CLOTHING_PRIORITY.get(oname, 0)) - int(CLOTHING_PRIORITY.get(cur, 0))
+			if improvement <= 0:
 				return -1.0
-		# Sin pieles suficientes no se ilusiona con ropa de piel que no puede hacer
-		if (recipe.get("inputs", {}) as Dictionary).has("ANY_PELT") and _bot_pelt_count(proxy) < 2:
+		# Do not gather secondary inputs (e.g. cap rags) before owning the
+		# recipe's actual hide cost. Gloves need ONE, not the old global two.
+		var hide_cost := int(recipe.get("inputs", {}).get("ANY_PELT", 0))
+		if _bot_pelt_count(proxy) < hide_cost:
 			return 1.5
-		return 4.6
+		# Prefer a real headdress over a cap when both are feasible.
+		return 4.6 + 0.05 * improvement
 	# Flechas: solo si tiene arco — y con tope para no fundir en flechas todos
 	# los Palos que necesita para levantar su refugio (11 palos).
 	if otype == "ammo_arrow" or oname.begins_with("Flecha"):
@@ -18060,9 +18262,27 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 		b["anim"] = "idle"
 		b["crouching"] = true
 		b["sitting"] = false
-		if float(st["t"]) >= float(st.get("t_need", 1.2)):
+		var duration := float(st.get("t_need", 1.2))
+		if str(st.get("kind", "")) == "eat":
+			if not _bot_can_reach_loot(proxy.global_position, apos) or not _claim_bot_ground_pickup(b, str(st.get("id", ""))):
+				b["_forage"] = {}
+				_cancel_bot_ground_pickup(b)
+				return false
+			if float(b.get("flinch_timer", 0.0)) > 0.0 or float(b.get("health", 100.0)) <= 0.0:
+				_cancel_bot_ground_pickup(b)
+				return false
+			b["crouching"] = false
+			b["is_aiming"] = false
+			var phase := "pickup" if float(st["t"]) < PlayerController.GroundGesture.DURATION else "eat"
+			var phase_time := float(st["t"]) if phase == "pickup" else float(st["t"]) - PlayerController.GroundGesture.DURATION
+			b["anim"] = PlayerController.GroundGesture.packet(phase, str(st["id"]), str(st.get("name", "Seta")), "food", phase_time)
+			var face: Vector3 = apos - proxy.global_position
+			b["rot"] = atan2(-face.x, -face.z)
+			duration += PlayerController.GroundGesture.DURATION
+		if float(st["t"]) >= duration:
 			b["_forage"] = {}
 			_bot_forage_complete(b, st)
+			_cancel_bot_ground_pickup(b)
 		return true
 	# Escaneo con cadencia: iterar world_actions_by_id cada frame por bot era caro
 	b["_forage_scan"] = float(b.get("_forage_scan", 0.0)) - delta
@@ -18115,6 +18335,12 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 	return _bot_try_forage(b, 0.0)
 
 func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
+	var started := Time.get_ticks_usec()
+	var result := _find_forage_target_impl(b, radius)
+	_pbm("forage_scan", started)
+	return result
+
+func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 	if world == null or not ("world_actions_by_id" in world):
 		return {}
 	var proxy: Node3D = b["proxy"]
@@ -18123,7 +18349,7 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 	var now := Time.get_unix_time_from_system()
 	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
-	# Setas primero: se comen al momento, sin objetos al suelo ni esperas largas
+	# Setas primero. Reject distant candidates before memory/lighting queries.
 	_ensure_world_action_caches()
 	for aid in _cached_eat_ids:
 		var a = world.world_actions_by_id.get(aid)
@@ -18131,9 +18357,11 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 			continue
 		if str(a.get("action_type")) != "eat_food" or claims.has(aid) or depleted.has(aid):
 			continue
+		var d := proxy.global_position.distance_to(a.global_position)
+		if d >= best_d:
+			continue
 		if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
 			continue
-		var d := proxy.global_position.distance_to(a.global_position)
 		if d < best_d:
 			best_d = d
 			best = {"kind": "eat", "id": str(aid), "pos": a.global_position, "t": 0.0, "t_need": 1.2,
@@ -18148,9 +18376,11 @@ func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 				continue
 			if now < float(a.get_meta("fruit_ready_time", 0.0)):
 				continue
+			var d2 := proxy.global_position.distance_to(a.global_position)
+			if d2 >= best_d:
+				continue
 			if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
 				continue
-			var d2 := proxy.global_position.distance_to(a.global_position)
 			if d2 < best_d:
 				best_d = d2
 				best = {"kind": "fruit", "id": str(aid), "pos": a.global_position, "t": 0.0, "t_need": 3.0,

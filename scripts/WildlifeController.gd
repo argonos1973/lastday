@@ -2,6 +2,38 @@ extends Node3D
 class_name WildlifeController
 
 const WildlifeAudio = preload("res://scripts/WildlifeAudio.gd")
+const GameLang = preload("res://scripts/GameLang.gd")
+const WolfPack = preload("res://scripts/WolfPack.gd")
+
+var pack_id := ""
+var pack: RefCounted = null
+var black_coat := false
+var puppet_pack_leader := false
+var _prey_search_timer := 0.0
+var _corpse_search_timer := 0.0
+
+func join_pack(group: RefCounted) -> void:
+	if pack != null:
+		pack.remove(self)
+	pack = group
+	if pack != null and pack.add(self):
+		pack_id = pack.id
+	else:
+		pack = null
+		pack_id = ""
+
+func is_pack_leader() -> bool:
+	return puppet_pack_leader if is_puppet else pack != null and pack.leader == self and WolfPack.active(self)
+
+func set_black_coat(value: bool) -> void:
+	if black_coat == value:
+		return
+	black_coat = value
+	_tamed_fur_state = -1
+	_update_tamed_visuals()
+
+func _pack_members() -> Array:
+	return pack.members if pack != null else _cached_wildlife
 
 const BEAR_ATTACK_DURATION := 37.0 / 30.0
 const WOLF_ATTACK_DURATION := 38.0 / 30.0
@@ -49,6 +81,7 @@ var _wait_near_pos := Vector3.ZERO
 var _howl_timer := randf_range(15.0, 35.0)
 var _growl_timer := randf_range(8.0, 18.0)
 var _wolf_audio_player: AudioStreamPlayer3D = null
+var _wolf_voice_kind := ""
 var _wolf_pain_player: AudioStreamPlayer3D = null
 var _wolf_howl_2d_player: AudioStreamPlayer = null
 var _wolf_hunger := 40.0
@@ -524,7 +557,8 @@ func _escape_if_trapped_impl(delta: float) -> bool:
 func _exit_tree() -> void:
 	# Do not clear the static _scene_cache when a single animal dies mid-game —
 	# doing so forced the next spawned wildlife to hit disk/ResourceLoader again.
-	pass
+	if pack != null:
+		pack.remove(self)
 
 static var perf_usec := 0
 static var perf_parts := {}
@@ -537,9 +571,16 @@ static func _pp(part: String, t0: int) -> void:
 func _process(delta: float) -> void:
 	var _t0 := Time.get_ticks_usec()
 	_process_body(delta)
+	if not _is_dedicated and animal_type == "wolf":
+		_sync_wolf_eating_audio()
 	perf_usec += Time.get_ticks_usec() - _t0
 
 func _process_body(delta: float) -> void:
+	if pack != null and (_is_dead or not tamed_to.is_empty()):
+		pack.remove(self)
+		pack = null
+		if not _is_dead:
+			pack_id = ""
 	if not is_puppet and not tamed_to.is_empty() and not _is_dead and _state in ["follow", "guard"] and current_anim_keyword in ["idle", "sit", "lie"] and _threat_player == null:
 		_tamed_rest_time += delta
 	else:
@@ -755,6 +796,12 @@ func _process_body(delta: float) -> void:
 				if scene != null and scene.has_method("_note_wildlife_death"):
 					scene._note_wildlife_death(animal_type, global_position)
 		if _wolf_eating_timer > 0.0:
+			if _wolf_eating_target != null and (not is_instance_valid(_wolf_eating_target) \
+					or _wolf_eating_target.is_queued_for_deletion() or _wolf_eating_target.get("_gutted") == true \
+					or _wolf_eating_target.get("depleted") == true):
+				_wolf_eating_timer = 0.0
+				_wolf_eating_target = null
+				return
 			_play_animation_by_name("eat")
 			if is_instance_valid(_wolf_eating_target):
 				var toward_food := _wolf_eating_target.global_position - global_position
@@ -1011,8 +1058,14 @@ func _retreat_from_player() -> Dictionary:
 	return {"target": _retreat_target, "speed": move_speed * 2.0}
 
 func _wolf_ai(delta: float) -> Dictionary:
+	_prey_search_timer = maxf(0.0, _prey_search_timer - delta)
+	_corpse_search_timer = maxf(0.0, _corpse_search_timer - delta)
 	if _is_dead:
 		return {"target": global_position, "speed": 0.0}
+	if animal_type == "wolf" and _state == "chase_prey" and is_instance_valid(_chase_target) \
+			and _chase_target.get("_is_dead") == true:
+		# A witnessed kill is immediately available as food.
+		_corpse_search_timer = 0.0
 	if is_instance_valid(_player_bite_target):
 		return _continue_player_bite(delta)
 	_player_bite_target = null
@@ -1420,7 +1473,14 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": target, "speed": speed}
 	# Priority 1: eat nearby corpse when hungry (lower priority than chasing player)
 	if is_hungry:
-		var corpse := _find_nearest_corpse()
+		var corpse: Node3D = null
+		if animal_type != "wolf" or _corpse_search_timer <= 0.0:
+			corpse = _find_nearest_corpse()
+			# Empty/far searches can wait 0.2 s. Nearby food is revalidated
+			# every frame so claims, depletion and taming remain immediate.
+			if animal_type == "wolf" and (corpse == null or global_position.distance_squared_to(corpse.global_position) >= 30.0 * 30.0):
+				_corpse_search_timer = 0.2
+				corpse = null
 		if corpse != null:
 			var dist_to_corpse := global_position.distance_to(corpse.global_position)
 			if dist_to_corpse < 2.0:
@@ -1478,7 +1538,17 @@ func _wolf_ai(delta: float) -> Dictionary:
 			return {"target": global_position, "speed": 0.0}
 	# Priority 3: hunt nearby prey when hungry (wolves hunt deer/fox; bears hunt wolf/deer/fox)
 	if is_hungry:
-		var nearest_prey := _find_nearest_prey()
+		var nearest_prey: Node3D = pack.hunting_prey(self) if pack != null else null
+		if nearest_prey == null and animal_type == "wolf" and _state == "chase_prey" \
+				and is_instance_valid(_chase_target) and not _chase_target.is_queued_for_deletion() \
+				and _chase_target.get("_is_dead") != true \
+				and str(_chase_target.get("animal_type")) in ["deer", "fox"] \
+				and global_position.distance_squared_to(_chase_target.global_position) < 45.0 * 45.0:
+			nearest_prey = _chase_target
+		if nearest_prey == null and (animal_type != "wolf" or _prey_search_timer <= 0.0):
+			nearest_prey = _find_nearest_prey()
+			if animal_type == "wolf":
+				_prey_search_timer = 0.2
 		if nearest_prey != null and is_instance_valid(nearest_prey):
 			var dist_to_prey := global_position.distance_to(nearest_prey.global_position)
 			if dist_to_prey < 45.0:
@@ -1515,6 +1585,12 @@ func _wolf_ai(delta: float) -> Dictionary:
 	# Default: peaceful patrol
 	_state = "patrol"
 	_chase_target = null
+	if pack != null:
+		var formation: Dictionary = pack.patrol(self)
+		if not formation.is_empty():
+			var pace := float(formation["speed"])
+			_play_animation_by_name("idle" if pace <= 0.0 else "trot" if pace > move_speed * 1.3 else "walk")
+			return formation
 	target = patrol_points[target_index]
 	speed = move_speed * 1.0
 	_play_animation_by_name("walk")
@@ -1764,7 +1840,7 @@ func _is_valid_player_target(node: Node) -> bool:
 func _alert_nearby_pack(target_node: Node3D) -> void:
 	if not _is_valid_player_target(target_node):
 		return
-	for node in _cached_wildlife:
+	for node in _pack_members():
 		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
 			continue
 		var mate := node as WildlifeController
@@ -1782,7 +1858,7 @@ func _alert_nearby_pack(target_node: Node3D) -> void:
 				mate._chase_target = target_node
 
 func _pack_mate_also_chasing(target_node: Node3D) -> bool:
-	for node in _cached_wildlife:
+	for node in _pack_members():
 		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
 			continue
 		var mate := node as WildlifeController
@@ -1791,6 +1867,8 @@ func _pack_mate_also_chasing(target_node: Node3D) -> bool:
 	return false
 
 func _get_flank_sign() -> float:
+	if pack != null:
+		return 1.0 if pack.members.find(self) % 2 == 0 else -1.0
 	if _flank_sign == 0.0:
 		_flank_sign = 1.0 if (get_instance_id() % 2 == 0) else -1.0
 	return _flank_sign
@@ -1821,7 +1899,7 @@ func _clamp_flee_goal(from: Vector3, away: Vector3, dist: float) -> Vector3:
 	return Vector3(clamp(goal.x, -limit, limit), goal.y, clamp(goal.z, -limit, limit_z))
 
 func _rally_pack_on_howl() -> void:
-	for node in _cached_wildlife:
+	for node in _pack_members():
 		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
 			continue
 		var mate := node as WildlifeController
@@ -2075,7 +2153,7 @@ func _animal_name() -> String:
 
 func _animal_name_cap() -> String:
 	match animal_type:
-		"wolf": return "Lobo"
+		"wolf": return GameLang.t("Lobo negro", "Black wolf") if black_coat else "Lobo"
 		"deer": return "Ciervo"
 		"fox": return "Zorro"
 		"bear": return "Oso"
@@ -2099,7 +2177,7 @@ func _meat_count() -> int:
 
 func _hide_name() -> String:
 	match animal_type:
-		"wolf": return "Piel de lobo"
+		"wolf": return "Piel de lobo negro" if black_coat else "Piel de lobo"
 		"deer": return "Piel de ciervo"
 		"fox": return "Piel de zorro"
 		"bear": return "Piel de oso"
@@ -2122,7 +2200,7 @@ func _leftover_meat_count() -> int:
 
 func _corpse_item_name() -> String:
 	match animal_type:
-		"wolf": return "Lobo muerto"
+		"wolf": return "Lobo negro muerto" if black_coat else "Lobo muerto"
 		"deer": return "Ciervo muerto"
 		"fox": return "Zorro muerto"
 		"bear": return "Oso muerto"
@@ -3803,7 +3881,8 @@ func _apply_tamed_fur_tint(state: int) -> void:
 		if mi.name == "CollarBand" or mi.name == "CollarTag":
 			continue
 		if state == 0:
-			mi.set_surface_override_material(0, null)
+			var base := mi.mesh.surface_get_material(0) as StandardMaterial3D
+			mi.set_surface_override_material(0, MaterialFactory.black_wolf_material(base) if black_coat and base != null else null)
 		else:
 			var base_mat := mi.mesh.surface_get_material(0) as StandardMaterial3D
 			if base_mat == null:
@@ -3812,12 +3891,12 @@ func _apply_tamed_fur_tint(state: int) -> void:
 				if _tamed_fur_mat_mine == null:
 					_tamed_fur_mat_mine = base_mat.duplicate() as StandardMaterial3D
 					_tamed_fur_mat_mine.albedo_color = Color(1.26, 1.18, 1.04)
-				mi.set_surface_override_material(0, _tamed_fur_mat_mine)
+				mi.set_surface_override_material(0, MaterialFactory.black_wolf_material(_tamed_fur_mat_mine) if black_coat else _tamed_fur_mat_mine)
 			else:
 				if _tamed_fur_mat_other == null:
 					_tamed_fur_mat_other = base_mat.duplicate() as StandardMaterial3D
 					_tamed_fur_mat_other.albedo_color = Color(1.06, 1.12, 1.22)
-				mi.set_surface_override_material(0, _tamed_fur_mat_other)
+				mi.set_surface_override_material(0, MaterialFactory.black_wolf_material(_tamed_fur_mat_other) if black_coat else _tamed_fur_mat_other)
 
 func _update_tamed_visuals() -> void:
 	if animal_type != "wolf" or _is_dedicated:
@@ -4106,6 +4185,8 @@ func _update_wolf_sounds(delta: float) -> void:
 		return
 	_howl_timer -= delta
 	_growl_timer -= delta
+	if _wolf_is_eating_audio():
+		return
 	var is_hungry := _wolf_hunger < _wolf_hunger_threshold
 	if is_hungry and _howl_timer <= 0.0:
 		# El domesticado hambriento quejido en vez de aullar como el salvaje.
@@ -4115,7 +4196,7 @@ func _update_wolf_sounds(delta: float) -> void:
 		if is_puppet:
 			_play_wolf_sound("growl")
 			_growl_timer = randf_range(8.0, 16.0)
-		elif _state == "chase_player" or _state == "chase_deer":
+		elif _state in ["chase_player", "chase_prey", "fight_wolf"]:
 			_play_wolf_sound("growl")
 			_growl_timer = randf_range(3.0, 8.0)
 		else:
@@ -4125,14 +4206,56 @@ func _prepare_animal_voice() -> void:
 	if _wolf_audio_player == null:
 		_wolf_audio_player = AudioStreamPlayer3D.new()
 		_wolf_audio_player.name = "WolfSound"
-		_wolf_audio_player.unit_size = 14.0 if animal_type == "bear" else 8.0
-		_wolf_audio_player.max_distance = 65.0 if animal_type == "bear" else 40.0
 		_wolf_audio_player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
 		add_child(_wolf_audio_player)
+	_wolf_audio_player.unit_size = 14.0 if animal_type == "bear" else 8.0
+	_wolf_audio_player.max_distance = 65.0 if animal_type == "bear" else 40.0
+
+func _wolf_is_eating_audio() -> bool:
+	return animal_type == "wolf" and not _is_dead and _stagger_timer <= 0.0 \
+		and _puppet_attack_timer <= 0.0 and current_anim_keyword == "eat" \
+		and (is_puppet or _wolf_eating_timer > 0.0)
+
+func _sync_wolf_eating_audio() -> void:
+	# The replicated eat pose already supplies the state. No chew RPCs,
+	# per-frame allocations, long MP3 decoding or extra voice players.
+	if animal_type != "wolf" or _is_dedicated:
+		return
+	var network := get_node_or_null("/root/NetworkManager")
+	if network != null and network.get("is_dedicated_server") == true:
+		return
+	if _is_dead or not _wolf_is_eating_audio():
+		if _wolf_audio_player != null and (_is_dead or _wolf_voice_kind == "eat"):
+			_wolf_audio_player.stop()
+			_wolf_voice_kind = ""
+		if _is_dead and _wolf_howl_2d_player != null:
+			_wolf_howl_2d_player.stop()
+		return
+	var camera := get_viewport().get_camera_3d()
+	if camera == null or global_position.distance_squared_to(camera.global_position) > 18.0 * 18.0:
+		if _wolf_audio_player != null and _wolf_voice_kind == "eat":
+			_wolf_audio_player.stop()
+		return
+	if _wolf_howl_2d_player != null:
+		_wolf_howl_2d_player.stop()
+	if _wolf_audio_player != null and _wolf_audio_player.playing and _wolf_voice_kind == "eat":
+		return
+	_prepare_animal_voice()
+	_wolf_audio_player.stream = WildlifeAudio.stream(WildlifeAudio.WOLF_EAT[randi() % WildlifeAudio.WOLF_EAT.size()])
+	if _wolf_audio_player.stream == null:
+		return
+	_wolf_voice_kind = "eat"
+	_wolf_audio_player.unit_size = 4.0
+	_wolf_audio_player.max_distance = 18.0
+	_wolf_audio_player.volume_db = -9.0
+	_wolf_audio_player.pitch_scale = randf_range(.98, 1.02)
+	_wolf_audio_player.play()
 
 func _play_wolf_sound(sound_type: String) -> void:
 	if sound_type not in ["howl", "attack", "growl", "growl_low", "bite", "hungry"]: return
 	if _is_dead: return
+	if sound_type in ["howl", "hungry", "growl", "growl_low"] and _wolf_is_eating_audio():
+		return
 	var _net := get_node_or_null("/root/NetworkManager")
 	if _net != null and _net.is_host and not is_puppet and _net.is_connected:
 		_net.animal_sound.rpc(name, sound_type)
@@ -4201,6 +4324,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if stream == null:
 		return
 	_wolf_audio_player.stream = stream
+	_wolf_voice_kind = sound_type
 	if is_bear:
 		_wolf_audio_player.volume_db = -6.0 if sound_type == "bite" else (2.0 if sound_type == "attack" else -2.0)
 		_wolf_audio_player.pitch_scale = randf_range(.96, 1.04) if sound_type != "bite" else .85
@@ -4212,7 +4336,7 @@ func _play_wolf_sound(sound_type: String) -> void:
 			_wolf_audio_player.pitch_scale = randf_range(0.95, 1.05)
 		elif sound_type == "growl_low":
 			_wolf_audio_player.volume_db = -14.0
-			_wolf_audio_player.pitch_scale = randf_range(0.6, 0.75) * (1.45 if tamed else 1.0)
+			_wolf_audio_player.pitch_scale = randf_range(.96, 1.04)
 		elif sound_type == "bite":
 			_wolf_audio_player.volume_db = -6.0
 			_wolf_audio_player.pitch_scale = randf_range(.96, 1.04)
@@ -4896,7 +5020,7 @@ func _try_build_external_animal() -> bool:
 	return false
 
 static func corpse_species(item_name: String) -> String:
-	return {"Ciervo muerto": "deer", "Lobo muerto": "wolf", "Zorro muerto": "fox", "Oso muerto": "bear", "Animal muerto": "wolf"}.get(item_name, "")
+	return {"Ciervo muerto": "deer", "Lobo muerto": "wolf", "Lobo negro muerto": "wolf", "Zorro muerto": "fox", "Oso muerto": "bear", "Animal muerto": "wolf"}.get(item_name, "")
 
 static func species_height(kind: String) -> float:
 	match kind:

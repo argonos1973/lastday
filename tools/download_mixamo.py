@@ -29,6 +29,7 @@ GENERAL = [
     ("throw_object", "Throw", "c9cb09fa-b96c-11e4-a802-0aaa78deedf9"),
     ("dig", "Digging", "c9c6cd3e-b96c-11e4-a802-0aaa78deedf9"),
     ("pick_fruit", "Pick Fruit", "c9cda6af-b96c-11e4-a802-0aaa78deedf9"),
+    ("pickup_ground", "Pick Fruit", "c9cda77e-b96c-11e4-a802-0aaa78deedf9"),
     ("injured_walk", "Injured Walk", "c9cdc569-b96c-11e4-a802-0aaa78deedf9"),
     ("injured_idle", "Injured Idle", "c9ce52f6-b96c-11e4-a802-0aaa78deedf9"),
 ]

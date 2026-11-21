@@ -518,6 +518,8 @@ static func _add_preview_hat(model: Node3D, item_name: String, pelt_species: Str
 	var hat := (packed as PackedScene).instantiate() as Node3D
 	if hat == null:
 		return
+	if item_name == "Tocado de piel animal" and pelt_species == "lobo negro":
+		MaterialFactory.apply_black_wolf_coat(hat)
 	hat.name = "PreviewHat"
 	if item_name in ["Pasamontañas", "Pasamontañas navideño"]:
 		var wrapper := Node3D.new()

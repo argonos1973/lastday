@@ -3,7 +3,7 @@ extends RefCounted
 ## A single AnimationPlayer still evaluates the chosen motion; no extra layers.
 
 const SOURCE := "res://assets/animations/mixamo/character_motions.glb"
-const SOURCES := [SOURCE, "res://assets/animations/eat_fruit.glb"]
+const SOURCES := [SOURCE, "res://assets/animations/eat_fruit.glb", "res://assets/animations/ground_pickup.glb"]
 const PREFIX := "motion/"
 const DIRECTIONS := ["forward", "forward_right", "right", "backward_right",
 	"backward", "backward_left", "left", "forward_left"]

@@ -97,6 +97,7 @@ const BIRD_MODEL := "res://assets/external/bird/simple_bird.glb"
 const PELT_DIR := "res://assets/characters/adapted/pelt/"
 const PELT_HEADDRESS := {
 	"lobo": PELT_DIR + "headdress_lobo.glb",
+	"lobo negro": PELT_DIR + "headdress_lobo.glb",
 	"ciervo": PELT_DIR + "headdress_ciervo.glb",
 	"zorro": PELT_DIR + "headdress_zorro.glb",
 	"oso": PELT_DIR + "headdress_oso.glb",
@@ -110,6 +111,7 @@ const PELT_DEFAULT_SPECIES := "lobo"
 # its tile is synthesized feather streaks in the Bird_Body tint.
 const PELT_FUR_TEXTURES := {
 	"lobo": "res://assets/textures/pelt/fur_lobo.png",
+	"lobo negro": "res://assets/textures/pelt/fur_lobo.png",
 	"ciervo": "res://assets/textures/pelt/fur_ciervo.png",
 	"zorro": "res://assets/textures/pelt/fur_zorro.png",
 	"oso": "res://assets/textures/pelt/fur_oso.png",

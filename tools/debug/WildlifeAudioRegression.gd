@@ -33,7 +33,7 @@ func run():
 	world.net = Net.new(); world.add_child(world.net)
 	var actor := Actor.new(); actor.name = "Player"; world.add_child(actor); world.player = actor
 	Bank.prepare()
-	for path in Bank.PAW_SOFT + Bank.PAW_HARD + Bank.HOOF + Bank.WOLF_RUN + Bank.WOLF_GROWL + Bank.WOLF_ATTACK + [Bank.BEAR_ATTACK, Bank.BEAR_GROWL, Bank.BITE]:
+	for path in Bank.PAW_SOFT + Bank.PAW_HARD + Bank.HOOF + Bank.WOLF_WALK + Bank.WOLF_RUN + Bank.WOLF_EAT + Bank.WOLF_GROWL + Bank.WOLF_ATTACK + [Bank.BEAR_ATTACK, Bank.BEAR_GROWL, Bank.BITE]:
 		var sample := Bank.stream(path)
 		check(sample is AudioStreamWAV and sample.loop_mode == AudioStreamWAV.LOOP_DISABLED, path+" non-looping PCM")
 		check(sample != null and sample.get_length() > .08 and sample.get_length() < 4.0, path+" bounded clip")
@@ -41,9 +41,10 @@ func run():
 	check(Bank.step("wolf",false,0) != Bank.step("deer",false,0),"paws and hooves have distinct recordings")
 	var wolf_run_streams := Bank.WOLF_RUN.map(func(p): return Bank.stream(p))
 	check(Bank.step("wolf",true,0,true) in wolf_run_streams,"running wolf uses its own gallop bank")
-	check(Bank.step("wolf",true,0,false) in Bank.PAW_HARD.map(func(p): return Bank.stream(p)),"walking wolf keeps shared paw bank")
+	check(Bank.step("wolf",true,0,false) in Bank.WOLF_WALK.map(func(p): return Bank.stream(p)),"walking wolf uses LOBOS walking recording")
 	check(Bank.step("fox",true,0,true) in Bank.PAW_HARD.map(func(p): return Bank.stream(p)),"wolf run bank does not leak to fox")
 	var camera := Camera3D.new(); world.add_child(camera); camera.position = Vector3(0,1.5,4); camera.make_current()
+	test_wolf_actions(world)
 	var audio := AudioSystem.new(); world.add_child(audio); audio.set_process(false)
 	audio._create_players(); audio._load_footstep_audio(); audio.player = actor
 	var species_samples := {}
@@ -151,6 +152,58 @@ func run():
 	print("WILDLIFE_AUDIO checks=",checks," failures=",failures)
 	quit(1 if failures else 0)
 
+func test_wolf_actions(world: World) -> void:
+	var animal := Animal.new()
+	animal.animal_type = "wolf"
+	animal.is_puppet = true
+	world.add_child(animal)
+	# The same packet/application path works for a join during an existing meal.
+	animal.puppet_apply(Vector3.ZERO, 0.0, "eat", false, false)
+	animal._sync_wolf_eating_audio()
+	check(animal._wolf_audio_player != null and animal._wolf_audio_player.playing, "eat snapshot starts spatial chewing")
+	var voice := animal._wolf_audio_player
+	check(voice.stream in Bank.WOLF_EAT.map(func(p): return Bank.stream(p)), "chewing uses LOBO_COMIENDO")
+	var clip := voice.stream
+	var nodes := Performance.get_monitor(Performance.OBJECT_NODE_COUNT)
+	for frame in 100:
+		animal._sync_wolf_eating_audio()
+	check(voice == animal._wolf_audio_player and voice.stream == clip and Performance.get_monitor(Performance.OBJECT_NODE_COUNT) == nodes, "meal reuses one voice without restarting/allocating every frame")
+	animal._play_wolf_sound("growl")
+	check(voice.stream == clip, "ambient growl cannot overwrite a meal")
+	animal.puppet_apply(Vector3.ZERO, 0.0, "walk", false, false)
+	animal._sync_wolf_eating_audio()
+	check(not voice.playing, "leaving the eat pose stops chewing")
+	animal.puppet_apply(Vector3.ZERO, 0.0, "eat", false, false)
+	animal._sync_wolf_eating_audio()
+	world.puppet_animals["audio_test"] = animal
+	world._net_animal_sound("audio_test", "attack")
+	animal._sync_wolf_eating_audio()
+	check(animal.current_anim_keyword == "attack" and voice.stream in Bank.WOLF_ATTACK.map(func(p): return Bank.stream(p)), "network attack interrupts chewing with actual attack audio")
+	animal._puppet_attack_timer = 0.0
+	animal._puppet_combat_active = false
+	animal.puppet_apply(Vector3.ZERO, 0.0, "eat", false, false)
+	animal._sync_wolf_eating_audio()
+	animal.position = Vector3(100, 0, 0)
+	animal._sync_wolf_eating_audio()
+	check(not voice.playing, "distant meals stay silent")
+	animal.position = Vector3.ZERO
+	animal._sync_wolf_eating_audio()
+	check(voice.playing, "nearby ongoing meal becomes audible")
+	animal.puppet_apply(Vector3.ZERO, 0.0, "idle", true, false, 240.0)
+	animal._sync_wolf_eating_audio()
+	check(not voice.playing, "death cancels the meal sound")
+	world.puppet_animals.erase("audio_test")
+	animal.free()
+	var server_wolf := Animal.new()
+	world.add_child(server_wolf)
+	server_wolf.animal_type = "wolf"
+	server_wolf._is_dedicated = true
+	server_wolf.current_anim_keyword = "eat"
+	server_wolf._wolf_eating_timer = 8.0
+	server_wolf._sync_wolf_eating_audio()
+	check(server_wolf._wolf_audio_player == null, "dedicated wolf allocates no eating voice")
+	server_wolf.free()
+
 func verify_mix(actor: Actor, audio: AudioSystem):
 	var bus := AudioServer.bus_count
 	AudioServer.add_bus(); AudioServer.set_bus_name(bus,"WildlifeTest")
@@ -158,23 +211,36 @@ func verify_mix(actor: Actor, audio: AudioSystem):
 	AudioServer.add_bus_effect(bus,capture)
 	root.audio_listener_enable_3d = true
 	actor._bite_audio_player.bus = "WildlifeTest"
+	var vocal := Animal.new()
+	current_scene.add_child(vocal)
+	vocal.animal_type = "wolf"
+	vocal.is_puppet = true
+	vocal._prepare_animal_voice()
+	vocal._wolf_audio_player.bus = "WildlifeTest"
 	await process_frame
-	for label in ["wolf_bite","bear_bite","wolf_step","deer_step","fox_step","bear_step"]:
+	for label in ["wolf_bite","bear_bite","wolf_step","deer_step","fox_step","bear_step","wolf_run","wolf_growl","wolf_eat"]:
 		capture.clear_buffer()
 		if label.ends_with("bite"):
 			actor._last_bite_audio_msec = -10000
 			actor._play_animal_bite_sound(label)
+		elif label in ["wolf_growl", "wolf_eat"]:
+			vocal.current_anim_keyword = "eat" if label == "wolf_eat" else "idle"
+			if label == "wolf_eat": vocal._sync_wolf_eating_audio()
+			else: vocal._play_wolf_sound("growl")
 		else:
 			var species: String = label.trim_suffix("_step")
+			if label == "wolf_run": species = "wolf"
 			audio._animal_step_species[label] = species
 			for voice in audio._remote_step_players: voice.bus = "WildlifeTest"
-			audio._play_remote_step(label,Vector3.ZERO,"walk",true)
+			audio._play_remote_step(label,Vector3.ZERO,"run" if label == "wolf_run" else "walk",true)
 		await create_timer(.7).timeout
 		var samples := capture.get_buffer(capture.get_frames_available())
 		var peak := 0.0
 		for sample in samples: peak = maxf(peak,maxf(absf(sample.x),absf(sample.y)))
 		check(peak > .005 and peak < .95,label+" produces audible audio with headroom")
 		print("ANIMAL_OUTPUT ",label," peak=",peak)
+		vocal._wolf_audio_player.stop()
+	vocal.free()
 	actor._bite_audio_player.bus = "Master"
 	for voice in audio._remote_step_players: voice.bus = "Master"
 	AudioServer.remove_bus(bus)

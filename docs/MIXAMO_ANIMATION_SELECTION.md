@@ -41,7 +41,49 @@ siguen en el controlador. Se conserva un solo `AnimationPlayer`.
 | Recoger fruta del árbol | `motion/pick_fruit`, conectado a la acción `pick_fruit` de `Main`. Conserva sus 3 segundos y las comprobaciones de alcance/recurso. |
 | Herido en reposo / caminando | `motion/injured_idle` y `motion/injured_walk` en los selectores de salud existentes. |
 | Comer | `motion/eat_fruit`: captura específica de comer de CMU, adaptada al personaje, con el alimento en la mano derecha. Conserva 2 segundos y cancelación. |
-| Recoger objetos del suelo | `pickup` y `collect` siguen siendo instantáneos. |
+| Recoger objetos del suelo | `motion/pickup_ground`: una sola recogida de Mixamo de 1,4 s antes de entregar o equipar el objeto. Los alimentos pasan después al gesto de comer. |
+
+La recogida usa **Pick Fruit — Picking Fruit From Ground**, ID oficial
+`c9cda77e-b96c-11e4-a802-0aaa78deedf9`, revisado sobre el personaje del juego.
+Se añade como `assets/animations/ground_pickup.glb`: **99,5 KiB**, 65 huesos,
+sin mallas ni imágenes. La fuente, sus ajustes y su SHA-256 están en
+`assets/animations/ground_pickup.SOURCES.json`. Se regenera con
+`tools/blender/import_ground_pickup.py`; el descargador admite
+`--roles pickup_ground`.
+Se conserva solo el primer alcance al suelo y la incorporación final:
+se eliminan la espera inicial, las otras dos recogidas y la inspección de la
+fruta. Después del contacto, el brazo vuelve a una pose de transporte para
+que los objetos grandes, como los fusiles, no atraviesen el rostro.
+
+`GroundItemGesture` gestiona solo la representación: mantiene el objeto
+concreto en la mano, oculta su visual del suelo al llegar la mano a los
+**0,7 s** y restaura los visuales si se cancela. El inventario, la reserva
+del servidor, las porciones, la durabilidad y el agotamiento del objeto
+siguen siendo responsabilidad de las acciones existentes. Recoger tarda
+1,4 s; comer del suelo añade después el tiempo propio del alimento. Una
+cancelación antes de terminar la comida devuelve el alimento al suelo.
+También se puede comer con la mochila llena.
+
+Jugadores y bots envían fase, identidad del objeto y tiempo transcurrido
+mediante el campo de animación existente. Un cliente que llega durante
+el gesto entra en la misma fase; las instantáneas repetidas no reinician
+la animación. Los bots mantienen su plan y solo detienen la recogida
+individual cuando hay una interrupción. El daño pasivo por necesidades
+no impide recoger comida; los impactos sí interrumpen.
+
+La comparación aislada contra `1da44eb` usa cuatro personajes, 600 fotogramas
+por estado y ejecuciones secuenciales. En reposo: **16,11 → 16,16 ms** de media;
+caminando: **15,87 → 16,18 ms**. Se conservan **228 llamadas de dibujo**,
+**204.758 primitivas** y **145,87 MiB de texturas**. La memoria estática
+aumenta aproximadamente **0,11 MiB**. Son mediciones de esa escena local,
+no una medición de FPS del servidor público.
+
+Regresiones: `PickupAnimRegression` (secuencia, cancelación, capacidad,
+visuales, bots y biblioteca compartida), `MultiplayerPickupRegression`
+(reservas reales y cancelación durante la respuesta del servidor),
+`BackpackContentsRegression`, `InventoryFixesRegression`,
+`SurvivorBotsAndCombatRegression` y `RifleGripRegression` (agarre al recoger
+ambos fusiles y recuperación del equipo tras cancelar).
 
 La preparación de tierra solicita `dig`: la pala usa su clip; las azadas
 conservan el gesto anterior, porque su cabeza y agarre no corresponden al de

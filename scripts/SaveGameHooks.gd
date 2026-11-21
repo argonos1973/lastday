@@ -337,6 +337,7 @@ static func collect_world_data(main: Node) -> Dictionary:
 			dead_wildlife.append({
 				"name": node.name,
 				"type": node.get("animal_type"),
+				"black": node.get("black_coat") == true,
 				"pos": [node.global_position.x, node.global_position.y, node.global_position.z],
 				"rot": node.rotation.y,
 				"gutted": bool(node.get("_gutted")),
@@ -358,6 +359,7 @@ static func collect_world_data(main: Node) -> Dictionary:
 		tamed_wildlife.append({
 			"name": node.name,
 			"owner": str(node.get("tamed_to")),
+			"black": node.black_coat,
 			"owner_client_id": node._owner_client_id,
 			"pos": [node.global_position.x, node.global_position.y, node.global_position.z],
 			"mode": str(node.get("_follow_mode")),
@@ -742,6 +744,8 @@ static func apply_saved_world_data(main: Node, data: Dictionary) -> void:
 				continue
 			if node.name == dw_name:
 				node.set("_is_dead", true)
+				if node.has_method("set_black_coat"):
+					node.set_black_coat(bool(dw.get("black", false)))
 				node.set("_gutted", dw_gutted)
 				node.set("health", 0.0)
 				node.set("_rot_timer", float(dw.get("rot_timer", 300.0)))
@@ -782,6 +786,8 @@ static func _apply_tamed_wildlife_entry(node: Node, tw: Dictionary) -> void:
 	if tw_pos_raw is Array and tw_pos_raw.size() >= 3:
 		node.global_position = Vector3(float(tw_pos_raw[0]), float(tw_pos_raw[1]), float(tw_pos_raw[2]))
 	node.set("tamed_to", str(tw.get("owner", "local")))
+	node.join_pack(null)
+	node.set_black_coat(bool(tw.get("black", false)))
 	node.set("_follow_mode", str(tw.get("mode", "follow")))
 	var tw_stay_raw = tw.get("stay_pos", null)
 	if tw_stay_raw is Array and tw_stay_raw.size() >= 3:

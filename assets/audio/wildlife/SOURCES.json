@@ -1,23 +1,26 @@
 {
-  "license": "CC0-1.0",
+  "license": "Mixed; see each source",
   "sources": {
     "animal_foley": {
       "author": "IENBA",
       "title": "Animal Footsteps",
       "url": "https://freesound.org/people/IENBA/sounds/658429/",
-      "sha256": "3bfda19af98bc904a97c86d51bb1e0dab3d04799ac19cc09246772d64a0ba657"
+      "sha256": "3bfda19af98bc904a97c86d51bb1e0dab3d04799ac19cc09246772d64a0ba657",
+      "license": "CC0-1.0"
     },
     "hooves": {
       "author": "craigsmith",
       "title": "R13-16-Soft Hoof Sounds.wav",
       "url": "https://freesound.org/people/craigsmith/sounds/479688/",
-      "sha256": "687af2c15649fb72cb3db1bbfe9010c9bc6a6fe77c9cd5f7bb27b4ac7dc5150c"
+      "sha256": "687af2c15649fb72cb3db1bbfe9010c9bc6a6fe77c9cd5f7bb27b4ac7dc5150c",
+      "license": "CC0-1.0"
     },
     "bear_growl": {
       "author": "celldroid",
       "title": "Bear Angry Growl",
       "url": "https://freesound.org/people/celldroid/sounds/763026/",
-      "sha256": "0e4f317fdfa9562e1c9778231ff0f34903c6da501138149a0ae097eeec3ce868"
+      "sha256": "0e4f317fdfa9562e1c9778231ff0f34903c6da501138149a0ae097eeec3ce868",
+      "license": "CC0-1.0"
     },
     "lobos_corriendo": {
       "author": "supplied recording",
@@ -28,6 +31,34 @@
       "author": "supplied recording",
       "title": "lobos_luchando.mp3",
       "sha256": "b130115839a750926f5a4b7a65f883b38254a43b372970a10546c7d714c6e0a9"
+    },
+    "wolf_walk_supplied": {
+      "author": "supplied by project owner",
+      "title": "LOBO_ANDANDO.mp3",
+      "path": "LOBOS/LOBO_ANDANDO.mp3",
+      "license": "User-supplied recording; original license unspecified",
+      "sha256": "12c2fff17678b0bdf4d4bfef47848e4f97e26bb35fd821b4c75898c7c7e363ef"
+    },
+    "wolf_run_supplied": {
+      "author": "supplied by project owner",
+      "title": "LOBO_CORRIENDO.mp3",
+      "path": "LOBOS/LOBO_CORRIENDO.mp3",
+      "license": "User-supplied recording; original license unspecified",
+      "sha256": "6bbad2f7c0b222545c9db0a4eecc515bc9248a0f10a29be120407e8e8b92fb9a"
+    },
+    "wolf_eat_supplied": {
+      "author": "supplied by project owner",
+      "title": "LOBO_COMIENDO.mp3",
+      "path": "LOBOS/LOBO_COMIENDO.mp3",
+      "license": "User-supplied recording; original license unspecified",
+      "sha256": "848ece334b6cda753c53ebb867ff1e34084bafbf8b0163a31e4b064823f2048e"
+    },
+    "wolf_growl_supplied": {
+      "author": "supplied by project owner",
+      "title": "LOBO_GRUÑENDO.mp3",
+      "path": "LOBOS/LOBO_GRUÑENDO.mp3",
+      "license": "User-supplied recording; original license unspecified",
+      "sha256": "1e361db1ddffcec2aaebad6cb5275fff90ebb1f267ece5628cd2c119865b130e"
     }
   },
   "clips": {
@@ -120,64 +151,78 @@
       "normalization_db": 8.688
     },
     "wolf_run_1.wav": {
-      "source": "lobos_corriendo",
-      "start": 1.70,
-      "duration": 0.46,
-      "filters": "afade=t=in:st=0:d=0.012,afade=t=out:st=0.30:d=0.16,volume=2.2",
-      "rate": "22050 Hz mono s16"
+      "source": "wolf_run_supplied",
+      "start": 4.7,
+      "duration": 0.24,
+      "filters": "highpass=f=65,lowpass=f=6000,afade=t=in:d=0.004,afade=t=out:st=0.19999999999999998:d=0.04",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 8.251
     },
     "wolf_run_2.wav": {
-      "source": "lobos_corriendo",
-      "start": 3.12,
-      "duration": 0.46,
-      "filters": "afade=t=in:st=0:d=0.012,afade=t=out:st=0.30:d=0.16,volume=2.2",
-      "rate": "22050 Hz mono s16"
+      "source": "wolf_run_supplied",
+      "start": 7.88,
+      "duration": 0.24,
+      "filters": "highpass=f=65,lowpass=f=6000,afade=t=in:d=0.004,afade=t=out:st=0.19999999999999998:d=0.04",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 17.07
     },
     "wolf_run_3.wav": {
-      "source": "lobos_corriendo",
-      "start": 6.68,
-      "duration": 0.46,
-      "filters": "afade=t=in:st=0:d=0.012,afade=t=out:st=0.30:d=0.16,volume=2.2",
-      "rate": "22050 Hz mono s16"
+      "source": "wolf_run_supplied",
+      "start": 11.09,
+      "duration": 0.24,
+      "filters": "highpass=f=65,lowpass=f=6000,afade=t=in:d=0.004,afade=t=out:st=0.19999999999999998:d=0.04",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 14.233
     },
     "wolf_growl_1.wav": {
-      "source": "lobos_luchando",
-      "start": 1.56,
-      "duration": 1.17,
-      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.85:d=0.32,volume=1.9",
-      "rate": "22050 Hz mono s16"
+      "source": "wolf_growl_supplied",
+      "start": 2.25,
+      "duration": 1.48,
+      "filters": "highpass=f=65,lowpass=f=7500,afade=t=in:d=0.03,afade=t=out:st=1.38:d=0.1",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": -4.159
     },
     "wolf_growl_2.wav": {
-      "source": "lobos_luchando",
-      "start": 30.05,
-      "duration": 1.30,
-      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.95:d=0.35,volume=1.9",
-      "rate": "22050 Hz mono s16"
+      "source": "wolf_growl_supplied",
+      "start": 3.73,
+      "duration": 1.5,
+      "filters": "highpass=f=65,lowpass=f=7500,afade=t=in:d=0.03,afade=t=out:st=1.4:d=0.1",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 2.054
     },
     "wolf_growl_3.wav": {
-      "source": "lobos_luchando",
-      "start": 33.70,
-      "duration": 0.82,
-      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.55:d=0.27,volume=2.2",
-      "rate": "22050 Hz mono s16"
+      "source": "wolf_growl_supplied",
+      "start": 5.23,
+      "duration": 2.05,
+      "filters": "highpass=f=65,lowpass=f=7500,afade=t=in:d=0.03,afade=t=out:st=1.9499999999999997:d=0.1",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": -4.707
     },
     "wolf_growl_4.wav": {
-      "source": "lobos_luchando",
-      "start": 36.60,
-      "duration": 1.30,
-      "filters": "afade=t=in:st=0:d=0.04,afade=t=out:st=0.95:d=0.35,volume=4.5",
-      "rate": "22050 Hz mono s16"
+      "source": "wolf_growl_supplied",
+      "start": 7.28,
+      "duration": 2.11,
+      "filters": "highpass=f=65,lowpass=f=7500,afade=t=in:d=0.03,afade=t=out:st=2.01:d=0.1",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": -3.18
     },
     "wolf_attack_1.wav": {
       "source": "lobos_luchando",
       "start": 4.95,
-      "duration": 1.50,
+      "duration": 1.5,
       "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=1.10:d=0.40,volume=1.6",
       "rate": "22050 Hz mono s16"
     },
     "wolf_attack_2.wav": {
       "source": "lobos_luchando",
-      "start": 13.60,
+      "start": 13.6,
       "duration": 1.75,
       "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=1.35:d=0.40,volume=2.0",
       "rate": "22050 Hz mono s16"
@@ -191,17 +236,71 @@
     },
     "wolf_attack_4.wav": {
       "source": "lobos_luchando",
-      "start": 25.30,
-      "duration": 1.40,
+      "start": 25.3,
+      "duration": 1.4,
       "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=1.00:d=0.40,volume=1.4",
       "rate": "22050 Hz mono s16"
     },
     "wolf_attack_5.wav": {
       "source": "lobos_luchando",
-      "start": 39.40,
+      "start": 39.4,
       "duration": 1.35,
       "filters": "afade=t=in:st=0:d=0.03,afade=t=out:st=0.95:d=0.40,volume=1.4",
       "rate": "22050 Hz mono s16"
+    },
+    "wolf_walk_1.wav": {
+      "source": "wolf_walk_supplied",
+      "start": 4.16,
+      "duration": 0.2,
+      "filters": "highpass=f=65,lowpass=f=4800,afade=t=in:d=0.004,afade=t=out:st=0.165:d=0.035",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 6.863
+    },
+    "wolf_walk_2.wav": {
+      "source": "wolf_walk_supplied",
+      "start": 6.25,
+      "duration": 0.2,
+      "filters": "highpass=f=65,lowpass=f=4800,afade=t=in:d=0.004,afade=t=out:st=0.165:d=0.035",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 8.708
+    },
+    "wolf_walk_3.wav": {
+      "source": "wolf_walk_supplied",
+      "start": 10.65,
+      "duration": 0.2,
+      "filters": "highpass=f=65,lowpass=f=4800,afade=t=in:d=0.004,afade=t=out:st=0.165:d=0.035",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 7.275
+    },
+    "wolf_eat_1.wav": {
+      "source": "wolf_eat_supplied",
+      "start": 0.04,
+      "duration": 1.25,
+      "filters": "highpass=f=65,lowpass=f=7500,afade=t=in:d=0.02,afade=t=out:st=1.17:d=0.08",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": -0.072
+    },
+    "wolf_eat_2.wav": {
+      "source": "wolf_eat_supplied",
+      "start": 3.33,
+      "duration": 1.42,
+      "filters": "highpass=f=65,lowpass=f=7500,afade=t=in:d=0.02,afade=t=out:st=1.3399999999999999:d=0.08",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 2.173
+    },
+    "wolf_eat_3.wav": {
+      "source": "wolf_eat_supplied",
+      "start": 5.75,
+      "duration": 1.5,
+      "filters": "highpass=f=65,lowpass=f=7500,afade=t=in:d=0.02,afade=t=out:st=1.42:d=0.08",
+      "rate": "24000 Hz mono s16",
+      "peak_dbfs": -6,
+      "normalization_db": 0.876
     }
   }
 }

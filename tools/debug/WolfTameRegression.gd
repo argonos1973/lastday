@@ -1019,7 +1019,8 @@ func test_tamed_wolf_world_rules() -> void:
 	pw.set_process(false)
 	world.add_child(pw)
 	pw._play_wolf_sound("growl")
-	check(pw._wolf_audio_player != null and pw._wolf_audio_player.pitch_scale > 1.2, "Tamed wolf sounds are pitched up")
+	# The supplied wolf recordings replaced the old synthetic pitched-up growl.
+	check(pw._wolf_audio_player != null and pw._wolf_audio_player.pitch_scale > 0.9 and pw._wolf_audio_player.pitch_scale < 1.1, "Tamed wolf recordings retain their natural pitch")
 	var pw2 := WildlifeController.new()
 	pw2.animal_type = "wolf"
 	pw2.set_process(false)

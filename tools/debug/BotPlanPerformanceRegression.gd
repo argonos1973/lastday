@@ -3,6 +3,12 @@ extends SceneTree
 ## The baseline is compiled in memory; the checkout and production are untouched.
 const Manager = preload("res://scripts/SurvivorBotManager.gd")
 const Fixtures = preload("res://tools/debug/BotPlanReliabilityRegression.gd")
+class BudgetManager extends Manager:
+	var sense_queries: Array[int] = []
+	func _ai_tick(_delta: float) -> void: pass
+	func _find_combat_foe(b: Dictionary) -> Node3D:
+		sense_queries.append(int(b["bot_id"]))
+		return super._find_combat_foe(b)
 var failures := 0
 func _initialize() -> void:
 	call_deferred("run")
@@ -27,7 +33,7 @@ func run() -> void:
 	world.add_child(dc)
 	world.day_cycle = dc
 	seed(20261119)
-	var current := Manager.new()
+	var current := BudgetManager.new()
 	world.add_child(current)
 	current.setup(world)
 	current.set_physics_process(false)
@@ -81,6 +87,25 @@ func run() -> void:
 	var out := FileAccess.open("res://build/tmp/phase1-performance.json", FileAccess.WRITE)
 	out.store_string(JSON.stringify(measurements))
 	out.close()
+	# Four due actors still advance every frame, but at most one performs its
+	# broad perception search. Observe the actual search, not a copy of the scheduler.
+	var updated: Dictionary = {}
+	for b in current.bots.values():
+		b["sense_t"] = 0.0
+		updated[b["bot_id"]] = int(b.get("_ground_tick", 0))
+	for frame in range(4):
+		var before := current.sense_queries.size()
+		current.tick(1.0 / 60.0)
+		if current.sense_queries.size() - before > 1:
+			failures += 1
+			push_error("Several bots ran broad perception in the same frame")
+	for b in current.bots.values():
+		if not current.sense_queries.has(int(b["bot_id"])):
+			failures += 1
+			push_error("Round-robin sensing starved a bot")
+		if int(b.get("_ground_tick", 0)) != int(updated[b["bot_id"]]) + 4:
+			failures += 1
+			push_error("Perception throttling skipped an actor's reactive tick")
 	baseline.free()
 	world.queue_free()
 	net.queue_free()

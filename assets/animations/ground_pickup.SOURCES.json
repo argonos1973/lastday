@@ -1,0 +1,47 @@
+{
+  "source": "https://www.mixamo.com/",
+  "motion_id": "c9cda77e-b96c-11e4-a802-0aaa78deedf9",
+  "name": "Pick Fruit",
+  "description": "Picking Fruit From Ground",
+  "source_sha256": "2d2441c53fe7add0762259ffccebfca3e3e9c002093198f57b252aa924e61e81",
+  "preferences": {
+    "format": "fbx7_2019",
+    "skin": "false",
+    "fps": "30",
+    "reducekf": "0"
+  },
+  "gms_hash": [
+    {
+      "model-id": 127020901,
+      "mirror": false,
+      "trim": [
+        0.0,
+        100.0
+      ],
+      "inplace": false,
+      "arm-space": 0,
+      "params": "0.0"
+    }
+  ],
+  "source_frames": [
+    1.0,
+    214.0
+  ],
+  "duration": 1.4,
+  "fps": 30,
+  "bones": 65,
+  "meshes": 0,
+  "segments": [
+    [
+      18,
+      55
+    ],
+    [
+      162,
+      214.0
+    ]
+  ],
+  "grab_time": 0.7,
+  "adaptation": "One kneel/reach/rise only. Remove idle lead-in and repeated picking/inspection. Blend the joined body pose and return the right arm to its carrying pose after 0.7s contact.",
+  "regenerate": "tools/blender/import_ground_pickup.py"
+}

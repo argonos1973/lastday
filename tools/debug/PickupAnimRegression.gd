@@ -1,7 +1,7 @@
 extends SceneTree
 
-# Pickups remain instant. Timed interactions retain their own clips and
-# offsets, with the same shared motion library on local and remote actors.
+# Ground pickups reach down before granting the item. Local and remote actors
+# share the same clip, and ground food then transitions to its eating gesture.
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _create_body() -> void:
@@ -12,6 +12,15 @@ class TestPlayer extends "res://scripts/PlayerController.gd":
 		pass
 	func _update_crosshair_spread(_d: float) -> void:
 		pass
+
+class TestWorld extends "res://scripts/Main.gd":
+	func _ready(): set_process(false); set_physics_process(false)
+	func _exit_tree(): pass
+	func _save_world_change_silent(): pass
+
+class TestBots extends "res://scripts/SurvivorBotManager.gd":
+	func _is_world_night() -> bool: return false
+	func _bot_supply_goal_allowed(_b: Dictionary, _goal: Vector3) -> bool: return true
 
 var failures := 0
 
@@ -34,6 +43,115 @@ func _mount_model(player: Node) -> AnimationPlayer:
 	player._setup_third_person_animation(model)
 	return player.third_person_animation_player
 
+func _ground_item(world: Node, id: String, pos: Vector3, item_name := "Seta", item_type := "food"):
+	var action = world._create_world_action(id, "eat_food" if item_type == "food" else "pickup_item", item_name,
+		pos, Vector3.ONE * 0.2, Color.WHITE, false, false)
+	action.set_meta("item_name", item_name)
+	action.set_meta("item_type", item_type)
+	action.set_meta("item_weight", 0.1)
+	action.set_meta("item_quantity", 1)
+	action.set_meta("item_use_value", 12.0)
+	var visual := Node3D.new()
+	visual.name = id + "_visual"
+	world.add_child(visual)
+	action.set_meta("visual_name", str(visual.name))
+	world._dropped_items.append({"id":id, "name":item_name, "type":item_type, "pos":pos, "qty":1, "weight":0.1, "use":12.0})
+	return action
+
+func _test_ground_transactions() -> void:
+	var world := TestWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var player: Node = _make_player()
+	player.inventory.items.clear()
+	player.inventory.max_weight = 0.0
+	player.stats.hunger = 40.0
+	var action = _ground_item(world, "meal", Vector3(0.0, 0.0, -0.7))
+	var visual: Node3D = world.get_node("meal_visual")
+	world.handle_world_action_eat(action, player)
+	check(player._interact_busy and not action.depleted and player.stats.hunger == 40.0,
+		"pickup starts without granting nutrition or consuming the mushroom")
+	player._ground_gesture.tick(player.GroundGesture.GRAB_TIME)
+	check(not visual.visible, "world object hides only after the hand reaches it")
+	player.cancel_active_action()
+	await create_timer(0.15).timeout
+	check(visual.visible and not action.depleted and player.stats.hunger == 40.0,
+		"cancelled pickup restores the object and changes no vital stats")
+	world.handle_world_action_eat(action, player)
+	await create_timer(player.GroundGesture.DURATION + 0.25).timeout
+	check(player._ground_gesture != null and player._ground_gesture.phase == "eat",
+		"ground mushroom finishes pickup before beginning the meal")
+	check(player.stats.hunger == 40.0 and not action.depleted and not visual.visible,
+		"meal has its own completion point with the mushroom held off the ground")
+	player.cancel_active_action()
+	await create_timer(0.15).timeout
+	check(visual.visible and not action.depleted and player.inventory.items.is_empty(),
+		"cancelled meal returns the mushroom without creating an inventory copy")
+	await world.handle_world_action_eat(action, player)
+	check(action.depleted and player.stats.hunger == 52.0 and player.inventory.items.is_empty(),
+		"ground food can be eaten with a full bag and restores nutrition exactly once")
+	var stone = _ground_item(world, "stone_test", Vector3(0,0,-0.7), "Piedra", "resource")
+	await world.handle_world_action_collect(stone, player)
+	check(not stone.depleted and world.get_node("stone_test_visual").visible and player.inventory.items.is_empty(),
+		"failed capacity check leaves the pickup visible and intact")
+	player.inventory.max_weight = 50.0
+	await world.handle_world_action_collect(stone, player)
+	check(stone.depleted and player.inventory.items.size() == 1, "normal pickup commits one real item after its gesture")
+	var cancelled = _ground_item(world, "walk_cancel", Vector3(0,0,-0.7), "Palo", "resource")
+	world.handle_world_action_collect(cancelled, player)
+	player.position.x = 1.0
+	await create_timer(0.2).timeout
+	check(not cancelled.depleted and not player._interact_busy, "moving away cancels a pending pickup")
+	player.position = Vector3.ZERO
+	var manager := TestBots.new()
+	world.add_child(manager)
+	manager.world = world
+	var proxy := Node3D.new()
+	world.add_child(proxy)
+	proxy.position = Vector3(10,0,0)
+	proxy.set_meta("saved_inventory", [])
+	world.server_proxies[901] = proxy
+	var food = _ground_item(world, "bot_meal", Vector3(10,0,-0.7))
+	var b := {"bot_id":901, "proxy":proxy, "pos":proxy.position, "health":90.0, "hunger":10.0,
+		"thirst":50.0, "torch_lit":false, "held_item":"", "backpack":"", "anim":"idle",
+		"clothing":"", "clothing_colors":[], "has_rifle":false,
+		"_forage":{"id":"bot_meal", "kind":"eat", "name":"Seta", "pos":food.position, "use":12.0, "t":0.0, "t_need":1.2}}
+	check(manager._bot_try_forage(b, 1.0), "bot begins collecting its ground food")
+	check(player.GroundGesture.decode(b.anim)[0] == "pickup" and b.hunger == 10.0,
+		"bot shows pickup without receiving food early")
+	check(not world._claim_world_pickup("bot_meal", 1), "a bot's active reservation also excludes human pickups")
+	manager._bot_try_forage(b, 1.3)
+	check(player.GroundGesture.decode(b.anim)[0] == "eat" and b.hunger == 10.0,
+		"bot switches from pickup to eating before applying nutrition")
+	manager._cancel_bot_ground_pickup(b)
+	check(not world._pickup_claims.has("bot_meal") and not food.depleted and b._forage.t == 0.0,
+		"interruption releases the bot claim and resets the interrupted gesture")
+	manager._bot_try_forage(b, 2.3)
+	manager._bot_try_forage(b, 1.2)
+	check(food.depleted and b.hunger == 22.0, "bot commits one mushroom after both phases")
+	var loot = _ground_item(world, "bot_loot", Vector3(10,0,-0.7), "Vendaje", "medical")
+	var entry: Dictionary = world._dropped_items.back()
+	manager._tick_loot_pickup(b, entry, 1.0)
+	check(not loot.depleted and (proxy.get_meta("saved_inventory") as Array).is_empty(),
+		"bot loot stays in the world until the pickup finishes")
+	b.health -= 0.01
+	manager._tick_loot_pickup(b, entry, 0.1)
+	check(float(b.get("_loot_pickup", {}).get("t", 0.0)) > 1.0,
+		"passive health decay cannot prevent collecting lifesaving supplies")
+	b.health -= 1.0
+	b["flinch_timer"] = 0.3
+	manager._tick_loot_pickup(b, entry, 2.0)
+	check(not loot.depleted and not world._pickup_claims.has("bot_loot"),
+		"damage interrupts a bot pickup without granting inventory")
+	b["flinch_timer"] = 0.0
+	manager._tick_loot_pickup(b, entry, player.GroundGesture.DURATION + 0.1)
+	check(loot.depleted and (proxy.get_meta("saved_inventory") as Array).size() == 1,
+		"bot loot commits exactly once after an uninterrupted gesture")
+	manager.world = null
+	player.free()
+	world.free()
+	current_scene = null
+
 func _initialize() -> void:
 	print("=== PickupAnimRegression ===")
 	await process_frame
@@ -52,10 +170,10 @@ func _initialize() -> void:
 
 	ap.play(player.third_person_idle_animation, 0.0)
 	for action in ["pickup", "collect"]:
-		player.play_action_animation(action, 0.8)
-		check(player.third_person_action_timer == 0.0, action + " adds no action delay")
-		check(player.third_person_action_animation.is_empty(), action + " adds no blocking gesture")
-		check(ap.current_animation == player.third_person_idle_animation, action + " preserves locomotion")
+		player.play_action_animation(action, player.GroundGesture.DURATION)
+		check(player.third_person_action_timer == player.GroundGesture.DURATION, action + " waits for the pickup gesture")
+		check(player.third_person_action_animation == player._motion("pickup_ground"), action + " uses the ground-reaching clip")
+		check(ap.get_animation(player.third_person_action_animation).loop_mode == Animation.LOOP_NONE, action + " is a single pickup")
 
 	# Forage resolves the same clip — same offset keeps sender/puppet aligned.
 	player.play_action_animation("forage", 3.0)
@@ -121,6 +239,17 @@ func _initialize() -> void:
 	var puppet_ap: AnimationPlayer = _mount_model(puppet)
 	await process_frame
 	check(ap.get_animation_library("motion") == puppet_ap.get_animation_library("motion"), "compatible actors share one motion library")
+	puppet.is_puppet = true
+	var packet: String = player.GroundGesture.packet("pickup", "seta|1", "Seta", "food", 0.7)
+	puppet.puppet_apply(Vector3.ZERO, 0.0, packet)
+	check(puppet_ap.current_animation == puppet._motion("pickup_ground"), "remote pickup selects the same clip")
+	check(absf(puppet_ap.current_animation_position - 0.7) < 0.02, "joining during a pickup preserves its phase")
+	check(puppet._ground_gesture.action_id == "seta|1", "gesture IDs survive packet escaping")
+	check(puppet._ground_gesture.item.item_name == "Seta", "remote gesture displays the actual food")
+	puppet.puppet_apply(Vector3.ZERO, 0.0, player.GroundGesture.packet("eat", "seta|1", "Seta", "food"))
+	check(puppet_ap.current_animation == puppet.third_person_eat_animation, "ground pickup transitions to eating")
+	puppet.puppet_apply(Vector3.ZERO, 0.0, "idle")
+	check(puppet._ground_gesture == null, "remote interruption clears the temporary item")
 	for clip_name in ap.get_animation_library("motion").get_animation_list():
 		var motion: Animation = ap.get_animation("motion/" + clip_name)
 		for track in motion.get_track_count():
@@ -142,5 +271,7 @@ func _initialize() -> void:
 
 	player.queue_free()
 	puppet.queue_free()
+	await process_frame
+	await _test_ground_transactions()
 	print("PickupAnimRegression failures=%d" % failures)
 	quit(1 if failures > 0 else 0)

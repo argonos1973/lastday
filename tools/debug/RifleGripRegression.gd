@@ -65,6 +65,34 @@ func run():
 	actor.puppet_apply_visuals("", "Rifle francotirador", "")
 	actor.process_remote(1.0 / 30.0)
 	check(actor._ik_skeleton_connected, "Remote re-equip restores rifle alignment")
+	# Ground pickup leaves the supporting arm free and pins only the firing
+	# hand to the actual grip, without initializing ammo or giving an item.
+	actor.puppet_apply(actor.global_position, actor.rotation.y,
+		actor.GroundGesture.packet("pickup", "cancel_gun", actor.M4_NAME, "weapon_rifle"))
+	check(not actor.third_person_hand_item_root.visible, "pickup prop stays hidden before contact")
+	actor.puppet_apply(actor.global_position, actor.rotation.y, "idle")
+	check(actor.third_person_hand_item_root.visible and actor._rifle_root.visible,
+		"early cancellation restores the original equipment visibility")
+	for weapon_name in [actor.RIFLE_NAME, actor.M4_NAME]:
+		actor.puppet_apply(actor.global_position, actor.rotation.y,
+			actor.GroundGesture.packet("pickup", "floor_gun", weapon_name, "weapon_rifle"))
+		var pickup_player: AnimationPlayer = actor.third_person_animation_player
+		for time in [0.0, 0.35, 0.7, 1.05, 1.37]:
+			actor._ground_gesture.elapsed = time
+			actor._ground_gesture.tick(0.0)
+			pickup_player.play(actor._motion("pickup_ground"), 0.0)
+			pickup_player.seek(time, true)
+			pickup_player.speed_scale = 0.0
+			pickup_player.advance(0.0)
+			for frame in 3:
+				actor.process_remote(1.0 / 30.0)
+				await process_frame
+			check(hand_contact(actor, remote_skel, "Right").distance_to(
+				actor._rifle_weapon_offset.global_transform * actor._rg_right_knuckle) < 0.015,
+				weapon_name + " pickup keeps the real right hand on its grip at %.2f" % time)
+		actor.puppet_apply(actor.global_position, actor.rotation.y, "idle")
+		pickup_player.speed_scale = 1.0
+	check(actor.inventory.items.is_empty(), "temporary pickup props create no inventory")
 	actor.position = Vector3.ZERO
 	actor.rotation = Vector3.ZERO
 	actor._update_puppet_held_item("Rifle francotirador")

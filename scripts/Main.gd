@@ -23,6 +23,7 @@ const WorldActionScript = preload("res://scripts/WorldAction.gd")
 const RiverWaterScript = preload("res://scripts/RiverWater.gd")
 const FishControllerScript = preload("res://scripts/FishController.gd")
 const WildlifeControllerScript = preload("res://scripts/WildlifeController.gd")
+const WolfPackScript = preload("res://scripts/WolfPack.gd")
 const SimpleObjLoaderScript = preload("res://scripts/SimpleObjLoader.gd")
 const CelestialSystemScript = preload("res://scripts/CelestialSystem.gd")
 const NavPathfindingScript = preload("res://scripts/NavPathfinding.gd")
@@ -4883,7 +4884,7 @@ func _net_gut_animal(animal_name: String, sender: int, collect_mode: bool = fals
 			_:
 				meat_name = "Carne cruda de lobo"
 				meat_qty = 4
-				hide_name = "Piel de lobo"
+				hide_name = "Piel de lobo negro" if animal.get("black_coat") == true else "Piel de lobo"
 				hide_qty = 1
 	# Spawn meat immediately on server and notify clients - clients delay puppet removal to match animation
 	if not collect_mode:
@@ -5220,9 +5221,18 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		bp_name = str(net.players[peer_id].get("equipped_backpack", ""))
 	if not bp_name.is_empty() and not inv_names.has(bp_name):
 		drop_source.append({"name": bp_name, "type": "backpack", "weight": 0.8, "quantity": 1, "use_value": 0.0})
-	for cname in str(proxy.get_meta("saved_clothing", "")).split(",", false):
-		if not cname.is_empty() and not inv_names.has(cname):
-			drop_source.append({"name": cname, "type": "clothing", "weight": 0.3, "quantity": 1, "use_value": 0.05})
+	# Only authoritative bots keep clothing outside inventory in this field.
+	var worn_data: Dictionary = saved_extra.get("worn_clothing", {}) if proxy.get_meta("is_ai_bot", false) else {}
+	for label in str(proxy.get_meta("saved_clothing", "")).split(",", false):
+		var parts := label.split("|", true, 1)
+		var cname := str(parts[0])
+		# Bot garments live outside their backpack. A carried spare with the
+		# same name must not swallow the actually worn item on death.
+		if not cname.is_empty() and (worn_data.has(cname) or not inv_names.has(cname)):
+			var piece: Dictionary = (worn_data.get(cname, {"name": cname, "type": "clothing", "weight": 0.3, "quantity": 1, "use_value": 0.05}) as Dictionary).duplicate(true)
+			if parts.size() > 1 and not str(parts[1]).is_empty():
+				piece["pelt_species"] = str(parts[1])
+			drop_source.append(piece)
 	# Drop each item as a pickup on the server and notify all clients
 	var drops: Array = []
 	var victim_pdata: Dictionary = net.players.get(peer_id, {}) if net != null else {}
@@ -5277,22 +5287,15 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		var dpelt := str(d.get("pelt_species", ""))
 		if is_instance_valid(dropped_action):
 			dropped_action.set_meta("item_camo", camo)
+		for entry in _dropped_items:
+			if str(entry.get("id", "")) != did:
+				continue
 			if not dpelt.is_empty():
-				dropped_action.set_meta("item_pelt", dpelt)
-				for entry in _dropped_items:
-					if str(entry.get("id", "")) == did:
-						entry["pelt"] = dpelt
-						break
-				# El visual del tocado ya salió con el modelo por defecto:
-				# regenerarlo con la especie correcta.
-				var old_visual := get_node_or_null("Pickup_" + did)
-				if old_visual != null and iname == "Tocado de piel animal":
-					old_visual.free()
-					var dpaths := _get_drop_model_paths(iname, itype, dpelt)
-					_try_instance_external_scene(dpaths, "Pickup_" + did, dpos, Vector3.ONE * _get_drop_scale(iname, itype), Vector3(0, randf_range(0, 360), 0), true, 0.0)
-					var regen_vis := get_node_or_null("Pickup_" + did)
-					if regen_vis != null:
-						_remove_collision_from_node(regen_vis)
+				_apply_ground_pickup_pelt(entry, dpelt)
+			for key in ["durability", "max_durability"]:
+				if d.has(key):
+					entry[key] = d[key]
+			break
 		if camo and iname in ["Camiseta", "Pantalones"]:
 			var dropped_visual := get_node_or_null("Pickup_" + did) as Node3D
 			if dropped_visual != null:
@@ -5931,6 +5934,10 @@ func _broadcast_animals() -> void:
 			"fm": str(animal.get("_follow_mode")),
 			"hp": round(float(hp_val) * 10.0) / 10.0 if hp_val != null else 0.0
 		}
+		if animal is WildlifeController and animal.animal_type == "wolf":
+			data[aid]["pk"] = animal.pack_id
+			data[aid]["alpha"] = animal.is_pack_leader()
+			data[aid]["black"] = animal.black_coat
 	net.animals = data
 	var all_recipients: Array[int] = net.snapshot_recipients()
 	_animal_debug_timer += 1
@@ -6034,6 +6041,9 @@ func _update_puppet_animals(unlimited: bool = false) -> void:
 				p.puppet_apply(Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0)), float(d.get("r", 0.0)), bool(d.get("d", false)), bool(d.get("g", false)), bool(d.get("landed", false)))
 			else:
 				if p.animal_type == "wolf":
+					p.pack_id = str(d.get("pk", ""))
+					p.puppet_pack_leader = bool(d.get("alpha", false))
+					p.set_black_coat(bool(d.get("black", false)))
 					p._wolf_hunger = float(d.get("h", p._wolf_hunger))
 					p._wolf_hunger_threshold = float(d.get("ht", p._wolf_hunger_threshold))
 					p.tamed_to = str(d.get("tamed", ""))
@@ -7439,6 +7449,8 @@ func _spawn_dropped_item_visual(drop_id: String, item_name: String, item_type: S
 		var spawned_drop_node := get_node_or_null(visual_name)
 		if spawned_drop_node != null:
 			_remove_collision_from_node(spawned_drop_node)
+			if item_name == "Lobo negro muerto":
+				MaterialFactory.apply_black_wolf_coat(spawned_drop_node)
 		_mark_world_action_visual(visual_name)
 	else:
 		# Fallback: no model available, create a simple shape
@@ -7669,7 +7681,7 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 			return [GameConst.FOX_MODEL]
 		"Oso muerto":
 			return [GameConst.BEAR_MODEL]
-		"Lobo muerto", "Animal muerto":
+		"Lobo muerto", "Lobo negro muerto", "Animal muerto":
 			return [GameConst.WOLF_MODEL]
 	match item_type:
 		"water":
@@ -10708,30 +10720,33 @@ func _create_wildlife() -> void:
 		var fox_route := WildlifeRoutes.build_roaming_route(_world_rng, fox_start, 24, 80.0, 160.0, is_wildlife_allowed_at, true)
 		_create_wildlife_animal("fox", fox_route)
 	
-	# Wolves: spread across 12 expanded quadrants of the open world
-	var wolf_quadrants := [
-		Vector3(-200, 0, -200), Vector3(0, 0, -240), Vector3(200, 0, -200),
-		Vector3(-240, 0, 0), Vector3(240, 0, 0), Vector3(-200, 0, 200),
-		Vector3(0, 0, 240), Vector3(200, 0, 200), Vector3(-100, 0, -100),
-		Vector3(100, 0, -100), Vector3(-100, 0, 100), Vector3(100, 0, 100),
-		Vector3(-300, 0, -100), Vector3(300, 0, 100), Vector3(-100, 0, 300),
-		Vector3(100, 0, -300), Vector3(-300, 0, 200), Vector3(300, 0, -200),
-		# Southern extension anchors.
-		Vector3(-30, 0, 560), Vector3(40, 0, 620), Vector3(9, 0, 780),
-		Vector3(-20, 0, 840), Vector3(50, 0, 860),
+	# The same 23 wolves form seven packs; no population or per-frame manager
+	# is added. Each pack shares a route and starts with one black leader.
+	var wolf_packs := [
+		[Vector3(-200, 0, -200), 4], [Vector3(200, 0, -200), 3],
+		[Vector3(-200, 0, 200), 3], [Vector3(200, 0, 200), 4],
+		[Vector3(-300, 0, -100), 3], [Vector3(-30, 0, 560), 3],
+		[Vector3(-20, 0, 840), 3],
 	]
-	for i in range(wolf_quadrants.size()):
-		var center: Vector3 = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
+	for entry in wolf_packs:
+		var anchor: Vector3 = entry[0]
+		var center := anchor + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		for _retry in range(30):
-			if not _is_near_wildlife_blocker(center, 5.0) and not _is_near_lake(center, 15.0):
+			if is_wolf_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0):
 				break
-			center = wolf_quadrants[i] + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
-		# Ruta larga: los lobos recorren grandes distancias por todo el mapa sin cruzar ríos ni edificios
+			center = anchor + Vector3(_world_rng.randf_range(-20, 20), 0.0, _world_rng.randf_range(-20, 20))
 		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wolf_allowed_at, true)
-		_create_wildlife_animal("wolf", route)
-		var _saved_rng_state := _world_rng.state
-		await get_tree().process_frame
-		_world_rng.state = _saved_rng_state
+		var group := _new_wolf_pack()
+		for slot in int(entry[1]):
+			var wolf := _create_wildlife_animal("wolf", route, group)
+			var offset := Vector3(-3.0 if slot % 2 else 3.0, 0.0, -float(slot) * 2.5)
+			var start := wolf.global_position + offset
+			if slot > 0 and is_wolf_allowed_at(start) and not _is_near_wildlife_blocker(start, 1.0):
+				wolf.global_position = start
+				wolf._snap_to_terrain()
+			var _saved_rng_state := _world_rng.state
+			await get_tree().process_frame
+			_world_rng.state = _saved_rng_state
 	# Birds: flocks roaming the entire map from spread-out starting zones
 	var bird_always_allowed := func(_pos: Vector3) -> bool: return true
 	var bird_start_zones := [
@@ -10801,15 +10816,9 @@ func _check_wildlife_respawn() -> void:
 	var total_wolf := alive_wolf
 	var total_deer := alive_deer
 	var total_fox := alive_fox
-	if total_wolf < 22 and _wildlife_respawn_ready("wolf"):
-		var center := _wildlife_spawn_pos()
-		for _retry in range(40):
-			if is_wolf_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0) and _far_from_death_sites("wolf", center):
-				break
-			center = _wildlife_spawn_pos()
-		var route := WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wolf_allowed_at, true)
-		_create_wildlife_animal("wolf", route)
-		_wildlife_mark_replaced("wolf")
+	if total_wolf < 23 and _wildlife_respawn_ready("wolf"):
+		if _respawn_pack_wolf():
+			_wildlife_mark_replaced("wolf")
 	if total_deer < 14 and _wildlife_respawn_ready("deer"):
 		var deer_route: Array
 		if randf() < 0.3:
@@ -10890,6 +10899,36 @@ func _check_wildlife_respawn() -> void:
 			_create_bird(shifted, _bird_flock_counter)
 		_wildlife_mark_replaced("bird")
 
+func _wolf_respawn_route(route: Array) -> Array:
+	for index in route.size():
+		var pos: Vector3 = route[index]
+		if is_wolf_allowed_at(pos) and not _is_near_wildlife_blocker(pos, 5.0) and _far_from_death_sites("wolf", pos):
+			return route.slice(index) + route.slice(0, index)
+	return []
+
+func _respawn_pack_wolf() -> bool:
+	var center := _wildlife_spawn_pos()
+	var group := _wolf_pack_for_spawn(center)
+	var guide: Node3D = group.guide()
+	var route: Array = []
+	if guide != null:
+		# Stay in the surviving pack's connected area. A random opposite
+		# riverbank can leave the replacement permanently unable to reunite.
+		route = _wolf_respawn_route(guide.patrol_points)
+		if route.is_empty():
+			route = _wolf_respawn_route(WildlifeRoutes.build_roaming_route(
+				_world_rng, guide.global_position, 28, 80.0, 160.0, is_wolf_allowed_at, true))
+	else:
+		for _retry in range(40):
+			if is_wolf_allowed_at(center) and not _is_near_wildlife_blocker(center, 5.0) and _far_from_death_sites("wolf", center):
+				route = WildlifeRoutes.build_roaming_route(_world_rng, center, 28, 80.0, 160.0, is_wolf_allowed_at, true)
+				break
+			center = _wildlife_spawn_pos()
+	if route.is_empty():
+		return false
+	_create_wildlife_animal("wolf", route, group)
+	return true
+
 func _wildlife_spawn_pos() -> Vector3:
 	# ~35% of respawn anchors land in the southern extension (open pass + city
 	# woods); the route builders still validate every waypoint.
@@ -10961,13 +11000,37 @@ func _create_deer_pair(route: Array) -> void:
 		_create_wildlife_animal("deer", shifted)
 
 var _animal_id_counter := 0
+var _wolf_packs: Dictionary = {}
 
-func _create_wildlife_animal(kind: String, points: Array) -> WildlifeController:
+func _new_wolf_pack() -> RefCounted:
+	var group = WolfPackScript.new("wolf_pack_%d" % _wolf_packs.size())
+	_wolf_packs[group.id] = group
+	return group
+
+func _wolf_pack_for_spawn(pos: Vector3) -> RefCounted:
+	var nearest: RefCounted = null
+	var distance := INF
+	for group in _wolf_packs.values():
+		group.prune()
+		# A normal respawn replaces a lost/captured leader before filling
+		# other vacancies. Existing grey members retain their real coat.
+		if group.leader == null:
+			return group
+		if group.members.size() < WolfPackScript.MAX_MEMBERS:
+			var d := pos.distance_squared_to(group.leader.global_position)
+			if d < distance:
+				distance = d
+				nearest = group
+	return nearest if nearest != null else _new_wolf_pack()
+
+func _create_wildlife_animal(kind: String, points: Array, group: RefCounted = null) -> WildlifeController:
 	var animal: WildlifeController = WildlifeControllerScript.new()
 	animal.name = "Wildlife_%s_%d" % [kind, _animal_id_counter]
 	_animal_id_counter += 1
 	add_child(animal)
 	animal.setup(kind, points)
+	if kind == "wolf":
+		animal.join_pack(group if group != null else _wolf_pack_for_spawn(animal.global_position))
 	return animal
 
 func _create_bear(territory_id: int, points: Array) -> void:
@@ -10992,6 +11055,8 @@ func _apply_pending_dead_wildlife() -> void:
 				continue
 			if node.name == dw_name:
 				node.set("_is_dead", true)
+				if node.has_method("set_black_coat"):
+					node.set_black_coat(bool(dw.get("black", false)))
 				node.set("_gutted", dw_gutted)
 				node.set("health", 0.0)
 				node.set("_rot_timer", float(dw.get("rot_timer", 300.0)))
@@ -12273,6 +12338,8 @@ func _apply_fur_clothing_material(item_name: String, node: Node, pelt: String = 
 	# El tocado cae con el modelo real del animal (texturas propias); las demás
 	# prendas de piel llevan la textura de la especie via shader triplanar.
 	if item_name == "Tocado de piel animal":
+		if pelt == "lobo negro":
+			MaterialFactory.apply_black_wolf_coat(node)
 		return
 	var fur_tints := {
 		"Chaqueta de piel": Color(0.29, 0.20, 0.12),
@@ -12595,6 +12662,31 @@ func _create_cut_log_action(pos: Vector3) -> void:
 	var action = _create_world_action(id, "cut_log", "Tronco", pos, Vector3(3.0, 0.5, 0.5), Color(0.25, 0.15, 0.06), false, false)
 	action.set_meta("visual_name", visual_name)
 
+func _apply_ground_pickup_pelt(drop: Dictionary, species: String) -> void:
+	drop["pelt"] = species
+	var id := str(drop.get("id", ""))
+	var action = world_actions_by_id.get(id)
+	if is_instance_valid(action):
+		action.set_meta("item_pelt", species)
+	if net != null and net.is_dedicated_server:
+		return
+	var visual_name := "Pickup_" + id
+	var visual := get_node_or_null(visual_name) as Node3D
+	if visual == null:
+		return
+	var item_name := str(drop.get("name", ""))
+	if item_name == "Tocado de piel animal":
+		var pos := visual.position
+		var rot := visual.rotation_degrees
+		visual.free()
+		var paths := _get_drop_model_paths(item_name, "clothing", species)
+		_try_instance_external_scene(paths, visual_name, pos, Vector3.ONE * _get_drop_scale(item_name, "clothing"), rot, true, 0.0)
+		visual = get_node_or_null(visual_name) as Node3D
+		if visual != null:
+			_remove_collision_from_node(visual)
+			_snap_node_bottom_to_y(visual, pos.y)
+	_apply_fur_clothing_material(item_name, visual, species)
+
 func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, weight: float, qty: int, use_value: float, fixed_id: String = "", action_type_override: String = "", wetness: float = 0.0, color: Color = Color(0, 0, 0, 0)) -> void:
 	var id := fixed_id if not fixed_id.is_empty() else "pickup_%s_%d" % [item_name.replace(" ", "_"), Time.get_ticks_msec() + randi() % 1000]
 	if _depleted_action_ids.has(id):
@@ -12643,6 +12735,8 @@ func _spawn_ground_pickup(item_name: String, item_type: String, pos: Vector3, we
 	var ground_node := get_node_or_null(visual_name)
 	if ground_node != null:
 		_remove_collision_from_node(ground_node)
+		if item_name == "Lobo negro muerto":
+			MaterialFactory.apply_black_wolf_coat(ground_node)
 	# Botas survival: use Remy model, hide all meshes except Shoes, paint black
 	if item_name == "Botas survival" and ground_node is Node3D:
 		var remy_meshes: Array = []
@@ -12976,10 +13070,11 @@ func _claim_world_pickup(action_id: String, sender: int) -> bool:
 			net.item_picked_up.rpc_id(sender, action_id)
 		return false
 	var owner := int(_pickup_claims.get(action_id, 0))
-	if owner != 0 and owner != sender and (owner == net.get_my_id() or net.peer_alive(owner)) \
+	var local_id := int(net.get_my_id()) if net != null else 1
+	if owner != 0 and owner != sender and (owner == local_id or SurvivorBotManager.is_bot_peer_id(owner) or (net != null and net.peer_alive(owner))) \
 			and int(_pickup_claim_until.get(action_id, 0)) > Time.get_ticks_msec():
 		return false
-	if sender != net.get_my_id() and not _is_static_world_loot_id(action_id):
+	if sender != local_id and not _is_static_world_loot_id(action_id):
 		var pos := Vector3.INF
 		var action = world_actions_by_id.get(action_id)
 		if is_instance_valid(action):
@@ -12999,6 +13094,11 @@ func _claim_world_pickup(action_id: String, sender: int) -> bool:
 	_pickup_claim_until[action_id] = Time.get_ticks_msec() + PICKUP_CLAIM_TIMEOUT_MSEC
 	return true
 
+func _pickup_actor_cancelled(actor, serial: int) -> bool:
+	return actor != null and (not is_instance_valid(actor) \
+		or ("_action_serial" in actor and int(actor.get("_action_serial")) != serial) \
+		or ("is_dead" in actor and bool(actor.get("is_dead"))))
+
 func _acquire_world_pickup(action, actor = null) -> bool:
 	if not is_instance_valid(action):
 		return false
@@ -13013,18 +13113,21 @@ func _acquire_world_pickup(action, actor = null) -> bool:
 		return false
 	if _pickup_replies.has(id):
 		return false
+	var serial := int(actor.get("_action_serial")) if is_instance_valid(actor) and "_action_serial" in actor else 0
 	_pickup_replies[id] = null
 	net.request_pickup_claim.rpc_id(1, id)
 	var deadline := Time.get_ticks_msec() + 5000
-	while _pickup_replies.get(id) == null and net.is_connected and Time.get_ticks_msec() < deadline:
+	while _pickup_replies.get(id) == null and net.is_connected and Time.get_ticks_msec() < deadline \
+			and not _pickup_actor_cancelled(actor, serial):
 		await get_tree().process_frame
 	var got_reply: bool = _pickup_replies.get(id) != null
 	var accepted: bool = _pickup_replies.get(id) == true
+	var cancelled := _pickup_actor_cancelled(actor, serial)
 	_pickup_replies.erase(id)
-	if not accepted or not is_instance_valid(action) or _depleted_action_ids.has(id):
+	if cancelled or not accepted or not is_instance_valid(action) or _depleted_action_ids.has(id):
 		if net.is_connected:
 			net.release_pickup_claim.rpc_id(1, id)
-		if not accepted and net.is_connected:
+		if not cancelled and not accepted and net.is_connected:
 			if not got_reply:
 				# El request llegó pero la respuesta no volvió (o al revés): con
 				# el socket medio roto esto rechazaba TODO fingiendo que otro
@@ -13047,14 +13150,16 @@ func _notify_claim_denied(action, actor) -> void:
 # Liberamos por id guardado, no por la accion: el nodo puede haberse liberado
 # durante la ejecucion (carne podrida, descarga de chunk) y el claim quedaria
 # colgado en el servidor.
-func _release_world_pickup(_action) -> void:
-	var id := _local_pickup_claim
-	_local_pickup_claim = ""
+func _release_world_pickup(_action, acquired_id := "") -> void:
+	var id := acquired_id if not acquired_id.is_empty() else _local_pickup_claim
+	if id == _local_pickup_claim:
+		_local_pickup_claim = ""
 	if id.is_empty() or net == null or not net.is_connected:
 		return
 	if net.is_host:
-		_pickup_claims.erase(id)
-		_pickup_claim_until.erase(id)
+		if int(_pickup_claims.get(id, 0)) == int(net.get_my_id()):
+			_pickup_claims.erase(id)
+			_pickup_claim_until.erase(id)
 	else:
 		net.release_pickup_claim.rpc_id(1, id)
 
@@ -13105,6 +13210,55 @@ func _await_water_fill(action, actor, bottle, duration: float) -> bool:
 			return false
 	return true
 
+func _needs_ground_pickup(action, actor, collect := false) -> bool:
+	if not is_instance_valid(action):
+		return false
+	var kind := str(action.action_type)
+	var held = actor.get_held_item() if actor != null and actor.has_method("get_held_item") else null
+	if kind == "plant_seeds":
+		return collect or held == null or str(held.item_type) not in ["tool_hoe", "tool_shovel"]
+	if kind == "gut_wolf":
+		return collect
+	if kind == "pickup_item" and not collect and str(action.get_meta("item_type", "")) == "clothing" \
+			and not CraftingSystem.is_rag_exempt(str(action.get_meta("item_name", ""))) and held != null \
+			and str(held.item_name) in ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Piedra afilada", "Hacha", "Hacha de piedra"]:
+		return false
+	return kind in ["pickup_item", "eat_food", "wolf_meat_raw", "bird_meat_raw", "pickup_torch", "wood", "stone",
+		"axe_tool", "hoe_tool", "shovel_tool", "hammer_tool", "pickaxe_tool", "matches_tool", "backpack_pickup", "coat"]
+
+func _await_ground_pickup(action, actor) -> bool:
+	if not _actor_still_reaches(action, actor, 5.0) or bool(action.get("depleted")):
+		return false
+	var defaults := {"axe_tool": ["Hacha", "tool_axe"], "hoe_tool": ["Azada", "tool_hoe"],
+		"shovel_tool": ["Pala", "tool_shovel"], "hammer_tool": ["Martillo", "tool_hammer"],
+		"pickaxe_tool": ["Pico", "tool_pickaxe"], "matches_tool": ["Cerillas", "tool_matches"],
+		"plant_seeds": ["Semillas", "resource"], "pickup_torch": ["Antorcha", "tool_torch"],
+		"wood": ["Tronco", "resource"], "stone": ["Piedra", "resource"], "backpack_pickup": ["Mochila pequena", "backpack"]}
+	var fallback: Array = defaults.get(str(action.action_type), [str(action.display_name), "resource"])
+	if actor.has_method("begin_ground_gesture"):
+		actor.begin_ground_gesture(str(action.action_id), str(action.get_meta("item_name", fallback[0])),
+			str(action.get_meta("item_type", fallback[1])))
+	_play_actor_action(actor, "pickup", PlayerController.GroundGesture.DURATION)
+	if hud != null:
+		hud.show_countdown(preload("res://scripts/GameLang.gd").t("Recogiendo", "Picking up"), PlayerController.GroundGesture.DURATION)
+	var start_pos: Vector3 = actor.global_position
+	var remaining := PlayerController.GroundGesture.DURATION
+	while remaining > 0.0:
+		var step := minf(remaining, 0.1)
+		if not await _await_actor_action(actor, step):
+			return false
+		if not _actor_still_reaches(action, actor, 5.0) or bool(action.get("depleted")) \
+				or actor.global_position.distance_to(start_pos) > 0.4:
+			if actor.has_method("cancel_active_action"):
+				actor.cancel_active_action(false)
+			return false
+		remaining -= step
+	return true
+
+func _end_ground_pickup(actor) -> void:
+	if is_instance_valid(actor) and actor.has_method("end_ground_gesture"):
+		actor.end_ground_gesture()
+
 func handle_world_action(action, actor) -> void:
 	# Bloquear interacciones concurrentes: operaciones con await (tala, cocinar,
 	# destripar, construir) no deben solaparse por repeticion de tecla.
@@ -13115,11 +13269,14 @@ func handle_world_action(action, actor) -> void:
 		if actor.has_method("_mark_action_started"):
 			start_serial = int(actor._mark_action_started())
 		actor.set("_interact_busy", true)
+	var pickup_id := str(action.action_id) if is_instance_valid(action) else ""
 	var claimed := await _acquire_world_pickup(action, actor)
 	if claimed:
-		await _execute_world_action(action, actor)
-		_release_world_pickup(action)
+		if not _needs_ground_pickup(action, actor) or await _await_ground_pickup(action, actor):
+			await _execute_world_action(action, actor)
+		_release_world_pickup(action, pickup_id)
 	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
+		_end_ground_pickup(actor)
 		actor.set("_interact_busy", false)
 
 func _execute_world_action(action, actor) -> void:
@@ -13140,7 +13297,7 @@ func _execute_world_action(action, actor) -> void:
 			var an_lower := "lobo"
 			var meat_name := "Carne cruda de lobo"
 			var meat_qty := 5
-			var hide_name := "Piel de lobo"
+			var hide_name := "Piel de lobo negro" if str(action.get_meta("item_name", "")) == "Lobo negro muerto" else "Piel de lobo"
 			var hide_qty := 1
 			var bone_qty := 2
 			var sinew_qty := 1
@@ -13172,7 +13329,7 @@ func _execute_world_action(action, actor) -> void:
 					an_lower = "lobo"
 					meat_name = "Carne cruda de lobo"
 					meat_qty = 5
-					hide_name = "Piel de lobo"
+					hide_name = "Piel de lobo negro" if str(action.get_meta("item_name", "")) == "Lobo negro muerto" else "Piel de lobo"
 			_play_actor_action(actor, "plant", 5.0)
 			if hud != null:
 				hud.show_countdown("Destripando %s" % an_lower, 5.0)
@@ -13403,54 +13560,7 @@ func _execute_world_action(action, actor) -> void:
 			else:
 				_finish_pickup_action(action, actor, item, "Recoges %s." % item.item_name)
 		"eat_food":
-			_play_actor_action(actor, "plant", 1.2)
-			if actor.has_method("_play_consumption_audio"):
-				actor._play_consumption_audio(false, 1.2, int(actor.get("_action_serial")))
-			if hud != null:
-				hud.show_countdown("Comiendo", 1.2)
-			var food_value := float(action.get_meta("item_use_value")) if action.has_meta("item_use_value") else 18.0
-			var eaten_name := str(action.get_meta("item_name")) if action.has_meta("item_name") else "algo"
-			var food_spoilage := 0.0
-			if action.has_meta("item_spoilage"):
-				food_spoilage = float(action.get_meta("item_spoilage"))
-			if not await _await_actor_action(actor, 1.2):
-				return
-			if not is_instance_valid(action):
-				return
-			_hide_action_visual(action)
-			action.mark_depleted()
-			if food_spoilage >= 100.0 and actor.stats.has_method("get_sick"):
-				actor.stats.get_sick(80.0)
-				actor.notice.emit("Comes comida podrida. Te sientes muy mal del estomago.")
-			elif food_spoilage >= 50.0 and actor.stats.has_method("get_sick"):
-				actor.stats.get_sick(30.0)
-				actor.notice.emit("Comes comida en mal estado. Te sientes mal.")
-			if actor.stats.hunger >= actor.stats.max_stat - 2.0:
-				actor.stats.overeat_count += 1
-				if actor.stats.overeat_count >= 3 and actor.stats.has_method("get_sick"):
-					actor.stats.get_sick(45.0)
-					actor.stats.overeat_count = 0
-					actor.notice.emit("Has comido demasiado. Te sientes mal del estomago.")
-				else:
-					actor.notice.emit("No tienes mas hambre pero comes de todas formas. Te sientes pesado.")
-			else:
-				var _oh_eat: float = float(actor.stats.hunger)
-				var _ot_eat: float = float(actor.stats.thirst)
-				var _ohp_eat: float = float(actor.stats.health)
-				actor.stats.hunger = min(actor.stats.max_stat, actor.stats.hunger + food_value)
-				actor.stats.thirst = min(actor.stats.max_stat, actor.stats.thirst + food_value * 0.20)
-				actor.stats.health = min(actor.stats.max_health, actor.stats.health + max(3.0, food_value * 0.35))
-				var _r_eat: String = actor.inventory._fmt_restore(_oh_eat, float(actor.stats.hunger), _ot_eat, float(actor.stats.thirst), _ohp_eat, float(actor.stats.health))
-				actor.notice.emit("Comes %s.%s" % [eaten_name, _r_eat])
-			actor.stats.changed.emit()
-			_save_world_change_silent()
-			_net_notify_pickup(action)
-			if eaten_name == "Carne humana":
-				actor.notice.emit("La carne humana esta en mal estado... te sientes muy mal.")
-				actor.stats.health = 0.0
-				actor.stats.changed.emit()
-				if actor.has_method("die"):
-					actor.die()
+			await _execute_world_action_eat(action, actor)
 		"forage":
 			_play_actor_action(actor, "forage", 0.9)
 			if not actor.inventory.add_item(ItemScript.create("Bayas silvestres", "food", 0.08, 2, 12.0)):
@@ -13463,7 +13573,6 @@ func _execute_world_action(action, actor) -> void:
 			_save_world_change_silent()
 			_net_notify_pickup(action)
 		"wood":
-			_play_actor_action(actor, "collect", 0.8)
 			if not actor.inventory.add_item(ItemScript.create("Tronco", "resource", 1.2, 2, 0.0)):
 				return
 			actor.notice.emit("Recoges troncos para construir.")
@@ -13472,7 +13581,6 @@ func _execute_world_action(action, actor) -> void:
 			_save_world_change_silent()
 			_net_notify_pickup(action)
 		"stone":
-			_play_actor_action(actor, "collect", 0.8)
 			var stone_qty: int = maxi(1, int(action.get_meta("item_quantity", 3)))
 			if not actor.inventory.add_item(ItemScript.create("Piedra", "resource", 0.45, stone_qty, 0.0)):
 				return
@@ -14085,7 +14193,8 @@ func _receive_pickup_item(actor, item) -> bool:
 	return actor.inventory.add_item(item)
 
 func _finish_pickup_action(action, actor, item, message: String, action_name := "pickup", duration := 0.8, hide_visual := true) -> void:
-	_play_actor_action(actor, action_name, duration)
+	if action_name not in ["pickup", "collect"]:
+		_play_actor_action(actor, action_name, duration)
 	if action.has_meta("item_max_durability"):
 		item.max_durability = float(action.get_meta("item_max_durability"))
 		item.durability = float(action.get_meta("item_durability", item.max_durability))
@@ -14126,10 +14235,13 @@ func handle_world_action_collect(action, actor) -> void:
 		return
 	var start_serial: int = actor._mark_action_started() if actor.has_method("_mark_action_started") else 0
 	actor.set("_interact_busy", true)
+	var pickup_id := str(action.action_id) if is_instance_valid(action) else ""
 	if await _acquire_world_pickup(action, actor):
-		await _execute_world_action_collect(action, actor)
-		_release_world_pickup(action)
+		if not _needs_ground_pickup(action, actor, true) or await _await_ground_pickup(action, actor):
+			await _execute_world_action_collect(action, actor)
+		_release_world_pickup(action, pickup_id)
 	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
+		_end_ground_pickup(actor)
 		actor.set("_interact_busy", false)
 
 func _execute_world_action_collect(action, actor) -> void:
@@ -14168,7 +14280,6 @@ func _execute_world_action_collect(action, actor) -> void:
 			var wolf_item = ItemScript.create(corpse_item_name, "material", 8.0, 1, 0.0)
 			if actor.get("equipped_backpack") != null and not str(actor.get("equipped_backpack")).is_empty():
 				wolf_item.cargo_location = "backpack"
-			_play_actor_action(actor, "pickup", 0.8)
 			if not actor.inventory.add_item(wolf_item):
 				actor.notice.emit("No puedes cargar con el %s, demasiado peso." % animal_label)
 				return
@@ -14238,8 +14349,6 @@ func _execute_world_action_collect(action, actor) -> void:
 						var ci = ItemScript.from_dict(cd)
 						if ci != null:
 							item.contents.append(ci)
-			if str(item.item_type) != "backpack":
-				_play_actor_action(actor, "pickup", 0.8)
 			if str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
 				if not _pickup_and_swap_backpack(action, actor, item):
 					return
@@ -14325,9 +14434,10 @@ func handle_shelter_dismantle(action, actor) -> void:
 	var start_serial: int = actor._mark_action_started() if (actor != null and actor.has_method("_mark_action_started")) else 0
 	if actor != null:
 		actor.set("_interact_busy", true)
+	var pickup_id := str(action.action_id)
 	if await _acquire_world_pickup(action, actor):
 		await _execute_shelter_dismantle(action, actor)
-		_release_world_pickup(action)
+		_release_world_pickup(action, pickup_id)
 	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
 		actor.set("_interact_busy", false)
 
@@ -14396,13 +14506,18 @@ func handle_world_action_eat(action, actor) -> void:
 	var start_serial: int = actor._mark_action_started() if (actor != null and actor.has_method("_mark_action_started")) else 0
 	if actor != null:
 		actor.set("_interact_busy", true)
+	var pickup_id := str(action.action_id) if is_instance_valid(action) else ""
 	if await _acquire_world_pickup(action, actor):
-		await _execute_world_action_eat(action, actor)
-		_release_world_pickup(action)
+		if not _needs_ground_pickup(action, actor) or await _await_ground_pickup(action, actor):
+			await _execute_world_action_eat(action, actor)
+		_release_world_pickup(action, pickup_id)
 	if is_instance_valid(actor) and (not ("_action_serial" in actor) or int(actor.get("_action_serial")) == start_serial):
+		_end_ground_pickup(actor)
 		actor.set("_interact_busy", false)
 
 func _execute_world_action_eat(action, actor) -> void:
+	if actor.has_method("set_ground_gesture_phase"):
+		actor.set_ground_gesture_phase("eat")
 	match action.action_type:
 		"eat_food":
 			var eat_name0: String = str(action.get_meta("item_name", ""))

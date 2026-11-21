@@ -1,6 +1,11 @@
 extends SceneTree
 class Manager extends "res://scripts/SurvivorBotManager.gd":
 	var loot_item_builds := 0
+	var supply_checks := 0
+	var denied_supply := Vector3.INF
+	func _bot_supply_goal_allowed(_b: Dictionary, goal: Vector3) -> bool:
+		supply_checks += 1
+		return goal != denied_supply
 	func _loot_entry_item_dict(entry: Dictionary) -> Dictionary:
 		loot_item_builds += 1
 		return super._loot_entry_item_dict(entry)
@@ -52,6 +57,42 @@ func test_loot_search(manager: Manager, proxy: Node3D) -> void:
 	check(manager._find_nearby_valuable_loot(bot, 28.0).is_empty(), "depleted loot remains excluded")
 	manager.world = null
 	world.free()
+
+func test_forage_search(manager: Manager, proxy: Node3D) -> void:
+	var world := LootWorld.new()
+	root.add_child(world)
+	manager.world = world
+	proxy.global_position = Vector3.ZERO
+	var bot := {"bot_id": 901, "proxy": proxy, "hunger": 20.0, "health": 100.0}
+	for index in range(2002):
+		var action := WorldAction.new()
+		action.action_id = str(index)
+		action.action_type = "pick_fruit" if index == 1 else "eat_food"
+		action.position = Vector3(4, 0, 0) if index == 0 else Vector3(2, 0, 0) if index == 1 else Vector3(100 + index, 0, 0)
+		world.add_child(action)
+		world.world_actions_by_id[str(index)] = action
+	manager.supply_checks = 0
+	check(manager._find_forage_target(bot, 20.0).get("id") == "0", "near mushrooms retain priority over nearer fruit")
+	check(manager.supply_checks == 1, "two thousand distant foods trigger no supply/lighting evaluations")
+	world._depleted_action_ids.append("0")
+	check(manager._find_forage_target(bot, 20.0).get("id") == "1", "fruit becomes available after mushroom depletion")
+	world._pickup_claims["1"] = 902
+	check(manager._find_forage_target(bot, 20.0).is_empty(), "forage respects another actor's reservation")
+	world._pickup_claims.clear()
+	world._depleted_action_ids.clear()
+	manager.denied_supply = Vector3(4, 0, 0)
+	check(manager._find_forage_target(bot, 20.0).get("id") == "1", "local light/safety restrictions still reject food")
+	world.world_actions_by_id["1"].set_meta("fruit_ready_time", Time.get_unix_time_from_system() + 60.0)
+	check(manager._find_forage_target(bot, 20.0).is_empty(), "unripe fruit remains unavailable")
+	manager.denied_supply = Vector3.INF
+	world.world_actions_by_id["0"].position = Vector3(20, 0, 0)
+	check(manager._find_forage_target(bot, 20.0).is_empty(), "forage preserves its strict radius boundary")
+	world.world_actions_by_id["0"].position = Vector3(19.99, 0, 0)
+	check(manager._find_forage_target(bot, 20.0).get("id") == "0", "food just inside the radius is reachable")
+	world.world_actions_by_id["0"].position = Vector3(0, 21, 0)
+	check(manager._find_forage_target(bot, 20.0).is_empty(), "forage distance includes height")
+	manager.world = null
+	world.free()
 var errors := 0
 func check(ok: bool, label: String):
 	if not ok:
@@ -63,6 +104,7 @@ func run():
 	root.add_child(manager)
 	var actor := Node3D.new()
 	root.add_child(actor)
+	test_forage_search(manager, actor)
 	var meal := {"name":"Carne asada","type":"food","quantity":1,"weight":.42,"use_value":25.0}
 	actor.set_meta("saved_inventory",[meal.duplicate(true)])
 	check(manager._take_peace_gift(actor).is_empty(), "never give away last meal")

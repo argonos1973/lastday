@@ -2143,5 +2143,38 @@
     "file": "injured_idle.fbx",
     "bytes": 1003808,
     "sha256": "caf54d17606251f4509354ef704c1bb3cb3569c340486c74215812a1cf08c9b5"
+  },
+  "pickup_ground": {
+    "role": "pickup_ground",
+    "mixamo_name": "Pick Fruit",
+    "motion_id": "c9cda77e-b96c-11e4-a802-0aaa78deedf9",
+    "selection_status": "review_ground_pickup",
+    "description": "Picking Fruit From Ground",
+    "duration": 7.07,
+    "loopable": true,
+    "supports_inplace": false,
+    "gms_hash": [
+      {
+        "model-id": 127020901,
+        "mirror": false,
+        "trim": [
+          0.0,
+          100.0
+        ],
+        "inplace": false,
+        "arm-space": 0,
+        "params": "0.0"
+      }
+    ],
+    "character_id": "2dee24f8-3b49-48af-b735-c6377509eaac",
+    "preferences": {
+      "format": "fbx7_2019",
+      "skin": "false",
+      "fps": "30",
+      "reducekf": "0"
+    },
+    "file": "pickup_ground.fbx",
+    "bytes": 887664,
+    "sha256": "2d2441c53fe7add0762259ffccebfca3e3e9c002093198f57b252aa924e61e81"
   }
 }

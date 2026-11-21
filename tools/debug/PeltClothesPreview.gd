@@ -12,14 +12,14 @@ func run():
 	root.add_child(stage)
 	current_scene = stage
 	root.size = Vector2i(1600,1000)
-	var species_list := ["lobo", "ciervo", "zorro", "oso", "ave"]
-	var head_items := ["Tocado de piel animal","Tocado de piel animal","Tocado de piel animal","Tocado de piel animal","Gorro de piel"]
+	var species_list := ["lobo", "lobo negro", "ciervo", "zorro", "oso", "ave"]
+	var head_items := ["Tocado de piel animal","Tocado de piel animal","Tocado de piel animal","Tocado de piel animal","Tocado de piel animal","Gorro de piel"]
 	var actors: Array = []
 	for i in species_list.size():
 		var sp: String = species_list[i]
 		var actor := Actor.new()
 		stage.add_child(actor)
-		actor.position.x = (i-2)*1.35
+		actor.position.x = (i-(species_list.size()-1)*0.5)*1.35
 		actor.stats = preload("res://scripts/SurvivalStats.gd").new()
 		actor.inventory = preload("res://scripts/Inventory.gd").new()
 		actor.add_child(actor.inventory)
@@ -52,7 +52,7 @@ func run():
 	var cam := Camera3D.new()
 	stage.add_child(cam)
 	cam.projection=Camera3D.PROJECTION_ORTHOGONAL
-	cam.size=4.6
+	cam.size=5.2
 	for view in ["front","back"]:
 		cam.position = Vector3(0,2.1,-7.5) if view=="front" else Vector3(0,2.1,7.5)
 		cam.look_at(Vector3(0,1.1,0))
@@ -68,7 +68,7 @@ func run():
 		root.get_texture().get_image().save_png("/tmp/pelt_clothes_"+view+".png")
 	# Individual closeups reveal face clearance and the rear drape.
 	cam.size = 1.3
-	for i in [0, 1, 2, 3]:
+	for i in range(5):
 		var actor = actors[i]
 		for other in actors: other.visible = other == actor
 		var focus := Vector3(actor.position.x, 2.85, 0)

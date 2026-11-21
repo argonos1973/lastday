@@ -33,8 +33,12 @@ class ProbeNet extends "res://scripts/NetworkManager.gd":
 class Actor extends Node3D:
 	signal notice(message: String)
 	var _interact_busy := false
+	var _action_serial := 0
 	var inventory := Inventory.new()
 	func _init() -> void: add_child(inventory)
+	func _mark_action_started() -> int:
+		_action_serial += 1
+		return _action_serial
 
 var failures := 0
 func check(ok: bool, label: String) -> void:
@@ -85,6 +89,11 @@ func run() -> void:
 		main.add_child(proxy)
 		proxy.set_meta("saved_inventory", [])
 		main.server_proxies[id] = proxy
+	var gesture := PlayerController.GroundGesture.packet("pickup", "floor|test", "Seta amanita", "food", 0.7)
+	a.sync_player_state.rpc_id(1, aid, Vector3.ZERO, 0.0, gesture, "", "", "")
+	await create_timer(0.2).timeout
+	check(str(server.players[aid].get("anim", "")) == gesture and str(b.players.get(aid, {}).get("anim", "")) == gesture,
+		"pickup identity and phase reach the host and the other real client unchanged")
 	if OS.get_cmdline_user_args().has("--websocket"):
 		check(server.can_send_snapshot(aid), "healthy WebSocket accepts snapshots")
 		# Stop polling the receiver while filling the OS/TCP buffers. Production
@@ -153,6 +162,12 @@ func run() -> void:
 	await create_timer(0.25).timeout
 	check(actor.inventory.items.is_empty() and not action.depleted and not actor._interact_busy, "denied claim leaves inventory and item untouched")
 	main._pickup_claims.erase("client_gate")
+	client.handle_world_action_collect(action, actor)
+	actor._action_serial += 1
+	actor._interact_busy = false
+	await create_timer(0.25).timeout
+	check(actor.inventory.items.is_empty() and not action.depleted and not main._pickup_claims.has("client_gate"),
+		"cancelling while awaiting the server releases the claim and never starts the pickup")
 	actor.inventory.max_weight = 0.0
 	await client.handle_world_action_collect(action, actor)
 	await create_timer(0.15).timeout

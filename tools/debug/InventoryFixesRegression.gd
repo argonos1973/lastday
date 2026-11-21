@@ -68,7 +68,7 @@ func run() -> void:
 	var expected_corpse := {"bear": "Oso muerto", "deer": "Ciervo muerto", "fox": "Zorro muerto", "wolf": "Lobo muerto"}
 	for row in [["bear", "Oso muerto"], ["deer", "Ciervo muerto"], ["fox", "Zorro muerto"], ["wolf", "Lobo muerto"]]:
 		var action = _make_corpse_action(world, row[0], row[1])
-		world.handle_world_action_collect(action, player)
+		await world.handle_world_action_collect(action, player)
 		var found = _corpse_item(player, row[1])
 		check(found != null, "Collecting %s adds %s to inventory" % [row[0], row[1]])
 		check(action.depleted, "Corpse action is consumed after pickup: " + row[1])
@@ -88,7 +88,7 @@ func run() -> void:
 	world.add_child(meta_only)
 	meta_only.set_meta("animal_type", "deer")
 	meta_only.set_meta("gutted", false)
-	world.handle_world_action_collect(meta_only, player)
+	await world.handle_world_action_collect(meta_only, player)
 	var deer_found = _corpse_item(player, "Ciervo muerto")
 	check(deer_found != null, "animal_type meta alone resolves the deer corpse name")
 	if deer_found != null:
@@ -98,7 +98,7 @@ func run() -> void:
 	# A gutted corpse yields nothing.
 	var gutted = _make_corpse_action(world, "bear", "Oso muerto")
 	gutted.set_meta("gutted", true)
-	world.handle_world_action_collect(gutted, player)
+	await world.handle_world_action_collect(gutted, player)
 	check(_corpse_item(player, "Oso muerto") == null, "Gutted corpse adds nothing")
 	gutted.queue_free()
 

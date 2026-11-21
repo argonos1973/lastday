@@ -44,6 +44,28 @@ static func load_texture(tp: String):
 # were authored for cloth prints, so the hide goes through the triplanar
 # shader — the jacket reads as wolf/deer/fox/bear/bird fur on any mesh.
 static var _pelt_mat_cache: Dictionary = {}
+static var _black_wolf_materials: Dictionary = {}
+const BLACK_WOLF_TINT := Color(0.16, 0.17, 0.19)
+
+static func black_wolf_material(base: StandardMaterial3D) -> StandardMaterial3D:
+	var key := base.get_instance_id()
+	if not _black_wolf_materials.has(key):
+		var dark := base.duplicate() as StandardMaterial3D
+		dark.albedo_color *= BLACK_WOLF_TINT
+		_black_wolf_materials[key] = dark
+	return _black_wolf_materials[key]
+
+static func apply_black_wolf_coat(root: Node) -> void:
+	if root.has_meta("_black_wolf_coat"):
+		return
+	root.set_meta("_black_wolf_coat", true)
+	if root is MeshInstance3D and root.mesh != null:
+		for surface in root.mesh.get_surface_count():
+			var base = root.get_active_material(surface)
+			if base is StandardMaterial3D:
+				root.set_surface_override_material(surface, black_wolf_material(base))
+	for child in root.get_children():
+		apply_black_wolf_coat(child)
 
 static func pelt_fur_material(species: String) -> Material:
 	if species.is_empty():
@@ -61,6 +83,8 @@ static func pelt_fur_material(species: String) -> Material:
 		return null
 	sm.shader = sh
 	sm.set_shader_parameter("fur_tex", tex)
+	if species == "lobo negro":
+		sm.set_shader_parameter("tint", BLACK_WOLF_TINT)
 	_pelt_mat_cache[species] = sm
 	return sm
 
@@ -506,6 +530,7 @@ static func build_pelt_hide_mesh(pelt_species: String) -> MeshInstance3D:
 		"zorro": fur_color = Color(0.55, 0.25, 0.10)
 		"oso": fur_color = Color(0.22, 0.15, 0.10)
 		"lobo": fur_color = Color(0.42, 0.41, 0.38)
+		"lobo negro": fur_color = Color(0.045, 0.05, 0.055)
 		"ave": fur_color = Color(0.46, 0.41, 0.30)
 	# Realistic stretched animal hide silhouette (neck, front legs, waist, hind legs, tail)
 	var outline := PackedVector3Array([

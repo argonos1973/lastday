@@ -139,6 +139,8 @@ func run() -> void:
 	var notices: Array = []
 	player.notice.connect(func(m): notices.append(str(m)))
 	check(player._right_click_interact(bear_action), "RMB on a corpse executes an advertised action")
+	check(not _inv_has(player, "Oso muerto"), "Corpse is not granted before the pickup gesture")
+	await create_timer(PlayerController.GroundGesture.DURATION + 0.15).timeout
 	check(_inv_has(player, "Oso muerto"), "RMB collects the dead bear without a knife")
 	check(bear_action.depleted, "Corpse action depleted after RMB collect")
 	var gut_denied := false
@@ -175,6 +177,7 @@ func run() -> void:
 	stick_action.set_meta("item_use_value", 0.0)
 	ray.target = stick_action
 	check(player._right_click_interact(stick_action), "RMB accepts a [C] Coger prompt")
+	await create_timer(PlayerController.GroundGesture.DURATION + 0.15).timeout
 	check(_inv_has(player, "Palo"), "RMB collects the ground item like C")
 	check(stick_action.depleted, "Pickup action depleted after RMB collect")
 	stick_action.queue_free()
@@ -194,7 +197,7 @@ func run() -> void:
 	player.stats.hunger = 50.0
 	check(player._right_click_interact(mushroom), "RMB accepts an [M] Comer prompt")
 	check(player._interact_busy, "RMB on food enters the eat action like M")
-	await create_timer(1.5).timeout
+	await create_timer(PlayerController.GroundGesture.DURATION + 1.5).timeout
 	check(not player._interact_busy, "Eat action releases the busy flag")
 	check(player.stats.hunger > 50.0, "RMB on a mushroom restores hunger like M")
 	check(mushroom.depleted, "Mushroom consumed after RMB eat")
@@ -245,10 +248,11 @@ func run() -> void:
 	if rifle_drop != null:
 		ray2.target = rifle_drop
 		check(survivor._right_click_interact(rifle_drop), "RMB loots the rifle from death loot")
+		await create_timer(PlayerController.GroundGesture.DURATION + 0.15).timeout
 		check(_inv_has(survivor, "Fusil de caza"), "Rifle returns to the reconnecting survivor")
 	# A corpse from death loot is picked whole, species intact, without a blade.
 	var wolf_action = _make_corpse_action(world, "wolf", "Lobo muerto")
-	world.handle_world_action_collect(wolf_action, survivor)
+	await world.handle_world_action_collect(wolf_action, survivor)
 	check(_inv_has(survivor, "Lobo muerto"), "Species stays correct after death-loot collect")
 
 	# Gutting still requires a blade in hand (F path unchanged).

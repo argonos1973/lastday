@@ -39,6 +39,16 @@ func _count_solid_pixels(img: Image) -> int:
 				n += 1
 	return n
 
+func _mean_luminance(img: Image) -> float:
+	var total := 0.0
+	var weight := 0.0
+	for y in img.get_height():
+		for x in img.get_width():
+			var pixel := img.get_pixel(x, y)
+			total += pixel.get_luminance() * pixel.a
+			weight += pixel.a
+	return total / maxf(weight, 0.001)
+
 func _find_animation_player(root_node: Node) -> AnimationPlayer:
 	if root_node is AnimationPlayer:
 		return root_node as AnimationPlayer
@@ -66,11 +76,13 @@ func run() -> void:
 
 	var cases := {
 		"Lobo muerto": GameConst.WOLF_MODEL,
+		"Lobo negro muerto": GameConst.WOLF_MODEL,
 		"Ciervo muerto": GameConst.DEER_MODEL,
 		"Zorro muerto": GameConst.FOX_MODEL,
 		"Oso muerto": GameConst.BEAR_MODEL,
 	}
 	var animated_species := {"Ciervo muerto": true, "Zorro muerto": true, "Oso muerto": true}
+	var grey_wolf_luminance := 0.0
 	for item_name in cases:
 		var expected: String = cases[item_name]
 		var paths: Array = test_world._get_drop_model_paths(item_name, "material")
@@ -103,7 +115,7 @@ func run() -> void:
 		root.add_child(thumb)
 		await process_frame
 		await process_frame
-		thumb.set_model(paths, 1.0)
+		thumb.set_model(paths, 1.0, Vector3.ZERO, 1.0, "", Color.TRANSPARENT, Color.TRANSPARENT, "", item_name)
 		for i in 6:
 			await process_frame
 		# The skinned source meshes must be replaced by static copies so the
@@ -128,6 +140,10 @@ func run() -> void:
 			var vp: SubViewport = thumb.get_child(0)
 			var img := vp.get_texture().get_image()
 			check(_count_solid_pixels(img) > 50, "%s: thumbnail rendered blank" % item_name)
+			if item_name == "Lobo muerto":
+				grey_wolf_luminance = _mean_luminance(img)
+			elif item_name == "Lobo negro muerto":
+				check(_mean_luminance(img) < grey_wolf_luminance * 0.65, "Black corpse thumbnail retains its actual dark coat")
 		thumb.queue_free()
 
 	# 'Animal muerto' generic fallback must still resolve to a real model.

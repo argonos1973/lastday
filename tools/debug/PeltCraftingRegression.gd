@@ -3,6 +3,12 @@ extends SceneTree
 const Crafting = preload("res://scripts/CraftingSystem.gd")
 const InventoryScript = preload("res://scripts/Inventory.gd")
 const ItemScript = preload("res://scripts/Item.gd")
+const BotFixtures = preload("res://tools/debug/BotPlanReliabilityRegression.gd")
+const Bots = preload("res://scripts/SurvivorBotManager.gd")
+
+class PeltPuppet extends PlayerController:
+	func _create_body() -> void: pass
+	func _capture_mouse() -> void: pass
 
 var failures := 0
 
@@ -12,7 +18,10 @@ func check(ok: bool, message: String) -> void:
 		push_error(message)
 
 func _initialize() -> void:
-	var pelts := ["Piel de ciervo", "Piel de zorro", "Piel de lobo", "Piel de oso", "Piel de ave"]
+	call_deferred("run")
+
+func run() -> void:
+	var pelts := ["Piel de ciervo", "Piel de zorro", "Piel de lobo", "Piel de lobo negro", "Piel de oso", "Piel de ave"]
 	for pelt_name in pelts:
 		var recipes := Crafting.get_recipes_for_item(pelt_name, "resource")
 		check(not recipes.is_empty(), "%s must unlock pelt recipes" % pelt_name)
@@ -20,17 +29,17 @@ func _initialize() -> void:
 		"Chaqueta de piel": {"Piel de oso": 4},
 		"Pantalones de piel": {"Piel de ciervo": 3},
 		"Botas de piel": {"Piel de zorro": 2},
-		"Guantes de piel": {"Piel de lobo": 1},
+		"Guantes de piel": {"Piel de lobo negro": 1},
 		"Gorro de piel": {"Piel de ave": 2, "Trapos": 1},
-		"Tocado de piel animal": {"Piel de lobo": 3},
+		"Tocado de piel animal": {"Piel de lobo negro": 3},
 	}
 	var expected_species := {
 		"Chaqueta de piel": "oso",
 		"Pantalones de piel": "ciervo",
 		"Botas de piel": "zorro",
-		"Guantes de piel": "lobo",
+		"Guantes de piel": "lobo negro",
 		"Gorro de piel": "ave",
-		"Tocado de piel animal": "lobo",
+		"Tocado de piel animal": "lobo negro",
 	}
 	for output_name in outputs:
 		var inventory = InventoryScript.new()
@@ -161,6 +170,162 @@ func _initialize() -> void:
 			var ap_list := inst.find_children("*", "AnimationPlayer", true, false)
 			check(not ap_list.is_empty() and (ap_list[0] as AnimationPlayer).get_animation_list().size() > 0, "%s contains an exported animation clip" % glb_p)
 			inst.free()
+	test_bot_pelts()
 	if failures == 0:
 		print("PASS: pelts from all animal types unlock recipes and craft wearable gear")
 	quit(1 if failures else 0)
+
+func reset_bot(b: Dictionary, clothing: String, materials: Array) -> void:
+	b["clothing"] = clothing
+	b["backpack"] = "Mochila militar"
+	b["shelter_id"] = "pelt_test_camp"
+	b["_craft_state"] = {}
+	b["_craft_check"] = 0.0
+	b["_want_cache"] = {}
+	var proxy: Node3D = b["proxy"]
+	proxy.set_meta("saved_inventory", materials.duplicate(true))
+	proxy.set_meta("saved_extra", {})
+	proxy.set_meta("saved_clothing", clothing)
+	proxy.set_meta("loot_dropped", false)
+
+func materials_for(species: String, count: int, tool: String = "Cuchillo", durability: float = 80.0) -> Array:
+	return [{"name": "Piel de " + species, "type": "resource", "weight": .65, "quantity": count},
+		{"name": tool, "type": "weapon", "weight": .2, "quantity": 1, "durability": durability, "max_durability": 80.0}]
+
+func test_bot_pelts() -> void:
+	var world := BotFixtures.TestWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var net := BotFixtures.FakeNet.new()
+	net.is_dedicated_server = true
+	world.add_child(net)
+	world.net = net
+	world.day_cycle = BotFixtures.FakeDayCycle.new()
+	world.add_child(world.day_cycle)
+	var manager := Bots.new()
+	world.add_child(manager)
+	manager.world = world
+	world.survivor_bot_mgr = manager
+	# Spawn real bot state without loading/saving the user's AI memory.
+	manager.spawn_all_bots()
+	var outfit := ["Chaqueta de piel", "Pantalones de piel", "Botas de piel", "Guantes de piel"]
+	var recipes := {}
+	for recipe in Crafting.RECIPES:
+		if recipe.inputs.has("ANY_PELT"):
+			recipes[str(recipe.output.name)] = recipe
+	var species_list := ["lobo", "lobo negro", "ciervo", "zorro", "oso", "ave"]
+	for i in species_list.size():
+		var species: String = species_list[i]
+		var b: Dictionary = manager.bots[901 + i % 4]
+		reset_bot(b, "Camiseta,Pantalones,Zapatillas", materials_for(species, 13))
+		var head := "Gorro de piel" if species == "ave" else "Tocado de piel animal"
+		var expected: Array = outfit + [head]
+		for tick in 100:
+			if expected.all(func(nm): return nm in str(b["clothing"]).split(",")):
+				break
+			manager._bot_try_craft(b, 3.0)
+		var worn: Dictionary = b["proxy"].get_meta("saved_extra", {}).get("worn_clothing", {})
+		for nm in expected:
+			check(nm in str(b["clothing"]).split(","), "%s autonomously crafts and wears %s from %s" % [b.name, nm, species])
+			var entry: Dictionary = worn.get(nm, {})
+			check(str(entry.get("pelt_species", "")) == species, "%s worn %s keeps %s" % [b.name, nm, species])
+			check(float(entry.get("durability", 0.0)) == 300.0, "worn %s retains crafted durability" % nm)
+			var saved: Dictionary = JSON.parse_string(JSON.stringify(entry))
+			var item = ItemScript.from_dict(saved)
+			check(str(item.get_meta("pelt_species", "")) == species, "serialized worn %s retains species" % nm)
+		var payload := str(net.players[int(b.bot_id)].equipped_clothing)
+		check(payload == str(b["proxy"].get_meta("saved_clothing", "")), "network and saved outfit agree")
+		check(payload.contains(head + "|" + species), "remote headdress receives actual species")
+		if species != "ave":
+			check(not manager._bot_wants_pelts(b, b.proxy), "complete %s outfit stops gathering pelts" % species)
+			check(manager._bot_pelt_count(b.proxy) == 0, "full mammal outfit consumes exactly thirteen hides")
+		else:
+			check(manager._bot_recipe_score(b, recipes["Tocado de piel animal"]) <= 0.0 \
+				or manager._bot_pelt_count(b.proxy) == 0, "bird cap is not endlessly recrafted")
+			check(not manager._bot_wants_pelts(b, b.proxy, "Piel de ave"), "finished bird outfit does not hoard more bird skins")
+			check(manager._bot_wants_pelts(b, b.proxy, "Piel de lobo negro"), "animal hides can still upgrade a bird cap")
+		if species == "lobo negro":
+			var avatar := PeltPuppet.new()
+			avatar.is_puppet = true
+			world.add_child(avatar)
+			avatar.setup_as_puppet()
+			avatar.set_process(false)
+			avatar.set_physics_process(false)
+			avatar.puppet_apply_visuals(payload, "", "")
+			for nm in expected:
+				check(str(avatar._equipped_pelt.get(nm, "")) == species, "puppet equips black " + nm)
+			avatar.free()
+	var bot: Dictionary = manager.bots[901]
+	var rest := "Chaqueta de piel,Pantalones de piel,Botas de piel,Tocado de piel animal"
+	reset_bot(bot, rest, materials_for("lobo negro", 1, "Piedra afilada"))
+	check(manager._bot_try_craft(bot, .1), "one hide and primitive blade start glove crafting")
+	manager._bot_try_craft(bot, 3.0)
+	check("Guantes de piel" in str(bot.clothing).split(","), "one-hide gloves are actually worn")
+	check(manager._bot_pelt_count(bot.proxy) == 0, "gloves consume only one hide")
+	var headless_outfit := ",".join(outfit)
+	reset_bot(bot, headless_outfit, materials_for("lobo", 3, "Cuchillo", 0.0))
+	check(not manager._bot_try_craft(bot, .1), "broken knife cannot craft a headdress")
+	check(manager._bot_pelt_count(bot.proxy) == 3, "rejected craft preserves hides")
+	reset_bot(bot, headless_outfit, materials_for("lobo", 3))
+	check(manager._bot_try_craft(bot, .1), "headdress work starts with valid materials")
+	var remaining := materials_for("lobo", 2)
+	bot.proxy.set_meta("saved_inventory", remaining)
+	manager._bot_try_craft(bot, 3.0)
+	check(not str(bot.clothing).contains("Tocado") and manager._bot_pelt_count(bot.proxy) == 2 \
+		and float(remaining[1].durability) == 80.0, "lost input during interruption aborts without consuming/creating items")
+	reset_bot(bot, headless_outfit + ",Casco militar", materials_for("lobo", 3))
+	check(manager._bot_recipe_score(bot, recipes["Tocado de piel animal"]) <= 0.0, "headdress does not displace equally valued military helmet")
+	# A bird cap must not burn three hides on another downgraded cap.
+	reset_bot(bot, headless_outfit + ",Gorro de piel", materials_for("ave", 3))
+	check(not manager._bot_try_craft(bot, .1), "bird skins cannot repeatedly downgrade the headdress recipe")
+	var inventory: Array = bot.proxy.get_meta("saved_inventory", [])
+	inventory.append({"name": "Piel de lobo negro", "type": "resource", "weight": .65, "quantity": 3})
+	bot["_craft_check"] = 0.0
+	bot.proxy.set_meta("saved_extra", {"worn_clothing": {"Gorro de piel": {"name": "Gorro de piel", "type": "clothing", "quantity": 1, "weight": .35, "durability": 177.0, "max_durability": 300.0, "pelt_species": "ave"}}})
+	check(manager._bot_try_craft(bot, .1), "available animal hides upgrade bird cap")
+	manager._bot_try_craft(bot, 3.0)
+	check(str(bot.proxy.get_meta("saved_clothing", "")).contains("Tocado de piel animal|lobo negro"), "trophy crafting selects mammal hides before stored bird hides")
+	var old_cap: Dictionary = {}
+	for it in bot.proxy.get_meta("saved_inventory", []):
+		if str(it.get("name", "")) == "Gorro de piel": old_cap = it
+	check(str(old_cap.get("pelt_species", "")) == "ave" and float(old_cap.get("durability", 0.0)) == 177.0, "replaced cap retains original species and condition")
+	# Overflow/dropped crafted gear remains the same item through pickup.
+	manager._bot_drop_to_ground(bot, old_cap)
+	var dropped: Dictionary = world._dropped_items.back()
+	check(str(dropped.get("pelt", "")) == "ave", "bot's dropped garment preserves hide in world record")
+	var action = world.world_actions_by_id.get(str(dropped.get("id", "")))
+	check(is_instance_valid(action) and str(action.get_meta("item_pelt", "")) == "ave", "dropped garment exposes species to human pickup")
+	var picked := manager._loot_entry_item_dict(dropped)
+	check(str(picked.get("pelt_species", "")) == "ave" and float(picked.get("durability", 0.0)) == 177.0, "bot re-pickup keeps species and condition")
+	# Death drops both the worn trophy and a separate same-name spare.
+	var spare := {"name": "Tocado de piel animal", "type": "clothing", "weight": .7, "quantity": 1, "pelt_species": "zorro", "durability": 111.0, "max_durability": 300.0}
+	bot["clothing"] = "Tocado de piel animal"
+	bot.proxy.set_meta("saved_clothing", manager._bot_clothing_sync(bot))
+	bot.proxy.set_meta("saved_inventory", [spare])
+	bot.proxy.set_meta("saved_backpack", "")
+	net.players[int(bot.bot_id)]["equipped_backpack"] = ""
+	var before := world._dropped_items.size()
+	world._drop_player_loot(int(bot.bot_id), bot.proxy)
+	var trophies := {}
+	for entry in world._dropped_items.slice(before):
+		check(not str(entry.get("name", "")).contains("|"), "death labels never become invalid item names")
+		if str(entry.get("name", "")) == "Tocado de piel animal":
+			trophies[str(entry.get("pelt", ""))] = float(entry.get("durability", 0.0))
+	check(trophies.get("lobo negro", 0.0) == 300.0 and trophies.get("zorro", 0.0) == 111.0 \
+		and trophies.size() == 2, "death preserves worn and spare trophies without loss or duplication")
+	world._drop_player_loot(int(bot.bot_id), bot.proxy)
+	check(world._dropped_items.size() == before + 2, "repeated death callback cannot duplicate equipment")
+	# No temporary backpack slot is needed when the result goes onto the body.
+	reset_bot(bot, headless_outfit, materials_for("lobo negro", 4))
+	bot["backpack"] = ""
+	var full: Array = bot.proxy.get_meta("saved_inventory", [])
+	var capacity := manager._bot_carry_capacity(bot)
+	for i in range(int(capacity.slots) - full.size()):
+		full.append({"name": "Fixture_%d" % i, "type": "misc", "weight": .01, "quantity": 1})
+	check(not manager._bot_would_fit(bot, full, recipes["Tocado de piel animal"].output), "fixture backpack really has no free slot")
+	check(manager._bot_try_craft(bot, .1), "full backpack still allows sewing wearable upgrade")
+	manager._bot_try_craft(bot, 3.0)
+	check(str(bot.clothing).contains("Tocado de piel animal") and manager._bot_pelt_count(bot.proxy) == 1, "full-pack headdress equips and consumes three of four hides")
+	check(manager._bot_inv_stored_count(bot.proxy.get_meta("saved_inventory", [])) <= int(capacity.slots), "directly worn craft does not overfill inventory")
+	world.free()
+	print("BOT_PELT_CRAFT failures=", failures)

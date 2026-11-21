@@ -678,6 +678,8 @@ var _critical_sound_timer := 0.0
 var _was_critical := false
 var third_person_loaded_path := ""
 var third_person_action_animation := ""
+const GroundGesture = preload("res://scripts/GroundItemGesture.gd")
+var _ground_gesture: RefCounted
 var third_person_action_timer := 0.0
 var third_person_action_start_offset := 0.0
 var _hit_reaction_forced := false
@@ -1265,9 +1267,11 @@ var _puppet_top_camo := false
 var _puppet_bottom_camo := false
 
 func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
+	var ground_fields := GroundGesture.decode(anim)
 	if is_instance_valid(rowing_boat) and not bool(rowing_boat.get("occupant_standing")) and not anim.to_lower().contains("dead"):
 		return
 	if is_dead:
+		end_ground_gesture(false)
 		_sync_puppet_action_audio("dead")
 		# Still update position for dead puppets (corpse sync)
 		global_position = pos
@@ -1282,6 +1286,11 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	_puppet_motion_initialized = true
 	global_position = pos
 	rotation.y = rot
+	if not ground_fields.is_empty():
+		_sync_ground_gesture(ground_fields)
+		anim = _motion("pickup_ground") if ground_fields[0] == "pickup" else "eat"
+	elif _ground_gesture != null:
+		end_ground_gesture()
 	_puppet_anim = anim
 	_throw_aim_hold = anim == "throw_aim"
 	_sync_puppet_action_audio(anim)
@@ -1423,6 +1432,9 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 				third_person_animation_player.seek(clip_offset, true)
 			else:
 				third_person_animation_player.advance(0.0)
+			if _ground_gesture != null:
+				third_person_animation_player.seek(minf(_ground_gesture.elapsed,
+					third_person_animation_player.get_animation(target).length), true)
 			if target == _motion("throw_object"):
 				var throw_start := 0.0 if anim == "throw_aim" else THROW_ANIM_FREEZE_TIME
 				if _puppet_held.is_empty():
@@ -1463,7 +1475,7 @@ func _sync_puppet_action_audio(anim: String) -> void:
 		if is_instance_valid(_drink_hand_root) and _drink_hand_root.get_child_count() > 0:
 			_clear_third_person_drink_bottle_left_hand()
 		if is_instance_valid(third_person_hand_item_root):
-			third_person_hand_item_root.visible = true
+			third_person_hand_item_root.visible = _ground_gesture == null or _ground_gesture.grabbed
 	if kind == _puppet_action_audio_kind: return
 	if _puppet_action_audio_kind == "reload" and is_instance_valid(_reload_audio_player):
 		_reload_audio_player.stop()
@@ -1746,6 +1758,9 @@ func _puppet_swap_to_naked() -> void:
 	_puppet_clothing = ""
 
 func _update_puppet_held_item(item_name: String) -> void:
+	if _ground_gesture != null:
+		_ground_gesture.apply_equipment()
+		return
 	if third_person_hand_item_root == null:
 		return
 	if CombatProf.enabled:
@@ -1870,6 +1885,11 @@ func _update_puppet_held_item_impl(item_name: String) -> void:
 
 #region PROCESO PRINCIPAL (_process + input)
 func _process(delta: float) -> void:
+	if _ground_gesture != null:
+		if is_dead:
+			end_ground_gesture()
+		else:
+			_ground_gesture.tick(delta)
 	if is_puppet:
 		_pain_sound_timer = maxf(0.0,_pain_sound_timer-delta)
 		# One-shot action clips (fire, punch, ...) must expire on puppets too —
@@ -3540,6 +3560,8 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 	node = _load_external_node3d(model_path)
 	if node == null:
 		return
+	if item_name == "Tocado de piel animal" and _active_pelt_species == "lobo negro":
+		MaterialFactory.apply_black_wolf_coat(node)
 	var face_fit := bool(cfg.get("face_fit", false))
 	var external_model := node
 	if face_fit:
@@ -4623,6 +4645,9 @@ func _restore_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 
 func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var target_skel: Skeleton3D = skel if skel != null else _hand_skeleton
+	if _ground_gesture != null:
+		_restore_aim_pitch_pose(target_skel)
+		return
 	# When HeldGripModifier is active on a rendered viewport, only the modifier
 	# may tilt the torso; otherwise _physics_process writes into the base pose
 	# before the modifier runs and the lean accumulates every frame.
@@ -4638,7 +4663,7 @@ func _apply_aim_pitch_pose(skel: Skeleton3D = null) -> void:
 	var held = get_held_item()
 	var held_name := str(held.item_name) if held != null else _puppet_held
 	var holding_spear: bool = held_name in ["Lanza", "Lanza de hueso", "Palo afilado"]
-	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
+	var holding_bow: bool = _ground_gesture == null and (_has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"])
 	var bow_active: bool = holding_bow and (_is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_aim_walk_animation, _bow_shoot_animation]))
 	var throw_active: bool = _throw_aim_hold or _throw_charging or _throw_release_item != null or (_has_throwable_weapon_equipped() and _is_aiming) or (is_puppet and holding_spear and (_is_aiming or _puppet_anim == "throw"))
 	var m4_active := _m4_camera_ready() and not _is_aiming
@@ -4916,7 +4941,7 @@ func _update_hand_socket() -> void:
 	_apply_aim_pitch_pose(_hand_skeleton)
 	var skel_global := _hand_skeleton.global_transform
 	var local_to_model := third_person_model.global_transform.affine_inverse()
-	var holding_bow: bool = _has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"]
+	var holding_bow: bool = _ground_gesture == null and (_has_bow_equipped() or _puppet_held in ["Arco de madera", "Arco reforzado"])
 	if holding_bow and _left_hand_bone_idx >= 0:
 		var cur_anim: String = third_person_animation_player.current_animation if third_person_animation_player != null else ""
 		var bow_drawing: bool = _is_aiming or _bow_release_item != null or (not cur_anim.is_empty() and cur_anim in [_bow_aim_idle_animation, _bow_aim_walk_animation, _bow_shoot_animation])
@@ -7055,6 +7080,7 @@ func cancel_active_action(show_cancel_notice: bool = false) -> bool:
 	_stop_consumption_audio()
 	if not is_performing_interruptible_action():
 		return false
+	end_ground_gesture()
 	if is_instance_valid(_reload_audio_player): _reload_audio_player.stop()
 	var was_fishing := _is_fishing or _is_fishing_idle or (not third_person_action_animation.is_empty() and third_person_action_animation == _rod_cast_animation)
 	var was_sleeping := is_sleeping
@@ -7114,6 +7140,38 @@ func cancel_active_action(show_cancel_notice: bool = false) -> bool:
 	action_cancelled.emit()
 	return true
 
+func _sync_ground_gesture(fields: PackedStringArray) -> void:
+	if _ground_gesture != null and _ground_gesture.action_id == fields[1] \
+			and _ground_gesture.item.item_name == fields[2]:
+		if _ground_gesture.phase != fields[0]:
+			_ground_gesture.change_phase(fields[0])
+			if fields.size() > 4:
+				_ground_gesture.elapsed = clampf(float(fields[4]), 0.0, 10.0)
+		return
+	end_ground_gesture(false)
+	_ground_gesture = GroundGesture.new()
+	_ground_gesture.setup(self, fields)
+	_puppet_current_anim = ""
+
+func begin_ground_gesture(action_id: String, item_name: String, item_type: String) -> void:
+	_cancel_aim()
+	_sync_ground_gesture(PackedStringArray(["pickup", action_id, item_name, item_type]))
+
+func set_ground_gesture_phase(phase: String) -> void:
+	if _ground_gesture != null:
+		_ground_gesture.change_phase(phase)
+
+func end_ground_gesture(restore_equipment := true) -> void:
+	if _ground_gesture == null:
+		return
+	_ground_gesture.close()
+	_ground_gesture = null
+	if restore_equipment and is_inside_tree():
+		if is_puppet:
+			_update_puppet_held_item(_puppet_held)
+		else:
+			_sync_held_item()
+
 func play_action_animation(action_name: String, duration := 1.1) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
@@ -7160,8 +7218,7 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 			if target_animation.is_empty():
 				target_animation = third_person_plant_animation
 		"pickup", "collect":
-			# Recoger es instantáneo: sin gesto de agacharse.
-			return
+			target_animation = _motion("pickup_ground", third_person_gather_animation)
 		"cook":
 			target_animation = third_person_sit_animation
 			if target_animation.is_empty():
@@ -8731,6 +8788,9 @@ void fragment() {
 
 #region ITEMS EN MANO Y EQUIPAMIENTO (PlayerHeldItems)
 func _sync_held_item() -> void:
+	if _ground_gesture != null:
+		_ground_gesture.apply_equipment()
+		return
 	# En un puppet no hay inventario real: get_held_item() siempre es null y la
 	# rama vacia desmontaba el rifle construido por _update_puppet_held_item
 	# cada vez que equip_clothing re-sincronizaba (cambio de ropa de un bot =
@@ -8759,7 +8819,7 @@ func _sync_held_item() -> void:
 	_update_hand_socket()
 	_update_crosshair(_has_rifle_equipped())
 
-func _sync_third_person_equipment(held_item) -> void:
+func _sync_third_person_equipment(held_item, preview_only := false) -> void:
 	_generic_hand_grip = false
 	for stored_visual in _stored_back_visuals:
 		if stored_visual != null and is_instance_valid(stored_visual):
@@ -8822,12 +8882,13 @@ func _sync_third_person_equipment(held_item) -> void:
 				_has_rod_in_inventory = true
 				break
 	var _rod_in_hands := held_item != null and str(held_item.item_type) == "tool_fishing"
-	if _has_rod_in_inventory and not _rod_in_hands and not _has_stored_back_item_type("tool_fishing") and _back_slot_count() < 2:
+	if not preview_only and _has_rod_in_inventory and not _rod_in_hands and not _has_stored_back_item_type("tool_fishing") and _back_slot_count() < 2:
 		_store_inventory_fishing_rod_on_back()
 	if hands != null and hands.has_item_in_hands():
 		if held_item != null and str(held_item.item_type) == "weapon_rifle":
 			_build_third_person_rifle(str(held_item.item_name))
-			_initialize_rifle_ammo()
+			if not preview_only:
+				_initialize_rifle_ammo()
 			return
 	if held_item == null:
 		return
@@ -8842,7 +8903,7 @@ func _sync_third_person_equipment(held_item) -> void:
 		_build_third_person_primitive(held_name)
 		_clear_rifle_attachment()
 		return
-	if flashlight.visible and str(held_item.item_type) == "tool" and held_name in ["Linterna", "Flashlight"]:
+	if is_instance_valid(flashlight) and flashlight.visible and str(held_item.item_type) == "tool" and held_name in ["Linterna", "Flashlight"]:
 		_build_third_person_flashlight()
 		return
 	match held_item.item_type:
@@ -8856,7 +8917,8 @@ func _sync_third_person_equipment(held_item) -> void:
 			_clear_rifle_attachment()
 		"weapon_rifle":
 			_build_third_person_rifle(str(held_item.item_name))
-			_initialize_rifle_ammo()
+			if not preview_only:
+				_initialize_rifle_ammo()
 		"tool", "tool_shovel", "tool_hammer", "tool_pickaxe":
 			if held_name == "Pala":
 				_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 1.15)
@@ -9013,6 +9075,12 @@ func _build_held_clothing(item_name: String) -> void:
 				path = "res://assets/characters/adapted/pickup_soldier_legs.glb"
 	if path.is_empty() or not _add_named_held_model(path, "HeldClothing"):
 		_build_third_person_clothing_bundle()
+	elif item_name == "Tocado de piel animal":
+		var held_pelt_item = get_held_item()
+		if held_pelt_item != null and str(held_pelt_item.get_meta("pelt_species", "")) == "lobo negro":
+			var held_model := third_person_hand_item_root.get_node_or_null("HeldClothing")
+			if held_model != null:
+				MaterialFactory.apply_black_wolf_coat(held_model)
 	elif item_name in GameConst.PELT_FUR_ITEMS and item_name != "Tocado de piel animal":
 		# Held pelt garment: fur of the species it was sewn from.
 		var held2 = get_held_item()
@@ -10160,6 +10228,12 @@ func _update_rifle_visuals(delta: float) -> void:
 		var skel := _spine_skeleton if is_instance_valid(_spine_skeleton) else _find_skeleton(third_person_model)
 		if skel != null:
 			_update_rifle_ik(skel, delta)
+	if _ground_gesture != null and _ground_gesture.item.item_type == "weapon_rifle":
+		# The gun is still being lifted; its sling is not on the shoulder yet.
+		if is_instance_valid(_rifle_on_back_strap):
+			_rifle_on_back_strap.visible = false
+		_rifle_strap_update_accum = 0.0
+		return
 	# Keep the procedural sling at 30 Hz for either carry mode.
 	if is_instance_valid(_rifle_on_back_strap):
 		if _rifle_strap_system == null or _rifle_strap_update_accum >= (1.0 / 30.0):
@@ -10171,6 +10245,21 @@ func _update_rifle_visuals(delta: float) -> void:
 
 func _update_rifle_ik(skel: Skeleton3D, delta: float) -> void:
 	if _in_rifle_ik:
+		return
+	if _ground_gesture != null:
+		# A pickup uses the animated right hand only. Keep the existing measured
+		# pistol-grip contact without pulling either arm back into a firing pose.
+		if is_instance_valid(_rifle_weapon_offset) and is_instance_valid(_rifle_root):
+			var right := _find_bone_cached("rh_idx", _resolve_bone_name_cached("rh", right_hand_bone_name, skel), skel)
+			if right >= 0:
+				_in_rifle_ik = true
+				var scale_value := _rifle_weapon_scale() * skel.global_basis.get_scale().x
+				var carry := (global_basis.orthonormalized() * Basis(Vector3.RIGHT, deg_to_rad(-6.0))).scaled(Vector3.ONE * scale_value)
+				_rifle_weapon_offset.set_as_top_level(true)
+				_rifle_root.transform = Transform3D.IDENTITY
+				_rifle_weapon_offset.global_basis = carry
+				_seat_m4_idle_grip(skel, right, _rifle_weapon_offset)
+				_in_rifle_ik = false
 		return
 	# Rifle placed by the animation hands and right shoulder; IK disabled.
 	if _rifle_root == null or not is_instance_valid(_rifle_root):
@@ -10396,7 +10485,7 @@ func _rifle_running() -> bool:
 
 func _m4_camera_ready() -> bool:
 	# Third-person camera aiming keeps the stock shouldered without opening ADS.
-	return _mounted_rifle_is_m4 and not _rifle_running() and not is_sitting and not is_prone and not _forced_hit_reaction_active()
+	return _ground_gesture == null and _mounted_rifle_is_m4 and not _rifle_running() and not is_sitting and not is_prone and not _forced_hit_reaction_active()
 
 func _try_place_rifle_aiming(skel: Skeleton3D, s: float) -> bool:
 	# The camera travels from third person to ADS. Its position must never
@@ -11086,6 +11175,7 @@ func _clear_rifle_attachment() -> void:
 					child.free()
 
 func _exit_tree() -> void:
+	end_ground_gesture(false)
 	_free_parked_rifle()
 
 # Apartar la montura del rifle en lugar de destruirla. Devuelve true si se
@@ -11525,7 +11615,7 @@ func _print_tree_debug(node: Node, depth: int) -> void:
 
 func _clear_third_person_drink_bottle_left_hand() -> void:
 	if is_instance_valid(third_person_hand_item_root):
-		third_person_hand_item_root.visible = true
+		third_person_hand_item_root.visible = _ground_gesture == null or _ground_gesture.grabbed
 		_generic_hand_grip = third_person_hand_item_root.has_node("PalmGripVisual")
 	if _drink_hand_root == null or not is_instance_valid(_drink_hand_root):
 		return
@@ -12671,6 +12761,9 @@ func end_rowing(pos: Vector3) -> void:
 func _get_current_anim() -> String:
 	if is_dead:
 		return "dead_melee" if _beaten_death else "dead"
+	if _ground_gesture != null:
+		return GroundGesture.packet(_ground_gesture.phase, _ground_gesture.action_id,
+			_ground_gesture.item.item_name, _ground_gesture.item.item_type, _ground_gesture.elapsed)
 	if _throw_aim_hold or _throw_charging:
 		return "throw_aim"
 	if _throw_release_item != null or (third_person_action_timer > 0.0 and third_person_action_animation == "motion/throw_object"):

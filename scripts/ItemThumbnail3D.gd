@@ -105,6 +105,9 @@ func set_model(paths: Array, scale_value: float = 1.0, extra_rotation_deg: Vecto
 	# icon. Flatten them to static copies that render the bind pose.
 	_flatten_skinned_meshes(inst)
 	var pelt_mat := MaterialFactory.pelt_fur_material(pelt_species) if not pelt_species.is_empty() else null
+	if proc_kind == "Lobo negro muerto" or (proc_kind == "Tocado de piel animal" and pelt_species == "lobo negro"):
+		MaterialFactory.apply_black_wolf_coat(inst)
+		pelt_mat = null
 	if not only_mesh_name.is_empty():
 		var all_meshes: Array = []
 		_collect_meshes(inst, all_meshes)

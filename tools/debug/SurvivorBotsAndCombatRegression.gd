@@ -2400,6 +2400,7 @@ func run() -> void:
 	elena["thirst"] = 80.0
 	elena["hide_timer"] = 0.0
 	elena["eat_cooldown"] = 0.0
+	elena["flinch_timer"] = 0.0
 	elena_proxy.set_meta("saved_inventory", [
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0},
 	])
@@ -2407,8 +2408,10 @@ func run() -> void:
 	var fst: Dictionary = elena.get("_forage", {})
 	check(str(fst.get("kind", "")) == "eat" and str(fst.get("id", "")) == "test_seta_1",
 		"Forrajeo: prefiere la seta sobre el arbol frutal")
-	# Llega y come: hambre sube y la accion queda agotada en el servidor
+	# Reaches down first; nutrition only arrives after the following meal.
 	elena_proxy.global_position = seta.global_position
+	mgr._bot_try_forage(elena, PlayerController.GroundGesture.DURATION)
+	check(float(elena["hunger"]) == 40.0 and not seta.depleted, "Forrajeo: recoger no adelanta la comida")
 	mgr._bot_try_forage(elena, 1.3)
 	check(float(elena["hunger"]) > 50.0, "Forrajeo: comer la seta repone hambre (hunger=%.0f)" % float(elena["hunger"]))
 	check((world._depleted_action_ids as Array).has("test_seta_1"),

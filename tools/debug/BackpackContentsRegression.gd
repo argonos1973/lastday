@@ -14,6 +14,10 @@ class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _capture_mouse() -> void:
 		pass
 
+class TestHUD extends "res://scripts/HUD.gd":
+	func show_countdown(_text: String, _duration: float) -> void: pass
+	func hide_countdown() -> void: pass
+
 class TestWorld extends "res://scripts/Main.gd":
 	var saved_world: Dictionary = {}
 	func _ready() -> void:
@@ -57,11 +61,13 @@ func run() -> void:
 	var world := TestWorld.new()
 	root.add_child(world)
 	world.net = TestNetwork.new()
-	var hud_stub = load("res://scripts/HUD.gd").new()
+	var hud_stub = TestHUD.new()
 	world.add_child(hud_stub)
 	world.hud = hud_stub
 	var player := TestPlayer.new()
 	root.add_child(player)
+	player.set_process(false)
+	player.set_physics_process(false)
 	world.player = player
 	player._initializing = false
 
@@ -110,7 +116,7 @@ func run() -> void:
 
 	# Recogerla: el contenido vuelve al inventario plano (equipada da huecos).
 	if action != null:
-		world.handle_world_action_collect(action, player)
+		await world.handle_world_action_collect(action, player)
 	check(player.equipped_backpack == "Mochila pequena", "Picking it up equips the backpack again")
 	# Los objetos apilables se funden en un stack: contar unidades, no entradas.
 	var units_after := 0
@@ -126,7 +132,7 @@ func run() -> void:
 	mil_bp_action.set_meta("item_name", "Mochila militar")
 	mil_bp_action.set_meta("item_type", "backpack")
 	mil_bp_action.set_meta("item_weight", 1.8)
-	world.handle_world_action_collect(mil_bp_action, player)
+	await world.handle_world_action_collect(mil_bp_action, player)
 	check(player.equipped_backpack == "Mochila militar", "Picking up a new backpack equips it")
 	check(drops.size() == 1 and drops[0]["n"] == "Mochila pequena", "Picking up a new backpack drops the previously worn backpack")
 	var bp_count := 0

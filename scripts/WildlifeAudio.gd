@@ -4,9 +4,11 @@ const DIR := "res://assets/audio/wildlife/"
 const PAW_SOFT := [DIR+"paw_soft_1.wav", DIR+"paw_soft_2.wav", DIR+"paw_soft_3.wav"]
 const PAW_HARD := [DIR+"paw_hard_1.wav", DIR+"paw_hard_2.wav", DIR+"paw_hard_3.wav"]
 const HOOF := [DIR+"hoof_1.wav", DIR+"hoof_2.wav", DIR+"hoof_3.wav"]
-# Gallop strikes cut from the supplied lobos_corriendo.mp3 and fight snarls
-# from lobos_luchando.mp3 (see SOURCES.json for cut points).
+# Wolf walk/run/eat/growl come from the owner's LOBOS recordings.
+# Attack snarls keep the separate fight recording; see SOURCES.json.
+const WOLF_WALK := [DIR+"wolf_walk_1.wav", DIR+"wolf_walk_2.wav", DIR+"wolf_walk_3.wav"]
 const WOLF_RUN := [DIR+"wolf_run_1.wav", DIR+"wolf_run_2.wav", DIR+"wolf_run_3.wav"]
+const WOLF_EAT := [DIR+"wolf_eat_1.wav", DIR+"wolf_eat_2.wav", DIR+"wolf_eat_3.wav"]
 const WOLF_GROWL := [DIR+"wolf_growl_1.wav", DIR+"wolf_growl_2.wav", DIR+"wolf_growl_3.wav", DIR+"wolf_growl_4.wav"]
 const WOLF_ATTACK := [DIR+"wolf_attack_1.wav", DIR+"wolf_attack_2.wav", DIR+"wolf_attack_3.wav", DIR+"wolf_attack_4.wav", DIR+"wolf_attack_5.wav"]
 const BEAR_GROWL := DIR+"bear_growl.wav"
@@ -33,9 +35,9 @@ static func stream(path: String) -> AudioStream:
 	return audio
 
 static func prepare() -> void:
-	for path in PAW_SOFT + PAW_HARD + HOOF + WOLF_RUN + WOLF_GROWL + WOLF_ATTACK + [BEAR_GROWL, BEAR_ATTACK, BITE]:
+	for path in PAW_SOFT + PAW_HARD + HOOF + WOLF_WALK + WOLF_RUN + WOLF_EAT + WOLF_GROWL + WOLF_ATTACK + [BEAR_GROWL, BEAR_ATTACK, BITE]:
 		stream(path)
 
 static func step(species: String, hard: bool, variation: int, running: bool = false) -> AudioStream:
-	var paths: Array = HOOF if species == "deer" else (WOLF_RUN if (species == "wolf" and running) else (PAW_HARD if hard else PAW_SOFT))
+	var paths: Array = (WOLF_RUN if running else WOLF_WALK) if species == "wolf" else (HOOF if species == "deer" else (PAW_HARD if hard else PAW_SOFT))
 	return stream(paths[posmod(variation, paths.size())])
