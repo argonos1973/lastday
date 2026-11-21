@@ -5334,6 +5334,9 @@ func _drop_player_loot(peer_id: int, proxy: Node3D) -> void:
 		var dropped_action = world_actions_by_id.get(did)
 		var dpelt := str(d.get("pelt_species", ""))
 		if is_instance_valid(dropped_action):
+			# El botin sale del inventario de un actor ya drenado: ningun
+			# chaleco re-regala cargadores al saquear el cadaver.
+			dropped_action.set_meta("player_dropped", true)
 			dropped_action.set_meta("item_camo", camo)
 		for entry in _dropped_items:
 			if str(entry.get("id", "")) != did:
@@ -12573,20 +12576,47 @@ func _pickup_and_swap_backpack(action, actor, bp_item) -> bool:
 				if ci != null:
 					bp_item.contents.append(ci)
 	var prev_bp_name := str(actor.equipped_backpack)
+	# Capacidad con la mochila nueva: si lo que llevas ya no cabría, avisar y
+	# dejarla en el suelo — no se expulsan objetos para hacer hueco.
+	if actor.has_method("_compute_carry_capacity") and not prev_bp_name.is_empty():
+		actor.equipped_backpack = str(bp_item.item_name)
+		var new_slots := int(actor._compute_carry_capacity(true)["slots"])
+		actor.equipped_backpack = prev_bp_name
+		var stored_now: int = actor.inventory.get_stored_count() if actor.inventory.has_method("get_stored_count") else actor.inventory.items.size()
+		if stored_now > new_slots:
+			actor.notice.emit("No tienes espacio en el inventario.")
+			return false
 	var old_bp_item = null
 	var old_bp_packed: Array = []
 	if not prev_bp_name.is_empty() and actor.inventory != null:
+		# La que sale es la EQUIPADA (meta equipped_slot), no la primera
+		# mochila del inventario: con una de repuesto antes, se destruía la
+		# repuesto y una copia de la equipada caía al suelo (duplicado real).
+		var old_idx := -1
 		for i in range(actor.inventory.items.size()):
 			var it = actor.inventory.items[i]
-			if it != null and str(it.item_type) == "backpack":
-				old_bp_item = actor.inventory.remove_index(i, 1)
+			if it != null and str(it.item_type) == "backpack" \
+					and str(it.get_meta("equipped_slot", "")) == "backpack":
+				old_idx = i
 				break
+		if old_idx < 0:
+			for i in range(actor.inventory.items.size()):
+				var it2 = actor.inventory.items[i]
+				if it2 != null and str(it2.item_type) == "backpack" \
+						and str(it2.item_name) == prev_bp_name:
+					old_idx = i
+					break
+		if old_idx >= 0:
+			old_bp_item = actor.inventory.remove_index(old_idx, 1)
 		if old_bp_item != null:
 			for c in old_bp_item.contents:
 				if c != null:
 					old_bp_packed.append(c.to_dict())
 			old_bp_item.contents.clear()
 	bp_item.set_meta("equipped_slot", "backpack")
+	# Que no se funda en una pila de repuesto: su contenido y su meta tienen
+	# que viajar con esta unidad concreta.
+	bp_item.stack_separated = true
 	actor.equip_backpack(bp_item.item_name)
 	if not actor.inventory.add_item(bp_item):
 		if old_bp_item != null:
@@ -12595,6 +12625,17 @@ func _pickup_and_swap_backpack(action, actor, bp_item) -> bool:
 		actor.equip_backpack(prev_bp_name)
 		return false
 	actor.equip_backpack(bp_item.item_name)
+	# La copia guardada es un duplicate_stack sin el meta: con otra mochila
+	# del mismo nombre, equip_backpack podría marcar la primera por nombre.
+	var stored_bp = actor.inventory.items.back() if not actor.inventory.items.is_empty() else null
+	if stored_bp != null and str(stored_bp.item_type) == "backpack" and str(stored_bp.item_name) == str(bp_item.item_name):
+		for it3 in actor.inventory.items:
+			if it3 == null or str(it3.item_type) != "backpack":
+				continue
+			if it3 == stored_bp:
+				it3.set_meta("equipped_slot", "backpack")
+			elif str(it3.get_meta("equipped_slot", "")) == "backpack":
+				it3.remove_meta("equipped_slot")
 	# Unpack contents of the newly picked up backpack into the player's inventory
 	if not bp_item.contents.is_empty():
 		var leftover: Array = []
@@ -12604,17 +12645,16 @@ func _pickup_and_swap_backpack(action, actor, bp_item) -> bool:
 			leftover.append(ci)
 		bp_item.contents = leftover
 	# If the player was already wearing a backpack, drop the previous one on the ground
-	if not prev_bp_name.is_empty():
-		var old_w := float(old_bp_item.weight) if old_bp_item != null else (1.8 if prev_bp_name == "Mochila militar" else 0.8)
+	if old_bp_item != null:
+		var old_w := float(old_bp_item.weight)
 		var drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
 		drop_pos.y = actor.global_position.y
-		if old_bp_item != null:
-			actor.set_meta("last_dropped_durability", float(old_bp_item.durability))
-			actor.set_meta("last_dropped_max_durability", float(old_bp_item.max_durability))
-			actor.set_meta("last_dropped_wetness", float(old_bp_item.wetness))
+		actor.set_meta("last_dropped_durability", float(old_bp_item.durability))
+		actor.set_meta("last_dropped_max_durability", float(old_bp_item.max_durability))
+		actor.set_meta("last_dropped_wetness", float(old_bp_item.wetness))
 		if not old_bp_packed.is_empty():
 			actor.set_meta("pending_backpack_contents", old_bp_packed)
-		actor.item_dropped.emit(prev_bp_name, "backpack", old_w, 1, 0.0, drop_pos, Color(0, 0, 0, 0), false, 0.0)
+		actor.item_dropped.emit(str(old_bp_item.item_name), "backpack", old_w, 1, 0.0, drop_pos, Color(0, 0, 0, 0), false, 0.0)
 	if actor.has_method("_sync_held_item"):
 		actor._sync_held_item()
 	return true
@@ -13542,59 +13582,36 @@ func _execute_world_action(action, actor) -> void:
 						net.world_action_completed.rpc_id(1, action.action_id, rag_spawns, "", Vector3.ZERO)
 					return
 			if str(item.item_type) == "clothing" and actor.has_method("equip_clothing"):
-				# If the same clothing item is already equipped, swap: drop the old
-				# one on the ground instead of adding a duplicate to the inventory.
-				var slot_key := ""
-				if actor.get("_equipped_slots") != null:
-					for sk in actor._equipped_slots.keys():
-						if str(actor._equipped_slots[sk]) == item.item_name:
-							slot_key = sk
-							break
-				if not slot_key.is_empty():
-					# Already wearing the same item: drop the old one and equip the new
-					var _old_color: Color = actor.get_current_clothing_color(item.item_name)
-					actor.set_meta("last_dropped_camo", actor.clothing_has_camo(item.item_name))
-					var _prev_init: bool = bool(actor.get("_initializing"))
-					actor.set("_initializing", true)
-					actor.unequip_clothing(item.item_name)
-					actor.set("_initializing", _prev_init)
-					if actor.inventory != null:
-						for i in range(actor.inventory.items.size()):
-							if str(actor.inventory.items[i].item_name) == item.item_name:
-								actor.set_meta("last_dropped_pelt", str(actor.inventory.items[i].get_meta("pelt_species", "")))
-								actor.inventory.remove_index(i)
-								break
-					var swap_drop_pos: Vector3 = actor.global_position + (actor.global_transform.basis * Vector3.FORWARD * 0.8)
-					swap_drop_pos.y = actor.global_position.y
-					actor.item_dropped.emit(item.item_name, "clothing", item.weight, 1, item.use_value, swap_drop_pos, _old_color, false, 0.0)
-					var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
-					item.set_meta("equipped_slot", slot_key)
-					actor.inventory.add_item(item)
-					var added_item = actor.inventory.items.back() if not actor.inventory.items.is_empty() else item
-					_grant_vest_magazines(action, actor, item.item_name, added_item)
-					actor.equip_clothing(item.item_name, _eq_color, added_item)
-					if item.item_name != "Chaleco táctico":
-						actor.notice.emit("Equipas %s." % item.item_name)
-					_hide_action_visual(action)
-					action.mark_depleted()
-					_save_world_change_silent()
-					_net_notify_pickup(action)
-				else:
-					var eq_slot: String = str(actor.CLOTHING_SLOTS.get(item.item_name, "")) if "CLOTHING_SLOTS" in actor else ""
-					if not eq_slot.is_empty():
-						item.set_meta("equipped_slot", eq_slot)
-					if not actor.inventory.add_item(item):
-						return
-					var added_item2 = actor.inventory.items.back() if not actor.inventory.items.is_empty() else item
-					var _eq_color2: Color = item.get_meta("clothing_color", Color(0,0,0,0))
-					_grant_vest_magazines(action, actor, item.item_name, added_item2)
-					actor.equip_clothing(item.item_name, _eq_color2, added_item2)
-					if item.item_name != "Chaleco táctico":
-						actor.notice.emit("Equipas %s." % item.item_name)
-					_hide_action_visual(action)
-					action.mark_depleted()
-					_save_world_change_silent()
-					_net_notify_pickup(action)
+				var eq_slot: String = str(actor.CLOTHING_SLOTS.get(item.item_name, "")) if "CLOTHING_SLOTS" in actor else ""
+				# Si la prenda nueva diera menos capacidad que la que llevas
+				# puesta, avisar y dejarla en el suelo — no se expulsan objetos.
+				if not eq_slot.is_empty() and actor.get("_equipped_slots") != null and actor.has_method("_compute_carry_capacity"):
+					var worn_name := str(actor._equipped_slots.get(eq_slot, ""))
+					if not worn_name.is_empty() and worn_name != item.item_name:
+						var prev_worn = actor._equipped_slots[eq_slot]
+						actor._equipped_slots[eq_slot] = item.item_name
+						var new_slots := int(actor._compute_carry_capacity(true)["slots"])
+						actor._equipped_slots[eq_slot] = prev_worn
+						var stored_now: int = actor.inventory.get_stored_count() if actor.inventory.has_method("get_stored_count") else actor.inventory.items.size()
+						if stored_now > new_slots:
+							actor.notice.emit("No tienes espacio en el inventario.")
+							return
+				if not eq_slot.is_empty():
+					item.set_meta("equipped_slot", eq_slot)
+				if not actor.inventory.add_item(item):
+					return
+				var added_item = actor.inventory.items.back() if not actor.inventory.items.is_empty() else item
+				var _eq_color: Color = item.get_meta("clothing_color", Color(0,0,0,0))
+				_grant_vest_magazines(action, actor, item.item_name, added_item)
+				# El swap (mismo nombre u otra prenda del slot) lo resuelve
+				# equip_clothing con el item realmente llevado.
+				actor.equip_clothing(item.item_name, _eq_color, added_item)
+				if item.item_name != "Chaleco táctico":
+					actor.notice.emit("Equipas %s." % item.item_name)
+				_hide_action_visual(action)
+				action.mark_depleted()
+				_save_world_change_silent()
+				_net_notify_pickup(action)
 			elif str(item.item_type) == "backpack" and actor.has_method("equip_backpack"):
 				if not _pickup_and_swap_backpack(action, actor, item):
 					return
@@ -14406,7 +14423,10 @@ func _execute_world_action_collect(action, actor) -> void:
 					actor.notice.emit("No tienes espacio en el inventario.")
 					return
 				actor.notice.emit("Coges %s." % item.item_name)
-				_grant_vest_magazines(action, actor, item.item_name, item)
+				# Las metas de munición deben caer sobre la copia guardada
+				# (duplicate_stack), no sobre el objeto temporal.
+				var stored_item = actor.inventory.items.back() if not actor.inventory.items.is_empty() else item
+				_grant_vest_magazines(action, actor, item.item_name, stored_item)
 			elif not _receive_pickup_item(actor, item):
 				return
 			else:

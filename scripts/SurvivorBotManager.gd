@@ -3585,7 +3585,7 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 			if int(it["quantity"]) <= 0:
 				to_remove.append(it)
 			if not old_bp.is_empty():
-				_bot_add_inventory_item(inv, {"name": old_bp, "type": "backpack", "weight": 0.9, "quantity": 1, "use_value": 0.0})
+				_bot_add_inventory_item(inv, {"name": old_bp, "type": "backpack", "weight": 1.8 if old_bp == "Mochila militar" else 0.9, "quantity": 1, "use_value": 0.0})
 		elif tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm) and float(it.get("durability", 100.0)) > 0.0:
 			var slot := str(PlayerController.CLOTHING_SLOTS[nm])
 			var cur := _worn_in_slot(worn, slot)
@@ -10735,6 +10735,10 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 			_loot_clear(b)
 			return
 	proxy.set_meta("saved_inventory", inv)
+	# Una mochila empaquetada trae su contenido serializado (Item.to_dict): el
+	# bot la abre al recogerla y reparte los objetos por su inventario. Lo que
+	# no le cabe cae al suelo como drop real — nada desaparece con la accion.
+	_bot_unpack_entry_contents(b, inv, entry)
 	_ai_note_loot(b, enm, etp)
 	if enm == "Chaleco táctico" and world.has_method("_grant_vest_magazines") and "world_actions_by_id" in world:
 		var vest_action = world.world_actions_by_id.get(id)
@@ -14492,6 +14496,19 @@ func _loot_entry_item_dict(entry: Dictionary) -> Dictionary:
 		out["wetness"] = float(entry["wetness"])
 	return out
 
+# Contenido de una mochila empaquetada (Item.to_dict dentro del drop): el bot
+# la abre y reparte los objetos por su inventario. Lo que no le cabe se suelta
+# a sus pies como drop real — igual que el jugador conserva lo empaquetado.
+func _bot_unpack_entry_contents(b: Dictionary, inv: Array, entry: Dictionary) -> void:
+	var packed = entry.get("contents", [])
+	if not (packed is Array) or packed.is_empty():
+		return
+	var proxy: Node3D = b["proxy"]
+	for cd in packed:
+		if cd is Dictionary and not _bot_try_add_inventory_item(b, inv, cd):
+			_bot_drop_to_ground(b, cd)
+	proxy.set_meta("saved_inventory", inv)
+
 # Lo que no le cabe cae al suelo a sus pies, igual que al jugador: queda
 # saqueable por cualquiera como pickup real sincronizado.
 func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vector3.INF) -> void:
@@ -14511,9 +14528,16 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vec
 				dropped["spoilage"] = float(item_dict["spoilage"])
 			var action = world.get("world_actions_by_id").get(str(dropped.get("id", ""))) if "world_actions_by_id" in world else null
 			if is_instance_valid(action):
+				# Drop nacido del inventario de un actor: ya esta "drenado" —
+				# un chaleco soltado no vuelve a regalar cargadores al recogerlo.
+				action.set_meta("player_dropped", true)
 				for key in ["durability", "max_durability"]:
 					if item_dict.has(key):
 						action.set_meta("item_" + key, item_dict[key])
+				var contents = item_dict.get("contents", [])
+				if contents is Array and not contents.is_empty():
+					action.set_meta("contents", contents)
+					dropped["contents"] = contents
 			var pelt := str(item_dict.get("pelt_species", ""))
 			if not pelt.is_empty():
 				dropped["pelt"] = pelt
@@ -14530,6 +14554,8 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vec
 			rec["spoilage"] = float(item_dict["spoilage"])
 		if item_dict.has("pelt_species"):
 			rec["pelt"] = str(item_dict["pelt_species"])
+		if item_dict.has("contents"):
+			rec["contents"] = item_dict["contents"]
 		world._dropped_items.append(rec)
 
 # La entrada de "keep" mas prescindible (para recortar lo que se queda encima

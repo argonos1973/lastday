@@ -75,6 +75,80 @@ func _check_stash_stability(mgr, world, template: Dictionary) -> void:
 	world._built_shelters.erase(sh)
 	proxy.free()
 
+# Misma regla que el jugador tras el fix de recogida: si no cabe se queda en
+# el mundo, nada se duplica y un chaleco ya drenado no re-regala cargadores.
+func _check_bot_pickup_fixes(mgr, world, template: Dictionary) -> void:
+	var proxy := Node3D.new()
+	world.add_child(proxy)
+	var b := template.duplicate(true)
+	b["proxy"] = proxy
+	b["clothing"] = "Camiseta,Pantalones,Zapatillas"
+	b["backpack"] = ""
+	proxy.set_meta("saved_inventory", [])
+	proxy.set_meta("saved_extra", {})
+	proxy.set_meta("saved_backpack", "")
+	proxy.set_meta("saved_clothing", "")
+
+	# 1) Capacidad: lo que no cabe no muta el inventario ni se duplica.
+	var inv: Array = proxy.get_meta("saved_inventory", [])
+	var heavy = {"name": "Tronco", "type": "resource", "weight": 50.0, "quantity": 1, "use_value": 0.0}
+	check(not mgr._bot_try_add_inventory_item(b, inv, heavy), "Bot: un objeto demasiado pesado no entra en el inventario")
+	check(inv.is_empty(), "Bot: el intento fallido no muta el inventario")
+
+	# 2) Drop de un chaleco por el bot: queda marcado como ya drenado, igual
+	# que un drop de jugador — al recogerlo nadie recibe cargadores de nuevo.
+	var pre = world._dropped_items.size()
+	mgr._bot_drop_to_ground(b, {"name": "Chaleco táctico", "type": "clothing", "weight": 0.8, "quantity": 1, "use_value": 0.0})
+	check(world._dropped_items.size() == pre + 1, "Bot: el objeto soltado aparece como drop real del mundo")
+	var vdrop: Dictionary = world._dropped_items[-1]
+	var vaction = world.world_actions_by_id.get(str(vdrop.get("id", "")))
+	check(is_instance_valid(vaction) and vaction.has_meta("player_dropped"),
+		"Bot: un chaleco soltado no vuelve a regalar cargadores")
+
+	# 3) Mochila empaquetada: el contenido serializado pasa al inventario del
+	# bot en vez de desaparecer al depletar la accion.
+	proxy.set_meta("saved_inventory", [])
+	inv = proxy.get_meta("saved_inventory", [])
+	var entry = {"name": "Mochila pequena", "type": "backpack", "contents": [
+		{"name": "Manzana", "type": "food", "weight": 0.2, "quantity": 2, "use_value": 12.0},
+		{"name": "Venda", "type": "medical", "weight": 0.1, "quantity": 1, "use_value": 10.0},
+	]}
+	mgr._bot_unpack_entry_contents(b, inv, entry)
+	check(mgr._bot_item_count(proxy, "Manzana") == 2 and mgr._bot_item_count(proxy, "Venda") == 1,
+		"Bot: el contenido de una mochila empaquetada va a su inventario")
+
+	# 3b) Lo que no cabe del contenido cae al suelo como drop real, no se pierde.
+	var pre2 = world._dropped_items.size()
+	var entry2 = {"name": "Mochila pequena", "type": "backpack", "contents": [
+		{"name": "Tronco", "type": "resource", "weight": 500.0, "quantity": 1, "use_value": 0.0},
+	]}
+	mgr._bot_unpack_entry_contents(b, inv, entry2)
+	check(world._dropped_items.size() == pre2 + 1 and str(world._dropped_items[-1].get("name", "")) == "Tronco",
+		"Bot: el contenido que no cabe cae al suelo como drop real")
+	check(mgr._bot_item_count(proxy, "Tronco") == 0, "Bot: el objeto que no cabe tampoco entra al inventario")
+
+	# 4) Botin de muerte: todo lo que cae del cadaver esta ya drenado.
+	proxy.set_meta("saved_inventory", [{"name": "Chaleco táctico", "type": "clothing", "weight": 0.8, "quantity": 1, "use_value": 0.0}])
+	world._drop_player_loot(4242, proxy)
+	var drained = false
+	for e in world._dropped_items:
+		if str(e.get("name", "")) == "Chaleco táctico" and str(e.get("id", "")).begins_with("death_loot_"):
+			var da = world.world_actions_by_id.get(str(e.get("id", "")))
+			drained = is_instance_valid(da) and da.has_meta("player_dropped")
+	check(drained, "Muerte: el chaleco del botin no re-regala cargadores")
+
+	# 5) Swap de mochila del auto-equip: la vieja vuelve al inventario y la
+	# nueva sale — nada se duplica ni desaparece.
+	proxy.set_meta("saved_inventory", [
+		{"name": "Mochila militar", "type": "backpack", "weight": 1.8, "quantity": 1, "use_value": 0.0},
+		{"name": "Manzana", "type": "food", "weight": 0.2, "quantity": 1, "use_value": 12.0},
+	])
+	b["backpack"] = "Mochila pequena"
+	mgr._auto_equip_best_gear(b)
+	check(str(b["backpack"]) == "Mochila militar" and mgr._bot_item_count(proxy, "Mochila pequena") == 1 and mgr._bot_item_count(proxy, "Mochila militar") == 0,
+		"Bot: al mejorar la mochila la vieja queda de repuesto, sin duplicados")
+	proxy.free()
+
 class FakeDayCycle extends Node:
 	var time_of_day := 14.0
 	var ambient_temp := 15.0
@@ -3650,6 +3724,7 @@ func run() -> void:
 	check(mgr._bot_item_count(fresh_b["proxy"], "Lata de atun abierta") >= 1,
 		"SpawnReal 10l: el bot retira comida de su propio refugio cuando tiene hambre")
 	_check_stash_stability(mgr, world, fresh_b)
+	_check_bot_pickup_fixes(mgr, world, fresh_b)
 
 	# 10m y 10n: cocinar carne cruda exige Palo afilado para ensartarla y
 	# permite al bot armar/encender una hoguera para asarla igual que un humano
