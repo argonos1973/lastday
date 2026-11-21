@@ -815,6 +815,12 @@ func _nearest_tree_dist(pos: Vector3, max_dist: float) -> float:
 # Punto de agua alcanzable mas cercano (segmentos del rio/lago) para que el
 # superviviente vaya a beber cuando se quede sin botellas.
 func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
+	var started := Time.get_ticks_usec()
+	var result := _nearest_water_pos_impl(from, b)
+	_pbm("water_search", started)
+	return result
+
+func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 	if world == null or not world.has_method("_default_river_segments"):
 		return Vector3.INF
 	# Sed critica (<18): la muerte por deshidratacion no se negocia — se salta
@@ -1737,12 +1743,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# Supervivencia identica a la del jugador humano: SurvivalStats simula
 	# hambre, sed, energia, sueño, temperatura corporal, lluvia, vadeo, calor
 	# de fogata/antorcha y muerte por inanicion/hipotermia/calor/agotamiento.
+	var survival_started := Time.get_ticks_usec()
 	_bot_survival_tick(b, delta)
+	_pbm("survival", survival_started)
 	if bool(proxy.get_meta("proxy_dead", false)):
 		return
 	proxy.set_meta("saved_hunger", float(b["hunger"]))
 	proxy.set_meta("saved_thirst", float(b["thirst"]))
+	var needs_started := Time.get_ticks_usec()
 	_maintain_bot_needs(b, delta)
+	_pbm("maintain_needs", needs_started)
 
 	# Herida sangrante sin venda: se detiene a improvisar una (3 Trapos -> Venda;
 	# ropa + cuchillo -> Trapos). Se desangrar huyendo era la muerte "succumbed"
@@ -11000,6 +11010,32 @@ func _bot_dismantle_shelter_exec(b: Dictionary, sh_id: String) -> void:
 	_record_milestone(int(b["bot_id"]), "first_dismantle")
 	record_bot_event(int(b["bot_id"]), "shelter_dismantle", sh_id, "shelter", _shelter_entry_pos(sh), "desmonta refugio por los palos")
 
+func _bot_shelter_needs_supply(b: Dictionary, kind: String) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var lessons: Dictionary = b.get("_mem", {}).get("death_lessons", {})
+	if kind == "food":
+		return float(b["hunger"]) < 60.0 + minf(16.0, float(int(lessons.get("starved", 0))) * 8.0) \
+			and not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0)
+	return float(b["thirst"]) < 60.0 + minf(16.0, float(int(lessons.get("dehydrated", 0))) * 8.0) \
+		and not _bot_has_drink(proxy)
+
+func _bot_shelter_weapon_usable(proxy: Node3D, item: Dictionary) -> bool:
+	var nm := str(item.get("name", ""))
+	if nm not in BOT_WEAPON_ORDER or int(item.get("quantity", 1)) <= 0 or float(item.get("durability", 100.0)) <= 0.0:
+		return false
+	if nm in ["Arco de madera", "Arco reforzado"]:
+		return _bot_arrow_count(proxy) > 0
+	if nm in ["Fusil de asalto", "Rifle francotirador"]:
+		# Inspect acquisition state without granting ammunition merely because
+		# the bot looked into a stash. Only actual first acquisition may seed it.
+		var ammo: Dictionary = proxy.get_meta("bot_gun_ammo", {})
+		if ammo.is_empty():
+			ammo = proxy.get_meta("saved_extra", {}).get("rifle_ammo", {})
+		var flag := "m4_initialized" if _bot_gun_is_m4(nm) else "initialized"
+		var acquired := bool(ammo.get(flag, ammo.has(_bot_gun_loaded_key(nm)) or ammo.has(_bot_gun_reserve_key(nm))))
+		return not acquired or _bot_gun_any_ammo(proxy, nm)
+	return true
+
 func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	var sid := str(b.get("shelter_id", ""))
 	var contents := _get_shelter_contents(sid)
@@ -11008,9 +11044,8 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	# Quien ya se murio de hambre/sed revisa su alijo antes de que la
 	# necesidad apriete: las lecciones suben el umbral de "lo necesito".
-	var dl_need: Dictionary = b.get("_mem", {}).get("death_lessons", {})
-	var need_food: bool = float(b["hunger"]) < 60.0 + minf(16.0, float(int(dl_need.get("starved", 0))) * 8.0) and not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0)
-	var need_water: bool = float(b["thirst"]) < 60.0 + minf(16.0, float(int(dl_need.get("dehydrated", 0))) * 8.0) and not _bot_has_drink(proxy)
+	var need_food := _bot_shelter_needs_supply(b, "food")
+	var need_water := _bot_shelter_needs_supply(b, "water")
 	var need_weapon: bool = _best_weapon_name(proxy).is_empty()
 	var need_med: bool = float(b["health"]) < 78.0 and _bot_item_count(proxy, "Venda") == 0
 	var need_farm_kit: bool = _bot_needs_farm_kit_now(b)
@@ -11023,7 +11058,7 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 			return true
 		if need_water and (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")):
 			return true
-		if need_weapon and tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"]:
+		if need_weapon and tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_shelter_weapon_usable(proxy, cd):
 			return true
 		if need_med and nm == "Venda":
 			return true
@@ -11259,6 +11294,12 @@ func _bot_try_camo_shelter(b: Dictionary) -> void:
 	_record_milestone(int(b["bot_id"]), "camouflaged_shelter")
 
 func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
+	var started := Time.get_ticks_usec()
+	var moved := _bot_sync_own_shelter_stash_impl(b)
+	_pbm("stash_sync", started)
+	return moved
+
+func _bot_sync_own_shelter_stash_impl(b: Dictionary) -> int:
 	var sid := str(b.get("shelter_id", ""))
 	if sid.is_empty():
 		return 0
@@ -11266,8 +11307,10 @@ func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 	if sh.is_empty():
 		return 0
 	var proxy: Node3D = b["proxy"]
-	var inv: Array = (proxy.get_meta("saved_inventory", []) as Array).duplicate(true)
-	var contents: Array = (sh.get("contents", []) as Array).duplicate(true)
+	var original_inv: Array = proxy.get_meta("saved_inventory", [])
+	var original_contents: Array = sh.get("contents", [])
+	var inv: Array = original_inv.duplicate(true)
+	var contents: Array = original_contents.duplicate(true)
 	var changed := false
 	var moved := 0
 	# 1) Retirar del refugio propio si al bot le falta comida, bebida, arma o venda
@@ -11278,11 +11321,11 @@ func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 		var nm := str(cd.get("name", ""))
 		var tp := str(cd.get("type", "resource"))
 		var want_withdraw := false
-		if tp == "food" and float(b["hunger"]) < 60.0 and not _bot_has_edible_food(proxy, float(b["hunger"]) < 28.0):
+		if tp == "food" and _bot_shelter_needs_supply(b, "food"):
 			want_withdraw = true
-		elif (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")) and float(b["thirst"]) < 60.0 and not _bot_has_drink(proxy):
+		elif (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")) and _bot_shelter_needs_supply(b, "water"):
 			want_withdraw = true
-		elif tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _best_weapon_name(proxy).is_empty():
+		elif tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _best_weapon_name(proxy).is_empty() and _bot_shelter_weapon_usable(proxy, cd):
 			want_withdraw = true
 		elif tp == "ammo" and _bot_gun_wants_ammo_item(proxy, nm):
 			want_withdraw = true
@@ -11323,6 +11366,11 @@ func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 			moved += int(sdict.get("quantity", 1))
 		else:
 			keep_inv.append(sdict)
+	# A tentative withdrawal can be returned by the capacity/reserve partition.
+	# Do not broadcast or save the whole world when the transaction is a no-op.
+	if changed and keep_inv == original_inv and contents == original_contents:
+		proxy.set_meta("saved_inventory", original_inv)
+		return 0
 	if changed:
 		proxy.set_meta("saved_inventory", keep_inv)
 		_commit_shelter_contents(sid, contents)
@@ -12470,6 +12518,11 @@ func _stop_bot_motion(b: Dictionary) -> void:
 		proxy.set_meta("sprinting", false)
 
 func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
+	var started := Time.get_ticks_usec()
+	_move_bot_towards_impl(b, raw_goal, speed, delta, anim_name)
+	_pbm("movement", started)
+
+func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var proxy: Node3D = b["proxy"]
 	# Moverse implica estar de pie: si una rama de decision pone a correr a un
 	# bot sentado/dormido/tumbado sin levantarlo (la huida lo hacia), en los
@@ -13294,6 +13347,12 @@ func _bot_under_immediate_threat(b: Dictionary) -> bool:
 # Con b informado, el borde depende de su modo termico: con frio proyecta
 # al anillo templado (calienta de verdad), si no al borde exterior seguro.
 func _bot_fire_safe_spot(pos: Vector3, y: float, b = null) -> Vector3:
+	var started := Time.get_ticks_usec()
+	var result := _bot_fire_safe_spot_impl(pos, y, b)
+	_pbm("fire_spot", started)
+	return result
+
+func _bot_fire_safe_spot_impl(pos: Vector3, y: float, b = null) -> Vector3:
 	var fp := _nearest_lit_campfire_pos(pos, 4.3, b)
 	if fp == Vector3.INF:
 		return pos
@@ -13776,13 +13835,14 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 		return true # amanecio con el deposito medio lleno
 	return false
 
-func _best_weapon_name(proxy: Node3D) -> String:
-	var inv: Array = proxy.get_meta("saved_inventory", [])
-	var order := ["Fusil de asalto", "Rifle francotirador", "Arco reforzado", "Arco de madera",
+const BOT_WEAPON_ORDER := ["Fusil de asalto", "Rifle francotirador", "Arco reforzado", "Arco de madera",
 		"Lanza de hueso", "Lanza", "Hacha de piedra", "Hacha", "Cuchillo de hueso",
 		"Cuchillo de piedra", "Cuchillo", "Palo afilado"]
+
+func _best_weapon_name(proxy: Node3D) -> String:
+	var inv: Array = proxy.get_meta("saved_inventory", [])
 	var arrows := -1
-	for w in order:
+	for w in BOT_WEAPON_ORDER:
 		for it in inv:
 			if it is Dictionary and str(it.get("name", "")) == w and int(it.get("quantity", 1)) > 0:
 				if it.has("durability") and float(it.get("durability", 100.0)) <= 0.0:

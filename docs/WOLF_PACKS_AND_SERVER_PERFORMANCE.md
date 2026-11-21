@@ -88,6 +88,40 @@ El cliente macOS local se exportó y su firma ad-hoc se verificó con
 `SurvivalInventoryRegression`, `PickupAnimRegression`, `WolfPackRegression`
 y `PeltCraftingRegression`. Esta tanda todavía no se ha desplegado.
 
+## Revisión del guardado y los alijos (21 de noviembre de 2026)
+
+La observación del servidor después del despliegue detectó caídas intermitentes
+fuera del arranque. En tres minutos sin jugadores, 82 actualizaciones del
+monitor dieron una mediana de 56,5 FPS, una media de 49,8 y un mínimo de 8.
+Los contadores situaban el mayor coste en la actualización de Carlos.
+
+Una reproducción aislada encontró un bucle concreto: un arco sin flechas se
+retiraba del alijo y se devolvía en la misma actualización. Ciento veinte
+actualizaciones generaban 120 solicitudes de guardado sin ningún cambio neto.
+La elegibilidad del arma ahora comprueba estado y munición; el caso genera
+cero solicitudes. La inspección de un fusil nuevo no concede su munición
+inicial. Los umbrales preventivos para buscar comida y agua se usan también
+al retirarlas, evitando viajes al alijo que no resolvían la necesidad.
+
+Los cambios del mundo se agrupan con una cadencia de dos segundos y un único
+escritor. El hilo principal comprueba si terminó el trabajo anterior; no espera
+si sigue activo. La información de jugadores se conserva inmediatamente para
+las reconexiones, aunque desaparezca un proxy antes del siguiente snapshot.
+El cierre explícito drena también el último estado pendiente.
+
+`ServerSaveRegression` simula una escritura ocupada durante 250 ms: tramitar
+100 solicitudes tarda aproximadamente 3,4 ms en la máquina de desarrollo y
+se verifica que termina guardándose el estado más reciente. También pasan
+las pruebas de reinicio, munición, fabricación de pieles, planes y combate.
+
+La telemetría añade supervivencia, necesidades, movimiento, búsqueda de agua,
+alijos y posiciones junto al fuego. Estos tiempos están incluidos en los de
+cada actor. El divisor de ms/s usa tiempo real monotónico: el delta del motor
+se limita durante los atascos y podía producir cifras superiores a 1000 ms/s.
+`frame_p95` y `frame_max` miden los intervalos reales entre actualizaciones del
+servidor, incluyendo las esperas. La comparación tras desplegar debe observar
+varios minutos de actividad y anotar cuántos jugadores hay conectados.
+
 ## Grabaciones de lobos aportadas en `LOBOS`
 
 | Original | Uso |

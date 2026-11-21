@@ -39,10 +39,7 @@ func check(ok: bool, message: String) -> void:
 # _save_server_world posts the file write to WorkerThreadPool — wait for the
 # pending task so save assertions see the file synchronously.
 func _flush_save(world: Node) -> void:
-	var task: int = world.get("_server_save_task") if world.get("_server_save_task") != null else -1
-	if task >= 0:
-		WorkerThreadPool.wait_for_task_completion(task)
-		world.set("_server_save_task", -1)
+	world._wait_pending_server_save()
 
 func _initialize() -> void:
 	call_deferred("run")
@@ -138,6 +135,56 @@ func run() -> void:
 		check(str(players["cid_abc"].get("char_name", "")) == "TestServerChar", "character name persisted")
 		check(str(players["cid_abc"].get("top_color", "")).begins_with("0.1"), "appearance color persisted")
 	check(_local_save_hash(sgm) == local_hash_before, "single-player save untouched by dedicated save")
+
+	# A busy disk writer must not stop a gameplay request. Repeated changes
+	# coalesce into the latest snapshot, including a player removed meanwhile.
+	var delayed_writer := WorkerThreadPool.add_task(func(): OS.delay_msec(250))
+	world._server_save_task = delayed_writer
+	world._server_save_next_msec = 0
+	var transient := Node3D.new()
+	world.add_child(transient)
+	transient.set_meta("client_id", "cid_pending")
+	transient.set_meta("saved_health", 71.0)
+	world.server_proxies[99] = transient
+	var changing_drop := {"id":"coalesced", "name":"Palo", "type":"resource", "qty":1, "pos":Vector3.ZERO}
+	world._dropped_items.append(changing_drop)
+	var request_started := Time.get_ticks_usec()
+	for i in 100:
+		changing_drop["qty"] = i + 1
+		world._save_world_change_silent()
+	var requests_ms := (Time.get_ticks_usec() - request_started) / 1000.0
+	check(requests_ms < 125.0, "100 save requests do not wait for a 250ms writer (%.2fms)" % requests_ms)
+	check(world._server_save_task == delayed_writer and world._server_save_dirty,
+		"active writer retained; latest world change remains pending")
+	world.server_proxies.erase(99)
+	transient.free()
+	_flush_save(world)
+	var coalesced: Dictionary = sgm.load_server_game()
+	var coalesced_drops: Array = coalesced.get("world", {}).get("dropped_items", [])
+	check(coalesced_drops.any(func(d): return d.get("id") == "coalesced" and int(d.get("qty", 0)) == 100),
+		"draining writes the latest coalesced world state")
+	check(float(coalesced.get("players", {}).get("cid_pending", {}).get("health", 0)) == 71.0,
+		"deferred save retains a proxy removed before the snapshot")
+	check(not world._server_save_dirty and world._server_save_task == -1, "drain leaves no pending write")
+	# Normal processing must eventually dispatch queued changes without another
+	# save request. Changing live data after enqueue must reach that snapshot.
+	changing_drop["qty"] = 101
+	world._save_world_change_silent()
+	check(world._server_save_dirty and world._server_save_task == -1, "burst is deferred until the save cadence")
+	changing_drop["qty"] = 102
+	while Time.get_ticks_msec() < world._server_save_next_msec:
+		await process_frame
+	world._pump_server_save()
+	check(not world._server_save_dirty and world._server_save_task >= 0, "pending save starts after its cadence")
+	_flush_save(world)
+	coalesced = sgm.load_server_game()
+	check((coalesced.get("world", {}).get("dropped_items", []) as Array).any(func(d): return d.get("id") == "coalesced" and int(d.get("qty", 0)) == 102),
+		"deferred snapshot captures live state at dispatch")
+	world._dropped_items.erase(changing_drop)
+	world._server_saved_players.erase("cid_pending")
+	world._save_world_change_silent()
+	_flush_save(world)
+	print("SAVE_COALESCE requests_ms=%.2f requests=100 final_qty=102" % requests_ms)
 
 	# --- Connected client must not write any save ---
 	net.is_host = false
@@ -260,6 +307,7 @@ func run() -> void:
 	world.add_child(bare_live)
 	bare_live.global_position = Vector3(12.0, 0.4, 13.0)
 	bare_live.set_meta("saved_pos", bare_live.global_position)
+	bare_live.set_meta("has_real_pos", true)
 	world.proxy_by_client_id["cid_barelive"] = bare_live
 	world._match_proxy_to_client(70, "cid_barelive")
 	await process_frame

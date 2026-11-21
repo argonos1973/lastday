@@ -14,6 +14,67 @@ func check(ok: bool, msg: String) -> void:
 		failures += 1
 		print("FAIL: ", msg)
 
+func _check_stash_stability(mgr, world, template: Dictionary) -> void:
+	var proxy := Node3D.new()
+	world.add_child(proxy)
+	var b := template.duplicate()
+	b["proxy"] = proxy
+	b["_mem"] = {}
+	b["health"] = 100.0
+	b["hunger"] = 100.0
+	b["thirst"] = 100.0
+	b["backpack"] = "Mochila militar"
+	b["shelter_id"] = "stash_stability"
+	proxy.set_meta("saved_backpack", b["backpack"])
+	var sh := {"id": b["shelter_id"], "pos": Vector3.ZERO, "contents": []}
+	world._built_shelters.append(sh)
+	var arrow := {"name":"Flecha", "type":"ammo_arrow", "quantity":3, "weight":0.05}
+	for sample in [
+		{"name":"Arco de madera", "type":"weapon_bow", "durability":100.0, "take":false},
+		{"name":"Cuchillo", "type":"weapon", "durability":0.0, "take":false},
+		{"name":"Fusil de asalto", "type":"weapon_rifle", "durability":100.0, "dry":true, "take":false},
+		{"name":"Cuchillo", "type":"weapon", "durability":100.0, "take":true},
+		{"name":"Arco de madera", "type":"weapon_bow", "durability":100.0, "arrows":true, "take":true},
+		{"name":"Fusil de asalto", "type":"weapon_rifle", "durability":100.0, "take":true},
+	]:
+		proxy.set_meta("saved_inventory", [arrow.duplicate()] if sample.get("arrows", false) else [])
+		proxy.set_meta("saved_extra", {})
+		proxy.set_meta("bot_gun_ammo", {"initialized":true, "m4_initialized":true,
+			"m4_magazine":0, "m4_reserve":0, "magazine":0, "reserve":0} if sample.get("dry",false) else {})
+		sh["contents"] = [{"name":sample.name, "type":sample.type, "quantity":1, "weight":0.5, "durability":sample.durability}]
+		var before: int = world.save_requests
+		check(mgr._own_shelter_has_needed_item(b) == sample.take,
+			"Alijo: solo vuelve por un arma util (%s, %s)" % [sample.name, sample])
+		if sample.name == "Fusil de asalto" and not sample.get("dry", false):
+			check((proxy.get_meta("bot_gun_ammo", {}) as Dictionary).is_empty(),
+				"Alijo: inspeccionar el primer fusil no regala municion")
+		for frame in 120:
+			mgr._bot_sync_own_shelter_stash(b)
+		check(world.save_requests - before == (1 if sample.take else 0),
+			"Alijo estable durante 120 ticks: sin retirar/reguardar ni guardados repetidos (%s)" % sample)
+		check(mgr._bot_item_count(proxy, sample.name) == (1 if sample.take else 0),
+			"Alijo conserva la ubicacion y cantidad real del arma (%s)" % sample)
+	# A reserve/capacity partition can reject an otherwise wanted withdrawal.
+	# The transaction must not write an unchanged inventory/stash.
+	proxy.set_meta("saved_inventory", [{"name":"Analgesicos", "type":"medical", "quantity":2, "weight":0.1}])
+	sh["contents"] = [{"name":"Venda", "type":"medical", "quantity":1, "weight":0.1}]
+	var before: int = world.save_requests
+	for frame in 120:
+		check(mgr._bot_sync_own_shelter_stash(b) == 0, "Alijo: una transferencia neta vacia no cuenta como movimiento")
+	check(world.save_requests == before, "Alijo: sin guardados cuando la reserva devuelve lo retirado")
+	for supply in ["food", "water"]:
+		proxy.set_meta("saved_inventory", [])
+		b["_mem"] = {"death_lessons":{"starved":2, "dehydrated":2}}
+		b["hunger"] = 65.0
+		b["thirst"] = 65.0
+		var nm := "Manzana" if supply == "food" else "Botella de agua"
+		sh["contents"] = [{"name":nm, "type":supply, "quantity":2, "weight":0.2}]
+		check(mgr._own_shelter_has_needed_item(b), "Alijo: la prevencion pide %s" % supply)
+		check(mgr._bot_sync_own_shelter_stash(b) > 0 and mgr._bot_item_count(proxy, nm) > 0,
+			"Alijo: al llegar retira las provisiones que motivaron el viaje (%s)" % supply)
+	world._built_shelters.erase(sh)
+	proxy.free()
+
 class FakeDayCycle extends Node:
 	var time_of_day := 14.0
 	var ambient_temp := 15.0
@@ -68,6 +129,7 @@ class StubRifleShooter extends Node3D:
 		last_origin = o
 
 class TestWorld extends "res://scripts/Main.gd":
+	var save_requests := 0
 	var water_rect := Rect2(100000.0, 100000.0, 4.0, 4.0) # lejos por defecto
 	var water_depth := 1.0
 	var road_rect := Rect2(200000.0, 200000.0, 4.0, 4.0)
@@ -79,7 +141,7 @@ class TestWorld extends "res://scripts/Main.gd":
 	func _exit_tree() -> void:
 		pass
 	func _save_world_change_silent() -> void:
-		pass
+		save_requests += 1
 	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float:
 		return 0.4
 	func get_river_depth_at(pos: Vector3) -> float:
@@ -3587,6 +3649,7 @@ func run() -> void:
 	mgr._bot_sync_own_shelter_stash(fresh_b)
 	check(mgr._bot_item_count(fresh_b["proxy"], "Lata de atun abierta") >= 1,
 		"SpawnReal 10l: el bot retira comida de su propio refugio cuando tiene hambre")
+	_check_stash_stability(mgr, world, fresh_b)
 
 	# 10m y 10n: cocinar carne cruda exige Palo afilado para ensartarla y
 	# permite al bot armar/encender una hoguera para asarla igual que un humano

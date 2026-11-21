@@ -246,7 +246,12 @@ func _wildlife_respawn_ready(species: String) -> bool:
 	return Time.get_unix_time_from_system() - float(_wildlife_death_time.get(species, -1e9)) >= delay
 var _server_save_timer := 0.0
 var _server_save_task := -1
-var _perf_probe := 0.0
+const SERVER_SAVE_INTERVAL_MSEC := 2000
+var _server_save_dirty := false
+var _server_save_next_msec := 0
+var _perf_started_usec := 0
+var _perf_previous_frame_usec := 0
+var _perf_frame_usec: Array[int] = []
 var _perf_seg := {}
 
 func _pm(seg_name: String, t0: int) -> void:
@@ -1320,6 +1325,8 @@ func _update_near_ground_cover() -> void:
 func _process(delta: float) -> void:
 	if _scene_quitting:
 		return
+	if _server_save_dirty:
+		_pump_server_save()
 	if _cinematic_active:
 		_process_cinematic(delta)
 		return
@@ -1405,6 +1412,11 @@ func _process(delta: float) -> void:
 				return
 		# Update proxy positions from client sync data
 		var _pt := Time.get_ticks_usec()
+		if _perf_started_usec == 0:
+			_perf_started_usec = _pt
+		if _perf_previous_frame_usec > 0:
+			_perf_frame_usec.append(_pt - _perf_previous_frame_usec)
+		_perf_previous_frame_usec = _pt
 		_update_server_proxies(delta)
 		_pm("proxies", _pt)
 		_pt = Time.get_ticks_usec()
@@ -1451,31 +1463,40 @@ func _process(delta: float) -> void:
 			_server_save_timer = 0.0
 			_save_world_change_silent()
 		_pm("save", _pt)
-		_perf_probe += delta
-		if _perf_probe >= 10.0:
-			_perf_probe = 0.0
-			print("[PERF] fps=%.1f proc=%.2fms phys=%.2fms nav_proc=%.2fms wild_usec/s=%d nodes=%d phys_active=%d wild=%d" % [
+		var perf_now := Time.get_ticks_usec()
+		var perf_seconds := (perf_now - _perf_started_usec) / 1000000.0
+		if perf_seconds >= 10.0:
+			_perf_started_usec = perf_now
+			# Engine delta is capped after stalls; dividing by simulated time
+			# overstated CPU ms/s and hid real gaps between server frames.
+			_perf_frame_usec.sort()
+			var frame_p95_ms: float = _perf_frame_usec[mini(_perf_frame_usec.size() - 1, int(_perf_frame_usec.size() * 0.95))] / 1000.0 if not _perf_frame_usec.is_empty() else 0.0
+			var frame_max_ms: float = _perf_frame_usec.back() / 1000.0 if not _perf_frame_usec.is_empty() else 0.0
+			print("[PERF] fps=%.1f proc=%.2fms phys=%.2fms nav_proc=%.2fms wild_usec/s=%d nodes=%d phys_active=%d wild=%d frame_p95=%.2fms frame_max=%.2fms" % [
 				Engine.get_frames_per_second(),
 				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
 				Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
 				Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0,
-				WildlifeController.perf_usec / 10,
+				int(WildlifeController.perf_usec / perf_seconds),
 				int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
 				int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
 				get_tree().get_nodes_in_group("wildlife").size(),
+				frame_p95_ms,
+				frame_max_ms,
 			])
+			_perf_frame_usec.clear()
 			for k in WildlifeController.perf_parts.keys():
-				print("[PERF]   %s: %d ms/s" % [k, int(WildlifeController.perf_parts[k]) / 10 / 1000])
+				print("[PERF]   %s: %d ms/s" % [k, int(WildlifeController.perf_parts[k] / perf_seconds / 1000.0)])
 			WildlifeController.perf_usec = 0
 			WildlifeController.perf_parts.clear()
 			for k in _perf_seg.keys():
-				print("[PERF]   main.%s: %d ms/s" % [k, int(_perf_seg[k]) / 10 / 1000])
+				print("[PERF]   main.%s: %d ms/s" % [k, int(_perf_seg[k] / perf_seconds / 1000.0)])
 			_perf_seg.clear()
 			if survivor_bot_mgr != null:
 				var bseg: Dictionary = survivor_bot_mgr.get("perf_seg")
 				if bseg != null:
 					for k in bseg.keys():
-						print("[PERF]   bot.%s: %d ms/s" % [k, int(bseg[k]) / 10 / 1000])
+						print("[PERF]   bot.%s: %d ms/s" % [k, int(bseg[k] / perf_seconds / 1000.0)])
 					bseg.clear()
 		return
 	# Single player: respawn wildlife periodically (no net)
@@ -2436,14 +2457,25 @@ const _SERVER_PLAYER_FIELDS := {
 }
 
 func _wait_pending_server_save() -> void:
+	# Explicit drain for shutdown/tests only. Normal gameplay never waits for
+	# an active writer. Preserve the final coalesced state before leaving.
 	if _server_save_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_server_save_task)
 		_server_save_task = -1
+	if _server_save_dirty:
+		_pump_server_save(true)
+		if _server_save_task >= 0:
+			WorkerThreadPool.wait_for_task_completion(_server_save_task)
+			_server_save_task = -1
 
 func _save_server_world() -> void:
-	var sgm = get_node_or_null("/root/SaveGameManager")
-	if sgm == null:
-		return
+	# Retain player state immediately even if the proxy disappears before the
+	# next disk snapshot. World snapshot construction and I/O are coalesced.
+	_refresh_server_saved_players()
+	_server_save_dirty = true
+	_pump_server_save()
+
+func _refresh_server_saved_players() -> void:
 	var players := _collect_server_players()
 	# _server_saved_players is a persistent baseline: entries are kept after a
 	# player reconnects. Merge missing fields so a bare proxy (e.g. a duplicate
@@ -2458,12 +2490,28 @@ func _save_server_world() -> void:
 				if not rec.has(k):
 					rec[k] = baseline[k]
 	_server_saved_players = players.duplicate(true)
+
+func _pump_server_save(force: bool = false) -> void:
+	if not _server_save_dirty:
+		return
+	if _server_save_task >= 0:
+		if not WorkerThreadPool.is_task_completed(_server_save_task):
+			return
+		WorkerThreadPool.wait_for_task_completion(_server_save_task)
+		_server_save_task = -1
+	if not force and Time.get_ticks_msec() < _server_save_next_msec:
+		return
+	var sgm = get_node_or_null("/root/SaveGameManager")
+	if sgm == null:
+		return
+	var started := Time.get_ticks_usec()
+	_refresh_server_saved_players()
 	var world_data: Dictionary = SaveGameHooks.collect_world_data(self).duplicate(true)
-	var players_snapshot: Dictionary = players.duplicate(true)
-	# Reclaim the previous finished task ID and dispatch the atomic JSON write
-	# on a worker with isolated snapshots so the main thread never stalls on I/O.
-	_wait_pending_server_save()
+	var players_snapshot := _server_saved_players.duplicate(true)
+	_server_save_dirty = false
+	_server_save_next_msec = Time.get_ticks_msec() + SERVER_SAVE_INTERVAL_MSEC
 	_server_save_task = WorkerThreadPool.add_task(sgm.save_server_game.bind(world_data, players_snapshot))
+	_pm("save_snapshot", started)
 
 # Dedicated server counterpart of apply_saved_world_data: restores the state the
 # server relays to clients (drop lists, campfires, doors, corpses, rowboat).
