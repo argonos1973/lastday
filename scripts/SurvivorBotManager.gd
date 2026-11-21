@@ -814,6 +814,25 @@ func _nearest_tree_dist(pos: Vector3, max_dist: float) -> float:
 
 # Punto de agua alcanzable mas cercano (segmentos del rio/lago) para que el
 # superviviente vaya a beber cuando se quede sin botellas.
+func _preventive_water_pos(b: Dictionary) -> Vector3:
+	var from: Vector3 = (b["proxy"] as Node3D).global_position
+	var now := Time.get_ticks_msec()
+	var night := _is_world_night()
+	var desperate := float(b.get("thirst", 100.0)) < 18.0
+	var cached: Dictionary = b.get("_prevent_water_cache", {})
+	var reusable := not cached.is_empty() and now < int(cached.get("until", 0)) \
+		and from.distance_squared_to(cached.get("from", Vector3.INF)) <= 4.0 \
+		and bool(cached.get("night", false)) == night \
+		and bool(cached.get("desperate", false)) == desperate
+	var target: Vector3 = cached.get("pos", Vector3.INF)
+	if reusable and target.is_finite() and not desperate:
+		reusable = not _is_water_blacklisted(b, target) and _bot_supply_goal_allowed(b, target)
+	if not reusable:
+		target = _nearest_water_pos(from, b)
+		b["_prevent_water_cache"] = {"from":from, "pos":target, "until":now + 500,
+			"night":night, "desperate":desperate}
+	return target
+
 func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 	var started := Time.get_ticks_usec()
 	var result := _nearest_water_pos_impl(from, b)
@@ -2163,7 +2182,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# rellenar la botella antes de que la necesidad apriete.
 	var prevent_drink := false
 	if thirst_lessons > 0 and float(b["thirst"]) < 78.0 and not _bot_has_drink(proxy):
-		var wp_pre := _nearest_water_pos(proxy.global_position, b)
+		var wp_pre := _preventive_water_pos(b)
 		if wp_pre != Vector3.INF and Vector2(proxy.global_position.x - wp_pre.x, proxy.global_position.z - wp_pre.z).length() < 9.0:
 			prevent_drink = true
 			b["drink_at"] = wp_pre

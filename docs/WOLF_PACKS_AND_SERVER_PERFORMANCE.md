@@ -122,6 +122,16 @@ se limita durante los atascos y podía producir cifras superiores a 1000 ms/s.
 servidor, incluyendo las esperas. La comparación tras desplegar debe observar
 varios minutos de actividad y anotar cuántos jugadores hay conectados.
 
+La primera medición con estos contadores detectó otro coste: aproximadamente
+450 ms/s en búsquedas de agua. La prevención de sed consultaba todos los
+candidatos cada fotograma. Ahora reutiliza el resultado durante un máximo de
+500 ms y mientras el bot no se haya alejado más de 2 m. Un nuevo veto, perder
+la iluminación o el permiso para ir al destino, cambiar de noche/día o entrar
+en sed crítica fuerza una nueva consulta. Beber y las búsquedas urgentes
+conservan sus comprobaciones. La regresión de percepción comprueba que 120
+consultas consecutivas en el mismo lugar realizan una sola búsqueda completa,
+y que movimiento, veto, urgencia, iluminación y caducidad la invalidan.
+
 ## Grabaciones de lobos aportadas en `LOBOS`
 
 | Original | Uso |

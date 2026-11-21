@@ -20,6 +20,50 @@ class LootWorld extends Node3D:
 	var _pickup_claim_until := {}
 	var world_actions_by_id := {}
 
+class WaterWorld extends LootWorld:
+	var water_queries := 0
+	var day_cycle = null
+	func _default_river_segments() -> Array:
+		water_queries += 1
+		return [{"center":Vector3(6, 0, 0), "size":Vector2(14, 7)},
+			{"center":Vector3(100, 0, 0), "size":Vector2(14, 7)}]
+
+func test_preventive_water(manager: Manager, proxy: Node3D) -> void:
+	var world := WaterWorld.new()
+	root.add_child(world)
+	manager.world = world
+	proxy.global_position = Vector3.ZERO
+	var bot := {"bot_id":901, "proxy":proxy, "thirst":60.0}
+	var first := manager._preventive_water_pos(bot)
+	check(first.is_finite(), "preventive search finds an actual river bank")
+	for i in 120:
+		check(manager._preventive_water_pos(bot) == first, "stationary prevention retains the chosen bank")
+	check(world.water_queries == 1, "120 stationary checks share one full water search")
+	proxy.global_position = Vector3(4, 0, 0)
+	var moved := manager._preventive_water_pos(bot)
+	check(world.water_queries == 2 and moved != first, "travel invalidates the old bank projection")
+	bot["_bad_water"] = [{"pos":moved, "until":Time.get_ticks_msec()/1000.0 + 30.0}]
+	var alternate := manager._preventive_water_pos(bot)
+	check(world.water_queries == 3 and alternate.distance_to(moved) > 12.0, "new unreachable veto invalidates the cached bank immediately")
+	bot["thirst"] = 10.0
+	var urgent := manager._preventive_water_pos(bot)
+	check(world.water_queries == 4 and urgent == manager._nearest_water_pos(proxy.global_position, bot),
+		"critical thirst immediately refreshes using the existing urgent water-selection rules")
+	bot["thirst"] = 60.0
+	bot["_bad_water"] = []
+	manager._preventive_water_pos(bot)
+	var before := world.water_queries
+	manager.denied_supply = moved
+	check(manager._preventive_water_pos(bot) != moved and world.water_queries == before + 1,
+		"losing light or supply permission invalidates a cached destination")
+	manager.denied_supply = Vector3.INF
+	before = world.water_queries
+	OS.delay_msec(550)
+	check(manager._preventive_water_pos(bot) == moved and world.water_queries == before + 1,
+		"stationary cache refreshes and notices a newly available destination")
+	manager.world = null
+	world.free()
+
 func test_loot_search(manager: Manager, proxy: Node3D) -> void:
 	var world := LootWorld.new()
 	root.add_child(world)
@@ -105,6 +149,7 @@ func run():
 	var actor := Node3D.new()
 	root.add_child(actor)
 	test_forage_search(manager, actor)
+	test_preventive_water(manager, actor)
 	var meal := {"name":"Carne asada","type":"food","quantity":1,"weight":.42,"use_value":25.0}
 	actor.set_meta("saved_inventory",[meal.duplicate(true)])
 	check(manager._take_peace_gift(actor).is_empty(), "never give away last meal")
