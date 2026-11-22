@@ -60,6 +60,12 @@ func run() -> void:
 	var started := Time.get_ticks_usec()
 	for i in 100:
 		check(ray._find_nearest_interactable(player) == wide, "stable selection with 1200 distant props")
+	var shelter := WorldAction.new()
+	world.add_child(shelter)
+	shelter.setup("shelter_fallback", "shelter", "Refugio", Vector3(2.0, 1.5, 3.0), Color.WHITE, true, false)
+	shelter.global_position = Vector3(0, 0, -1.4)
+	await physics_frame
+	check(ray._find_nearest_interactable(player) == shelter, "nearby shelter enters fallback selection")
 	print("INTERACTION_RAYCAST failures=", failures, " mean_query_ms=", (Time.get_ticks_usec() - started) / 100000.0)
 	world.free()
 	quit(1 if failures else 0)

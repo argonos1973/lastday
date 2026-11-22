@@ -385,6 +385,7 @@ func run() -> void:
 	var k_inv: Array = kael_proxy.get_meta("saved_inventory", [])
 	for it in [
 		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 14, "use_value": 0.0},
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0},
 		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 4, "use_value": 0.0},
 		{"name": "Cuerda", "type": "resource", "weight": 0.25, "quantity": 2, "use_value": 0.0},
 		{"name": "Piel de lobo", "type": "resource", "weight": 0.65, "quantity": 4, "use_value": 0.0},
@@ -477,7 +478,7 @@ func run() -> void:
 
 	# --- 3b) Preparacion nocturna: junta material de fuego antes de oscurecer ---
 	# Un superviviente precavido no espera a que anochezca: por la tarde ya
-	# reune palos, piedras y trapos para la fogata o la antorcha.
+	# reune troncos, palos y trapos para la fogata o la antorcha.
 	var k_blade := {"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0}
 	kael["hide_timer"] = 0.0
 	kael["sleeping"] = false
@@ -501,7 +502,7 @@ func run() -> void:
 	kael["equip_mission"] = false
 	world.world_actions_by_id.clear()
 	# Matriz de "noche resuelta": antorcha propia, palo+trapos fabricable al
-	# momento, fogata ya levantada o — solo con refugio — el 2+2 para montarla.
+	# momento, fogata ya levantada o — solo con refugio — 2 troncos + 1 palo.
 	kael_proxy.set_meta("saved_inventory", [k_blade])
 	check(not mgr._bot_night_fire_ready(kael, kael_proxy), "Sin antorcha ni fogata ni material: no tiene la noche resuelta")
 	kael_proxy.set_meta("saved_inventory", [k_blade,
@@ -525,7 +526,7 @@ func run() -> void:
 	check(mgr._bot_cuts_into_trapos("Chaqueta militar") and not mgr._bot_cuts_into_trapos("Piedra"),
 		"Sabe que ropa se corta a trapos para la antorcha")
 	# Recoleccion dirigida al caer la tarde: piedras sueltas del mundo
-	# (accion stone) se recogen a mano para la fogata — sin filo hace falta.
+	# (accion stone) sirven para herramientas; nunca para la fogata.
 	dc.time_of_day = 18.0
 	kael_proxy.global_position = Vector3(40.0, 0.4, 40.0)
 	kael["pos"] = kael_proxy.global_position
@@ -535,9 +536,10 @@ func run() -> void:
 	world.add_child(prep_stone)
 	prep_stone.global_position = kael_proxy.global_position + Vector3(5.0, 0.0, 0.0)
 	world.world_actions_by_id["prep_stone"] = prep_stone
-	check(mgr._bot_try_gather_mats(kael, 0.1), "Al caer la tarde sin fuego sale a por material")
+	kael_proxy.set_meta("saved_inventory", [k_blade, {"name":"Semillas","type":"resource","quantity":1,"weight":0.05}])
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Con semillas recoge piedra para fabricar la azada")
 	var g_kind := str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
-	check(g_kind == "stone", "Elige el nodo de piedras para la fogata (kind=%s)" % g_kind)
+	check(g_kind == "stone", "Elige el nodo de piedras para la herramienta (kind=%s)" % g_kind)
 	kael_proxy.global_position = prep_stone.global_position
 	kael["pos"] = kael_proxy.global_position
 	for i in range(20):
@@ -545,7 +547,7 @@ func run() -> void:
 			break
 	check(mgr._bot_item_count(kael_proxy, "Piedra") >= 2,
 		"Recoge las piedras del nodo a mano (Piedra=%d)" % mgr._bot_item_count(kael_proxy, "Piedra"))
-	# Troncos aprovechables (accion wood): con filo los lleva para rajar a palos
+	# Un nodo wood no sustituye la tala real aunque sea el mas cercano.
 	var prep_wood := WorldActionScript.new()
 	prep_wood.setup("prep_wood", "wood", "Troncos aprovechables", Vector3(1.6, 0.7, 1.0), Color(0.25, 0.15, 0.06), false, false)
 	world.add_child(prep_wood)
@@ -554,16 +556,17 @@ func run() -> void:
 	kael["_gather"] = {}
 	kael["_gather_scan"] = 0.0
 	kael_proxy.set_meta("saved_inventory", [k_blade])
-	check(mgr._bot_try_gather_mats(kael, 0.1), "Con filo va a por troncos para rajar palos")
+	check(not mgr._bot_try_gather_mats(kael, 0.1), "Con solo cuchillo no obtiene troncos del nodo wood")
 	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
-	check(g_kind == "wood", "Elige el nodo de troncos como fuente de palos (kind=%s)" % g_kind)
+	check(g_kind != "wood", "Nunca elige el atajo wood (kind=%s)" % g_kind)
 	kael_proxy.global_position = prep_wood.global_position
 	kael["pos"] = kael_proxy.global_position
 	for i in range(20):
 		if not mgr._bot_try_gather_mats(kael, 0.2):
 			break
-	check(mgr._bot_item_count(kael_proxy, "Tronco") >= 1 and mgr._bot_palo_supply(kael_proxy, "Cuchillo") >= 4,
-		"Recoge troncos que cuentan como palos futuros (Tronco=%d supply=%d)" % [mgr._bot_item_count(kael_proxy, "Tronco"), mgr._bot_palo_supply(kael_proxy, "Cuchillo")])
+	mgr._bot_node_collect_complete(kael, {"id":"prep_wood","kind":"wood","pos":prep_wood.global_position})
+	check(mgr._bot_item_count(kael_proxy, "Tronco") == 0 and not world._depleted_action_ids.has("prep_wood"),
+		"Una recogida wood antigua tampoco regala troncos")
 	# Arbustos a talar: el camino de siempre sigue eligiendose con filo
 	var prep_bush := WorldActionScript.new()
 	prep_bush.setup("prep_bush", "fell_bush", "Arbusto", Vector3(1.2, 1.4, 1.2), Color(0.2, 0.35, 0.12), true, false)
@@ -587,10 +590,12 @@ func run() -> void:
 	kael["_gather"] = {}
 	kael["_gather_scan"] = 0.0
 	kael_proxy.set_meta("saved_inventory", [
-		{"name": "Hacha", "type": "tool_axe", "weight": 1.4, "quantity": 1, "durability": 80.0, "max_durability": 80.0}])
-	check(mgr._bot_try_gather_mats(kael, 0.1), "Con hacha y sin palos sale a talar el arbol")
+		{"name": "Hacha", "type": "tool_axe", "weight": 1.4, "quantity": 1, "durability": 80.0, "max_durability": 80.0},
+		{"name":"Palo","type":"resource","weight":0.3,"quantity":13},
+		{"name":"Semillas","type":"resource","weight":0.05,"quantity":2}])
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Con palos suficientes y sin troncos sale a talar el arbol")
 	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
-	check(g_kind == "fell_tree", "Elige el arbol grande como fuente de palos (kind=%s)" % g_kind)
+	check(g_kind == "fell_tree", "La falta de troncos elige fell_tree aunque haya wood/piedras/arbusto mas cerca (kind=%s)" % g_kind)
 	kael_proxy.global_position = prep_tree.global_position
 	kael["pos"] = kael_proxy.global_position
 	for i in range(70):
@@ -612,6 +617,31 @@ func run() -> void:
 		if _it is Dictionary and str(_it.get("type", "")) == "tool_axe":
 			axe_dur = float(_it.get("durability", 0.0))
 	check(axe_dur == 70.0, "El hacha gasta 10 de durabilidad por arbol (dur=%.0f)" % axe_dur)
+	# Los dos troncos de fuego no se rajan ni se guardan en el alijo.
+	var reserve_inv := [
+		k_blade.duplicate(true),
+		{"name":"Tronco","type":"resource","weight":1.2,"quantity":2},
+		{"name":"Palo","type":"resource","weight":0.3,"quantity":1}]
+	kael_proxy.set_meta("saved_inventory", reserve_inv.duplicate(true))
+	var split_recipe := {}
+	for recipe in CraftingSystem.RECIPES:
+		if str(recipe.get("output", {}).get("name", "")) == "Palo":
+			split_recipe = recipe
+	kael["_craft_state"] = {}
+	check(not mgr._bot_try_craft_named(kael, 0.1, ["Palo"], false), "El crafteo dirigido no raja los dos troncos reservados")
+	mgr._bot_apply_craft(kael, split_recipe)
+	check(mgr._bot_item_count(kael_proxy, "Tronco") == 2 and mgr._bot_item_count(kael_proxy, "Palo") == 1,
+		"Revalidar un crafteo interrumpido conserva troncos y palo de fogata")
+	var fire_partition: Dictionary = mgr._bot_partition_inventory_for_shelter(kael, reserve_inv)
+	check((fire_partition.keep as Array).filter(func(e): return str(e.name) == "Tronco").size() == 1
+		and (fire_partition.store as Array).filter(func(e): return str(e.name) in ["Tronco","Palo"]).is_empty(),
+		"El alijo conserva los dos troncos y el palo para el fuego pendiente")
+	var surplus_inv: Array = reserve_inv.duplicate(true)
+	surplus_inv[1]["quantity"] = 3
+	kael_proxy.set_meta("saved_inventory", surplus_inv)
+	mgr._bot_apply_craft(kael, split_recipe)
+	check(mgr._bot_item_count(kael_proxy, "Tronco") == 2 and mgr._bot_item_count(kael_proxy, "Palo") == 3,
+		"Un tercer tronco si puede rajarse para refugio/antorcha sin gastar los dos del fuego")
 	# Sin hacha el arbol no se elige: un cuchillo no tumba un tronco
 	world.last_action_completed = {}
 	var prep_tree2 := WorldActionScript.new()
@@ -684,7 +714,7 @@ func run() -> void:
 	(kael["vstats"] as SurvivalStats).sleep = 90.0
 	kael_proxy.set_meta("saved_inventory", [k_blade,
 		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 5, "use_value": 0.0},
-		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 2, "use_value": 0.0}])
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0}])
 	var fires_pre: int = (world.built_campfires as Array).size()
 	mgr._tick_bot(kael, 0.1)
 	check((world.built_campfires as Array).size() == fires_pre + 1,
@@ -3740,15 +3770,15 @@ func run() -> void:
 	fresh_b["proxy"].set_meta("saved_inventory", [
 		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 20.0},
 		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1, "use_value": 0.0},
-		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 2, "use_value": 0.0},
-		{"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 2, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 1, "use_value": 0.0},
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0},
 	])
 	for i in range(25):
 		mgr._bot_try_cook_meat(fresh_b, 0.2)
 		if mgr._bot_item_count(fresh_b["proxy"], "Carne asada de ciervo") > 0:
 			break
 	check(not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Carne asada de ciervo") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Palo afilado") == 0,
-		"SpawnReal 10n: con Palo afilado + 2 Palos + 2 Piedras el bot hace hoguera, ensarta la carne y la cocina (cf=%s)" % str(fresh_b.get("campfire_id", "")))
+		"SpawnReal 10n: con Palo afilado + 2 Troncos + 1 Palo el bot hace hoguera, ensarta la carne y la cocina (cf=%s)" % str(fresh_b.get("campfire_id", "")))
 
 	# 10o: percepcion auditiva — un disparo de rifle a 85 m es oido por los
 	# otros bots (activa alerta/huida en desarmados y aggro en un bot armado)
@@ -3772,7 +3802,7 @@ func run() -> void:
 		"SpawnReal 10p: bot hostil armado a 85 m oye el disparo y localiza al tirador")
 
 	# 10q: sin refugio construido, un bot con Pez crudo + Palo afilado +
-	# 2 Palos + 2 Piedras crea hoguera, ensarta el pez (Pez ensartado) y lo
+	# 2 Troncos + 1 Palo crea hoguera, ensarta el pez (Pez ensartado) y lo
 	# cocina (Pez cocinado)
 	fresh_b["shelter_id"] = ""
 	fresh_b["shelter_pos"] = Vector3.INF
@@ -3783,8 +3813,8 @@ func run() -> void:
 	fresh_b["proxy"].set_meta("saved_inventory", [
 		{"name": "Pez crudo", "type": "food", "weight": 0.4, "quantity": 1, "use_value": 15.0},
 		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1, "use_value": 0.0},
-		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 2, "use_value": 0.0},
-		{"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 2, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 1, "use_value": 0.0},
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0},
 	])
 	for i in range(25):
 		mgr._bot_try_cook_meat(fresh_b, 0.2)
@@ -4345,7 +4375,7 @@ func run() -> void:
 	fresh_b["sleeping"] = false
 	fresh_b["proxy"].set_meta("saved_inventory", [
 		{"name": "Palo", "type": "resource", "weight": 0.2, "quantity": 4},
-		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 3},
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2},
 	])
 	vs.body_temperature = 34.0
 	var fires0: int = world.built_campfires.size()
@@ -6116,15 +6146,15 @@ func run() -> void:
 	mgr._tick_bot(b_nt, 0.1)
 	check(str(b_nt.get("_act", "")) != "rest" and bool(b_nt.get("torch_lit", false)),
 		"10J5n4: Con antorcha de noche vuelve a poder salir (act=%s torch=%s)" % [str(b_nt.get("_act", "")), str(b_nt.get("torch_lit", false))])
-	# Sin refugio y con justo los 11 palos no gasta el del refugio en la antorcha.
+	# 11 palos de refugio + 1 reservado para fuego: no desviarlos a antorcha.
 	p_nt.set_meta("saved_inventory", [
-		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 12},
 		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1},
 	])
 	b_nt["_craft_state"] = {}
 	mgr._tick_bot(b_nt, 0.1)
 	check(str(b_nt.get("_act", "")) == "build" and mgr._bot_item_count(p_nt, "Antorcha") == 0,
-		"10J5n5: Con los 11 palos justos del refugio no gasta uno en la antorcha: va a construir (act=%s)" % str(b_nt.get("_act", "")))
+		"10J5n5: Con 11 palos de refugio + 1 de fuego no gasta uno en antorcha: va a construir (act=%s)" % str(b_nt.get("_act", "")))
 	# Pero con ropa+filo sin trapos primero la corta a trapos y luego fabrica.
 	p_nt.set_meta("saved_inventory", [
 		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 13},
@@ -6405,11 +6435,11 @@ func run() -> void:
 	# unirse lo desmonta — solo queda la base del lider y el material se salva.
 	var save_bp_nt := str(b_nt.get("backpack", ""))
 	b_nt["backpack"] = "Mochila militar" # para que quepa todo el salvamento
-	p_ld.set_meta("saved_inventory", [{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11}])
+	p_ld.set_meta("saved_inventory", [{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 12}])
 	p_ld.global_position = Vector3(260.0, 0.4, 200.0)
 	mgr._bot_build_shelter(b_ld, p_ld.global_position)
 	var sh_lead := str(b_ld.get("shelter_id", ""))
-	p_nt.set_meta("saved_inventory", [{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 11}])
+	p_nt.set_meta("saved_inventory", [{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 12}])
 	mgr._bot_build_shelter(b_nt, p_nt.global_position + Vector3(40.0, 0.0, 0.0))
 	var sh_own := str(b_nt.get("shelter_id", ""))
 	mgr._commit_shelter_contents(sh_own, [{"name": "Piel de lobo", "type": "resource", "weight": 0.35, "quantity": 1}])
@@ -7271,7 +7301,7 @@ func run() -> void:
 	# 10X) Afilar antes que intoxicarse: con Palo + filo el bot desesperado
 	#      craftea Palo afilado (2.4 s) y luego cocina — no come crudo.
 	# ------------------------------------------------------------------
-	# 10X0: carne + Palo + Cuchillo -> no come crudo, arranca el afilado
+	# 10X0: carne + 2 Palos + Cuchillo -> afila uno, reserva otro para fuego
 	mgr._respawn_bot(mgr.bots[903])
 	b_med = mgr.bots[903]
 	p_med = b_med["proxy"]
@@ -7284,7 +7314,7 @@ func run() -> void:
 	b_med["sick_timer"] = 0.0
 	p_med.set_meta("saved_inventory", [
 		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 20.0},
-		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 1},
+		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 2},
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
 	])
 	mem_med["death_lessons"] = {}
@@ -7312,7 +7342,7 @@ func run() -> void:
 	b_med["sick_timer"] = 0.0
 	p_med.set_meta("saved_inventory", [
 		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
-		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 1},
+		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 2},
 		{"name": "Cuchillo de piedra", "type": "weapon", "weight": 0.3, "quantity": 1, "durability": 60.0, "max_durability": 60.0},
 	])
 	mem_med["death_lessons"] = {}

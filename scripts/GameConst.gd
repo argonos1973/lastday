@@ -82,6 +82,7 @@ const KNIFE_MODEL := "res://assets/external/quaternius_zombie_apocalypse/Weapons
 const MILITARY_HELMET_MODEL := "res://assets/models/equipment/tactical_helmet.glb"
 const HEADLAMP_MODEL := "res://assets/characters/adapted/headlamp.glb"
 const HEADLAMP_ITEM_NAME := "Linterna frontal"
+const HEADLAMP_DROP_SCALE := 0.55
 const MILITARY_BACKPACK_MODEL := "res://assets/characters/adapted/military_backpack.glb"
 const BACKPACK_MODEL := "res://assets/characters/adapted/backpack_detailed.glb"
 const FISHERMANS_HAT_MODEL := "res://assets/external/polyhaven/fishermans_hat/fishermans_hat_1k.gltf"

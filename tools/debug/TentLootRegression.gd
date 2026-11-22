@@ -5,7 +5,7 @@ class World extends "res://scripts/Main.gd":
  func _exit_tree(): pass
  func _create_pickup_item(data: Dictionary) -> void:
   if not _depleted_action_ids.has(str(data.id)):
-   generated[data.id] = {"name": data.name, "pos": data.pos}
+   generated[data.id] = {"name": data.name, "pos": data.pos, "scale": float(data.get("scale", 0.0))}
  func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float: return 0.0
 func _initialize(): call_deferred("run")
 func run():
@@ -20,9 +20,16 @@ func run():
  world._create_house_loot()
  var failures := 0
  for id in ["village_house_headlamp", "city_house_headlamp", "tent_loot_headlamp", "remote_tent_loot_headlamp", "city_tent2_loot_headlamp"]:
-  if before.get(id, {}).get("name") != GameConst.HEADLAMP_ITEM_NAME:
+  var lamp = before.get(id, {})
+  if lamp.get("name") != GameConst.HEADLAMP_ITEM_NAME:
    failures += 1
    push_error("Missing headlamp " + id)
+  elif absf(float(lamp.get("scale", 0.0)) - GameConst.HEADLAMP_DROP_SCALE) > 0.001:
+   failures += 1
+   push_error("Wrong headlamp loot scale " + id)
+ if absf(world._get_drop_scale(GameConst.HEADLAMP_ITEM_NAME, "clothing") - GameConst.HEADLAMP_DROP_SCALE) > 0.001:
+  failures += 1
+  push_error("Dropped headlamp uses the wrong scale")
  for id in before:
   if id in world._depleted_action_ids: continue
   if before[id] != world.generated.get(id):

@@ -1244,7 +1244,12 @@ func _input(event: InputEvent) -> void:
 			if _loot_panel != null:
 				_close_loot_ui()
 			var k_target = player._get_aimed_interaction_target() if player.has_method("_get_aimed_interaction_target") else null
-			var k_is_shelter: bool = k_target != null and str(k_target.get("action_type", "")) == "shelter"
+			var k_is_shelter: bool = k_target != null and str(k_target.get("action_type")) == "shelter"
+			if not k_is_shelter and not _is_backpack_container(k_target):
+				var near_target = player._get_interaction_target() if player.has_method("_get_interaction_target") else null
+				if near_target != null and str(near_target.get("action_type")) == "shelter":
+					k_target = near_target
+					k_is_shelter = true
 			if _is_backpack_container(k_target) or k_is_shelter:
 				_toggle_backpack_ui(k_target)
 			else:
@@ -4286,7 +4291,7 @@ func _net_item_picked_up(action_id: String, sender_id: int = 0) -> bool:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
-	elif action_id.begins_with("fell_tree_"):
+	if action_id.begins_with("fell_tree_"):
 		# World-state replays run after forest generation — a felled tree that
 		# was never activated here is still standing as a batched MultiMesh
 		# instance; hide it like a live world_action_completed relay would.
@@ -8004,7 +8009,7 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 				"Casco militar":
 					return 1.0
 				"Linterna frontal":
-					return 1.25
+					return GameConst.HEADLAMP_DROP_SCALE
 				_:
 					return 0.7
 		"seed":
@@ -11478,7 +11483,7 @@ func _create_house_loot() -> void:
 	# Separate stream and IDs: an old depleted house ID must still refer to the same item.
 	var hl_rng := RandomNumberGenerator.new()
 	hl_rng.seed = _stable_loot_seed("residential_headlamps")
-	var headlamp := {"name": GameConst.HEADLAMP_ITEM_NAME, "type": "clothing", "weight": 0.22, "qty": 1, "use": 0.0, "paths": [GameConst.HEADLAMP_MODEL], "scale": 1.25, "rot": Vector3.ZERO, "color": Color.TRANSPARENT}
+	var headlamp := {"name": GameConst.HEADLAMP_ITEM_NAME, "type": "clothing", "weight": 0.22, "qty": 1, "use": 0.0, "paths": [GameConst.HEADLAMP_MODEL], "scale": GameConst.HEADLAMP_DROP_SCALE, "rot": Vector3.ZERO, "color": Color.TRANSPARENT}
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
 		{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0, "label": "Casa abandonada 2"},
@@ -13028,7 +13033,11 @@ func _net_world_action_completed(action_id: String, spawns: Array, extra_visual:
 		_hide_action_visual(action)
 		action.mark_depleted()
 		world_actions_by_id.erase(action_id)
-	elif not action_id.is_empty() and action_id.begins_with("fell_tree_"):
+	# An activated WorldAction can still use a batched tree visual. Always
+	# hide that instance too, including cuts performed by server bots.
+	if action_id.begins_with("fell_tree_"):
+		if not _legit_cut_trees.has(action_id):
+			_legit_cut_trees.append(action_id)
 		_hide_remote_felled_tree(action_id)
 	if action_id.begins_with("crop_"):
 		_remove_crop(action_id)

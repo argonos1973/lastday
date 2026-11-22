@@ -67,7 +67,7 @@ func _update_interaction_index() -> void:
 		if not _interaction_cells.has(cell):
 			_interaction_cells[cell] = {}
 		_interaction_cells[cell][get_instance_id()] = self
-	elif action_type in ["cut_log", "eat_food", "light_campfire", "cook"]:
+	elif action_type in ["cut_log", "eat_food", "light_campfire", "cook", "shelter"]:
 		_wide_interactions[get_instance_id()] = self
 	else:
 		return

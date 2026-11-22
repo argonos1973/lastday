@@ -3,10 +3,14 @@ class Arena extends Node3D:
  var _lit_campfires: Array = []
  var world_actions_by_id: Dictionary = {}
  var net = null
+ var reject_build := false
  # Franja de rio simulada: x en [100,110] es agua sombreada para las pruebas
  # de fogata en el agua (igual que get_river_depth_at del mundo real).
  func get_river_depth_at(pos): return 1.0 if pos.x >= 100.0 and pos.x <= 110.0 else 0.0
- func _net_campfire_built(id, pos, _pid): world_actions_by_id[id] = {"position": pos}
+ func _net_campfire_built(id, pos, _pid):
+  if reject_build: return false
+  world_actions_by_id[id] = {"position": pos}
+  return true
  func _net_campfire_lit(id, name, pos, _pid):
   if not world_actions_by_id.has(id): return false
   for lc in _lit_campfires:
@@ -43,8 +47,12 @@ func run():
  check(not manager._bot_prepare_night_supplies(equipped,.1) and equipped.flashlight_on and equipped.held_item == "Cuchillo", "worn headlamp lights night travel without using hands")
  check(not manager._bot_supply_goal_allowed(b,Vector3(30,0,0)), "non-lethal hunger keeps the dark travel ban")
  proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+ var old_recipe := (proxy.get_meta("saved_inventory") as Array).duplicate(true)
+ check(not manager._bot_build_and_light_campfire(b, Vector3(1,0,0)), "sticks and stones cannot replace logs")
+ check(proxy.get_meta("saved_inventory") == old_recipe and world._lit_campfires.is_empty(), "rejected recipe changes neither inventory nor world")
+ proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1},{"name":"Piedra","quantity":2}])
  check(not manager._bot_prepare_night_supplies(b,.1), "build and light a fire using inventory")
- check(world._lit_campfires.size() == 1 and manager._bot_item_count(proxy,"Palo") == 0 and manager._bot_item_count(proxy,"Piedra") == 0, "fire consumes actual materials once")
+ check(world._lit_campfires.size() == 1 and manager._bot_item_count(proxy,"Tronco") == 0 and manager._bot_item_count(proxy,"Palo") == 0 and manager._bot_item_count(proxy,"Piedra") == 2, "fire consumes two logs and one stick, leaving stones untouched")
  check(manager._bot_supply_goal_lit(b,Vector3(8,0,0)), "nearby food/water within firelight allowed")
  check(not manager._bot_supply_goal_lit(b,Vector3(25,0,0)), "distant supplies without torch rejected")
  manager._bot_prepare_night_supplies(b,.1)
@@ -124,7 +132,7 @@ func run():
  for invalid_pos in [Vector3.INF, Vector3(200,0,200)]:
   proxy.global_position = Vector3(100,0,100)
   world._lit_campfires = [{"id":"old_camp","pos":Vector3(200,0,200)}]
-  proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+  proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1}])
   var replacement := {"proxy":proxy,"bot_id":905,"hunger":30.0,"thirst":30.0,"campfire_id":"old_camp","campfire_pos":invalid_pos}
   check(not manager._bot_prepare_night_supplies(replacement,.1), "invalid or distant camp permits a new local fire")
   check(replacement.campfire_id != "old_camp" and world._lit_campfires.size() == 2 and world._lit_campfires[0].pos == Vector3(200,0,200), "new camp has distinct identity and preserves old fire")
@@ -134,7 +142,7 @@ func run():
  proxy.global_position = Vector3(0,0,0)
  world._lit_campfires = []
  world.world_actions_by_id = {}
- proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":4},{"name":"Piedra","quantity":4}])
+ proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":4},{"name":"Palo","quantity":2}])
  var b5 := {"proxy":proxy,"bot_id":906,"hunger":30.0,"thirst":30.0,"campfire_id":"","campfire_pos":Vector3.INF}
  check(not manager._bot_prepare_night_supplies(b5,.1), "builds and lights a real campfire")
  check(world._lit_campfires.size() == 1, "campfire registered as lit")
@@ -178,17 +186,21 @@ func run():
  proxy.global_position = Vector3(0,0,0)
  # --- Nunca una fogata dentro del agua: punto en el rio se reubica a suelo
  # seco si el anillo lo permite, y rodeado de agua no gasta material ---
- proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+ proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1}])
  var b9 := {"proxy":proxy,"bot_id":910,"campfire_id":"","campfire_pos":Vector3.INF}
  check(manager._bot_build_and_light_campfire(b9, Vector3(100.5,0,0)), "fire next to the river relocates to dry land")
  check(b9["campfire_pos"].x < 100.0, "relocated fire lands outside the water band")
  check(world.world_actions_by_id.has(b9["campfire_id"]), "relocated fire actually exists in the world")
- proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+ proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1}])
  var b10 := {"proxy":proxy,"bot_id":911,"campfire_id":"","campfire_pos":Vector3.INF}
  check(not manager._bot_build_and_light_campfire(b10, Vector3(105.0,0,0)), "fully surrounded by water -> build refused")
  check(b10["campfire_id"] == "", "refused build leaves no phantom campfire id")
- check(manager._bot_item_count(proxy,"Palo") == 2 and manager._bot_item_count(proxy,"Piedra") == 2,
+ check(manager._bot_item_count(proxy,"Tronco") == 2 and manager._bot_item_count(proxy,"Palo") == 1,
    "refused build does not consume materials")
+ world.reject_build = true
+ check(not manager._bot_build_and_light_campfire(b10, Vector3.ZERO), "authoritative world can reject a dry placement")
+ check(manager._bot_item_count(proxy,"Tronco") == 2 and manager._bot_item_count(proxy,"Palo") == 1 and b10.campfire_id == "",
+   "authoritative rejection preserves materials and creates no phantom fire")
  world.free()
  print("BotNightSuppliesRegression errors=",errors)
  quit(1 if errors else 0)

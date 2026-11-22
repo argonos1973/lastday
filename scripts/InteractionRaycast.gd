@@ -152,7 +152,7 @@ func _find_nearest_interactable(player: Node3D) -> Object:
 			if wa.depleted and not wa.repeatable:
 				continue
 			# Only use fallback for choppable objects and pickup items
-			if wa.action_type != "fell_tree" and wa.action_type != "fell_bush" and wa.action_type != "cut_log" and wa.action_type != "pickup_item" and wa.action_type != "eat_food" and wa.action_type != "light_campfire" and wa.action_type != "cook" and wa.action_type != "gut_wolf":
+			if wa.action_type != "fell_tree" and wa.action_type != "fell_bush" and wa.action_type != "cut_log" and wa.action_type != "pickup_item" and wa.action_type != "eat_food" and wa.action_type != "light_campfire" and wa.action_type != "cook" and wa.action_type != "gut_wolf" and wa.action_type != "shelter":
 				continue
 		var node_pos := (node as Node3D).global_position
 		var dx := player_pos.x - node_pos.x

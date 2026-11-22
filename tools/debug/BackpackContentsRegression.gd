@@ -9,10 +9,16 @@ const ItemScript = preload("res://scripts/Item.gd")
 const SaveHooks = preload("res://scripts/SaveGameHooks.gd")
 
 class TestPlayer extends "res://scripts/PlayerController.gd":
+	var aimed_target = null
+	var near_target = null
 	func _create_body() -> void:
 		pass
 	func _capture_mouse() -> void:
 		pass
+	func _get_aimed_interaction_target():
+		return aimed_target
+	func _get_interaction_target():
+		return near_target
 
 class TestHUD extends "res://scripts/HUD.gd":
 	func show_countdown(_text: String, _duration: float) -> void: pass
@@ -254,6 +260,29 @@ func run() -> void:
 	world._input(ev2)
 	check(world._backpack_panel == null, "Escape closes the stash panel")
 	world._backpack_action = null
+
+	# K no exige retícula exacta: si el fallback cercano selecciona un refugio,
+	# abre su alijo. Un objetivo no-refugio sigue abriendo la mesa de crafteo.
+	player.aimed_target = stash_action
+	player.near_target = null
+	var ev_k := InputEventKey.new()
+	ev_k.keycode = KEY_K
+	ev_k.pressed = true
+	world._input(ev_k)
+	check(world._backpack_action == stash_action and world._backpack_panel != null, "K opens an aimed shelter stash")
+	world._input(ev_k)
+	check(world._backpack_panel == null, "K closes the aimed shelter stash")
+	player.aimed_target = null
+	player.near_target = stash_action
+	world._input(ev_k)
+	check(world._backpack_action == stash_action and world._backpack_panel != null, "K opens a nearby shelter stash")
+	world._input(ev_k)
+	var pickup_target = world._create_world_action("near_pickup", "pickup_item", "Palo", Vector3.ZERO, Vector3.ONE, Color.WHITE, false, false)
+	pickup_target.set_meta("item_name", "Palo")
+	pickup_target.set_meta("item_type", "resource")
+	player.near_target = pickup_target
+	world._input(ev_k)
+	check(world._backpack_panel == null, "K still opens crafting when the nearby target is not a shelter")
 
 	world.free()
 	player.free()
