@@ -39,6 +39,7 @@ func run():
 	check(manager._has_clear_shot(proxy.position,animal.position), "open sight line")
 	arena.distant_cover = true
 	check(not manager._has_clear_shot(proxy.position,animal.position), "analytical distant cover blocks sight")
+	check(not manager._bot_within_aim_sight(b, animal, 8.0), "analytical cover also blocks aim recognition")
 	manager._handle_predator_encounter(b,animal,.1)
 	check(manager.moves == 1 and not b.is_aiming, "rifle bot navigates instead of aiming into cover")
 	manager._bot_fire_rifle_at(b,animal,100)
@@ -48,6 +49,7 @@ func run():
 	manager._handle_predator_encounter(b,animal,.1)
 	check(animal.damage == 0 and manager.moves == 2, "melee cannot hit through cover")
 	arena.distant_cover = false
+	check(manager._bot_within_aim_sight(b, animal, 8.0), "aim recognition recovers once cover is removed")
 	animal.position.y = 2.2
 	manager._handle_predator_encounter(b,animal,.1)
 	check(animal.damage == 0 and manager.moves == 3, "melee cannot hit another floor")

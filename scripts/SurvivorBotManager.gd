@@ -1702,6 +1702,10 @@ func _emit_bot_condition_audio(b: Dictionary, condition: String) -> void:
 
 func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["_ground_tick"] = int(b.get("_ground_tick", 0)) + 1
+	var ignition: Dictionary = b.get("_fire_ignition", {})
+	if not ignition.is_empty() and (int(ignition.get("tick", -1)) < int(b["_ground_tick"]) - 1 \
+			or bool(b.get("sleeping", false)) or float(b.get("flinch_timer", 0.0)) > 0.0):
+		b.erase("_fire_ignition")
 	if b.has("_ground_claim") and int(b.get("_ground_last_tick", -1)) < int(b["_ground_tick"]) - 1:
 		_cancel_bot_ground_pickup(b)
 	var proxy: Node3D = b.get("proxy")
@@ -2136,6 +2140,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# recoge o se limpia el cadáver). No asignar una referencia ya liberada a
 	# una variable tipada: en Godot 4 eso genera un error cada tick y puede
 	# propagar transforms inválidos al proxy del bot.
+	if not (b.get("_fire_ignition", {}) as Dictionary).is_empty() and _ensure_bot_campfire_lit(b, delta):
+		return
 	var gut: Node3D = null
 	var gut_candidate: Variant = b.get("gut_target")
 	if gut_candidate != null:
@@ -2475,6 +2481,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "campfire"
 		var fire_spot := _find_nearby_campfire_spot(b, sh_pos)
 		if fire_spot != Vector3.INF:
+			if proxy.global_position.distance_to(fire_spot) > GameConst.CAMPFIRE_REACH:
+				_move_bot_towards(b, fire_spot, 3.8, delta, "walk")
+				return
 			_bot_build_and_light_campfire(b, fire_spot)
 		else:
 			b["no_fire_spot"] = true
@@ -2583,7 +2592,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			return
 		# Dentro del refugio: encender fogata si se apagó, asar carne (solo si tiene Palo afilado / Carne ensartada) y descansar/ocultarse
 		if has_built_sh:
-			_ensure_bot_campfire_lit(b)
+			if _bot_try_light_own_fire(b, delta):
+				return
 		# Sin fogata aun y con material a mano: la monta junto a donde acampa —
 		# los troncos y el palo que junto al caer la tarde se vuelven luz y
 		# calor para la noche (quien se esconde no enciende un faro).
@@ -3675,10 +3685,10 @@ func _find_threatening_predator(b: Dictionary, max_dist: float) -> Node3D:
 				continue
 		var d := proxy.global_position.distance_to((w as Node3D).global_position)
 		var d_leader := leader.global_position.distance_to((w as Node3D).global_position) if leader != null else 9999.0
-		# Defender al lider de una fiera exige verla uno mismo: la cercania
-		# del depredador al lider solo cuenta si el bot lo tiene a la vista.
+		# Defender al lider de una fiera exige percibirla uno mismo: la cercania
+		# del depredador al lider solo cuenta si el bot lo ve o lo oye.
 		var eff_d := minf(d, d_leader) if d <= 45.0 else d
-		if eff_d < best_d:
+		if eff_d < best_d and (_can_bot_hear_actor(b, w as Node3D, d) or _has_clear_shot(proxy.global_position, (w as Node3D).global_position)):
 			best_d = eff_d
 			best = w as Node3D
 	return best
@@ -4366,7 +4376,7 @@ func _find_huntable_prey(b: Dictionary, max_dist: float) -> Node3D:
 		if _is_goal_blacklisted(b, w.global_position):
 			continue
 		var d := proxy.global_position.distance_to((w as Node3D).global_position)
-		if d < best_d:
+		if d < best_d and (_can_bot_hear_actor(b, w as Node3D, d) or _has_clear_shot(proxy.global_position, (w as Node3D).global_position)):
 			best_d = d
 			best = w as Node3D
 	return best
@@ -4388,7 +4398,7 @@ func _find_guttable_corpse(b: Dictionary, max_dist: float) -> Node3D:
 		if at not in ["deer", "fox", "wolf", "bear"]:
 			continue
 		var d := proxy.global_position.distance_to((w as Node3D).global_position)
-		if d < best_d:
+		if d < best_d and _has_clear_shot(proxy.global_position, (w as Node3D).global_position):
 			best_d = d
 			best = w as Node3D
 	return best
@@ -4576,7 +4586,7 @@ func _find_tameable_wolf(b: Dictionary, max_dist: float) -> Node3D:
 		if str(w.get("animal_type")) != "wolf" or not str(w.get("tamed_to")).is_empty():
 			continue
 		var d := proxy.global_position.distance_to((w as Node3D).global_position)
-		if d >= 5.5 and d <= max_dist:
+		if d >= 5.5 and d <= max_dist and (_can_bot_hear_actor(b, w as Node3D, d) or _has_clear_shot(proxy.global_position, (w as Node3D).global_position)):
 			return w as Node3D
 	return null
 
@@ -4779,8 +4789,8 @@ func _ai_note_foe_scan(b: Dictionary, foe: Node3D) -> void:
 		return
 	var proxy: Node3D = b.get("proxy")
 	if proxy != null and is_instance_valid(proxy) \
-			and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)) \
-			and _has_clear_shot(proxy.global_position, foe.global_position):
+			and _has_clear_shot(proxy.global_position, foe.global_position) \
+			and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position), true):
 		_ai_note_foe_intel(b, foe, foe.global_position, "seen")
 
 # Version JSON de la pista de enemigo para el panel de diagnostico.
@@ -5045,17 +5055,20 @@ func _bot_target_is_lit(target: Node3D) -> bool:
 		or bool(target.get_meta("flashlight_on", false)) or target.get("_flashlight_on") == true \
 		or _is_near_any_lit_campfire(target.global_position, 6.0)
 
-func _bot_within_aim_sight(b: Dictionary, target: Node3D, dist: float) -> bool:
+func _bot_within_aim_sight(b: Dictionary, target: Node3D, dist: float, checked_los := false) -> bool:
 	# An acquired enemy still needs to be visible. A scope/overwatch position
 	# extends recognition, but neither grants night vision or sees through cover.
+	var proxy: Node3D = b["proxy"]
+	var los := func() -> bool:
+		return checked_los or _has_clear_shot(proxy.global_position, target.global_position)
 	if _is_world_night() and bool(b.get("flashlight_on", false)) and dist <= 38.0:
 		var forward := Vector3.FORWARD.rotated(Vector3.UP, float(b.get("rot", 0.0)))
-		var direction := target.global_position - (b["proxy"] as Node3D).global_position
+		var direction := target.global_position - proxy.global_position
 		if forward.dot(direction.normalized()) >= cos(deg_to_rad(PlayerController.HEADLAMP_SPOT_ANGLE)):
-			return true
+			return los.call()
 	var scoped := str(b.get("held_item", "")) == "Rifle francotirador"
-	var elevated := (b["proxy"] as Node3D).global_position.y - target.global_position.y >= BOT_ROOF_MIN_ELEV
-	return dist <= _effective_human_sight(target, 85.0 if scoped or elevated else 52.0)
+	var elevated := proxy.global_position.y - target.global_position.y >= BOT_ROOF_MIN_ELEV
+	return dist <= _effective_human_sight(target, 85.0 if scoped or elevated else 52.0) and los.call()
 
 # Percepcion auditiva entre bots y jugadores: disparos (220 m), esprints/tala
 # (34-55 m), puertas (30 m) y pasos normales (16 m) se oyen aunque haya muros
@@ -5288,7 +5301,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 		if d_aggro < 130.0:
 			# El aggro no es un radar: sigue al enemigo solo mientras lo ve u
 			# oye. Si lo pierde, recuerda DONDE desaparecio y cuanto buscarlo.
-			if _can_bot_hear_actor(b, aggro, d_aggro) or (_bot_within_aim_sight(b, aggro, d_aggro) and _has_clear_shot(proxy.global_position, aggro.global_position)):
+			if _can_bot_hear_actor(b, aggro, d_aggro) or (_has_clear_shot(proxy.global_position, aggro.global_position) and _bot_within_aim_sight(b, aggro, d_aggro, true)):
 				return aggro
 			if int(b.get("_lost_foe_until_msec", 0)) <= 0:
 				var pers_lf := _get_bot_personality(b)
@@ -5526,7 +5539,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 	# una vigia disparar desde su puesto elevado.
 	var clear_los := _has_clear_shot(proxy.global_position, fpos)
 	if wkind == "rifle":
-		clear_los = clear_los and _bot_within_aim_sight(b, foe, dist)
+		clear_los = clear_los and _bot_within_aim_sight(b, foe, dist, true)
 	if wkind == "rifle" and bool(b.get("gun_reloading", false)):
 		_bot_seek_ballistic_cover(b, foe, delta)
 		return
@@ -5877,7 +5890,7 @@ func _bot_aim_tick(b: Dictionary, foe: Node3D, dist: float, clear_los: bool, del
 	if not rifle:
 		a["visual_darkness"] = 0.0
 		a["uncertainty_deg"] = 0.0
-	var visible := clear_los and (not rifle or _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)))
+	var visible := clear_los and (not rifle or _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position), true))
 	var origin := proxy.global_position + Vector3(0.0, 0.3 if bool(b.get("prone", false)) else (1.0 if (bool(b.get("crouching", false)) or bool(b.get("sitting", false))) else 1.4), 0.0)
 	var pt := Vector3.INF
 	if visible:
@@ -6113,7 +6126,7 @@ func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: St
 			or not _has_clear_shot(proxy.global_position, target.global_position):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.recheck_fail", _cpt)
 		return false
-	if not _bot_within_aim_sight(b, target, proxy.global_position.distance_to(target.global_position)):
+	if not _bot_within_aim_sight(b, target, proxy.global_position.distance_to(target.global_position), true):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.not_visible", _cpt)
 		return false
 	var is_m4 := _bot_gun_is_m4(weapon)
@@ -10428,7 +10441,7 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 			return _bot_has_can_opener(b["proxy"]) or float(b["hunger"]) < 30.0
 		return true
 	if tp == "tool_matches" or nm == "Cerillas":
-		return _bot_item_count(b["proxy"], "Cerillas") < 1
+		return not _bot_has_usable_matches(b["proxy"])
 	if tp == "tool_torch" or nm == "Antorcha":
 		return _bot_item_count(b["proxy"], "Antorcha") < 1
 	if tp == "weapon_bola" or nm == "Boleadoras":
@@ -10816,13 +10829,44 @@ func _bot_build_camp_pos(b: Dictionary) -> Vector3:
 	return b.get("camp_spot", Vector3.INF)
 
 func _can_bot_build_campfire(proxy: Node3D) -> bool:
-	return _bot_item_count(proxy, "Tronco") >= 2 and _bot_item_count(proxy, "Palo") >= 1
+	for material in GameConst.CAMPFIRE_INPUTS:
+		if _bot_item_count(proxy, material) < int(GameConst.CAMPFIRE_INPUTS[material]):
+			return false
+	return true
+
+func _bot_has_usable_matches(proxy: Node3D) -> bool:
+	for item in proxy.get_meta("saved_inventory", []):
+		if str(item.get("name", "")) == "Cerillas" and int(item.get("quantity", 1)) > 0 and float(item.get("durability", 10.0)) > 0.0:
+			return true
+	return false
+
+func _bot_has_nearby_campfire(b: Dictionary) -> bool:
+	var pos: Vector3 = b.get("campfire_pos", Vector3.INF)
+	return world != null and "world_actions_by_id" in world and world.world_actions_by_id.has(str(b.get("campfire_id", ""))) \
+		and pos.is_finite() and (b["proxy"] as Node3D).global_position.distance_to(pos) <= 40.0
+
+func _bot_own_fire_lit(b: Dictionary) -> bool:
+	var id := str(b.get("campfire_id", ""))
+	if id.is_empty() or world == null:
+		return false
+	for lc in world.get("_lit_campfires") if "_lit_campfires" in world else []:
+		if str(lc.get("id", "")) == id and _campfire_entry_alive(lc):
+			return true
+	return false
+
+func _bot_fire_stick_reserve(b: Dictionary) -> int:
+	var build := _bot_needs_campfire(b)
+	if not build and not (_bot_has_nearby_campfire(b) and not _bot_own_fire_lit(b)):
+		return 0
+	return (1 if build else 0) + (0 if _bot_has_usable_matches(b["proxy"]) else GameConst.CAMPFIRE_IGNITION_STICKS)
 
 # Reserva comun para recoleccion, crafteo y alijo. Un fuego remoto no
 # resuelve el frio ni la cocina de aqui; no_fire_spot solo veta el solar.
 func _bot_needs_campfire(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	if _is_near_any_lit_campfire(proxy.global_position, 8.0):
+		return false
+	if _bot_has_nearby_campfire(b):
 		return false
 	if _bot_is_freezing(b):
 		return true
@@ -10837,12 +10881,14 @@ func _bot_craft_preserves_fire(b: Dictionary, recipe: Dictionary) -> bool:
 	var inputs: Dictionary = recipe.get("inputs", {})
 	if not inputs.has("Tronco") and not inputs.has("Palo"):
 		return true
-	if not _bot_needs_campfire(b):
+	var building := _bot_needs_campfire(b)
+	var sticks := _bot_fire_stick_reserve(b)
+	if not building and sticks == 0:
 		return true
 	var proxy: Node3D = b["proxy"]
 	for material in ["Tronco", "Palo"]:
 		var cost := int(inputs.get(material, 0))
-		if cost > 0 and _bot_item_count(proxy, material) - cost < (2 if material == "Tronco" else 1):
+		if cost > 0 and _bot_item_count(proxy, material) - cost < ((2 if building else 0) if material == "Tronco" else sticks):
 			return false
 	return true
 
@@ -11168,7 +11214,7 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 	var container_kept := 0
 	var med_kept := 0
 	var needs_fire := _bot_needs_campfire(b)
-	var stick_cap := 3 if needs_fire else 2
+	var stick_cap := maxi(2, _bot_fire_stick_reserve(b))
 	var stone_cap := 1
 	var log_cap := 2 if needs_fire else 0
 	var log_kept := 0
@@ -11224,7 +11270,7 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			kept_torch = true
 			keep.append(it)
 			continue
-		if nm == "Cerillas" and not kept_matches:
+		if nm == "Cerillas" and not kept_matches and float(it.get("durability", 10.0)) > 0.0:
 			kept_matches = true
 			keep.append(it)
 			continue
@@ -11491,14 +11537,16 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> bool:
 		if dry == Vector3.INF:
 			return false
 		pos = dry
+	if proxy.global_position.distance_to(pos) > GameConst.CAMPFIRE_REACH:
+		return false
 	var cf_id := "bot_campfire_%d" % int(b["bot_id"])
 	# A remote/invalid old camp must not be moved or overwritten by a new one.
-	if not str(b.get("campfire_id", "")).is_empty():
+	if not str(b.get("campfire_id", "")).is_empty() or ("world_actions_by_id" in world and world.world_actions_by_id.has(cf_id)):
 		cf_id += "_%d" % Time.get_ticks_usec()
 	if world._net_campfire_built(cf_id, pos, 0) == false:
 		return false
-	_consume_bot_item(proxy, "Tronco", 2)
-	_consume_bot_item(proxy, "Palo", 1)
+	for material in GameConst.CAMPFIRE_INPUTS:
+		_consume_bot_item(proxy, material, int(GameConst.CAMPFIRE_INPUTS[material]))
 	b["campfire_id"] = cf_id
 	b["campfire_pos"] = pos
 	var net = world.get("net")
@@ -11506,6 +11554,8 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> bool:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.campfire_built.rpc_id(pid, cf_id, pos)
+	if world.has_method("_save_world_change_silent"):
+		world._save_world_change_silent()
 	_ensure_bot_campfire_lit(b)
 	return true
 
@@ -11529,31 +11579,90 @@ func _campfire_entry_alive(lc) -> bool:
 				return false
 	return true
 
-func _ensure_bot_campfire_lit(b: Dictionary) -> void:
+func _ensure_bot_campfire_lit(b: Dictionary, delta := 0.0) -> bool:
 	var cf_id := str(b.get("campfire_id", ""))
 	if cf_id.is_empty() or world == null:
-		return
+		b.erase("_fire_ignition")
+		return false
 	# La fogata expiro o la quitaron: el id ya no es un objeto real —
 	# limpiar la referencia en vez de reencender una fogata fantasma.
 	if "world_actions_by_id" in world and not (world.world_actions_by_id as Dictionary).has(cf_id):
 		b["campfire_id"] = ""
 		b["campfire_pos"] = Vector3.INF
-		return
+		b.erase("_fire_ignition")
+		return false
 	for lc in world.get("_lit_campfires") if "_lit_campfires" in world else []:
 		if lc is Dictionary and str(lc.get("id", "")) == cf_id and _campfire_entry_alive(lc):
-			return
-	var fire_name := "CampfireFire_Bot_%d_%d" % [int(b["bot_id"]), Time.get_ticks_msec()]
+			b.erase("_fire_ignition")
+			return false
+	var proxy: Node3D = b["proxy"]
 	var pos: Vector3 = b["campfire_pos"]
-	if world.has_method("_net_campfire_lit") and world._net_campfire_lit(cf_id, fire_name, pos, 0) == false:
+	var state: Dictionary = b.get("_fire_ignition", {})
+	var action = world.world_actions_by_id.get(cf_id)
+	if action is Node3D and is_instance_valid(action):
+		pos = action.global_position
+		b["campfire_pos"] = pos
+	var already_lit := action is Object and is_instance_valid(action) and bool(action.get_meta("lit", false))
+	if already_lit or proxy.global_position.distance_to(pos) > GameConst.CAMPFIRE_REACH \
+			or bool(b.get("sleeping", false)) or float(b.get("health", 100.0)) <= 0.0 \
+			or float(b.get("flinch_timer", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0 \
+			or (not state.is_empty() and proxy.global_position.distance_to(state.origin) > 0.4):
+		b.erase("_fire_ignition")
+		return false
+	if state.is_empty() or str(state.get("id", "")) != cf_id:
+		var matches := _bot_has_usable_matches(proxy)
+		if not matches and _bot_item_count(proxy, "Palo") < GameConst.CAMPFIRE_IGNITION_STICKS:
+			return false
+		state = {"id":cf_id,"matches":matches,"t":0.0,"origin":proxy.global_position,"tick":-1}
+	if (state.matches and not _bot_has_usable_matches(proxy)) or (not state.matches and _bot_item_count(proxy, "Palo") < GameConst.CAMPFIRE_IGNITION_STICKS):
+		b.erase("_fire_ignition")
+		return false
+	# At most one progress step per live bot tick; isolated callers omit the tick.
+	if not b.has("_ground_tick") or int(state.tick) != int(b["_ground_tick"]):
+		state.t += delta
+		state.tick = int(b.get("_ground_tick", -1))
+	b["_fire_ignition"] = state
+	_stop_bot_motion(b)
+	b["_act"] = "ignite_campfire"
+	b["sitting"] = false
+	b["crouching"] = true
+	b["anim"] = "plant" if state.matches else "forage"
+	b["held_item"] = "Cerillas" if state.matches else "Palo"
+	proxy.set_meta("saved_held_item", b["held_item"])
+	if float(state.t) < (GameConst.CAMPFIRE_MATCH_SECONDS if state.matches else GameConst.CAMPFIRE_STICK_SECONDS):
+		return true
+	var fire_name := "CampfireFire_Bot_%d_%d" % [int(b["bot_id"]), Time.get_ticks_msec()]
+	b.erase("_fire_ignition")
+	if not world.has_method("_net_campfire_lit") or world._net_campfire_lit(cf_id, fire_name, pos, 0) == false:
 		# Rechazo explicito: la fogata ya no existe — referencia muerta.
-		b["campfire_id"] = ""
-		b["campfire_pos"] = Vector3.INF
-		return
+		return false
+	if state.matches:
+		_reduce_bot_item_durability(proxy, "Cerillas", 1.0)
+	else:
+		_consume_bot_item(proxy, "Palo", GameConst.CAMPFIRE_IGNITION_STICKS)
+	if _bot_item_count(proxy, str(b["held_item"])) == 0:
+		b["held_item"] = ""
+		proxy.set_meta("saved_held_item", "")
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.campfire_lit.rpc_id(pid, cf_id, fire_name, pos)
+	if world.has_method("_save_world_change_silent"):
+		world._save_world_change_silent()
+	return true
+
+func _bot_try_light_own_fire(b: Dictionary, delta: float) -> bool:
+	if not _bot_has_nearby_campfire(b) or _bot_own_fire_lit(b):
+		return false
+	if not _bot_has_usable_matches(b["proxy"]) and _bot_item_count(b["proxy"], "Palo") < GameConst.CAMPFIRE_IGNITION_STICKS:
+		return false
+	var pos: Vector3 = b["campfire_pos"]
+	if (b["proxy"] as Node3D).global_position.distance_to(pos) > GameConst.CAMPFIRE_REACH:
+		b.erase("_fire_ignition")
+		_move_bot_towards(b, pos, 3.8, delta, "walk")
+		return true
+	return _ensure_bot_campfire_lit(b, delta)
 
 func _find_nearby_campfire_spot(b: Dictionary, origin: Vector3) -> Vector3:
 	for off in [Vector3(2.8, 0.0, 1.4), Vector3(-2.8, 0.0, 1.4), Vector3(0.0, 0.0, 3.2), Vector3(2.8, 0.0, -1.4), Vector3(0.0, 0.0, -3.2), Vector3(4.2, 0.0, 0.0), Vector3(-4.2, 0.0, 0.0)]:
@@ -11633,8 +11742,7 @@ func _bot_fire_ring_spot(b: Dictionary, fp: Vector3, dir: Vector2, radius: float
 
 # Cocinar carne cruda igual que el jugador humano: exige ensartar primero la
 # carne en un Palo afilado ("Carne ensartada") y cocinarla en una hoguera
-# encendida (propia o cercana; si no hay y tiene 2 Palos + 2 Piedras, arma y
-# enciende una hoguera en el sitio).
+# encendida (propia o cercana); construccion y encendido pagan por separado.
 func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 	if float(b.get("cook_cooldown", 0.0)) > 0.0:
 		return false
@@ -11648,23 +11756,24 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 	var cur := proxy.global_position
 	var fire_pos := _nearest_lit_campfire_pos(cur, 12.0 if _is_world_night() and not _bot_has_item(proxy, "Antorcha") else 85.0)
 	var cf_pos: Vector3 = b.get("campfire_pos", Vector3.INF)
-	if fire_pos == Vector3.INF and cf_pos != Vector3.INF and _bot_supply_goal_lit(b, cf_pos) and Vector2(cur.x - cf_pos.x, cur.z - cf_pos.z).length() < 110.0:
+	if fire_pos == Vector3.INF and cf_pos != Vector3.INF and _bot_own_fire_lit(b) and _bot_supply_goal_lit(b, cf_pos) and Vector2(cur.x - cf_pos.x, cur.z - cf_pos.z).length() < 110.0:
 		fire_pos = cf_pos
 	if fire_pos == Vector3.INF:
+		if _bot_try_light_own_fire(b, delta):
+			return true
+		if _bot_has_nearby_campfire(b):
+			return false
 		if not _can_bot_build_campfire(proxy):
 			return false
-		var base_origin: Vector3 = b.get("shelter_pos", Vector3.INF)
-		if base_origin == Vector3.INF or Vector2(cur.x - base_origin.x, cur.z - base_origin.z).length() > 35.0:
-			base_origin = cur
+		var base_origin := cur
 		var spot := _find_nearby_campfire_spot(b, base_origin)
 		if spot == Vector3.INF:
 			spot = cur + Vector3(2.2, 0.0, 0.0)
 			spot.y = _ground_y(spot.x, spot.z)
 		if not _bot_build_and_light_campfire(b, spot):
 			return false
-		# La fogata pudo reubicarse a suelo seco junto al punto pedido: usar la
-		# posicion real registrada, no el candidato original.
-		fire_pos = b["campfire_pos"]
+		# La estructura nueva aun no arde: primero completar el encendido.
+		return true
 	# Ensartar la carne cruda o pescado crudo con el Palo afilado antes de acercarla al fuego
 	if not _bot_skewer_raw_meat(proxy):
 		return false
@@ -11688,6 +11797,8 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 
 func _bot_cook_meat_at_fire(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
+	if not _is_near_any_lit_campfire(proxy.global_position, GameConst.CAMPFIRE_REACH):
+		return false
 	# Regla idéntica al jugador humano: no se puede cocinar carne cruda ni
 	# pescado crudo sin ensartarlos en un Palo afilado ("Carne ensartada" / "Pez ensartado").
 	if not _bot_skewer_raw_meat(proxy):
@@ -13754,6 +13865,8 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 		proxy.set_meta("torch_lit", true)
 		proxy.set_meta("saved_held_item", "Antorcha")
 		return false
+	if _bot_try_light_own_fire(b, delta):
+		return true
 	# Sin antorcha la fabrica; con antorcha pero sin yesca lo que falta es la
 	# ignicion (2 Palos frotados sirven), no otra antorcha.
 	var no_torch := _bot_item_count(proxy, "Antorcha") == 0
@@ -13766,10 +13879,11 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 		var own_fire: Vector3 = b.get("campfire_pos", Vector3.INF)
 		if own_fire != Vector3.INF and proxy.global_position.distance_to(own_fire) <= NIGHT_SUPPLY_FIRE_RADIUS:
 			_ensure_bot_campfire_lit(b)
-		if not _bot_supply_goal_lit(b, proxy.global_position) and _can_bot_build_campfire(proxy):
+		if not _bot_supply_goal_lit(b, proxy.global_position) and not _bot_has_nearby_campfire(b) and _can_bot_build_campfire(proxy):
 			var spot := _find_nearby_campfire_spot(b, proxy.global_position)
 			if spot != Vector3.INF:
-				_bot_build_and_light_campfire(b, spot)
+				if _bot_build_and_light_campfire(b, spot):
+					return true
 	if _bot_supply_goal_lit(b, proxy.global_position):
 		# El bot iluminado que pasa a hambre/sed letal tambien ancla su
 		# burbuja aqui: la seta a 5 m fuera de la luz es alcanzable igual
@@ -16721,6 +16835,8 @@ func _ai_step_evidence(b: Dictionary, d: Dictionary) -> float:
 # El bot esta parado de camino pero trabajando: saqueo, huida, combate,
 # recoleccion, sueno o despiece cuentan como actividad, no como bloqueo.
 func _ai_step_busy(b: Dictionary) -> bool:
+	if not (b.get("_fire_ignition", {}) as Dictionary).is_empty():
+		return true
 	if b.get("aggro_target") != null or float(b.get("flee_until", 0.0)) > 0.0 \
 			or float(b.get("hide_timer", 0.0)) > 0.0 or bool(b.get("sitting", false)) \
 			or bool(b.get("sleeping", false)) or is_instance_valid(b.get("gut_target")):
@@ -19076,9 +19192,12 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 		_move_bot_towards(b, spot, 5.8, delta, "run")
 		b["_act"] = "fire_rescue"
 		return true
+	if _bot_try_light_own_fire(b, delta):
+		b["_act"] = "fire_rescue"
+		return true
 	# Material a mano: la fogata se monta donde esta — ni en el agua ni donde
 	# ya arde otra (eso lo cubre la rama de arriba).
-	if _can_bot_build_campfire(proxy):
+	if not _bot_has_nearby_campfire(b) and _can_bot_build_campfire(proxy):
 		var depth := 0.0
 		if world != null and world.has_method("get_river_depth_at"):
 			depth = float(world.get_river_depth_at(proxy.global_position))
@@ -19096,7 +19215,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	var proxy: Node3D = b["proxy"]
 	var needs_fire := _bot_needs_campfire(b)
 	var tronco_need := 2 if needs_fire else 0
-	var fire_sticks := 1 if needs_fire else 0
+	var fire_sticks := _bot_fire_stick_reserve(b)
 	var palo_need := fire_sticks
 	if str(b.get("shelter_id", "")).is_empty():
 		palo_need = 11 + fire_sticks
@@ -19129,14 +19248,14 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	# lena del fuego que le salva la vida ES el rescate, no una expedicion.
 	var freezing_rescue := fire_rescue and _bot_is_freezing(b)
 	if freezing_rescue:
-		tronco_need = 2
-		palo_need = 1
+		tronco_need = 2 if needs_fire else 0
+		palo_need = fire_sticks
 		piedra_need = 0
 		seeds_need = false
 	var tronco_short := _bot_item_count(proxy, "Tronco") < tronco_need
 	var palo_short := _bot_palo_supply(proxy, tool, tronco_need) < palo_need
 	var piedra_short := _bot_item_count(proxy, "Piedra") < piedra_need
-	if needs_fire and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
+	if (needs_fire or fire_sticks > 0) and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
 			and (not _bot_is_freezing(b) or freezing_rescue) and (b.get("_gather", {}) as Dictionary).is_empty():
 		if _bot_try_fire_material_pickup(b, delta, 120.0 if freezing_rescue else (24.0 if night_no_light else 80.0)):
 			return true
@@ -19149,7 +19268,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 			and float(b.get("hide_timer", 0.0)) <= 0.0 \
 			and not _bot_is_exhausted(b) \
 			and (not _bot_is_freezing(b) or freezing_rescue) \
-			and (_sensed_node(b, "_s_leader") == null or (palo_need <= 3 and piedra_need <= 2))
+			and (_sensed_node(b, "_s_leader") == null or (palo_need <= fire_sticks + 1 and piedra_need <= 2))
 	var st0: Dictionary = b.get("_gather", {})
 	if not allowed:
 		if not st0.is_empty():
@@ -19167,8 +19286,9 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 			taken = claimer != int(b["bot_id"])
 		var kind_g := str(st.get("kind", "fell_bush"))
 		var is_tree := kind_g == "fell_tree"
+		var indexed_tree: bool = is_tree and world.has_method("_tree_entry_for_action") and not world._tree_entry_for_action(aid).is_empty()
 		var held_g := _bot_axe_tool(proxy) if is_tree else tool
-		if not (apos is Vector3) or act == null or not is_instance_valid(act) or taken \
+		if not (apos is Vector3) or (not indexed_tree and (act == null or not is_instance_valid(act))) or taken \
 				or (world != null and "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid)) \
 				or (kind_g in ["fell_bush", "wood"] and tool.is_empty()) or (is_tree and held_g.is_empty()):
 			_bot_release_gather_claim(b, st)
@@ -19238,6 +19358,8 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 	var can_fit_stone := _bot_would_fit(b, inv, {"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 1})
 	var axe := _bot_axe_tool(proxy)
 	var camp: Vector3 = b.get("camp_spot", proxy.global_position)
+	if not camp.is_finite():
+		camp = proxy.global_position
 	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
 	var best := {}
@@ -19277,6 +19399,12 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 			# sueltos 1.4 s a mano.
 			var t_need := 10.0 if atype == "fell_tree" else (5.0 if atype == "fell_bush" else 1.4)
 			best = {"id": str(aid), "pos": (a as Node3D).global_position, "t": 0.0, "t_need": t_need, "kind": atype}
+	if not axe.is_empty() and (need_tronco or need_palo) and can_fit_log and world.has_method("_find_bot_tree_target"):
+		var tree: Dictionary = world._find_bot_tree_target(proxy.global_position, radius, camp, func(pos: Vector3): return _is_goal_blacklisted(b, pos))
+		if not tree.is_empty():
+			var score := proxy.global_position.distance_to(tree.pos) + (tree.pos as Vector3).distance_to(camp) * 0.5
+			if score < best_score:
+				best = tree
 	return best
 
 func _bot_fell_bush_complete(b: Dictionary, st: Dictionary) -> void:
@@ -19330,9 +19458,11 @@ func _bot_fell_tree_complete(b: Dictionary, st: Dictionary) -> void:
 	if world == null or aid.is_empty() or pos == Vector3.INF:
 		return
 	var action = world.world_actions_by_id.get(aid) if "world_actions_by_id" in world else null
-	if action == null or not is_instance_valid(action):
+	var tree: Dictionary = world._tree_entry_for_action(aid) if world.has_method("_tree_entry_for_action") else {}
+	if tree.is_empty() and (not is_instance_valid(action) or str(action.get("action_type")) != "fell_tree"):
 		return
-	if str(action.get("action_type")) != "fell_tree" or proxy.global_position.distance_to(pos) > 3.0:
+	var actual_pos: Vector3 = tree.pos if not tree.is_empty() else action.global_position
+	if pos.distance_to(actual_pos) > 0.1 or proxy.global_position.distance_to(actual_pos) > 3.0:
 		return
 	if "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid):
 		return
@@ -19399,12 +19529,13 @@ func _bot_node_collect_complete(b: Dictionary, st: Dictionary) -> void:
 func _bot_night_fire_ready(b: Dictionary, proxy: Node3D) -> bool:
 	if _bot_item_count(proxy, "Antorcha") > 0:
 		return true
-	if _bot_item_count(proxy, "Palo") >= 1 and _bot_item_count(proxy, "Trapos") >= 1:
+	if _bot_item_count(proxy, "Palo") >= 1 + _bot_fire_stick_reserve(b) and _bot_item_count(proxy, "Trapos") >= 1:
 		return true
-	if not str(b.get("campfire_id", "")).is_empty():
+	if _bot_own_fire_lit(b):
 		return true
 	return not str(b.get("shelter_id", "")).is_empty() \
-		and _can_bot_build_campfire(proxy)
+		and (_bot_has_nearby_campfire(b) or _can_bot_build_campfire(proxy)) \
+		and _bot_item_count(proxy, "Palo") >= _bot_fire_stick_reserve(b)
 
 # Palos de los que dispone en la practica: los que lleva mas los que puede
 # rajar de sus troncos (Tronco + filo -> 2 palos). Sin filo el tronco es lastre.
@@ -19419,7 +19550,7 @@ func _bot_palo_supply(proxy: Node3D, tool: String = "", reserved_logs := 0) -> i
 # reserva y adquisicion verificada; no exige hacha para recoger un tronco.
 func _bot_try_fire_material_pickup(b: Dictionary, delta: float, radius: float) -> bool:
 	var entry: Dictionary = b.get("_s_loot", {})
-	if str(entry.get("name", "")) not in ["Tronco", "Palo"]:
+	if str(entry.get("name", "")) not in ["Tronco", "Palo", "Cerillas"]:
 		entry = {}
 	if not entry.is_empty() and "_depleted_action_ids" in world and world._depleted_action_ids.has(str(entry.get("id", ""))):
 		_loot_clear(b)
@@ -19430,7 +19561,7 @@ func _bot_try_fire_material_pickup(b: Dictionary, delta: float, radius: float) -
 			return false
 		b["_fire_loot_scan"] = 1.4
 		entry = _find_fire_prep_loot(b, radius, true)
-	if entry.is_empty() or str(entry.get("name", "")) not in ["Tronco", "Palo"]:
+	if entry.is_empty() or str(entry.get("name", "")) not in ["Tronco", "Palo", "Cerillas"]:
 		return false
 	b["_s_loot"] = entry
 	_loot_commit_claim(b)
@@ -19457,7 +19588,8 @@ func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false)
 	var needs_fire := _bot_needs_campfire(b)
 	var need_tronco := needs_fire and _bot_item_count(proxy, "Tronco") < 2
 	var need_torch := _bot_item_count(proxy, "Antorcha") < 1
-	var need_palo := _bot_item_count(proxy, "Palo") < ((1 if needs_fire else 0) + (1 if need_torch else 0))
+	var need_palo := _bot_item_count(proxy, "Palo") < (_bot_fire_stick_reserve(b) + (1 if need_torch else 0))
+	var need_matches := (needs_fire or _bot_has_nearby_campfire(b)) and not _bot_has_usable_matches(proxy)
 	var need_trapos := need_torch and _bot_item_count(proxy, "Trapos") < 1
 	var best := {}
 	var best_d := radius
@@ -19479,11 +19611,12 @@ func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false)
 			if wa != null and is_instance_valid(wa) and wa.has_meta("dropped_by"):
 				continue
 		var nm := str(entry.get("name", ""))
-		if materials_only and nm not in ["Tronco", "Palo"]:
+		if materials_only and nm not in ["Tronco", "Palo", "Cerillas"]:
 			continue
 		var useful := (need_torch and nm == "Antorcha") \
 			or (need_palo and nm == "Palo") \
 			or (need_tronco and nm == "Tronco") \
+			or (need_matches and nm == "Cerillas" and float(entry.get("durability", 10.0)) > 0.0) \
 			or (need_trapos and (nm == "Trapos" or _bot_cuts_into_trapos(nm)))
 		if not useful:
 			continue

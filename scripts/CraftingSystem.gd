@@ -147,7 +147,7 @@ const RECIPES := [
 		"label": "Ensartar pez en palo"
 	},
 	{
-		"inputs": { "Tronco": 2, "Palo": 1 },
+		"inputs": GameConst.CAMPFIRE_INPUTS,
 		"output": { "name": "Fogata", "type": "campfire", "weight": 0.0, "use_value": 0.0 },
 		"label": "Construir fogata con troncos"
 	},

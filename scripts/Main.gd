@@ -155,6 +155,7 @@ var _tree_check_interval := 2.0
 var _tree_check_timer := 0.0
 var _tree_grid: Dictionary = {} # cell_key -> Array[entry refs]
 var _tree_entries_by_id: Dictionary = {} # tree_id -> entry (remote depletion lookup)
+var _felled_tree_positions: Dictionary = {} # x/z keys; also filters streamed collision cells
 var _tree_grid_cell_size := 20.0
 var _active_tree_entries: Array = [] # tracks all activated trees for reliable deactivation
 var _bush_id_counter := 0
@@ -8291,6 +8292,8 @@ func _create_map() -> void:
 	if not is_server:
 		_create_world_details()
 		await get_tree().process_frame
+	else:
+		_prepare_server_vegetation_layout()
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		# Light posts and power lines placed on the actual road edges
@@ -8321,6 +8324,8 @@ func _create_map() -> void:
 			_set_loading_phase("Plantando bosque...")
 		await _create_forest()
 		await get_tree().process_frame
+	else:
+		await _create_forest(true)
 	_tm = Time.get_ticks_msec()
 	if not is_server:
 		_create_survival_objectives()
@@ -8353,22 +8358,6 @@ func _create_map() -> void:
 	# Server needs wildlife blockers registered for nav grid (no visuals)
 	if is_server:
 		# Match client roof locations even though the server skips visual props.
-		_military_tent_pos = _find_flat_area_for_tent()
-		# El cliente tiene esta tienda en HOUSE_FOOTPRINTS al llamar a
-		# _create_fruit_trees; copiar el orden de las appends mantiene los
-		# predicados _is_near_house identicos en ambos lados.
-		HOUSE_FOOTPRINTS.append({"origin": _military_tent_pos, "w": 9.0, "d": 12.0})
-		_remote_tent_pos = _find_flat_area_for_remote_tent()
-		_city_tent_pos = _find_flat_area_for_city_tent()
-		_city_tent2_pos = _find_flat_area_for_city_tent2()
-		# Acciones pick_fruit identicas a las del cliente (mismo _fruit_rng,
-		# mismas posiciones): sin ellas los bots del servidor dedicado no
-		# tenian ningun frutal que recolectar.
-		_create_fruit_trees()
-		# El cliente anade estas tres tiendas tras _create_fruit_trees.
-		HOUSE_FOOTPRINTS.append({"origin": _remote_tent_pos, "w": 9.0, "d": 12.0})
-		HOUSE_FOOTPRINTS.append({"origin": _city_tent_pos, "w": 9.0, "d": 12.0})
-		HOUSE_FOOTPRINTS.append({"origin": _city_tent2_pos, "w": 9.0, "d": 12.0})
 		_build_city_military_base_perimeter(true)
 		_register_server_house_blockers()
 		# Cascara fisica de casas/graneros/tiendas/refugio: sin ella la linea de
@@ -13751,29 +13740,36 @@ func _execute_world_action(action, actor) -> void:
 				actor._play_consumption_audio(true, _DRINK_HOLD_TIME, int(actor.get("_action_serial")))
 			actor.notice.emit("Bebiendo agua %s. Muévete para parar." % action.get_meta("drink_source", "del rio"))
 		"light_campfire":
+			if not _actor_still_reaches(action, actor, GameConst.CAMPFIRE_REACH):
+				return
 			if action.get_meta("lit", false):
 				actor.notice.emit("La fogata ya esta encendida.")
 				return
 			var held_m = actor.get_held_item() if actor.has_method("get_held_item") else null
-			if held_m != null and held_m.item_name == "Cerillas":
-				_play_actor_action(actor, "plant", 1.5)
+			if held_m != null and held_m.item_name == "Cerillas" and not held_m.is_broken():
+				_play_actor_action(actor, "plant", GameConst.CAMPFIRE_MATCH_SECONDS)
 				actor.notice.emit("Encendiendo fogata con cerillas...")
 				if hud != null:
-					hud.show_countdown("Encendiendo fogata", 1.5)
-				if not await _await_actor_action(actor, 1.5):
+					hud.show_countdown("Encendiendo fogata", GameConst.CAMPFIRE_MATCH_SECONDS)
+				if not await _await_actor_action(actor, GameConst.CAMPFIRE_MATCH_SECONDS):
 					return
-				actor.inventory.consume_match_charge()
+				if not is_instance_valid(action) or not _actor_still_reaches(action, actor, GameConst.CAMPFIRE_REACH) or action.get_meta("lit", false):
+					return
+				if not actor.inventory.consume_match_charge():
+					return
 				actor.inventory.changed.emit()
-			elif actor.inventory != null and actor.inventory.has_item_name("Palo", 2):
-				_play_actor_action(actor, "forage", 8.0)
+			elif actor.inventory != null and actor.inventory.has_item_name("Palo", GameConst.CAMPFIRE_IGNITION_STICKS):
+				_play_actor_action(actor, "forage", GameConst.CAMPFIRE_STICK_SECONDS)
 				actor.notice.emit("Frotando palos para encender fogata... (8s)")
 				if hud != null:
-					hud.show_countdown("Encendiendo fogata con palos", 8.0)
-				if not await _await_actor_action(actor, 8.0):
+					hud.show_countdown("Encendiendo fogata con palos", GameConst.CAMPFIRE_STICK_SECONDS)
+				if not await _await_actor_action(actor, GameConst.CAMPFIRE_STICK_SECONDS):
 					return
-				if not actor.inventory.has_item_name("Palo", 2):
+				if not is_instance_valid(action) or not _actor_still_reaches(action, actor, GameConst.CAMPFIRE_REACH) or action.get_meta("lit", false):
 					return
-				actor.inventory.consume_item_name("Palo", 2)
+				if not actor.inventory.has_item_name("Palo", GameConst.CAMPFIRE_IGNITION_STICKS):
+					return
+				actor.inventory.consume_item_name("Palo", GameConst.CAMPFIRE_IGNITION_STICKS)
 				actor.inventory.changed.emit()
 			else:
 				actor.notice.emit("Necesitas cerillas o 2 palos para encender la fogata.")
@@ -14936,7 +14932,7 @@ func _net_campfire_built(cf_id: String, pos: Vector3, sender_id: int = 0) -> boo
 	# fogata dentro del agua — devolver false corta ademas el reenvio del RPC.
 	if _is_water_drop_position(pos):
 		return false
-	if net != null and net.is_dedicated_server and not _tracked_has_id(_built_campfires, cf_id):
+	if not _tracked_has_id(_built_campfires, cf_id):
 		_built_campfires.append({"id": cf_id, "pos": pos})
 	if world_actions_by_id.has(cf_id):
 		return true
@@ -15307,15 +15303,14 @@ func _net_campfire_lit(action_id: String, fire_name: String, pos: Vector3, sende
 	# (persiste en el save); solo entran fogatas que arden de verdad. Si el
 	# id ya figura (reconstruida sobre una entrada vieja), se refrescan la
 	# posicion y el nombre de fuego reales en vez de duplicar.
-	if net != null and net.is_dedicated_server:
-		var tracked := false
-		for lc in _lit_campfires:
-			if lc is Dictionary and str(lc.get("id", "")) == action_id:
-				lc["fire_name"] = fire_name
-				lc["pos"] = pos
-				tracked = true
-		if not tracked:
-			_lit_campfires.append({"id": action_id, "fire_name": fire_name, "pos": pos})
+	var tracked := false
+	for lc in _lit_campfires:
+		if lc is Dictionary and str(lc.get("id", "")) == action_id:
+			lc["fire_name"] = fire_name
+			lc["pos"] = action.position
+			tracked = true
+	if not tracked:
+		_lit_campfires.append({"id": action_id, "fire_name": fire_name, "pos": action.position})
 	return true
 
 func _create_quaternius_environment_props() -> void:
@@ -19423,7 +19418,19 @@ func _pick_forest_tree_variant(rng = null) -> int:
 			return i
 	return count - 1
 
-func _create_forest() -> void:
+func _prepare_server_vegetation_layout() -> void:
+	# Same footprint order as _create_world_details, before forest generation.
+	_military_tent_pos = _find_flat_area_for_tent()
+	HOUSE_FOOTPRINTS.append({"origin": _military_tent_pos, "w": 9.0, "d": 12.0})
+	_create_fruit_trees()
+	_remote_tent_pos = _find_flat_area_for_remote_tent()
+	HOUSE_FOOTPRINTS.append({"origin": _remote_tent_pos, "w": 9.0, "d": 12.0})
+	_city_tent_pos = _find_flat_area_for_city_tent()
+	HOUSE_FOOTPRINTS.append({"origin": _city_tent_pos, "w": 9.0, "d": 12.0})
+	_city_tent2_pos = _find_flat_area_for_city_tent2()
+	HOUSE_FOOTPRINTS.append({"origin": _city_tent2_pos, "w": 9.0, "d": 12.0})
+
+func _create_forest(data_only := false) -> void:
 	# Generar bosque ultra denso y exhuberante optimizado por MultiMesh
 	# El bosque usa su propio flujo aleatorio. Así las posiciones quedan
 	# estables aunque se añadan casas, rios u otros objetos que consuman RNG
@@ -19436,7 +19443,13 @@ func _create_forest() -> void:
 	var color_var := Color(0.34, 0.46, 0.16)
 	# Pre-load forest tree pack so we know how many variants exist
 	if _forest_tree_meshes.is_empty():
-		_load_forest_tree_pack()
+		if data_only:
+			# Positions/IDs depend on the RNG draws, not on variant geometry.
+			# With >=2 variants the selector consumes exactly one randf.
+			# Never load a GLB, material or texture on the dedicated server.
+			_forest_tree_meshes = [{"height": 5.0}, {"height": 5.0}]
+		else:
+			_load_forest_tree_pack()
 	# Collect transforms per mesh variant for MultiMesh batching
 	var batch_transforms: Array = [] # Array[Array[Transform3D]]
 	var batch_aabbs: Array = [] # Array[AABB]
@@ -19454,7 +19467,7 @@ func _create_forest() -> void:
 		if Vector2(x, z).length() < inner_clear_radius:
 			continue
 		
-		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
+		var pos := Vector3(x, _get_ground_height(Vector3(x, 0, z)), z)
 		if get_river_depth_at(pos) > 0.0:
 			continue
 		if not _can_place_ground_vegetation(pos, 2.0):
@@ -19490,12 +19503,17 @@ func _create_forest() -> void:
 			interactive_count += 1
 		
 		# Sembrar hierba MultiMesh hiper eficiente alrededor de los troncos
-		_scatter_forest_grass(pos)
+		if not data_only:
+			_scatter_forest_grass(pos)
 		for _g in range(1):
 			var gpos := pos + Vector3(forest_rng.randf_range(-1.5, 1.5), 0.0, forest_rng.randf_range(-1.5, 1.5))
-			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.012
+			gpos.y = _get_ground_height(gpos) + 0.012
 			if _can_place_ground_vegetation(gpos):
-				_queue_grass_instance(gpos, forest_rng.randf_range(0.25, 0.55), forest_rng.randf_range(0.35, 0.65), base_color.lerp(color_var, forest_rng.randf()))
+				var gh := forest_rng.randf_range(0.25, 0.55)
+				var gr := forest_rng.randf_range(0.35, 0.65)
+				var gc := base_color.lerp(color_var, forest_rng.randf())
+				if not data_only:
+					_queue_grass_instance(gpos, gh, gr, gc)
 				
 		if i % 300 == 0:
 			var _saved_rng_state := forest_rng.state
@@ -19503,9 +19521,12 @@ func _create_forest() -> void:
 			forest_rng.state = _saved_rng_state
 	
 	_append_lake_forest(batch_transforms, all_tree_positions)
-	await _append_southern_growth(batch_transforms, all_tree_positions, forest_rng)
+	await _append_southern_growth(batch_transforms, all_tree_positions, forest_rng, data_only)
 	_append_city_avenue_trees(batch_transforms, all_tree_positions)
-	_append_northern_road_reforest(batch_transforms, all_tree_positions)
+	_append_northern_road_reforest(batch_transforms, all_tree_positions, data_only)
+	if data_only:
+		_hide_depleted_forest_trees()
+		return
 	# Flush batched trees into MultiMesh instances (one per variant)
 	_flush_forest_multimeshes(batch_transforms)
 	await _build_forest_understory_multimeshes(all_tree_positions)
@@ -19520,7 +19541,7 @@ func _append_city_avenue_trees(batches: Array, positions: Array) -> void:
 	rng.seed = 681907
 	for pos: Vector3 in preload("res://scripts/CityStreetscape.gd").tree_positions():
 		if CityExpansion.near_building(pos, 1.5) or get_river_depth_at(pos)>0.0: continue
-		pos.y = _get_exact_ground_y(pos.x,pos.z)
+		pos.y = _get_ground_height(pos)
 		var variant := _pick_forest_tree_variant(rng)
 		var entry: Dictionary = _forest_tree_meshes[variant]
 		var scale_value := 5.5 / maxf(1.0,float(entry.get("height",5.0)))
@@ -19531,7 +19552,7 @@ func _append_city_avenue_trees(batches: Array, positions: Array) -> void:
 		var tree_id := absi(int(round(pos.x))*73856093 ^ int(round(pos.z))*19349663)
 		_register_tree_in_grid({"pos":pos,"id":tree_id,"visual_name":"Tree_%d"%tree_id,"active":false,"multimesh":true,"variant_idx":variant,"mm_transform":transform})
 
-func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
+func _append_northern_road_reforest(batches: Array, positions: Array, data_only := false) -> void:
 	# Bosque nuevo donde antes corría la carretera Norte-Sur hasta el borde del
 	# mundo: la calzada termina ahora en el desvío de la montaña (z=-206) y el
 	# corredor x≈9, z=[-495,-204] queda completamente cerrado de bosque y hierba.
@@ -19569,7 +19590,7 @@ func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
 				break
 		if too_close:
 			continue
-		pos.y = _get_exact_ground_y(x, z)
+		pos.y = _get_ground_height(pos)
 		var variant := _pick_forest_tree_variant(rng)
 		var entry: Dictionary = _forest_tree_meshes[variant]
 		var tree_scale := rng.randf_range(0.85, 1.45)
@@ -19586,13 +19607,14 @@ func _append_northern_road_reforest(batches: Array, positions: Array) -> void:
 			var gpos := pos + Vector3(rng.randf_range(-2.4, 2.4), 0.0, rng.randf_range(-2.4, 2.4))
 			if HighMountainZone.on_road(gpos, 1.0):
 				continue
-			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.015
+			gpos.y = _get_ground_height(gpos) + 0.015
 			var gh := rng.randf_range(0.22, 0.48)
 			var gr := rng.randf_range(0.28, 0.56)
 			var gc := grass_base.lerp(grass_var, rng.randf()).darkened(rng.randf_range(0.0, 0.12))
-			_queue_grass_instance(gpos, gh, gr, gc)
+			if not data_only:
+				_queue_grass_instance(gpos, gh, gr, gc)
 
-func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array, forest_rng: RandomNumberGenerator) -> void:
+func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array, forest_rng: RandomNumberGenerator, data_only := false) -> void:
 	# Scattered woodland south of the old map edge, thinning out near the city.
 	# Same deterministic stream + batching as the core forest, so chopping,
 	# collisions and MultiMesh batching behave identically.
@@ -19608,7 +19630,7 @@ func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array,
 		# The district core and its immediate surroundings stay clear.
 		if city_dist < 34.0 or (city_dist < 65.0 and forest_rng.randf() < 0.4):
 			continue
-		var pos := Vector3(x, _get_exact_ground_y(x, z), z)
+		var pos := Vector3(x, _get_ground_height(Vector3(x, 0, z)), z)
 		if get_river_depth_at(pos) > 0.0 or _is_inside_river_band(pos, 2.0):
 			continue
 		# The connector road, the bridge approach and the city streets stay clear.
@@ -19634,21 +19656,27 @@ func _append_southern_growth(batch_transforms: Array, all_tree_positions: Array,
 		_register_tree_in_grid({"pos": pos, "id": tree_id, "visual_name": "Tree_%d" % tree_id, "active": false, "multimesh": true, "variant_idx": variant_idx, "mm_transform": world_xform})
 		for _g in range(3):
 			var gpos := pos + Vector3(forest_rng.randf_range(-2.2, 2.2), 0.0, forest_rng.randf_range(-2.2, 2.2))
-			gpos.y = _get_exact_ground_y(gpos.x, gpos.z) + 0.012
-			_queue_grass_instance(gpos, forest_rng.randf_range(0.25, 0.55), forest_rng.randf_range(0.35, 0.65), Color(0.20, 0.34, 0.12).lerp(Color(0.34, 0.46, 0.16), forest_rng.randf()))
+			gpos.y = _get_ground_height(gpos) + 0.012
+			var gh := forest_rng.randf_range(0.25, 0.55)
+			var gr := forest_rng.randf_range(0.35, 0.65)
+			var gc := Color(0.20, 0.34, 0.12).lerp(Color(0.34, 0.46, 0.16), forest_rng.randf())
+			if not data_only:
+				_queue_grass_instance(gpos, gh, gr, gc)
 		# Sparse granite boulders between the trees.
 		if forest_rng.randf() < 0.03:
 			var rpos := pos + Vector3(forest_rng.randf_range(-6, 6), 0.0, forest_rng.randf_range(-6, 6))
-			rpos.y = _get_exact_ground_y(rpos.x, rpos.z)
+			rpos.y = _get_ground_height(rpos)
 			if get_river_depth_at(rpos) <= 0.0 and not CityExpansion.on_road(rpos, 4.0, _south_road_end()):
-				var rock := MeshInstance3D.new()
-				rock.mesh = _get_forest_rock_mesh(rpos)
-				rock.material_override = MaterialFactory.make_forest_rock_material()
 				var rs := forest_rng.randf_range(0.5, 1.6)
-				rock.scale = Vector3.ONE * rs
-				rock.rotation_degrees.y = forest_rng.randf_range(0, 360)
-				rock.position = rpos + Vector3(0, 0.15 * rs, 0)
-				add_child(rock)
+				var ry := forest_rng.randf_range(0, 360)
+				if not data_only:
+					var rock := MeshInstance3D.new()
+					rock.mesh = _get_forest_rock_mesh(rpos)
+					rock.material_override = MaterialFactory.make_forest_rock_material()
+					rock.scale = Vector3.ONE * rs
+					rock.rotation_degrees.y = ry
+					rock.position = rpos + Vector3(0, 0.15 * rs, 0)
+					add_child(rock)
 		if i % 300 == 0:
 			var _saved := forest_rng.state
 			await get_tree().process_frame
@@ -19969,6 +19997,19 @@ func _create_forest_collision(positions: Array) -> void:
 			_forest_collision_grid[key] = []
 		(_forest_collision_grid[key] as Array).append(pos)
 
+func _remove_felled_tree_collision(pos: Vector3) -> void:
+	var tree_key := _tree_mm_slot_key(pos)
+	if _felled_tree_positions.has(tree_key):
+		return
+	_felled_tree_positions[tree_key] = true
+	var cell := Vector2i(int(pos.x / _forest_collision_grid_size), int(pos.z / _forest_collision_grid_size))
+	var body = _forest_collision_active_cells.get(cell)
+	if is_instance_valid(body):
+		for shape in body.get_children():
+			if shape is CollisionShape3D and _tree_mm_slot_key(shape.position) == tree_key:
+				shape.set_deferred("disabled", true)
+				shape.queue_free()
+
 func _update_forest_collision(unlimited: bool = false) -> void:
 	if player == null or not is_instance_valid(player):
 		return
@@ -20001,6 +20042,8 @@ func _update_forest_collision(unlimited: bool = false) -> void:
 			trunk_shape.radius = 0.28
 			trunk_shape.height = 6.0
 			for pos in positions:
+				if _felled_tree_positions.has(_tree_mm_slot_key(pos)):
+					continue
 				var col := CollisionShape3D.new()
 				col.shape = trunk_shape
 				col.position = Vector3(pos.x, pos.y + trunk_shape.height * 0.5, pos.z)
@@ -20058,9 +20101,9 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 				if not _tree_grid.has(tkey):
 					continue
 				for entry in _tree_grid[tkey]:
-					if _depleted_action_ids.has("fell_tree_%d" % int(entry.id)):
-						continue
 					var tpos: Vector3 = entry.pos
+					if _felled_tree_positions.has(_tree_mm_slot_key(tpos)):
+						continue
 					var r := 0.42
 					if a2d > 1e-6:
 						var rx := ox - tpos.x
@@ -20089,6 +20132,8 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 					continue
 				for fpos in _forest_collision_grid[fkey]:
 					var fp: Vector3 = fpos
+					if _felled_tree_positions.has(_tree_mm_slot_key(fp)):
+						continue
 					var r2 := 0.42
 					if a2d > 1e-6:
 						var rx2 := ox - fp.x
@@ -20136,6 +20181,10 @@ func raycast_distant_props(from_pos: Vector3, to_pos: Vector3) -> Dictionary:
 	return best_hit
 
 func _register_tree_in_grid(entry: Dictionary) -> void:
+	if net != null and net.is_dedicated_server:
+		# Rendering transforms, variant indices and node names are client data.
+		# Both server indices share this minimal dictionary.
+		entry = {"id": entry.id, "pos": entry.pos}
 	var key := _tree_grid_key(entry.pos)
 	if not _tree_grid.has(key):
 		_tree_grid[key] = []
@@ -20143,7 +20192,42 @@ func _register_tree_in_grid(entry: Dictionary) -> void:
 	if entry.has("id"):
 		_tree_entries_by_id[int(entry.id)] = entry
 
+func _tree_entry_for_action(action_id: String) -> Dictionary:
+	if not action_id.begins_with("fell_tree_"):
+		return {}
+	return _tree_entries_by_id.get(int(action_id.trim_prefix("fell_tree_")), {})
+
+# Only nearby cells, only on the bot's existing material-scan cadence.
+# Entries stay plain data: no node/mesh/collider per tree on the server.
+func _find_bot_tree_target(origin: Vector3, radius: float, camp: Vector3, blocked: Callable = Callable()) -> Dictionary:
+	var cell := _tree_grid_key(origin)
+	var reach := ceili(radius / _tree_grid_cell_size) + 1
+	var best := {}
+	var best_score := INF
+	for x in range(cell.x - reach, cell.x + reach + 1):
+		for z in range(cell.y - reach, cell.y + reach + 1):
+			for entry: Dictionary in _tree_grid.get(Vector2i(x, z), []):
+				var pos: Vector3 = entry.pos
+				if origin.distance_squared_to(pos) > radius * radius or _felled_tree_positions.has(_tree_mm_slot_key(pos)):
+					continue
+				var aid := "fell_tree_%d" % int(entry.id)
+				# Legacy rounded IDs can alias two very close trunks. Always
+				# select the same registered entry that completion will validate.
+				if _tree_entries_by_id[int(entry.id)].pos != pos:
+					continue
+				if _pickup_claims.has(aid):
+					continue
+				var score := origin.distance_to(pos) + pos.distance_to(camp) * 0.5
+				if score < best_score:
+					if blocked.is_valid() and blocked.call(pos):
+						continue
+					best_score = score
+					best = {"id":aid,"pos":pos,"kind":"fell_tree","t":0.0,"t_need":10.0}
+	return best
+
 func _update_tree_interactions(unlimited: bool = false) -> void:
+	if net != null and net.is_dedicated_server:
+		return
 	if player == null or not is_instance_valid(player):
 		return
 	var ppos: Vector3 = player.global_position
@@ -20545,10 +20629,13 @@ func _load_forest_tree_pack() -> void:
 	root.queue_free()
 
 func _create_cut_tree_remains(pos: Vector3) -> void:
+	_remove_felled_tree_collision(pos)
 	var pos_key := Vector3(round(pos.x * 10.0) * 0.1, round(pos.y * 10.0) * 0.1, round(pos.z * 10.0) * 0.1)
 	if _cut_remains_positions.has(pos_key):
 		return
 	_cut_remains_positions[pos_key] = true
+	if net != null and net.is_dedicated_server:
+		return
 	var _remains_rng := RandomNumberGenerator.new()
 	_remains_rng.seed = int(round(pos.x * 100.0)) ^ int(round(pos.z * 100.0))
 	var stump := _create_static_cylinder("CutTreeStump", pos, 0.32, 0.55, Color(0.18, 0.105, 0.045))

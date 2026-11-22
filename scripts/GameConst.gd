@@ -9,6 +9,12 @@ const WORLD_LIMIT := 480.0
 const WORLD_LIMIT_Z := 892.0
 const WORLD_SEED := 1337
 
+const CAMPFIRE_INPUTS := {"Tronco": 2, "Palo": 1}
+const CAMPFIRE_MATCH_SECONDS := 1.5
+const CAMPFIRE_STICK_SECONDS := 8.0
+const CAMPFIRE_IGNITION_STICKS := 2
+const CAMPFIRE_REACH := 3.5
+
 # -- Firearms (human player and survivor bots) -----------------------------
 const RIFLE_MAG_SIZE := 5
 const M4_MAG_SIZE := 30

@@ -33,6 +33,14 @@ class ProbeNet extends "res://scripts/NetworkManager.gd":
 	func world_action_completed(id: String, spawns: Array, extra: String, pos: Vector3) -> void:
 		if _accepts_world_sender(multiplayer.get_remote_sender_id()) and is_instance_valid(client_world):
 			client_world._net_world_action_completed(id, spawns, extra, pos)
+	@rpc("any_peer", "reliable")
+	func campfire_built(id: String, pos: Vector3) -> void:
+		if _accepts_world_sender(multiplayer.get_remote_sender_id()) and is_instance_valid(client_world):
+			client_world._net_campfire_built(id, pos)
+	@rpc("any_peer", "reliable")
+	func campfire_lit(id: String, fire_name: String, pos: Vector3) -> void:
+		if _accepts_world_sender(multiplayer.get_remote_sender_id()) and is_instance_valid(client_world):
+			client_world._net_campfire_lit(id, fire_name, pos)
 
 class NightBots extends "res://scripts/SurvivorBotManager.gd":
 	func _is_world_night() -> bool: return true
@@ -53,6 +61,13 @@ func tree_fixture(world: Node3D, active: bool) -> MultiMesh:
 	visual.multimesh = mm
 	world.add_child(visual)
 	world._tree_mm_slots[world._tree_mm_slot_key(pos)] = [[mm, 0, transform]]
+	if world.net == null or not world.net.is_dedicated_server:
+		var viewer := Node3D.new()
+		world.add_child(viewer)
+		viewer.position = pos
+		world.player = viewer
+		world._create_forest_collision([pos])
+		world._update_forest_collision(true)
 	if active:
 		var action := WorldAction.new()
 		action.action_id = "fell_tree_987654"
@@ -91,6 +106,18 @@ func check_bot_tree_chain(main, a: ProbeNet, b: ProbeNet) -> void:
 		"shelter_id":"","hunger":80.0,"thirst":80.0,"health":100.0,"_mem":{}}
 	manager._bot_fell_tree_complete(bot, {"id":"fell_tree_987654","pos":proxy.position})
 	await create_timer(0.3).timeout
+	var tree_ray := PhysicsRayQueryParameters3D.create(Vector3(58,3,60), Vector3(62,3,60), 1)
+	check(main.get_world_3d().direct_space_state.intersect_ray(tree_ray).is_empty(), "felling removes the grouped forest trunk collision above the stump")
+	for view in clients:
+		view.player.position = Vector3(450,0,450)
+		view._update_forest_collision(true)
+		view.player.position = Vector3(60,0,60)
+		view._update_forest_collision(true)
+	await physics_frame
+	await physics_frame
+	check(main.get_world_3d().direct_space_state.intersect_ray(tree_ray).is_empty(), "returning to the forest does not recreate the felled trunk collision")
+	check(clients.all(func(view): return view.raycast_distant_props(tree_ray.from, tree_ray.to).is_empty()),
+		"analytical projectile rays also ignore the cut trunk")
 	var logs: Array = main._dropped_items.filter(func(e): return str(e.id).begins_with("pickup_Tronco_fell_tree_987654_"))
 	check(logs.size() == 4 and manager._bot_item_count(proxy, "Tronco") == 0,
 		"bot felling creates four distinct world logs, never direct inventory grants")
@@ -135,12 +162,19 @@ func check_bot_tree_chain(main, a: ProbeNet, b: ProbeNet) -> void:
 	late._net_sync_world_state(main._depleted_action_ids.duplicate(), main._dropped_items.duplicate(true), [], [], [])
 	check(late._hidden_tree_transforms.has(Vector3(60,0,60)) and late._cut_remains_positions.size() == 1 and late.world_actions_by_id.has(logs[3].id),
 		"late world sync hides an activated tree and restores remaining logs")
-	check(manager._bot_build_and_light_campfire(bot, Vector3(65,0,60)),
+	check(manager._bot_build_and_light_campfire(bot, Vector3(63,0,60)),
 		"two acquired logs and one stick build the real campfire")
 	check(manager._bot_item_count(proxy, "Tronco") == 0 and manager._bot_item_count(proxy, "Palo") == 0,
 		"real campfire consumes exactly the acquired materials")
+	check(not manager._ensure_bot_campfire_lit(bot, 20.0), "real world refuses bot ignition without matches or extra sticks")
+	proxy.set_meta("saved_inventory", [{"name":"Cerillas","type":"tool_matches","quantity":1,"durability":2.0}])
+	manager._ensure_bot_campfire_lit(bot, 1.4)
+	check(not main.world_actions_by_id[bot.campfire_id].get_meta("lit", false), "real fire stays unlit until the timer finishes")
+	manager._ensure_bot_campfire_lit(bot, 0.11)
 	# Drain reliable RPCs before returning to the unrelated pickup cases.
 	await create_timer(0.2).timeout
+	check(clients.all(func(view): return view.world_actions_by_id.has(bot.campfire_id) and view.world_actions_by_id[bot.campfire_id].get_meta("lit", false)),
+		"both real clients receive the completed campfire ignition")
 	for peer in [a, b]:
 		peer.client_world = null
 	for view in clients:
@@ -214,7 +248,10 @@ func run() -> void:
 		main.server_proxies[id] = proxy
 	var gesture := PlayerController.GroundGesture.packet("pickup", "floor|test", "Seta amanita", "food", 0.7)
 	a.sync_player_state.rpc_id(1, aid, Vector3.ZERO, 0.0, gesture, "", "", "")
-	await create_timer(0.2).timeout
+	for _wait in range(40):
+		await create_timer(0.05).timeout
+		if str(server.players[aid].get("anim", "")) == gesture and str(b.players.get(aid, {}).get("anim", "")) == gesture:
+			break
 	check(str(server.players[aid].get("anim", "")) == gesture and str(b.players.get(aid, {}).get("anim", "")) == gesture,
 		"pickup identity and phase reach the host and the other real client unchanged")
 	if OS.get_cmdline_user_args().has("--websocket"):

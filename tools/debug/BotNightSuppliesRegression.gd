@@ -4,6 +4,7 @@ class Arena extends Node3D:
  var world_actions_by_id: Dictionary = {}
  var net = null
  var reject_build := false
+ var reject_light := false
  # Franja de rio simulada: x en [100,110] es agua sombreada para las pruebas
  # de fogata en el agua (igual que get_river_depth_at del mundo real).
  func get_river_depth_at(pos): return 1.0 if pos.x >= 100.0 and pos.x <= 110.0 else 0.0
@@ -12,6 +13,7 @@ class Arena extends Node3D:
   world_actions_by_id[id] = {"position": pos}
   return true
  func _net_campfire_lit(id, name, pos, _pid):
+  if reject_light: return false
   if not world_actions_by_id.has(id): return false
   for lc in _lit_campfires:
    if str(lc.get("id","")) == id:
@@ -28,6 +30,10 @@ func check(ok: bool, label: String):
   errors += 1
   push_error(label)
 func _initialize(): call_deferred("run")
+func finish_fire(manager, b: Dictionary) -> void:
+ for i in range(36):
+  manager._ensure_bot_campfire_lit(b, 0.25)
+  if manager._bot_own_fire_lit(b): return
 func run():
  var world := Arena.new()
  root.add_child(world)
@@ -51,8 +57,14 @@ func run():
  check(not manager._bot_build_and_light_campfire(b, Vector3(1,0,0)), "sticks and stones cannot replace logs")
  check(proxy.get_meta("saved_inventory") == old_recipe and world._lit_campfires.is_empty(), "rejected recipe changes neither inventory nor world")
  proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1},{"name":"Piedra","quantity":2}])
- check(not manager._bot_prepare_night_supplies(b,.1), "build and light a fire using inventory")
- check(world._lit_campfires.size() == 1 and manager._bot_item_count(proxy,"Tronco") == 0 and manager._bot_item_count(proxy,"Palo") == 0 and manager._bot_item_count(proxy,"Piedra") == 2, "fire consumes two logs and one stick, leaving stones untouched")
+ check(manager._bot_prepare_night_supplies(b,.1), "build a fire using inventory")
+ check(world._lit_campfires.is_empty() and manager._bot_item_count(proxy,"Tronco") == 0 and manager._bot_item_count(proxy,"Palo") == 0 and manager._bot_item_count(proxy,"Piedra") == 2, "building consumes two logs and one stick but cannot ignite for free")
+ check(not manager._ensure_bot_campfire_lit(b, 20.0), "no ignition materials means no fire regardless of elapsed time")
+ proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
+ manager._ensure_bot_campfire_lit(b, 7.9)
+ check(world._lit_campfires.is_empty() and manager._bot_item_count(proxy,"Palo") == 2, "friction must finish before consuming sticks")
+ manager._ensure_bot_campfire_lit(b, 0.11)
+ check(world._lit_campfires.size() == 1 and manager._bot_item_count(proxy,"Palo") == 0, "eight seconds of friction consume exactly two additional sticks")
  check(manager._bot_supply_goal_lit(b,Vector3(8,0,0)), "nearby food/water within firelight allowed")
  check(not manager._bot_supply_goal_lit(b,Vector3(25,0,0)), "distant supplies without torch rejected")
  manager._bot_prepare_night_supplies(b,.1)
@@ -132,9 +144,10 @@ func run():
  for invalid_pos in [Vector3.INF, Vector3(200,0,200)]:
   proxy.global_position = Vector3(100,0,100)
   world._lit_campfires = [{"id":"old_camp","pos":Vector3(200,0,200)}]
-  proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1}])
+  proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1},{"name":"Cerillas","quantity":1,"durability":10.0}])
   var replacement := {"proxy":proxy,"bot_id":905,"hunger":30.0,"thirst":30.0,"campfire_id":"old_camp","campfire_pos":invalid_pos}
-  check(not manager._bot_prepare_night_supplies(replacement,.1), "invalid or distant camp permits a new local fire")
+  check(manager._bot_prepare_night_supplies(replacement,.1), "invalid or distant camp permits a new local fire")
+  finish_fire(manager, replacement)
   check(replacement.campfire_id != "old_camp" and world._lit_campfires.size() == 2 and world._lit_campfires[0].pos == Vector3(200,0,200), "new camp has distinct identity and preserves old fire")
  # Fogata fantasma: el fuego expira (5 min) y su objeto desaparece, pero la
  # entrada de _lit_campfires sobrevive — el bot debe invalidarla, limpiar
@@ -142,14 +155,16 @@ func run():
  proxy.global_position = Vector3(0,0,0)
  world._lit_campfires = []
  world.world_actions_by_id = {}
- proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":4},{"name":"Palo","quantity":2}])
+ proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":4},{"name":"Palo","quantity":2},{"name":"Cerillas","quantity":1,"durability":10.0}])
  var b5 := {"proxy":proxy,"bot_id":906,"hunger":30.0,"thirst":30.0,"campfire_id":"","campfire_pos":Vector3.INF}
- check(not manager._bot_prepare_night_supplies(b5,.1), "builds and lights a real campfire")
+ check(manager._bot_prepare_night_supplies(b5,.1), "builds a real campfire")
+ finish_fire(manager, b5)
  check(world._lit_campfires.size() == 1, "campfire registered as lit")
  var dead_id: String = b5["campfire_id"]
  world.world_actions_by_id.erase(dead_id)  # el fuego expira: el objeto ya no existe
  check(not manager._bot_supply_goal_lit(b5, Vector3(3,0,0)), "ghost campfire gives no light")
- check(not manager._bot_prepare_night_supplies(b5,.1), "ghost reference cleared and a new fire is built")
+ check(manager._bot_prepare_night_supplies(b5,.1), "ghost reference cleared and a new fire is built")
+ finish_fire(manager, b5)
  check(b5["campfire_id"] != "" and world.world_actions_by_id.has(b5["campfire_id"]) and world._lit_campfires.size() == 1,
   "new real campfire lit; the ghost is gone")
  # Sin materiales: la referencia muerta se limpia igual y no levanta otra.
@@ -186,6 +201,7 @@ func run():
  proxy.global_position = Vector3(0,0,0)
  # --- Nunca una fogata dentro del agua: punto en el rio se reubica a suelo
  # seco si el anillo lo permite, y rodeado de agua no gasta material ---
+ proxy.global_position = Vector3(99,0,0)
  proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1}])
  var b9 := {"proxy":proxy,"bot_id":910,"campfire_id":"","campfire_pos":Vector3.INF}
  check(manager._bot_build_and_light_campfire(b9, Vector3(100.5,0,0)), "fire next to the river relocates to dry land")
@@ -198,9 +214,60 @@ func run():
  check(manager._bot_item_count(proxy,"Tronco") == 2 and manager._bot_item_count(proxy,"Palo") == 1,
    "refused build does not consume materials")
  world.reject_build = true
+ proxy.global_position = Vector3.ZERO
  check(not manager._bot_build_and_light_campfire(b10, Vector3.ZERO), "authoritative world can reject a dry placement")
  check(manager._bot_item_count(proxy,"Tronco") == 2 and manager._bot_item_count(proxy,"Palo") == 1 and b10.campfire_id == "",
    "authoritative rejection preserves materials and creates no phantom fire")
+ world.reject_build = false
+ world._lit_campfires.clear()
+ world.world_actions_by_id = {"ignite":{"position":Vector3(2,0,0)}}
+ var ignition := {"proxy":proxy,"bot_id":912,"campfire_id":"ignite","campfire_pos":Vector3(2,0,0)}
+ proxy.set_meta("saved_inventory", [{"name":"Cerillas","quantity":1,"durability":3.0}])
+ manager._ensure_bot_campfire_lit(ignition, 1.4)
+ check(world._lit_campfires.is_empty(), "matches need 1.5 seconds")
+ ignition["flinch_timer"] = 0.3
+ check(not manager._ensure_bot_campfire_lit(ignition, 1.0) and float(proxy.get_meta("saved_inventory")[0].durability) == 3.0,
+  "damage cancels ignition without spending a match")
+ ignition["flinch_timer"] = 0.0
+ manager._ensure_bot_campfire_lit(ignition, 1.4)
+ check(world._lit_campfires.is_empty(), "interrupted ignition starts from zero")
+ proxy.position = Vector3(22,0,0)
+ check(not manager._ensure_bot_campfire_lit(ignition, 5.0), "no remote ignition")
+ proxy.position = Vector3.ZERO
+ manager._ensure_bot_campfire_lit(ignition, 1.5)
+ check(world._lit_campfires.size() == 1 and float(proxy.get_meta("saved_inventory")[0].durability) == 2.0,
+  "completed match ignition spends one charge")
+ manager._ensure_bot_campfire_lit(ignition, 10.0)
+ check(float(proxy.get_meta("saved_inventory")[0].durability) == 2.0, "already lit fire costs nothing")
+ world._lit_campfires.clear()
+ proxy.set_meta("saved_inventory", [{"name":"Cerillas","quantity":1,"durability":0.0}])
+ check(not manager._ensure_bot_campfire_lit(ignition, 10.0) and world._lit_campfires.is_empty(), "spent matches cannot relight a fire")
+ proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2}])
+ manager._ensure_bot_campfire_lit(ignition, 7.0)
+ ignition["sleeping"] = true
+ check(not manager._ensure_bot_campfire_lit(ignition, 2.0), "sleep interrupts ignition")
+ ignition["sleeping"] = false
+ manager._ensure_bot_campfire_lit(ignition, 7.0)
+ proxy.position = Vector3(0.5,0,0)
+ check(not manager._ensure_bot_campfire_lit(ignition, 2.0), "moving interrupts ignition even within reach")
+ proxy.position = Vector3.ZERO
+ manager._ensure_bot_campfire_lit(ignition, 7.0)
+ proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":1}])
+ check(not manager._ensure_bot_campfire_lit(ignition, 2.0) and world._lit_campfires.is_empty(), "lost ingredients are revalidated at completion")
+ proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2}])
+ world.reject_light = true
+ check(not manager._ensure_bot_campfire_lit(ignition, 8.0) and manager._bot_item_count(proxy, "Palo") == 2 and ignition.campfire_id == "ignite",
+  "world rejection keeps ignition materials and the unlit camp")
+ world.reject_light = false
+ proxy.set_meta("saved_inventory", [{"name":"Carne ensartada","quantity":1},{"name":"Cerillas","quantity":1,"durability":2.0},{"name":"Antorcha","quantity":1}])
+ ignition["torch_lit"] = true
+ ignition["hunger"] = 20.0
+ check(not manager._bot_cook_meat_at_fire(ignition), "an unlit camp cannot cook")
+ check(manager._bot_try_cook_meat(ignition, 0.1) and manager._bot_item_count(proxy, "Carne ensartada") == 1,
+  "personal torch light cannot replace campfire heat while ignition is pending")
+ manager._ensure_bot_campfire_lit(ignition, 1.5)
+ check(manager._bot_cook_meat_at_fire(ignition) and manager._bot_item_count(proxy, "Carne asada en palo") == 1,
+  "cooking resumes once the campfire really burns")
  world.free()
  print("BotNightSuppliesRegression errors=",errors)
  quit(1 if errors else 0)

@@ -252,6 +252,7 @@ class TestWorld extends "res://scripts/Main.gd":
 		# Misma regla que el servidor: solo fogatas cuyo objeto existe.
 		if not world_actions_by_id.has(cid):
 			return false
+		world_actions_by_id[cid].set_meta("lit", true)
 		for lc in _lit_campfires:
 			if str(lc.get("id","")) == cid:
 				lc["fire_name"] = fire_name
@@ -506,7 +507,7 @@ func run() -> void:
 	kael_proxy.set_meta("saved_inventory", [k_blade])
 	check(not mgr._bot_night_fire_ready(kael, kael_proxy), "Sin antorcha ni fogata ni material: no tiene la noche resuelta")
 	kael_proxy.set_meta("saved_inventory", [k_blade,
-		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 4, "use_value": 0.0},
 		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1, "use_value": 0.0}])
 	check(mgr._bot_night_fire_ready(kael, kael_proxy), "Palo+Trapos: puede fabricar la antorcha en cuanto quiera")
 	kael["campfire_id"] = "cf_prep_test"
@@ -3512,7 +3513,10 @@ func run() -> void:
 		mgr._tick_bot(fresh_b, 0.1)
 	var acted := str(fresh_b.get("_act", ""))
 	var moved: bool = str(fresh_b.get("anim", "")) in ["walk", "run"] or acted in ["explore", "dwell", "predator", "forage"] or fresh_b.get("explore_target", Vector3.INF) != Vector3.INF
-	check(acted != "drink" and moved,
+	# Four simulated seconds may end during crafting after a pickup. That is
+	# real work, not the old idle loop in the unavailable-water branch.
+	var working: bool = acted == "craft" and not (fresh_b.get("_craft_state", {}) as Dictionary).is_empty()
+	check(acted != "drink" and (moved or working),
 		"SpawnReal 10d: sed sin agua no congela al bot (act=%s anim=%s)" % [acted, str(fresh_b.get("anim", "?"))])
 
 	# 10e: la telemetria web expone jugadores humanos desde server_proxies / net.players
@@ -3772,13 +3776,15 @@ func run() -> void:
 		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1, "use_value": 0.0},
 		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 1, "use_value": 0.0},
 		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0},
+		{"name": "Cerillas", "type": "tool_matches", "quantity": 1, "durability": 2.0},
 	])
 	for i in range(25):
+		fresh_b["_ground_tick"] = int(fresh_b.get("_ground_tick", 0)) + 1
 		mgr._bot_try_cook_meat(fresh_b, 0.2)
 		if mgr._bot_item_count(fresh_b["proxy"], "Carne asada de ciervo") > 0:
 			break
 	check(not str(fresh_b.get("campfire_id", "")).is_empty() and mgr._bot_item_count(fresh_b["proxy"], "Carne asada de ciervo") == 1 and mgr._bot_item_count(fresh_b["proxy"], "Palo afilado") == 0,
-		"SpawnReal 10n: con Palo afilado + 2 Troncos + 1 Palo el bot hace hoguera, ensarta la carne y la cocina (cf=%s)" % str(fresh_b.get("campfire_id", "")))
+		"SpawnReal 10n: con receta y cerillas el bot espera el encendido antes de cocinar (cf=%s)" % str(fresh_b.get("campfire_id", "")))
 
 	# 10o: percepcion auditiva — un disparo de rifle a 85 m es oido por los
 	# otros bots (activa alerta/huida en desarmados y aggro en un bot armado)
@@ -3815,8 +3821,10 @@ func run() -> void:
 		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1, "use_value": 0.0},
 		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 1, "use_value": 0.0},
 		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0},
+		{"name": "Cerillas", "type": "tool_matches", "quantity": 1, "durability": 2.0},
 	])
 	for i in range(25):
+		fresh_b["_ground_tick"] = int(fresh_b.get("_ground_tick", 0)) + 1
 		mgr._bot_try_cook_meat(fresh_b, 0.2)
 		if mgr._bot_item_count(fresh_b["proxy"], "Pez cocinado") > 0:
 			break
@@ -4379,7 +4387,9 @@ func run() -> void:
 	])
 	vs.body_temperature = 34.0
 	var fires0: int = world.built_campfires.size()
-	mgr._tick_bot(fresh_b, 0.1)
+	for _ignite in range(90):
+		mgr._tick_bot(fresh_b, 0.1)
+		if world.campfire_positions.size() > 0: break
 	check(world.built_campfires.size() > fires0 and world.campfire_positions.size() > 0,
 		"SpawnReal 10w9: con frio letal y materiales enciende una hoguera para calentarse")
 	world.campfire_positions.clear()
@@ -7314,7 +7324,7 @@ func run() -> void:
 	b_med["sick_timer"] = 0.0
 	p_med.set_meta("saved_inventory", [
 		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 20.0},
-		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 2},
+		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 4},
 		{"name": "Cuchillo", "type": "weapon", "weight": 0.4, "quantity": 1, "durability": 100.0, "max_durability": 100.0},
 	])
 	mem_med["death_lessons"] = {}
@@ -7342,7 +7352,7 @@ func run() -> void:
 	b_med["sick_timer"] = 0.0
 	p_med.set_meta("saved_inventory", [
 		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
-		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 2},
+		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 4},
 		{"name": "Cuchillo de piedra", "type": "weapon", "weight": 0.3, "quantity": 1, "durability": 60.0, "max_durability": 60.0},
 	])
 	mem_med["death_lessons"] = {}
@@ -7399,6 +7409,10 @@ func run() -> void:
 	b_med = mgr.bots[903]
 	p_med = b_med["proxy"]
 	p_med.global_position = Vector3(400.0, 0.4, 400.0)
+	var species_fires_before := world._lit_campfires.duplicate(true)
+	var species_positions_before := world.campfire_positions.duplicate()
+	world._net_campfire_built("species_cooking_fire", p_med.global_position)
+	world._net_campfire_lit("species_cooking_fire", "species_flame", p_med.global_position)
 	p_med.set_meta("saved_inventory", [
 		{"name": "Carne ensartada", "type": "food", "weight": 0.45, "quantity": 1, "use_value": 22.0, "species": "oso"},
 	])
@@ -7423,6 +7437,11 @@ func run() -> void:
 	mgr._bot_cook_meat_at_fire(b_med)
 	check(mgr._bot_item_count(p_med, "Carne asada en palo") == 1,
 		"10Y2: espeton sin especie -> Carne asada en palo (legacy)")
+	world._lit_campfires.assign(species_fires_before)
+	world.campfire_positions.assign(species_positions_before)
+	world.built_campfires.erase("species_cooking_fire")
+	world.world_actions_by_id["species_cooking_fire"].queue_free()
+	world.world_actions_by_id.erase("species_cooking_fire")
 	# 10Y3: el ensartado desde carne cruda estampa la especie
 	p_med.set_meta("saved_inventory", [
 		{"name": "Carne cruda de oso", "type": "food", "weight": 0.5, "quantity": 1, "use_value": 22.0},
