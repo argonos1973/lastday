@@ -401,6 +401,7 @@ const M4_DAMAGE := 95.0
 const M4_PVP_HEAD := 60.0
 const M4_PVP_BODY := 28.0
 const M4_COOLDOWN := 0.27
+const M4_SHOT_VOICES := 4
 const M4_MUZZLE_SPEED := 880.0
 const M4_SPREAD_MULT := 2.2
 const M4_RECOIL := 4.5
@@ -4079,8 +4080,6 @@ func _physics_process_impl(delta: float) -> void:
 	if (_fire_button_held or (lmb_live and _held_is_m4() and not is_dead and not _is_reloading)) and _held_is_m4() and _shoot_cooldown <= 0.0:
 		_fire_button_held = true
 		_shoot_rifle()
-	elif _shoot_cooldown <= 0.0 and _held_is_m4() and _shoot_audio_player != null and _shoot_audio_player.playing:
-		_shoot_audio_player.stop()
 	# Gradually wear equipped clothing (faster when moving, slower when sleeping)
 	if not is_dead and inventory != null:
 		var wear_rate := 1.0
@@ -15322,6 +15321,7 @@ func _shoot_rifle() -> void:
 			_apply_rifle_recoil(true)
 			_set_loaded_rounds(_loaded_rounds() - 1)
 			_launch_rifle_projectile(b_origin, b_dir, shot_wind, exclude_arr, true, true)
+			_play_shoot_sound(true)
 			var world := get_tree().current_scene
 			if world != null and world.has_method("_sync_local_player_inventory"):
 				world.call_deferred("_sync_local_player_inventory")
@@ -15912,12 +15912,13 @@ func _play_shoot_sound(is_m4 := false) -> void:
 	var stream := _load_audio_stream(M4_SHOOT_SOUND if use_m4 else "res://assets/audio/disparo.wav")
 	if stream == null:
 		return
-	if use_m4 and _shoot_audio_player.playing and _shoot_audio_player.stream == stream and _shoot_audio_player.get_playback_position() < 1.15:
-		return
 	if _shoot_audio_player.stream != stream:
 		_shoot_audio_player.stream = stream
-	_shoot_audio_player.volume_db = 3.0
-	_shoot_audio_player.pitch_scale = randf_range(0.95, 1.05)
+	# El M4 suena una vez por bala real: las voces se solapan para que cada
+	# cola de eco siga sonando bajo el tiro siguiente y la ultima se oiga entera.
+	_shoot_audio_player.max_polyphony = M4_SHOT_VOICES if use_m4 else 1
+	_shoot_audio_player.volume_db = 1.0 if use_m4 else 3.0
+	_shoot_audio_player.pitch_scale = randf_range(0.98, 1.02) if use_m4 else randf_range(0.95, 1.05)
 	_shoot_audio_player.play()
 
 var _last_reload_audio_msec := -10000

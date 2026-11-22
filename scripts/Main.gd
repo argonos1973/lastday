@@ -4370,8 +4370,8 @@ func _play_incoming_shot(at_pos: Vector3, shooter: Node = null, shooter_id: int 
 		held = str(net.players[shooter_id].get("held_item", ""))
 	var is_m4 := held == PlayerControllerScript.M4_NAME
 	var now := Time.get_ticks_msec() / 1000.0
-	# El clip del M4 ya encadena la rafaga: no reiniciarlo mientras suene.
-	if now - _incoming_shot_last < (1.15 if is_m4 else 0.55):
+	# El clip del M4 es un unico tiro: suena por cada bala que pasa cerca.
+	if now - _incoming_shot_last < (0.08 if is_m4 else 0.55):
 		return
 	_incoming_shot_last = now
 	var path := "res://assets/audio/m4_disparo.mp3" if is_m4 else "res://assets/audio/disparo.wav"
@@ -4387,6 +4387,7 @@ func _play_incoming_shot(at_pos: Vector3, shooter: Node = null, shooter_id: int 
 	_incoming_shot_player.global_position = at_pos
 	if _incoming_shot_player.stream != stream:
 		_incoming_shot_player.stream = stream
+	_incoming_shot_player.max_polyphony = PlayerControllerScript.M4_SHOT_VOICES if is_m4 else 1
 	_incoming_shot_player.volume_db = -1.0
 	_incoming_shot_player.pitch_scale = randf_range(1.05, 1.2)
 	_incoming_shot_player.play()
