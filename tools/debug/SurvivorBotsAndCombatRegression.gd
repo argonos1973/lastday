@@ -618,6 +618,85 @@ func run() -> void:
 		if _it is Dictionary and str(_it.get("type", "")) == "tool_axe":
 			axe_dur = float(_it.get("durability", 0.0))
 	check(axe_dur == 70.0, "El hacha gasta 10 de durabilidad por arbol (dur=%.0f)" % axe_dur)
+	check(int(kael.get("_fire_tree_count", 0)) == 1 and mgr._bot_item_count(kael_proxy, "Tronco") == 0,
+		"La primera tala queda registrada y sus troncos NO entran directo al inventario")
+	# Mismo ciclo de fogata: un segundo arbol cercano ya no se elige aunque
+	# los cuatro troncos sigan fuera de la mochila (hay que recogerlos).
+	var prep_tree_limit := WorldActionScript.new()
+	prep_tree_limit.setup("prep_tree_limit", "fell_tree", "Arbol", Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), true, false)
+	world.add_child(prep_tree_limit)
+	prep_tree_limit.global_position = kael_proxy.global_position + Vector3(4.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_tree_limit"] = prep_tree_limit
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	check(not mgr._bot_try_gather_mats(kael, 0.1), "La misma fogata no justifica un segundo arbol")
+	g_kind = str((kael.get("_gather", {}) as Dictionary).get("kind", ""))
+	check(g_kind != "fell_tree", "El cupo por fogata bloquea otra tala (kind=%s)" % g_kind)
+	kael["_fire_tree_count"] = 0
+	var palo_only_target := mgr._find_mat_target(kael, 80.0, "Hacha", true, false, false, false)
+	check(str(palo_only_target.get("kind", "")) != "fell_tree",
+		"La falta de palos no tumba arboles: solo arbustos/drops (kind=%s)" % str(palo_only_target.get("kind", "")))
+	kael["_fire_tree_count"] = 1
+	world.world_actions_by_id.erase("prep_tree_limit")
+	prep_tree_limit.queue_free()
+	# Si durante la tala aparece un Tronco real en el suelo, el bot abandona
+	# el corte y va a recogerlo en vez de tumbar madera innecesaria.
+	kael["_fire_tree_count"] = 0
+	var prep_tree_abort := WorldActionScript.new()
+	prep_tree_abort.setup("prep_tree_abort", "fell_tree", "Arbol", Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), true, false)
+	world.add_child(prep_tree_abort)
+	prep_tree_abort.global_position = kael_proxy.global_position + Vector3(6.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_tree_abort"] = prep_tree_abort
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael["_s_loot"] = {}
+	kael["_fire_loot_scan"] = 0.0
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Con cupo libre vuelve a elegir un arbol para la fogata")
+	check(str((kael.get("_gather", {}) as Dictionary).get("kind", "")) == "fell_tree",
+		"La tala de la nueva prueba comenzo (kind=%s)" % str((kael.get("_gather", {}) as Dictionary).get("kind", "")))
+	kael_proxy.global_position = prep_tree_abort.global_position
+	kael["pos"] = kael_proxy.global_position
+	var ground_log_pos: Vector3 = kael_proxy.global_position + Vector3(1.0, 0.06, 0.0)
+	world._dropped_items.append({"id":"ground_log_abort", "name":"Tronco", "type":"resource", "weight":1.2, "qty":1, "use":0.0, "pos":[ground_log_pos.x, ground_log_pos.y, ground_log_pos.z]})
+	check(not mgr._bot_try_gather_mats(kael, 0.1), "Un tronco real en el suelo aborta la tala en curso")
+	check((kael.get("_gather", {}) as Dictionary).is_empty() and not world._depleted_action_ids.has("prep_tree_abort"),
+		"La tala abortada no consume el arbol")
+	check(mgr._bot_try_gather_mats(kael, 0.1) and str((kael.get("_s_loot", {}) as Dictionary).get("id", "")) == "ground_log_abort",
+		"Tras abortar va a recoger el tronco real (loot=%s)" % str((kael.get("_s_loot", {}) as Dictionary).get("id", "")))
+	kael["_s_loot"] = {}
+	world._dropped_items = (world._dropped_items as Array).filter(func(e): return str(e.get("id", "")) != "ground_log_abort")
+	world.world_actions_by_id.erase("prep_tree_abort")
+	prep_tree_abort.queue_free()
+	kael["_fire_tree_count"] = 1
+	# Una fogata construida cierra el ciclo: si surge otra necesidad, ahi si
+	# puede justificarse un nuevo arbol.
+	kael_proxy.set_meta("saved_inventory", [
+		{"name": "Hacha", "type": "tool_axe", "weight": 1.4, "quantity": 1, "durability": 70.0, "max_durability": 80.0},
+		{"name":"Tronco","type":"resource","weight":1.2,"quantity":2},
+		{"name":"Palo","type":"resource","weight":0.3,"quantity":1}])
+	var fires_before_cycle: int = world.built_campfires.size()
+	check(mgr._bot_build_and_light_campfire(kael, kael_proxy.global_position + Vector3(0.9, 0.0, 0.9)),
+		"La fogata del ciclo se construye con los materiales reales")
+	check(world.built_campfires.size() == fires_before_cycle + 1 and int(kael.get("_fire_tree_count", 0)) == 0,
+		"Construir la fogata reinicia el cupo de tala")
+	kael["campfire_id"] = ""
+	kael["campfire_pos"] = Vector3.INF
+	kael["_gather"] = {}
+	kael["_gather_scan"] = 0.0
+	kael_proxy.set_meta("saved_inventory", [
+		{"name": "Hacha", "type": "tool_axe", "weight": 1.4, "quantity": 1, "durability": 70.0, "max_durability": 80.0},
+		{"name":"Palo","type":"resource","weight":0.3,"quantity":1}])
+	var prep_tree_cycle := WorldActionScript.new()
+	prep_tree_cycle.setup("prep_tree_cycle", "fell_tree", "Arbol", Vector3(1.35, 3.2, 1.35), Color(0.12, 0.08, 0.035), true, false)
+	world.add_child(prep_tree_cycle)
+	prep_tree_cycle.global_position = kael_proxy.global_position + Vector3(6.0, 0.0, 0.0)
+	world.world_actions_by_id["prep_tree_cycle"] = prep_tree_cycle
+	check(mgr._bot_try_gather_mats(kael, 0.1), "Una nueva fogata pendiente permite un nuevo arbol")
+	check(str((kael.get("_gather", {}) as Dictionary).get("kind", "")) == "fell_tree",
+		"El nuevo ciclo si elige fell_tree (kind=%s)" % str((kael.get("_gather", {}) as Dictionary).get("kind", "")))
+	kael["_gather"] = {}
+	world.world_actions_by_id.erase("prep_tree_cycle")
+	prep_tree_cycle.queue_free()
 	# Los dos troncos de fuego no se rajan ni se guardan en el alijo.
 	var reserve_inv := [
 		k_blade.duplicate(true),

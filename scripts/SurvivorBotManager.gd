@@ -1202,6 +1202,7 @@ func _spawn_bot(cfg: Dictionary) -> void:
 		"shelter_pos": Vector3.INF,
 		"campfire_id": "",
 		"campfire_pos": Vector3.INF,
+		"_fire_tree_count": 0,
 		"hide_timer": 0.0,
 		"team_leader_id": 0, # 0 = libre, >0 = peer_id del jugador líder (1 en SP/host)
 		"follow_mode": "follow", # "follow" | "stay" | "guard"
@@ -11549,6 +11550,7 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> bool:
 		_consume_bot_item(proxy, material, int(GameConst.CAMPFIRE_INPUTS[material]))
 	b["campfire_id"] = cf_id
 	b["campfire_pos"] = pos
+	b["_fire_tree_count"] = 0
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
@@ -19253,6 +19255,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 		piedra_need = 0
 		seeds_need = false
 	var tronco_short := _bot_item_count(proxy, "Tronco") < tronco_need
+	var can_fell_tree := _bot_can_fell_tree_for_fire(b, proxy)
 	var palo_short := _bot_palo_supply(proxy, tool, tronco_need) < palo_need
 	var piedra_short := _bot_item_count(proxy, "Piedra") < piedra_need
 	if (needs_fire or fire_sticks > 0) and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
@@ -19264,7 +19267,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	# solo se exime cuando su salida es el material del fuego —
 	# y el helado solo cuando esa salida es su fogata de rescate.
 	var allowed := (((palo_short or seeds_need) and not tool.is_empty()) or piedra_short \
-			or (tronco_short and not _bot_axe_tool(proxy).is_empty())) \
+			or (tronco_short and can_fell_tree)) \
 			and float(b.get("hide_timer", 0.0)) <= 0.0 \
 			and not _bot_is_exhausted(b) \
 			and (not _bot_is_freezing(b) or freezing_rescue) \
@@ -19288,9 +19291,11 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 		var is_tree := kind_g == "fell_tree"
 		var indexed_tree: bool = is_tree and world.has_method("_tree_entry_for_action") and not world._tree_entry_for_action(aid).is_empty()
 		var held_g := _bot_axe_tool(proxy) if is_tree else tool
+		var tree_still_needed := not is_tree or (tronco_short and can_fell_tree)
 		if not (apos is Vector3) or (not indexed_tree and (act == null or not is_instance_valid(act))) or taken \
 				or (world != null and "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid)) \
-				or (kind_g in ["fell_bush", "wood"] and tool.is_empty()) or (is_tree and held_g.is_empty()):
+				or (kind_g in ["fell_bush", "wood"] and tool.is_empty()) or (is_tree and held_g.is_empty()) \
+				or not tree_still_needed:
 			_bot_release_gather_claim(b, st)
 			b["_gather"] = {}
 			return false
@@ -19311,6 +19316,18 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 		if cutting:
 			b["held_item"] = held_g
 			proxy.set_meta("saved_held_item", held_g)
+		if is_tree and tronco_short:
+			st["log_scan"] = float(st.get("log_scan", 0.0)) - delta
+			if float(st["log_scan"]) <= 0.0:
+				st["log_scan"] = 0.6
+				var log_radius := 120.0 if freezing_rescue else (24.0 if night_no_light else 80.0)
+				var log_drop := _find_fire_prep_loot(b, log_radius, true, ["Tronco"])
+				if not log_drop.is_empty():
+					_bot_release_gather_claim(b, st)
+					b["_gather"] = {}
+					b["_s_loot"] = log_drop
+					b["_fire_loot_scan"] = 0.0
+					return false
 		if float(st["t"]) >= float(st.get("t_need", 5.0)):
 			b["_gather"] = {}
 			if is_tree:
@@ -19344,6 +19361,13 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	b["_gather"] = target
 	return _bot_try_gather_mats(b, 0.0, fire_rescue)
 
+# Un arbol (4 troncos) sobra para una fogata (2 troncos): se permite como
+# maximo una tala por bot y por fogata pendiente. Solo la falta de Tronco la
+# justifica; los palos siguen saliendo de arbustos o drops reales.
+func _bot_can_fell_tree_for_fire(b: Dictionary, proxy: Node3D) -> bool:
+	return not _bot_axe_tool(proxy).is_empty() \
+		and int(b.get("_fire_tree_count", 0)) < GameConst.BOT_MAX_TREES_PER_CAMPFIRE
+
 # Nodo de recoleccion mas conveniente segun lo que falta: arbustos a talar
 # (filo, 5 s, 3 palos + semillas), arboles (hacha, 10 s, 4 troncos
 # al suelo) o piedras sueltas para herramientas.
@@ -19357,6 +19381,7 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 	var can_fit_log := _bot_would_fit(b, inv, {"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 1})
 	var can_fit_stone := _bot_would_fit(b, inv, {"name": "Piedra", "type": "resource", "weight": 0.45, "quantity": 1})
 	var axe := _bot_axe_tool(proxy)
+	var can_fell_tree := need_tronco and can_fit_log and _bot_can_fell_tree_for_fire(b, proxy)
 	var camp: Vector3 = b.get("camp_spot", proxy.global_position)
 	if not camp.is_finite():
 		camp = proxy.global_position
@@ -19379,9 +19404,9 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 			# (0.3) ya no entra; los palos sobrantes quedan en el suelo.
 			serves = not tool.is_empty() and ((need_palo and can_fit_palo) or (need_seeds and can_fit_semillas))
 		elif atype == "fell_tree":
-			# Arbol de verdad: solo con hacha y si le cabe al menos un tronco
-			# de 1.2 kg (el resto queda en el suelo para la vuelta).
-			serves = not axe.is_empty() and (need_tronco or need_palo) and can_fit_log
+			# Arbol de verdad: solo cuando falte Tronco para la fogata, nunca
+			# para resolver la escasez de palos.
+			serves = can_fell_tree
 		elif atype == "stone":
 			serves = need_piedra and can_fit_stone
 		if not serves or claims.has(aid) or depleted.has(aid):
@@ -19399,7 +19424,7 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 			# sueltos 1.4 s a mano.
 			var t_need := 10.0 if atype == "fell_tree" else (5.0 if atype == "fell_bush" else 1.4)
 			best = {"id": str(aid), "pos": (a as Node3D).global_position, "t": 0.0, "t_need": t_need, "kind": atype}
-	if not axe.is_empty() and (need_tronco or need_palo) and can_fit_log and world.has_method("_find_bot_tree_target"):
+	if can_fell_tree and world.has_method("_find_bot_tree_target"):
 		var tree: Dictionary = world._find_bot_tree_target(proxy.global_position, radius, camp, func(pos: Vector3): return _is_goal_blacklisted(b, pos))
 		if not tree.is_empty():
 			var score := proxy.global_position.distance_to(tree.pos) + (tree.pos as Vector3).distance_to(camp) * 0.5
@@ -19464,6 +19489,8 @@ func _bot_fell_tree_complete(b: Dictionary, st: Dictionary) -> void:
 	var actual_pos: Vector3 = tree.pos if not tree.is_empty() else action.global_position
 	if pos.distance_to(actual_pos) > 0.1 or proxy.global_position.distance_to(actual_pos) > 3.0:
 		return
+	if int(b.get("_fire_tree_count", 0)) >= GameConst.BOT_MAX_TREES_PER_CAMPFIRE:
+		return
 	if "_depleted_action_ids" in world and (world._depleted_action_ids as Array).has(aid):
 		return
 	var axe := _bot_axe_tool(proxy)
@@ -19476,6 +19503,7 @@ func _bot_fell_tree_complete(b: Dictionary, st: Dictionary) -> void:
 		spawns.append({"id": "pickup_Tronco_%s_%d" % [aid, spawns.size()], "name": "Tronco", "type": "resource", "pos": pos + off, "weight": 1.2, "qty": 1, "use": 0.0})
 	if not world.has_method("_net_world_action_completed") or world._net_world_action_completed(aid, spawns, "tree_remains", pos, 0) == false:
 		return
+	b["_fire_tree_count"] = int(b.get("_fire_tree_count", 0)) + 1
 	_reduce_bot_item_durability(proxy, axe, 10.0)
 	if world.has_method("_attract_wolves_to_noise"):
 		world._attract_wolves_to_noise(pos, 45.0)
@@ -19581,7 +19609,7 @@ func _bot_try_fire_material_pickup(b: Dictionary, delta: float, radius: float) -
 # Busqueda dirigida de material de fuego al anochecer: va solo a por lo que
 # le falta para la antorcha (trapos/ropa cortable, palo) o la fogata
 # (2 troncos, 1 palo), ignorando el resto del botin.
-func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false) -> Dictionary:
+func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false, wanted_names: Array = []) -> Dictionary:
 	if world == null or not ("_dropped_items" in world):
 		return {}
 	var proxy: Node3D = b["proxy"]
@@ -19611,7 +19639,7 @@ func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false)
 			if wa != null and is_instance_valid(wa) and wa.has_meta("dropped_by"):
 				continue
 		var nm := str(entry.get("name", ""))
-		if materials_only and nm not in ["Tronco", "Palo", "Cerillas"]:
+		if (materials_only and nm not in ["Tronco", "Palo", "Cerillas"]) or (not wanted_names.is_empty() and nm not in wanted_names):
 			continue
 		var useful := (need_torch and nm == "Antorcha") \
 			or (need_palo and nm == "Palo") \
