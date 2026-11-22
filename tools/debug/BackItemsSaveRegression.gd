@@ -147,6 +147,9 @@ func run() -> void:
 	player.inventory.items.append(rifle)  # bypass capacity — we test save/load, not slots
 	check(player._store_inventory_rifle_on_back(), "Rifle stores on a shoulder slot")
 	check(not _inventory_has_type(player, "weapon_rifle"), "Stored rifle leaves the inventory")
+	player.inventory.items.append(ItemScript.create(GameConst.HEADLAMP_ITEM_NAME, "clothing", 0.22, 1, 0.0))
+	player.equip_clothing(GameConst.HEADLAMP_ITEM_NAME)
+	player._toggle_flashlight()
 	var data: Dictionary = SaveHooks.collect_player_data(player)
 	var back_items: Array = data.get("back_items", [])
 	check(back_items.size() == 2 and str(back_items[0].get("name", "")) == "Rifle francotirador", "Back items are serialized")
@@ -158,6 +161,7 @@ func run() -> void:
 	var restored := TestPlayer.new()
 	root.add_child(restored)
 	SaveHooks.apply_saved_player_data(restored, data)
+	check(restored.has_headlamp_equipped() and is_instance_valid(restored.flashlight) and restored.flashlight.visible, "equipped headlamp and switch survive a save round trip")
 	check(restored._has_stored_back_item_type("weapon_rifle"), "Back rifle survives the load")
 	check(not _inventory_has_type(restored, "weapon_rifle"), "Restored back rifle does not duplicate into inventory")
 	check(restored.use_back_item(0), "Back item returns to the hands after load")

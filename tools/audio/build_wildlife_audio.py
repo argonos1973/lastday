@@ -26,13 +26,26 @@ SOURCES = {
     'animal_foley': ('IENBA', 'Animal Footsteps', 'https://freesound.org/people/IENBA/sounds/658429/'),
     'hooves': ('craigsmith', 'R13-16-Soft Hoof Sounds.wav', 'https://freesound.org/people/craigsmith/sounds/479688/'),
     'bear_growl': ('celldroid', 'Bear Angry Growl', 'https://freesound.org/people/celldroid/sounds/763026/'),
+    'wolf_run_gallop': ('qubodup', 'Dog Running Past', 'https://freesound.org/people/qubodup/sounds/827320/'),
 }
+
+def _ensure_freesound_source(manifest, key):
+    author, title, url = SOURCES[key]
+    src = CACHE / (key + '.mp3')
+    if not src.exists():
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        html = urllib.request.urlopen(req, timeout=20).read().decode()
+        media = re.search(r'https://cdn.freesound.org/previews/[^"\s]+-hq\.mp3', html).group(0)
+        src.write_bytes(urllib.request.urlopen(media, timeout=30).read())
+    manifest['sources'][key] = dict(
+        author=author, title=title, url=url, license='CC0-1.0',
+        sha256=hashlib.sha256(src.read_bytes()).hexdigest())
+    return src
 
 def build_wolves(manifest):
     """Keep original MP3s untouched; edit isolated contacts/phrases offline."""
     supplied = {
         'wolf_walk_supplied': 'LOBO_ANDANDO',
-        'wolf_run_supplied': 'LOBO_CORRIENDO',
         'wolf_eat_supplied': 'LOBO_COMIENDO',
         'wolf_growl_supplied': 'LOBO_GRUÑENDO',
     }
@@ -48,17 +61,22 @@ def build_wolves(manifest):
             path=src.relative_to(ROOT).as_posix(),
             license='User-supplied recording; original license unspecified',
             sha256=hashlib.sha256(src.read_bytes()).hexdigest())
+    inputs['wolf_run_gallop'] = _ensure_freesound_source(manifest, 'wolf_run_gallop')
     specs = []
     for i, start in enumerate([4.16, 6.25, 10.65], 1):
-        specs.append((f'wolf_walk_{i}', 'wolf_walk_supplied', start, .20, 4800, .004, .035))
-    for i, start in enumerate([4.70, 7.88, 11.09], 1):
-        specs.append((f'wolf_run_{i}', 'wolf_run_supplied', start, .24, 6000, .004, .04))
+        specs.append((f'wolf_walk_{i}', 'wolf_walk_supplied', start, .20, 'highpass=f=65,lowpass=f=4800', .004, .035))
+    # LOBO_CORRIENDO.mp3 was broadband foliage/snow hiss (-38 dB, ZCR ~7 kHz) with
+    # almost no paw thud; use isolated turf gallop strikes from wolf_run_gallop
+    # pitched 8% lower offline for heavier adult-wolf weight.
+    for i, (start, duration) in enumerate([(3.825, .175), (4.195, .160), (3.460, .165)], 1):
+        specs.append((f'wolf_run_{i}', 'wolf_run_gallop', start, duration,
+                      'asetrate=44100*0.92,aresample=24000,asetpts=N/SR/TB,highpass=f=55,lowpass=f=3400', .005, .055))
     for i, (start, duration) in enumerate([(0.04, 1.25), (3.33, 1.42), (5.75, 1.50)], 1):
-        specs.append((f'wolf_eat_{i}', 'wolf_eat_supplied', start, duration, 7500, .02, .08))
+        specs.append((f'wolf_eat_{i}', 'wolf_eat_supplied', start, duration, 'highpass=f=65,lowpass=f=7500', .02, .08))
     for i, (start, duration) in enumerate([(2.25, 1.48), (3.73, 1.50), (5.23, 2.05), (7.28, 2.11)], 1):
-        specs.append((f'wolf_growl_{i}', 'wolf_growl_supplied', start, duration, 7500, .03, .10))
-    for name, key, start, length, lowpass, fade_in, fade_out in specs:
-        chain = f'highpass=f=65,lowpass=f={lowpass},afade=t=in:d={fade_in},afade=t=out:st={length-fade_out}:d={fade_out}'
+        specs.append((f'wolf_growl_{i}', 'wolf_growl_supplied', start, duration, 'highpass=f=65,lowpass=f=7500', .03, .10))
+    for name, key, start, length, base_filter, fade_in, fade_out in specs:
+        chain = f'{base_filter},afade=t=in:d={fade_in},afade=t=out:st={length-fade_out}:d={fade_out}'
         dest = DEST / (name + '.wav')
         subprocess.run([FFMPEG, '-v', 'error', '-y', '-ss', str(start),
                         '-i', str(inputs[key]), '-t', str(length), '-af', chain,
@@ -93,14 +111,8 @@ def main():
     for key in SOURCES:
         if key in manifest['sources']:
             manifest['sources'][key]['license'] = 'CC0-1.0'
-    for key, (author, title, url) in ({} if args.wolves_only else SOURCES).items():
-        src = CACHE / (key + '.mp3')
-        if not src.exists():
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            html = urllib.request.urlopen(req, timeout=20).read().decode()
-            media = re.search(r'https://cdn.freesound.org/previews/[^"\s]+-hq\.mp3', html).group(0)
-            src.write_bytes(urllib.request.urlopen(media, timeout=30).read())
-        manifest['sources'][key] = dict(author=author, title=title, url=url, license='CC0-1.0', sha256=hashlib.sha256(src.read_bytes()).hexdigest())
+    for key in ({} if args.wolves_only else SOURCES):
+        _ensure_freesound_source(manifest, key)
     specs = []
     for i, (start, length) in enumerate([(0.075,.18),(.50,.13),(.99,.18)]):
         specs.append((f'paw_soft_{i+1}', 'animal_foley', start, length, 'highpass=f=75,lowpass=f=3400', 5))

@@ -4039,6 +4039,10 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 						_synth.set_meta("pelt_species", slot_pelt)
 					player.inventory.add_item(_synth)
 				player.equip_clothing(slot_name, _load_color, null, slot_pelt)
+	if player.has_headlamp_equipped():
+		player._ensure_flashlight_node()
+		player.flashlight.visible = bool(extra.get("headlamp_on", false)) and not sleeping
+		player._sync_headlamp_light_pose()
 	# Back-slotted equipment (rifle, rod, spear) lives outside the inventory
 	var back_items = extra.get("back_items", [])
 	if back_items is Array and "_stored_back_items" in player:
@@ -5758,6 +5762,8 @@ func _sync_local_player_inventory() -> void:
 # equipment payload, rifle ammo and the rest of the survival stats.
 func _build_inventory_sync_extra(actual_held) -> Dictionary:
 	var extra := {}
+	if player.has_headlamp_equipped():
+		extra["headlamp_on"] = is_instance_valid(player.flashlight) and player.flashlight.visible
 	if "_stored_back_items" in player:
 		var back_items: Array = []
 		for entry in player._stored_back_items:
@@ -7853,6 +7859,8 @@ func _get_drop_model_paths(item_name: String, item_type: String, pelt: String = 
 					return [str(GameConst.PELT_HEADDRESS.get(pelt, GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))]
 				"Casco militar":
 					return [GameConst.MILITARY_HELMET_MODEL]
+				"Linterna frontal":
+					return [GameConst.HEADLAMP_MODEL]
 				"Guantes survival":
 					return [GameConst.GARDEN_GLOVES_MODEL]
 				"Botas survival":
@@ -7995,6 +8003,8 @@ func _get_drop_scale(item_name: String, item_type: String) -> float:
 					return 0.5
 				"Casco militar":
 					return 1.0
+				"Linterna frontal":
+					return 1.25
 				_:
 					return 0.7
 		"seed":
@@ -11465,6 +11475,10 @@ func _create_house_loot() -> void:
 		{"name": "Pasamontañas", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.0, "paths": ["res://assets/characters/adapted/civil/pickup_balaclava.glb"], "scale": 0.5, "rot": Vector3.ZERO, "color": Color.TRANSPARENT, "rare": true},
 		{"name": "Pasamontañas navideño", "type": "clothing", "weight": 0.25, "qty": 1, "use": 0.0, "paths": ["res://assets/characters/adapted/civil/pickup_balaclava_navideno.glb"], "scale": 0.5, "rot": Vector3.ZERO, "color": Color.TRANSPARENT, "rare": true},
 	]
+	# Separate stream and IDs: an old depleted house ID must still refer to the same item.
+	var hl_rng := RandomNumberGenerator.new()
+	hl_rng.seed = _stable_loot_seed("residential_headlamps")
+	var headlamp := {"name": GameConst.HEADLAMP_ITEM_NAME, "type": "clothing", "weight": 0.22, "qty": 1, "use": 0.0, "paths": [GameConst.HEADLAMP_MODEL], "scale": 1.25, "rot": Vector3.ZERO, "color": Color.TRANSPARENT}
 	var house_loot_data := [
 		{"origin": Vector3(-25, 0, -18), "w": 11.4, "d": 9.4, "label": "Casa abandonada 1"},
 		{"origin": Vector3(-38, 0, 18), "w": 14.0, "d": 11.0, "label": "Casa abandonada 2"},
@@ -11486,6 +11500,7 @@ func _create_house_loot() -> void:
 			hat_template_idx = _ti
 			break
 	var hat_house_idx := _world_rng.randi() % house_loot_data.size()
+	var hl_house_idx := hl_rng.randi() % house_loot_data.size()
 	for hd_i in range(house_loot_data.size()):
 		var hd: Dictionary = house_loot_data[hd_i]
 		var origin: Vector3 = hd["origin"]
@@ -11493,6 +11508,11 @@ func _create_house_loot() -> void:
 		var half_d: float = hd["d"] * 0.5
 		var house_label: String = str(hd.get("label", ""))
 		var furniture_aabbs: Array = _collect_house_furniture_aabbs(house_label)
+		if hd_i == hl_house_idx:
+			var lamp := headlamp.duplicate()
+			lamp["id"] = "village_house_headlamp"
+			lamp["pos"] = _find_pos_inside_house_avoiding(origin, half_w, half_d, furniture_aabbs, hl_rng)
+			_create_pickup_item(lamp)
 		var num_items := 3 + _world_rng.randi() % 4
 		for _j in range(num_items):
 			var template: Dictionary
@@ -11536,9 +11556,15 @@ func _create_house_loot() -> void:
 			axe_template_idx = _ti
 			break
 	var city_center := CityExpansion.CENTER
+	var hl_building: Dictionary = CityExpansion.BLOCK.BUILDINGS[hl_rng.randi() % CityExpansion.BLOCK.BUILDINGS.size()]
 	for definition in CityExpansion.BLOCK.BUILDINGS:
 		var b_pos: Vector3 = city_center + definition["position"]
 		var b_yaw: float = float(definition["yaw"])
+		if definition == hl_building:
+			var lamp := headlamp.duplicate()
+			lamp["id"] = "city_house_headlamp"
+			lamp["pos"] = _find_pos_inside_city_building(b_pos, b_yaw, 0.06, definition, hl_rng)
+			_create_pickup_item(lamp)
 		var city_items := 3 + _world_rng.randi() % 3
 		var loot_floors: Array = definition.get("loot_floor_values", [])
 		var item_count := maxi(city_items, loot_floors.size())
@@ -11925,6 +11951,7 @@ func _create_house_loot() -> void:
 		"vest": tent_loot_pool[18], "helmet": tent_loot_pool[14],
 		"backpack": tent_loot_pool[19], "pants": tent_loot_pool[3],
 		"jacket": tent_loot_pool[8], "food": tent_loot_pool[15],
+		"headlamp": headlamp,
 	})
 	# Water tower loot in the starting village (-43, 0, -48) and Clock Tower loot in the city (41, 0, 750)
 	var tower_rng := RandomNumberGenerator.new()
@@ -12016,6 +12043,18 @@ func _create_house_loot() -> void:
 			"paths": ["res://assets/characters/adapted/civil/pickup_balaclava.glb"], "scale": 0.5,
 			"rot": Vector3.ZERO, "color": Color.TRANSPARENT, "pos": spot["pos"], "floor_y": spot["pos"].y}
 		_create_pickup_item(mask_loot)
+	# Linternas frontales militares garantizadas — IDs fijos, sin consumir RNG.
+	for hspot in [
+		{"id": "tent_loot_headlamp", "pos": tent_origin + Vector3(1.5, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0.0, tent_floor_y, 0.0), "floor_y": tent_floor_y},
+		{"id": "remote_tent_loot_headlamp", "pos": remote_tent_origin + Vector3(1.5, 0.0, 2.0).rotated(Vector3.UP, deg_to_rad(120.0)) + Vector3(0.0, remote_tent_floor_y, 0.0), "floor_y": remote_tent_floor_y},
+		{"id": "city_tent2_loot_headlamp", "pos": city_tent2_origin + Vector3(-1.1, 0.0, 1.6).rotated(Vector3.UP, deg_to_rad(_city_tent2_yaw)) + Vector3(0.0, city_tent2_floor_y, 0.0), "floor_y": city_tent2_floor_y},
+		{"id": "clock_tower_roof_headlamp", "pos": ct_origin + Vector3(0.9, 29.46, 2.5), "floor_y": ct_origin.y + 29.46},
+	]:
+		var hl_loot: Dictionary = headlamp.duplicate()
+		hl_loot["id"] = hspot["id"]
+		hl_loot["pos"] = hspot["pos"]
+		hl_loot["floor_y"] = hspot["floor_y"]
+		_create_pickup_item(hl_loot)
 	# Tela de camuflaje garantizada en las tiendas militares — IDs fijos, sin RNG.
 	for cspot in [
 		{"id": "tent_loot_camonet", "pos": tent_origin + Vector3(-1.4, 0.0, 2.1).rotated(Vector3.UP, deg_to_rad(35.0)) + Vector3(0.0, tent_floor_y, 0.0), "floor_y": tent_floor_y},

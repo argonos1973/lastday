@@ -288,3 +288,175 @@ static func upper_bounds(mesh: MeshInstance3D, frame: Transform3D, cutoff: float
 			bounds = AABB(point, Vector3.ZERO) if first else bounds.expand(point)
 			first = false
 	return bounds
+
+# Fits the two-part tactical headlamp (`LampHousing` + `HeadbandStrap`) onto the
+# character's head in bind space, adapting height, tilt and elastic band span to
+# whatever headwear/balaclava is currently worn so the rigid housing never
+# distorts and the strap neither clips nor floats.
+static func fit_headlamp(model: Node3D, headlamp: Node3D, head_item: String = "", face_item: String = "", pelt_species: String = "") -> bool:
+	if model == null or headlamp == null or headlamp.get_parent() == null:
+		return false
+	var parent := headlamp.get_parent() as Node3D
+	var head := model.find_child("HeadMesh", true, false) as MeshInstance3D
+	if head == null or head.mesh == null:
+		return false
+	var bind_frame := _head_frame(model, head, parent)
+	var world_to_bind := (parent.global_transform * bind_frame).affine_inverse()
+	var bind_to_world := parent.global_transform * bind_frame
+	# Heights are in the imported HeadMesh's bind space, above the brow or brim.
+	var band_y := 3.572
+	var down_deg := 4.0
+	var wrap_outer_hat := false
+	match head_item:
+		"Casco militar":
+			band_y = 3.602
+			down_deg = 5.0
+			wrap_outer_hat = true
+		"Sombrero de pescador", "Gorro de piel":
+			band_y = 3.658
+			down_deg = 6.0
+			wrap_outer_hat = true
+		"Gorra militar", "Gorro de otoño":
+			band_y = 3.636
+			down_deg = 6.5
+			wrap_outer_hat = true
+		"Tocado de piel animal":
+			# Mount over the trophy's forehead/crown above its eyes and below its ears
+			# so neither the wearer's eyes nor the animal's eyes/jaws are covered.
+			match pelt_species:
+				"ciervo": band_y = 3.800
+				"oso": band_y = 3.798
+				"zorro": band_y = 3.788
+				_: band_y = 3.762
+			down_deg = 8.0
+			wrap_outer_hat = true
+
+	# Collect bind-space meshes that the strap wraps around at band_y.
+	# On bare head we measure HeadMesh (cranium) rather than flared side hair tufts
+	# so the elastic band hugs the temples instead of floating outside loose locks.
+	var slice_meshes: Array = [[head, bind_to_world]]
+	if not face_item.is_empty():
+		var face_node := model.get_node_or_null("Worn_" + face_item)
+		if face_node == null:
+			for ch in model.get_children():
+				if ch.name == "PreviewHat" and ch.find_child("FaceFittedBind", true, false) != null:
+					face_node = ch
+					break
+		if face_node != null:
+			for mi in face_node.find_children("*", "MeshInstance3D", true, false):
+				if mi.visible:
+					slice_meshes.append([mi, mi.global_transform])
+
+	if wrap_outer_hat:
+		if head_item in ["Gorra militar", "Gorro de otoño"]:
+			var cap := model.find_child("autumn_hat", true, false) as MeshInstance3D
+			if cap != null and cap.visible:
+				slice_meshes.append([cap, bind_to_world])
+		else:
+			var hat_node := model.get_node_or_null("Worn_" + head_item)
+			if hat_node == null:
+				hat_node = model.get_node_or_null("PreviewHat")
+			if hat_node != null:
+				for mi in hat_node.find_children("*", "MeshInstance3D", true, false):
+					if mi.visible:
+						slice_meshes.append([mi, mi.global_transform])
+
+	var min_x := INF; var max_x := -INF
+	var min_z := INF; var max_z := -INF
+	var front_z := -INF
+	var count := 0
+	var half_band := 0.016
+	for entry in slice_meshes:
+		var mi: MeshInstance3D = entry[0]
+		var xf: Transform3D = world_to_bind * entry[1]
+		if mi.mesh == null:
+			continue
+		for s in range(mi.mesh.get_surface_count()):
+			var arr := mi.mesh.surface_get_arrays(s)
+			if arr.is_empty():
+				continue
+			for v in arr[Mesh.ARRAY_VERTEX]:
+				var p: Vector3 = xf * v
+				if absf(p.y - band_y) <= half_band:
+					# Exclude wide animal ears/antlers when measuring pelt crown width.
+					if head_item == "Tocado de piel animal" and absf(p.x) > 0.205:
+						continue
+					min_x = minf(min_x, p.x)
+					max_x = maxf(max_x, p.x)
+					min_z = minf(min_z, p.z)
+					max_z = maxf(max_z, p.z)
+					if absf(p.x) <= 0.072:
+						front_z = maxf(front_z, p.z)
+					count += 1
+	if count == 0:
+		min_x = -0.20; max_x = 0.20; min_z = -0.21; front_z = 0.265
+	elif front_z == -INF:
+		front_z = max_z
+
+	var pad_x := 0.020 if wrap_outer_hat else (0.014 if not face_item.is_empty() else 0.018)
+	var pad_front := 0.005
+	var pad_back := 0.022 if head_item.is_empty() and face_item.is_empty() else 0.018
+	var mid_x := (min_x + max_x) * 0.5
+	var target_w := maxf(0.38, (max_x - min_x) + pad_x * 2.0)
+	var seat_z := front_z + pad_front
+	var target_d := maxf(0.36, seat_z - (min_z - pad_back))
+
+	var housing := headlamp.find_child("LampHousing", true, false) as MeshInstance3D
+	var strap := headlamp.find_child("HeadbandStrap", true, false) as MeshInstance3D
+	var housing_scale := 0.82
+	if housing != null:
+		housing.position = Vector3.ZERO
+		# Tilt ONLY the front lamp housing downward; keep the elastic band level
+		# around the head/hat/helmet cylinder so its sides never dip or rise into the crown.
+		housing.basis = Basis(Vector3.RIGHT, deg_to_rad(down_deg)) * Basis.from_scale(Vector3.ONE * housing_scale)
+		_ensure_headlamp_lens_glow(housing)
+	if strap != null:
+		var raw_s := strap.get_aabb()
+		var raw_w := maxf(raw_s.size.x, 0.01)
+		var raw_back := maxf(-raw_s.position.z, 0.01)
+		strap.position = Vector3.ZERO
+		strap.rotation = Vector3.ZERO
+		strap.scale = Vector3(target_w / raw_w, housing_scale, target_d / raw_back)
+
+	var in_head := Transform3D(Basis.IDENTITY, Vector3(mid_x, band_y, seat_z))
+	headlamp.transform = bind_frame * in_head
+	return true
+
+static func _ensure_headlamp_lens_glow(housing: MeshInstance3D) -> void:
+	if housing.get_node_or_null("HeadlampLensGlow") != null:
+		return
+	var glow_root := Node3D.new()
+	glow_root.name = "HeadlampLensGlow"
+	glow_root.visible = false
+	var hb := housing.get_aabb()
+	var lens_z := hb.end.z + 0.0015
+	# Center tactical projector emitter disc (cool high-intensity military LED)
+	var main_disc := MeshInstance3D.new()
+	main_disc.name = "MainEmitter"
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.016
+	cyl.bottom_radius = 0.016
+	cyl.height = 0.002
+	cyl.radial_segments = 16
+	main_disc.mesh = cyl
+	main_disc.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	main_disc.position = Vector3(0.0, -0.003, lens_z)
+	var emat := StandardMaterial3D.new()
+	emat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	emat.albedo_color = Color(0.88, 0.96, 1.0)
+	main_disc.material_override = emat
+	glow_root.add_child(main_disc)
+	# Tactical olive-green auxiliary corner LEDs
+	var aux_mat := StandardMaterial3D.new()
+	aux_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	aux_mat.albedo_color = Color(0.52, 0.92, 0.62)
+	for sx in [-1.0, 1.0]:
+		var pip := MeshInstance3D.new()
+		var sph := SphereMesh.new()
+		sph.radius = 0.0055
+		sph.height = 0.011
+		pip.mesh = sph
+		pip.position = Vector3(0.036 * sx, 0.012, lens_z - 0.006)
+		pip.material_override = aux_mat
+		glow_root.add_child(pip)
+	housing.add_child(glow_root)

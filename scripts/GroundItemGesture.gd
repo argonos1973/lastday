@@ -38,6 +38,23 @@ func setup(owner_actor: Node3D, fields: PackedStringArray) -> void:
 	apply_equipment()
 	_set_grabbed(phase == "eat" or elapsed >= GRAB_TIME)
 
+func _measure_world_aabb(root: Node) -> AABB:
+	var has_any := false
+	var combined := AABB()
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Node3D and not (n as Node3D).visible:
+			continue
+		if n is MeshInstance3D and (n as MeshInstance3D).mesh != null:
+			var mi := n as MeshInstance3D
+			var world_box := mi.global_transform * mi.get_aabb()
+			combined = world_box if not has_any else combined.merge(world_box)
+			has_any = true
+		for c in n.get_children():
+			stack.append(c)
+	return combined
+
 func _cache_source_visuals() -> void:
 	var world := actor.get_tree().current_scene
 	if world == null or not ("world_actions_by_id" in world):
@@ -46,10 +63,25 @@ func _cache_source_visuals() -> void:
 	if not is_instance_valid(action) or actor.global_position.distance_to(action.global_position) > 6.0:
 		return
 	source_action = action
+	if item != null:
+		if action.has_meta("item_pelt"):
+			item.set_meta("pelt_species", str(action.get_meta("item_pelt")))
+		if action.has_meta("item_color"):
+			item.set_meta("clothing_color", action.get_meta("item_color"))
+		if action.has_meta("item_camo"):
+			item.set_meta("clothing_camo", bool(action.get_meta("item_camo")))
+	var measured := AABB()
+	var has_measured := false
 	for visual_name in str(action.get_meta("visual_name", "")).split("|", false):
 		var visual := world.get_node_or_null(NodePath(visual_name))
 		if visual is Node3D:
 			hidden_visuals.append([visual, visual.visible])
+			var vbox := _measure_world_aabb(visual)
+			if vbox.size.length_squared() > 0.0001:
+				measured = vbox if not has_measured else measured.merge(vbox)
+				has_measured = true
+	if has_measured and item != null:
+		item.set_meta("_ground_aabb_size", measured.size)
 	var marker = action.get("_mesh_instance")
 	if is_instance_valid(marker):
 		hidden_visuals.append([marker, marker.visible])

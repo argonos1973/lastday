@@ -47,6 +47,7 @@ const CLOTHING_VISUALS := {
 	"Gorro de piel": {"path": GameConst.FISHERMANS_HAT_MODEL, "frac_y": 0.94, "size": 0.065, "yaw": 0.0, "align": "bottom", "forward": -0.04, "tint": Color(0.31, 0.22, 0.13)},
 	"Tocado de piel animal": {"path": "", "frac_y": 0.94, "size": 0.09, "yaw": 0.0, "seat_height": 0.56},
 	"Casco militar": {"path": GameConst.MILITARY_HELMET_MODEL, "frac_y": 0.96, "size": 0.16, "yaw": 0.0, "align": "bottom", "forward": -0.02},
+	"Linterna frontal": {"path": GameConst.HEADLAMP_MODEL, "frac_y": 0.95, "size": 0.08, "yaw": 0.0, "align": "center", "forward": 0.0},
 	"Guantes de trabajo": {"path": GameConst.GARDEN_GLOVES_MODEL, "frac_y": 0.45, "size": 0.09, "yaw": 0.0, "forward": 0.2},
 }
 const SOLDADO_MODEL := "res://assets/characters/adapted/soldado_parts.glb"
@@ -203,6 +204,7 @@ const CLOTHING_COVERED_ZONES := {
 	"Botas de montaña": ["pies"],
 	"Gorra militar": ["cabeza"],
 	"Gorro de otoño": ["cabeza"],
+	"Linterna frontal": ["cabeza"],
 	"Chaleco táctico": ["torso"],
 }
 
@@ -248,6 +250,8 @@ const CLOTHING_SLOTS := {
 	"Botas de montaña": "feet",
 	"Gorra militar": "head",
 	"Gorro de otoño": "head",
+	# Dedicated headlamp slot so it stacks with helmets, hats, tocados and balaclavas.
+	"Linterna frontal": "headlamp",
 	# The plate carrier rides over the clothing in its own vest slot.
 	"Chaleco táctico": "chaleco",
 }
@@ -294,6 +298,7 @@ const CLOTHING_WARMTH := {
 	"Botas de montaña": 0.20,
 	"Gorra militar": 0.08,
 	"Gorro de otoño": 0.08,
+	"Linterna frontal": 0.01,
 	"Chaleco táctico": 0.10,
 }
 
@@ -356,6 +361,7 @@ const CLOTHING_HEAT_RETENTION := {
 	"Sombrero de pescador": 0.0,
 	"Gorra militar": 0.02,
 	"Gorro de otoño": 0.10,
+	"Linterna frontal": 0.01,
 	"Casco militar": 0.06,
 	"Chaqueta de cuadros": 0.36,
 	"Chaqueta de otoño": 0.34,
@@ -1700,21 +1706,19 @@ func puppet_set_flashlight(on: bool) -> void:
 	if not is_puppet:
 		return
 	if flashlight == null:
-		# Local players mount the spotlight on the camera; puppets have no
-		# camera, so attach it to the chest of the model facing forward.
 		flashlight = SpotLight3D.new()
 		flashlight.name = "Flashlight"
 		flashlight.visible = false
 		flashlight.light_energy = 3.0
 		flashlight.spot_range = 18.0
 		flashlight.spot_angle = 35.0
+		flashlight.shadow_enabled = false
 		var host: Node3D = third_person_model if third_person_model != null else self
 		host.add_child(flashlight)
-		# The model is rotated 180 deg on Y (line ~8538), so flip the spot to
-		# face the character's forward direction, with the camera's downtilt.
 		flashlight.position = Vector3(0.0, 1.35, 0.0)
 		flashlight.rotation_degrees = Vector3(-8.0, 180.0, 0.0)
 	flashlight.visible = on
+	_sync_headlamp_light_pose()
 
 func _puppet_swap_to_naked() -> void:
 	if not is_puppet:
@@ -1798,6 +1802,18 @@ func _update_puppet_held_item_impl(item_name: String) -> void:
 		_build_held_food(item_name)
 		_fit_held_prop_to_palm({"item_name": item_name, "item_type": "food"})
 		return
+	if item_name in ["Mochila militar", "Mochila", "Mochila pequena"]:
+		_build_held_backpack(item_name)
+		_fit_held_prop_to_palm({"item_name": item_name, "item_type": "backpack"})
+		return
+	if CLOTHING_SLOTS.has(item_name):
+		_build_held_clothing(item_name)
+		_fit_held_prop_to_palm({"item_name": item_name, "item_type": "clothing"})
+		return
+	if item_name.begins_with("Piel de "):
+		_build_third_person_resource(item_name)
+		_fit_held_prop_to_palm({"item_name": item_name, "item_type": "resource"})
+		return
 	# Build visual based on item name
 	match item_name:
 		"Antorcha":
@@ -1821,10 +1837,10 @@ func _update_puppet_held_item_impl(item_name: String) -> void:
 			visual_type = "tool_hoe"
 			_build_third_person_tool(REAL_HOE_MODEL, "PuppetHoe", Color(0.5, 0.35, 0.18), 1.5)
 		"Martillo":
-			visual_type = "tool"
+			visual_type = "tool_hammer"
 			_build_third_person_tool(REAL_HAMMER_MODEL, "PuppetHammer", Color(0.5, 0.5, 0.5))
 		"Pico":
-			visual_type = "tool"
+			visual_type = "tool_pickaxe"
 			_build_third_person_tool(REAL_PICKAXE_MODEL, "PuppetPickaxe", Color(0.4, 0.4, 0.4), 0.9)
 		"Linterna":
 			visual_type = "tool"
@@ -1864,10 +1880,17 @@ func _update_puppet_held_item_impl(item_name: String) -> void:
 		"Bateria":
 			visual_type = "battery"
 			_build_third_person_battery()
-		"Madera":
-			_build_third_person_resource("Madera")
-		"Piedra":
-			_build_third_person_resource("Piedra")
+		"Madera", "Ramas", "Palo", "Tronco", "Piedra", "Semillas", "Trapos":
+			_build_third_person_resource(item_name)
+		"Tela de camuflaje":
+			visual_type = "material"
+			_build_third_person_resource(item_name)
+		"Cargador de M4":
+			visual_type = "ammo"
+			_add_named_held_model("res://assets/models/weapons/m4_magazine.glb", "HeldRifleMagazine")
+		"Cargador de fusil":
+			visual_type = "ammo"
+			_add_named_held_model(RIFLE_MAGAZINE_MODEL, "HeldRifleMagazine")
 		"Carne ensartada":
 			_build_third_person_can()
 		"Carne asada":
@@ -1945,6 +1968,7 @@ func _process(delta: float) -> void:
 		_update_drink_hand_socket()
 		_update_backpack_socket()
 		_update_head_worn_items()
+		_update_flashlight(delta)
 		if is_dead:
 			_sync_puppet_action_audio("dead")
 			_update_death_pose(delta)
@@ -2822,6 +2846,8 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
 	_recalculate_heat_protection()
+	if slot in ["head", "face", "headlamp"]:
+		_refit_equipped_headlamp()
 	_sync_held_item()
 	if inventory != null:
 		inventory.changed.emit()
@@ -2875,6 +2901,10 @@ func unequip_clothing(item_name: String) -> void:
 			stats.wetness = _effective_wetness()
 	if equipped_clothing == item_name:
 		equipped_clothing = ""
+	if item_name == GameConst.HEADLAMP_ITEM_NAME and flashlight != null and flashlight.visible:
+		flashlight.visible = false
+	if slot in ["head", "face", "headlamp"]:
+		_refit_equipped_headlamp()
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
 	_recalculate_heat_protection()
@@ -3604,6 +3634,10 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 				preload("res://scripts/HeadwearFit.gd").fit_pelt(parent, node, _active_pelt_species)
 			else:
 				preload("res://scripts/HeadwearFit.gd").fit(parent, node, item_name)
+		elif item_name == GameConst.HEADLAMP_ITEM_NAME:
+			preload("res://scripts/HeadwearFit.gd").fit_headlamp(parent, node,
+				str(_equipped_slots.get("head", "")), str(_equipped_slots.get("face", "")),
+				str(_equipped_pelt.get("Tocado de piel animal", _active_pelt_species)))
 	if clothing_has_camo(item_name):
 		var camo_meshes: Array = []
 		_collect_mesh_instances(node, camo_meshes)
@@ -3637,7 +3671,7 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 	# The offset is captured against the bone REST pose, not the current
 	# animated pose — the anchor above was computed from the bind-pose AABB,
 	# so equipping while crouched/sitting must not bake that pose's offset.
-	if CLOTHING_SLOTS.get(item_name, "") in ["head", "face"] and _head_skeleton != null and _head_bone_idx >= 0:
+	if CLOTHING_SLOTS.get(item_name, "") in ["head", "face", "headlamp"] and _head_skeleton != null and _head_bone_idx >= 0:
 		var bone_rest := _head_skeleton.get_bone_global_rest(_head_bone_idx)
 		var skel_global := _head_skeleton.global_transform
 		var rest_world := skel_global * bone_rest
@@ -3645,6 +3679,32 @@ func _wear_clothing_visual(item_name: String, loot_color: Color = Color(0, 0, 0,
 		var rest_local := local_to_model * rest_world
 		_head_worn_rel[worn_name] = rest_local.affine_inverse() * node.transform
 		_update_head_worn_items()
+
+func _refit_equipped_headlamp() -> void:
+	if third_person_model == null:
+		return
+	var worn_name := "Worn_" + GameConst.HEADLAMP_ITEM_NAME
+	var node := third_person_model.get_node_or_null(worn_name) as Node3D
+	if node == null or str(_equipped_slots.get("headlamp", "")) != GameConst.HEADLAMP_ITEM_NAME:
+		_sync_headlamp_light_pose()
+		return
+	var head_nm := str(_equipped_slots.get("head", ""))
+	var face_nm := str(_equipped_slots.get("face", ""))
+	var pelt_sp := str(_equipped_pelt.get("Tocado de piel animal", _active_pelt_species))
+	if _head_skeleton != null and _head_bone_idx >= 0:
+		var bone_rest := _head_skeleton.get_bone_global_rest(_head_bone_idx)
+		var rest_local := third_person_model.global_transform.affine_inverse() * (_head_skeleton.global_transform * bone_rest)
+		# Measure rigid hat/face meshes in bind space, even if equipped mid-animation.
+		for key in _head_worn_rel:
+			var worn := third_person_model.get_node_or_null(str(key)) as Node3D
+			if worn != null:
+				worn.transform = rest_local * _head_worn_rel[key]
+		if preload("res://scripts/HeadwearFit.gd").fit_headlamp(third_person_model, node, head_nm, face_nm, pelt_sp):
+			_head_worn_rel[worn_name] = rest_local.affine_inverse() * node.transform
+		_update_head_worn_items()
+	_headlamp_housing = node.find_child("LampHousing", true, false) as Node3D
+	_headlamp_glow = node.find_child("HeadlampLensGlow", true, false) as Node3D
+	_sync_headlamp_light_pose()
 
 # Body AABB collected directly from get_aabb() without going through
 # global_transform.  This is correct for Mixamo GLTF models because the
@@ -4461,88 +4521,143 @@ func _fit_held_prop_to_palm(item) -> void:
 	_hand_grip_adjustment = Vector3.ZERO
 	if item == null or third_person_hand_item_root == null:
 		return
-	# These actions carry their own authored hand/weapon animation.
-	if str(item.item_type) in ["weapon_rifle", "weapon_bow", "tool_fishing", "tool_torch", "tool_spear"] or str(item.item_name) in ["Arco de madera", "Arco reforzado", "Lanza", "Lanza de hueso", "Palo afilado"]:
+	var item_name := str(item.item_name)
+	var item_type := str(item.item_type)
+	# These actions carry their own authored hand/weapon animation; a torch
+	# picked off the ground temporarily rides in third_person_hand_item_root.
+	if item_type in ["weapon_rifle", "weapon_bow", "tool_fishing", "tool_spear"] or item_name in ["Arco de madera", "Arco reforzado", "Lanza", "Lanza de hueso", "Palo afilado"]:
+		return
+	if item_type == "tool_torch" and third_person_hand_item_root.get_child_count() == 0:
 		return
 	if third_person_hand_item_root.get_child_count() == 0:
 		return
 	_generic_hand_grip = true
-	var item_type := str(item.item_type)
-	var long_tool := item_type in ["tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe", "tool_spear", "weapon"] or str(item.item_name) in ["Hacha", "Pala", "Pico", "Martillo", "Palo", "Palo afilado", "Madera", "Tronco", "Ramas", "Carne ensartada", "Pez ensartado", "Carne asada en palo"]
-	# Keep multi-part props together under one grip pivot.
+	var long_tool := item_type in ["tool_axe", "tool_hoe", "tool_shovel", "tool_hammer", "tool_pickaxe", "tool_spear", "tool_torch", "weapon"] or item_name in ["Hacha", "Hacha de piedra", "Pala", "Pico", "Martillo", "Palo", "Palo afilado", "Madera", "Tronco", "Ramas", "Carne ensartada", "Pez ensartado", "Carne asada en palo"]
 	var pivot := Node3D.new()
 	pivot.name = "PalmGripVisual"
 	for child in third_person_hand_item_root.get_children():
 		third_person_hand_item_root.remove_child(child)
 		pivot.add_child(child)
-		if long_tool and child is Node3D:
+		if (long_tool or item_type == "backpack") and child is Node3D:
 			child.rotation = Vector3.ZERO
 	third_person_hand_item_root.add_child(pivot)
 	var bounds := _hierarchy_local_aabb(pivot)
 	if bounds.size.length_squared() < 0.000001:
 		return
+	var model_scale := third_person_model.scale.x if third_person_model != null and third_person_model.scale.x > 0.01 else MIXAMO_CHARACTER_SCALE
+	var ground_size := Vector3.ZERO
+	if item is Object and item.has_meta("_ground_aabb_size"):
+		ground_size = item.get_meta("_ground_aabb_size")
+	var ground_extent := maxf(ground_size.x, maxf(ground_size.y, ground_size.z))
+	# Backpacks hang from their top carry strap (+Y of the mesh -> -Y of the
+	# right hand, so -Y of the pack hangs downward from the fingers) at real
+	# ground/worn height instead of shrinking into the palm.
+	if item_type == "backpack":
+		var bp_height := clampf(ground_size.y, 0.58, 0.88) if ground_size.y > 0.20 else (0.74 if item_name == "Mochila militar" else 0.82)
+		pivot.basis = Basis(Vector3.RIGHT, PI)
+		pivot.scale = Vector3.ONE * ((bp_height / model_scale) / maxf(bounds.size.y, 0.001))
+		var top_handle := Vector3(bounds.get_center().x, bounds.position.y + bounds.size.y * 0.92, bounds.get_center().z)
+		pivot.position = -(pivot.basis * top_handle) + Vector3(0.0, 0.0, -0.09)
+		_hand_grip_curl = 0.72
+		return
+	var is_hanging_bundle := item_type == "clothing" or item_name.begins_with("Piel de ") or item_name == "Tela de camuflaje"
+	if is_hanging_bundle:
+		var bundle_extent := 0.72
+		if item_type == "clothing":
+			var slot := str(CLOTHING_SLOTS.get(item_name, ""))
+			if item_name == "Tocado de piel animal":
+				bundle_extent = 0.68
+			elif slot in ["head", "face", "hands", "feet"]:
+				bundle_extent = 0.38
+			elif slot == "chaleco":
+				bundle_extent = 0.58
+			else:
+				bundle_extent = 0.76
+		elif item_name == "Tela de camuflaje":
+			bundle_extent = 0.68
+		if ground_extent > 0.15:
+			# Standing T-pose garments span >1.5 m across outstretched sleeves and
+			# paired shoes span hip width; cap per slot so they drape naturally.
+			var slot_cap := 0.44 if str(CLOTHING_SLOTS.get(item_name, "")) in ["head", "face", "hands", "feet"] and item_name != "Tocado de piel animal" else 0.84
+			bundle_extent = clampf(ground_extent, 0.34, slot_cap)
+		var b_axis := bounds.size.max_axis_index()
+		var b_dir := Vector3.ZERO
+		b_dir[b_axis] = 1.0
+		pivot.quaternion = Quaternion(b_dir, Vector3.UP)
+		pivot.scale = Vector3.ONE * ((bundle_extent / model_scale) / maxf(bounds.size[b_axis], 0.001))
+		var edge_anchor := bounds.get_center()
+		edge_anchor[b_axis] = bounds.position[b_axis] + bounds.size[b_axis] * 0.16
+		pivot.position = -(pivot.basis * edge_anchor) + Vector3(0.0, 0.0, -0.05)
+		_hand_grip_curl = 0.68
+		return
 	var axis := bounds.size.max_axis_index()
 	var direction := Vector3.ZERO
-	var reverse_handle := str(item.item_name) == "Pala"
+	var reverse_handle := item_name == "Pala"
 	direction[axis] = -1.0 if reverse_handle else 1.0
 	# Handles run across the palm; fingers wrap around their cross-section.
 	pivot.quaternion = Quaternion(direction, Vector3.RIGHT)
-	var length := 0.22
+	var world_extent := 0.24
 	if long_tool:
-		length = 0.65 if item_type != "weapon" else 0.25
-		if item_type == "food": length = 0.45
-		# El cuchillo importado tiene mucho margen vacio en el modelo y, con
-		# la escala generica de armas, queda demasiado pequeno en la mano.
-		if str(item.item_name) == "Cuchillo":
-			length = 0.38
-		# Long-handled tools keep their real-world reach instead of the
-		# generic 0.65 m grip (final size is length × 1.30).
-		match str(item.item_name):
+		world_extent = 0.64 if item_type != "weapon" else 0.36
+		if item_type == "food": world_extent = 0.44
+		match item_name:
+			"Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso":
+				world_extent = 0.42
+			"Martillo":
+				world_extent = 0.36
+			"Pico":
+				world_extent = 0.92
 			"Azada":
-				length = 0.95
+				world_extent = 1.15
 			"Azada de piedra":
-				length = 0.85
+				world_extent = 0.92
 			"Pala":
-				length = 1.60
-	elif item_type in ["clothing", "backpack"]:
-		length = 0.28
-	elif item_type == "resource":
-		length = 0.17
+				world_extent = 1.48
+			"Tronco":
+				world_extent = 0.84
+			"Palo", "Madera", "Ramas":
+				world_extent = 1.05
+			"Antorcha":
+				world_extent = 0.72
+	elif item_type in ["resource", "material"]:
+		if item_name == "Piedra":
+			world_extent = 0.28
+		elif item_name == "Trapos":
+			world_extent = 0.32
+		else:
+			world_extent = 0.22
 	elif item_type == "tool_matches":
-		length = 0.15
+		world_extent = 0.18
 		_hand_grip_curl = 0.8
 		_hand_grip_adjustment = Vector3(0, 0.015, 0.025)
 	elif item_type == "medical":
-		length = 0.12
+		world_extent = 0.18
 	elif item_type == "battery":
-		length = 0.07
-	if str(item.item_name).begins_with("Lata de "):
-		length = 0.20
+		world_extent = 0.09
+	elif item_type == "ammo":
+		world_extent = 0.20
+	if item_name.begins_with("Lata de "):
+		world_extent = 0.19
 		_hand_grip_curl = 0.85
-	elif item_type == "tool_matches":
-		length = 0.18
-	elif item_type == "water":
-		length = 0.27
-	elif str(item.item_name) in ["Naranja", "Higo", "Bayas silvestres"] or str(item.item_name).begins_with("Seta"):
-		length = 0.13
-	# Imported props are authored with generous empty margins; enlarge the
-	# normalized grip slightly so the object sits visibly inside the palm.
-	pivot.scale = Vector3.ONE * (length / bounds.size[axis]) * 1.30
+	elif item_type == "water" or item_name == "Botella de plastico":
+		world_extent = 0.34
+	elif item_name in ["Naranja", "Higo", "Bayas silvestres"] or item_name.begins_with("Seta"):
+		world_extent = 0.16
+	if ground_extent > 0.08 and not long_tool and item_type not in ["medical", "tool_matches", "battery", "ammo"]:
+		world_extent = clampf(ground_extent, world_extent * 0.85, world_extent * 1.20)
+	pivot.scale = Vector3.ONE * ((world_extent / model_scale) / maxf(bounds.size[axis], 0.0001))
 	var anchor := bounds.get_center()
 	if long_tool:
 		anchor[axis] = bounds.position[axis] + bounds.size[axis] * (0.78 if reverse_handle else 0.22)
 		anchor = _held_handle_center(pivot, axis, anchor, bounds.size[axis] * 0.10)
-	if str(item.item_name) == "Piedra afilada":
+	if item_name == "Piedra afilada":
 		# Bifaz: los dos filos miran al frente/atrás de la palma y el talón
 		# redondeado queda dentro del puño en vez de la piedra entera.
 		pivot.rotate_object_local(Vector3.UP, PI * 0.5)
 		anchor = Vector3(bounds.get_center().x, bounds.position.y + bounds.size.y * 0.30, bounds.get_center().z)
 	pivot.position = -(pivot.basis * anchor)
-	if str(item.item_name) == "Pala":
-		pivot.set_meta("dig_support", Vector3(length * 1.30 * 0.42, 0.0, 0.0))
-	# Bulky objects need a more open grasp than a narrow handle.
-	if item_type in ["clothing", "backpack"]:
-		_hand_grip_curl = 0.65
+	if item_name == "Pala":
+		pivot.set_meta("dig_support", Vector3((world_extent / model_scale) * 0.42, 0.0, 0.0))
 
 func _held_handle_center(root: Node3D, axis: int, fallback: Vector3, tolerance: float) -> Vector3:
 	# A blade/head makes the full AABB off-centre. Locate the handle section.
@@ -8907,7 +9022,8 @@ func _sync_third_person_equipment(held_item, preview_only := false) -> void:
 		return
 	match held_item.item_type:
 		"backpack":
-			_build_third_person_tool(_backpack_model_path(str(held_item.item_name)), "ThirdPersonBackpack", Color(0.2, 0.25, 0.12))
+			_build_held_backpack(str(held_item.item_name))
+			_clear_rifle_attachment()
 		"weapon":
 			if str(held_item.item_name) == "Lanza":
 				_build_third_person_resource("Palo afilado")
@@ -8957,7 +9073,7 @@ func _sync_third_person_equipment(held_item, preview_only := false) -> void:
 			_build_third_person_seed_bag()
 			_clear_rifle_attachment()
 		"clothing":
-			_build_held_clothing(str(held_item.item_name))
+			_build_held_clothing(str(held_item.item_name), held_item)
 			_clear_rifle_attachment()
 		"misc":
 			if str(held_item.item_name) == "Botella de plastico":
@@ -8966,7 +9082,11 @@ func _sync_third_person_equipment(held_item, preview_only := false) -> void:
 				_build_third_person_pack()
 			_clear_rifle_attachment()
 		"tool_torch":
-			_build_third_person_torch()
+			if preview_only:
+				_torch_in_hands = false
+				_try_add_model_to_parent(third_person_hand_item_root, REAL_TORCH_MODEL, "HeldPickupTorch", Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
+			else:
+				_build_third_person_torch()
 			_clear_rifle_attachment()
 		"tool_fishing":
 			_build_third_person_fishing_rod()
@@ -8977,17 +9097,10 @@ func _sync_third_person_equipment(held_item, preview_only := false) -> void:
 		"tool_hoe":
 			_build_third_person_tool(REAL_HOE_MODEL, "ThirdPersonHoe", Color(0.20, 0.14, 0.08), 1.5)
 			_clear_rifle_attachment()
-		"tool_shovel":
-			_build_third_person_tool(REAL_SHOVEL_MODEL, "ThirdPersonShovel", Color(0.18, 0.16, 0.12), 1.15)
-			_clear_rifle_attachment()
-		"tool_hammer":
-			_build_third_person_tool(REAL_HAMMER_MODEL, "ThirdPersonHammer", Color(0.20, 0.15, 0.09))
-			_clear_rifle_attachment()
-		"tool_pickaxe":
-			_build_third_person_tool(REAL_PICKAXE_MODEL, "ThirdPersonPickaxe", Color(0.18, 0.15, 0.10), 0.9)
-			_clear_rifle_attachment()
 		"ammo":
-			_add_named_held_model(RIFLE_MAGAZINE_MODEL, "HeldRifleMagazine")
+			var mag_path := "res://assets/models/weapons/m4_magazine.glb" if held_name == "Cargador de M4" else RIFLE_MAGAZINE_MODEL
+			if not _add_named_held_model(mag_path, "HeldRifleMagazine"):
+				_add_named_held_model(RIFLE_MAGAZINE_MODEL, "HeldRifleMagazine")
 			_clear_rifle_attachment()
 		_:
 			_build_third_person_pack()
@@ -9050,53 +9163,71 @@ func _build_held_skewer(item_name: String) -> void:
 	food.position = Vector3(0, 0.14, 0) - food.basis * bounds.get_center()
 	third_person_hand_item_root.add_child(food)
 
-func _build_held_clothing(item_name: String) -> void:
+func _build_held_clothing(item_name: String, held_item = null) -> void:
+	var ref_item = held_item if held_item != null else get_held_item()
 	var path := MilitaryJackets.pickup_path(item_name)
-	match item_name:
-		"Pasamontañas": path = "res://assets/characters/adapted/civil/pickup_balaclava.glb"
-		"Pasamontañas navideño": path = "res://assets/characters/adapted/civil/pickup_balaclava_navideno.glb"
-		"Camiseta": path = "res://assets/characters/adapted/pickup_default_tops.glb"
-		"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
-		"Zapatillas": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
-		"Sombrero de pescador": path = GameConst.FISHERMANS_HAT_MODEL
-		"Gorro de piel": path = GameConst.FISHERMANS_HAT_MODEL
-		"Tocado de piel animal":
-			var held = get_held_item()
-			var held_pelt := str(held.get_meta("pelt_species", "")) if held != null else ""
-			path = str(GameConst.PELT_HEADDRESS.get(held_pelt, GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))
-		"Casco militar": path = GameConst.MILITARY_HELMET_MODEL
-		"Guantes survival", "Guantes de trabajo", "Guantes militares": path = GameConst.GARDEN_GLOVES_MODEL
-		"Guantes de piel": path = "res://assets/characters/adapted/pickup_soldier_hands.glb"
-		"Botas militares": path = "res://assets/characters/adapted/pickup_military_boots.glb"
-		"Botas de piel": path = "res://assets/characters/adapted/pickup_military_boots.glb"
-		_:
-			if item_name.begins_with("Pantalones"):
-				path = "res://assets/characters/adapted/pickup_soldier_legs.glb"
+	if path.is_empty():
+		path = preload("res://scripts/AutumnClothes.gd").pickup_path(item_name)
+	if path.is_empty():
+		match item_name:
+			"Pasamontañas": path = "res://assets/characters/adapted/civil/pickup_balaclava.glb"
+			"Pasamontañas navideño": path = "res://assets/characters/adapted/civil/pickup_balaclava_navideno.glb"
+			"Camiseta": path = "res://assets/characters/adapted/pickup_default_tops.glb"
+			"Pantalones": path = "res://assets/characters/adapted/pickup_default_bottoms.glb"
+			"Zapatillas", "Botas survival": path = "res://assets/characters/adapted/pickup_default_shoes.glb"
+			"Sombrero de pescador", "Gorro de piel": path = GameConst.FISHERMANS_HAT_MODEL
+			"Tocado de piel animal":
+				var held_pelt := str(ref_item.get_meta("pelt_species", "")) if ref_item is Object and ref_item.has_meta("pelt_species") else ""
+				path = str(GameConst.PELT_HEADDRESS.get(held_pelt, GameConst.PELT_HEADDRESS[GameConst.PELT_DEFAULT_SPECIES]))
+			"Casco militar": path = GameConst.MILITARY_HELMET_MODEL
+			"Linterna frontal": path = GameConst.HEADLAMP_MODEL
+			"Guantes survival", "Guantes de trabajo", "Guantes militares": path = GameConst.GARDEN_GLOVES_MODEL
+			"Guantes de piel": path = "res://assets/characters/adapted/pickup_soldier_hands.glb"
+			"Botas militares", "Botas de piel": path = "res://assets/characters/adapted/pickup_military_boots.glb"
+			"Chaqueta de piel", "Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II", "Chaqueta camuflaje", "Chaqueta camuflaje desert":
+				path = "res://assets/characters/adapted/pickup_soldier_torso.glb"
+			_:
+				if item_name.begins_with("Pantalones"):
+					path = "res://assets/characters/adapted/pickup_soldier_legs.glb"
+				elif item_name.begins_with("Chaqueta"):
+					path = "res://assets/characters/adapted/pickup_soldier_torso.glb"
 	if path.is_empty() or not _add_named_held_model(path, "HeldClothing"):
 		_build_third_person_clothing_bundle()
+		return
+	var held_node := third_person_hand_item_root.get_node_or_null("HeldClothing") if third_person_hand_item_root != null else null
+	if held_node == null:
+		return
+	if item_name == "Botas survival":
+		var shoe_mat := MaterialFactory.make_clothing_material("shoes", Color(0.05, 0.05, 0.05), 0.0)
+		var shoe_meshes: Array = []
+		_collect_mesh_instances(held_node, shoe_meshes)
+		for smi in shoe_meshes:
+			(smi as MeshInstance3D).material_override = shoe_mat
 	elif item_name == "Tocado de piel animal":
-		var held_pelt_item = get_held_item()
-		if held_pelt_item != null and str(held_pelt_item.get_meta("pelt_species", "")) == "lobo negro":
-			var held_model := third_person_hand_item_root.get_node_or_null("HeldClothing")
-			if held_model != null:
-				MaterialFactory.apply_black_wolf_coat(held_model)
+		var pelt_sp := str(ref_item.get_meta("pelt_species", "")) if ref_item is Object and ref_item.has_meta("pelt_species") else ""
+		if pelt_sp == "lobo negro":
+			MaterialFactory.apply_black_wolf_coat(held_node)
 	elif item_name in GameConst.PELT_FUR_ITEMS and item_name != "Tocado de piel animal":
-		# Held pelt garment: fur of the species it was sewn from.
-		var held2 = get_held_item()
-		var sp2 := str(held2.get_meta("pelt_species", "")) if held2 != null else ""
+		var sp2 := str(ref_item.get_meta("pelt_species", "")) if ref_item is Object and ref_item.has_meta("pelt_species") else ""
 		var fm := _pelt_fur_material(sp2) if not sp2.is_empty() else null
 		if fm != null:
-			var held_node := third_person_hand_item_root.get_node_or_null("HeldClothing") if third_person_hand_item_root != null else null
-			if held_node != null:
-				var _hm: Array = []
-				_collect_mesh_instances(held_node, _hm)
-				for _mi in _hm:
-					(_mi as MeshInstance3D).material_override = fm
+			var _hm: Array = []
+			_collect_mesh_instances(held_node, _hm)
+			for _mi in _hm:
+				(_mi as MeshInstance3D).material_override = fm
 	else:
-		var held_node2 := third_person_hand_item_root.get_node_or_null("HeldClothing") if third_person_hand_item_root != null else null
 		var scene_main := get_tree().current_scene if is_inside_tree() else null
-		if held_node2 != null and scene_main != null and scene_main.has_method("_apply_military_drop_material"):
-			scene_main._apply_military_drop_material(item_name, held_node2, get_current_clothing_color(item_name))
+		if scene_main != null and scene_main.has_method("_apply_military_drop_material"):
+			var tint_col := get_current_clothing_color(item_name)
+			if ref_item is Object and ref_item.has_meta("clothing_color"):
+				var meta_col: Color = ref_item.get_meta("clothing_color")
+				if meta_col.a > 0.0:
+					tint_col = meta_col
+			scene_main._apply_military_drop_material(item_name, held_node, tint_col)
+
+func _build_held_backpack(bp_name: String) -> void:
+	if not _try_add_model_to_parent(third_person_hand_item_root, _backpack_model_path(bp_name), "ThirdPersonBackpack", Vector3.ZERO, Vector3.ZERO, Vector3.ONE):
+		_build_third_person_pack()
 
 func _backpack_model_path(bp_name: String = "") -> String:
 	if bp_name.is_empty():
@@ -11554,7 +11685,7 @@ func _build_third_person_plastic_bottle() -> void:
 # Drink bottle held in the LEFT hand, attached via BoneAttachment3D to the
 # left hand bone so it automatically follows the drink animation's pose.
 func _is_food_visual_name(item_name: String) -> bool:
-	return Item.PERISHABLE_FOODS.has(item_name) or item_name.begins_with("Lata de ") or item_name in ["Verduras", "Carne asada"]
+	return Item.PERISHABLE_FOODS.has(item_name) or item_name.begins_with("Lata de ") or item_name.begins_with("Seta") or item_name in ["Verduras", "Carne asada"]
 
 func _build_eating_prop() -> void:
 	if not is_instance_valid(_drink_hand_root) or not is_instance_valid(third_person_hand_item_root):
@@ -11649,8 +11780,17 @@ func _build_third_person_resource(item_name: String) -> void:
 		_build_third_person_seed_bag()
 	elif item_name == "Trapos":
 		_add_named_held_model("res://assets/external/kenney_survival_kit/Models/GLB format/bedroll.glb", "HeldRags")
+	elif item_name.begins_with("Piel de "):
+		var pelt_sp := CraftingSystem.pelt_species_of(item_name)
+		var pelt_mesh := MaterialFactory.build_pelt_hide_mesh(pelt_sp if not pelt_sp.is_empty() else item_name)
+		pelt_mesh.name = "HeldPelt"
+		third_person_hand_item_root.add_child(pelt_mesh)
 	elif item_name == "Tela de camuflaje":
-		_add_named_held_model("res://assets/models/props/camo_net_pickup.glb", "HeldClothing")
+		if _add_named_held_model("res://assets/models/props/camo_net_pickup.glb", "HeldClothing"):
+			var held_net := third_person_hand_item_root.get_node_or_null("HeldClothing")
+			var scene_main := get_tree().current_scene if is_inside_tree() else null
+			if held_net != null and scene_main != null and scene_main.has_method("_apply_camo_net_material"):
+				scene_main._apply_camo_net_material(held_net)
 	else:
 		_build_third_person_pack()
 
@@ -13332,7 +13472,97 @@ func _split_torch_for_lighting(held):
 	inventory.changed.emit()
 	return lit_torch
 
+const HEADLAMP_BEAM_COLOR := Color(0.84, 0.94, 1.0)
+const HEADLAMP_SPOT_ENERGY := 6.4
+const HEADLAMP_SPOT_RANGE := 48.0
+const HEADLAMP_SPOT_ANGLE := 31.0
+var _headlamp_spill_light: OmniLight3D
+var _headlamp_housing: Node3D
+var _headlamp_glow: Node3D
+
+func has_headlamp_equipped() -> bool:
+	return str(_equipped_slots.get("headlamp", "")) == GameConst.HEADLAMP_ITEM_NAME
+
+func _ensure_flashlight_node() -> void:
+	if flashlight != null and is_instance_valid(flashlight):
+		return
+	flashlight = SpotLight3D.new()
+	flashlight.name = "Flashlight"
+	flashlight.visible = false
+	var host: Node3D = camera if (not is_puppet and is_instance_valid(camera)) else (third_person_model if third_person_model != null else self)
+	host.add_child(flashlight)
+
+func _sync_headlamp_light_pose() -> void:
+	if has_headlamp_equipped() and (is_dead or is_sleeping) and is_instance_valid(flashlight):
+		flashlight.visible = false
+	var active := flashlight != null and is_instance_valid(flashlight) and flashlight.visible and has_headlamp_equipped() and not is_dead and not is_sleeping
+	if is_instance_valid(_headlamp_glow):
+		_headlamp_glow.visible = active
+	if not active:
+		if is_instance_valid(_headlamp_spill_light):
+			_headlamp_spill_light.visible = false
+		if flashlight != null and is_instance_valid(flashlight) and flashlight.is_set_as_top_level():
+			flashlight.set_as_top_level(false)
+			flashlight.light_energy = 3.0
+			flashlight.spot_range = 18.0
+			flashlight.spot_angle = 35.0
+			flashlight.spot_attenuation = 1.0
+			flashlight.spot_angle_attenuation = 1.0
+			flashlight.light_color = Color.WHITE
+			if is_puppet:
+				flashlight.position = Vector3(0.0, 1.35, 0.0)
+				flashlight.rotation_degrees = Vector3(-8.0, 180.0, 0.0)
+			else:
+				flashlight.position = Vector3.ZERO
+				flashlight.rotation_degrees = Vector3(-8.0, 0.0, 0.0)
+		return
+	flashlight.light_color = HEADLAMP_BEAM_COLOR
+	flashlight.light_energy = HEADLAMP_SPOT_ENERGY
+	flashlight.spot_range = HEADLAMP_SPOT_RANGE
+	flashlight.spot_angle = HEADLAMP_SPOT_ANGLE
+	flashlight.spot_angle_attenuation = 0.62
+	flashlight.spot_attenuation = 0.85
+	flashlight.shadow_enabled = false
+	flashlight.set_as_top_level(true)
+	var lens_pos := global_position + Vector3(0.0, 1.66, 0.0)
+	var fwd_flat := -global_basis.z.normalized()
+	if third_person_model != null:
+		# third_person_model is rotated 180 deg around Y, so its +Z faces character forward
+		fwd_flat = third_person_model.global_basis.z.normalized()
+	if fwd_flat.length_squared() < 0.001:
+		fwd_flat = Vector3.FORWARD
+	var look_pitch := deg_to_rad(-6.0)
+	if is_instance_valid(_headlamp_housing):
+		var l_fwd := _headlamp_housing.global_basis.z.normalized()
+		lens_pos = _headlamp_housing.to_global(Vector3(0, 0, 0.073))
+		if is_puppet:
+			fwd_flat = Vector3(l_fwd.x, 0.0, l_fwd.z).normalized()
+			look_pitch = asin(clampf(l_fwd.y, -0.99, 0.99))
+	if not is_puppet and is_instance_valid(camera):
+		look_pitch = clampf(camera.rotation.x, deg_to_rad(-58.0), deg_to_rad(40.0))
+	var beam_dir := (fwd_flat * cos(look_pitch) + Vector3.UP * sin(look_pitch)).normalized()
+	flashlight.global_transform = Transform3D(Basis.looking_at(beam_dir, Vector3.UP), lens_pos)
+	if not is_instance_valid(_headlamp_spill_light):
+		_headlamp_spill_light = OmniLight3D.new()
+		_headlamp_spill_light.name = "HeadlampSpill"
+		_headlamp_spill_light.shadow_enabled = false
+		_headlamp_spill_light.omni_range = 8.5
+		_headlamp_spill_light.omni_attenuation = 1.10
+		_headlamp_spill_light.light_energy = 1.05
+		_headlamp_spill_light.light_color = HEADLAMP_BEAM_COLOR
+		add_child(_headlamp_spill_light)
+	_headlamp_spill_light.set_as_top_level(true)
+	_headlamp_spill_light.global_position = lens_pos + beam_dir * 0.18
+	_headlamp_spill_light.visible = true
+
 func _toggle_flashlight() -> void:
+	if has_headlamp_equipped():
+		_ensure_flashlight_node()
+		flashlight.visible = not flashlight.visible
+		_sync_headlamp_light_pose()
+		var lang := preload("res://scripts/GameLang.gd")
+		notice.emit(lang.t("Linterna frontal encendida.", "Tactical headlamp on.") if flashlight.visible else lang.t("Linterna frontal apagada.", "Tactical headlamp off."))
+		return
 	var held = get_held_item()
 	if held != null and str(held.item_type) == "tool_torch":
 		if held.is_broken():
@@ -13371,10 +13601,11 @@ func _toggle_flashlight() -> void:
 		notice.emit("Antorcha encendida con cerillas.")
 		return
 	if not inventory.has_item_type("tool"):
-		notice.emit("No tienes linterna.")
+		notice.emit(preload("res://scripts/GameLang.gd").t("No llevas una linterna frontal equipada.", "You have no headlamp equipped."))
 		return
 	if flashlight.visible:
 		flashlight.visible = false
+		_sync_headlamp_light_pose()
 		_sync_held_item()
 		notice.emit("Linterna apagada.")
 		return
@@ -13386,13 +13617,19 @@ func _toggle_flashlight() -> void:
 			notice.emit("No quedan pilas.")
 			return
 	flashlight.visible = true
+	_sync_headlamp_light_pose()
 	_sync_held_item()
 	notice.emit("Linterna encendida.")
 
 func _update_flashlight(delta: float) -> void:
 	if flashlight == null:
 		return
-	if flashlight.visible:
+	if has_headlamp_equipped():
+		_sync_headlamp_light_pose()
+		return
+	if is_instance_valid(_headlamp_spill_light) and _headlamp_spill_light.visible:
+		_headlamp_spill_light.visible = false
+	if flashlight.visible and not is_puppet:
 		flashlight_charge = max(0.0, flashlight_charge - delta)
 		flashlight.light_energy = 1.1 + 2.2 * (flashlight_charge / 90.0)
 		if flashlight_charge <= 0.0:

@@ -172,6 +172,8 @@ static func collect_player_data(player: Node) -> Dictionary:
 				clothing_items.append(item_name)
 		clothing = ",".join(clothing_items)
 	data["equipped_clothing"] = clothing
+	if player.has_method("has_headlamp_equipped") and player.has_headlamp_equipped():
+		data["headlamp_on"] = is_instance_valid(player.flashlight) and player.flashlight.visible
 	# Backpack
 	var eb = player.get("equipped_backpack")
 	data["equipped_backpack"] = str(eb) if eb != null else ""
@@ -500,6 +502,10 @@ static func apply_saved_player_data(player: Node, data: Dictionary) -> void:
 					player.inventory.add_item(ItemScript.create(slot_name, "clothing", _weight, 1, _use))
 				player.equip_clothing(slot_name, _load_color)
 	# Restore equipped backpack
+	if player.has_method("has_headlamp_equipped") and player.has_headlamp_equipped():
+		player._ensure_flashlight_node()
+		player.flashlight.visible = bool(data.get("headlamp_on", false))
+		player._sync_headlamp_light_pose()
 	var equipped_backpack := str(data.get("equipped_backpack", ""))
 	if not equipped_backpack.is_empty() and player.has_method("equip_backpack"):
 		player.equip_backpack(equipped_backpack)

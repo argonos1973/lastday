@@ -86,6 +86,7 @@ const CLOTHING_STORAGE := {
 	"Botas de montaña": 0,
 	"Gorra militar": 0,
 	"Gorro de otoño": 0,
+	"Linterna frontal": 0,
 }
 
 static func create(new_name: String, new_type: String, new_weight: float, new_quantity := 1, new_use_value := 0.0):

@@ -37,6 +37,10 @@ func run():
  var b := {"proxy":proxy,"bot_id":901,"hunger":30.0,"thirst":30.0,"campfire_id":"","campfire_pos":Vector3.INF}
  check(manager._bot_prepare_night_supplies(b,.1), "cannot leave without light or materials")
  check(not manager._bot_supply_goal_lit(b,Vector3(3,0,0)), "dark goal rejected even nearby")
+ var equipped := b.duplicate()
+ equipped.clothing = "Casco militar,Linterna frontal"
+ equipped.held_item = "Cuchillo"
+ check(not manager._bot_prepare_night_supplies(equipped,.1) and equipped.flashlight_on and equipped.held_item == "Cuchillo", "worn headlamp lights night travel without using hands")
  check(not manager._bot_supply_goal_allowed(b,Vector3(30,0,0)), "non-lethal hunger keeps the dark travel ban")
  proxy.set_meta("saved_inventory", [{"name":"Palo","quantity":2},{"name":"Piedra","quantity":2}])
  check(not manager._bot_prepare_night_supplies(b,.1), "build and light a fire using inventory")

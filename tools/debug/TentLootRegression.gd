@@ -19,6 +19,10 @@ func run():
  world._depleted_action_ids = ["tent_loot_hat", "remote_tent_loot_hat", "city_tent_loot_hat"]
  world._create_house_loot()
  var failures := 0
+ for id in ["village_house_headlamp", "city_house_headlamp", "tent_loot_headlamp", "remote_tent_loot_headlamp", "city_tent2_loot_headlamp"]:
+  if before.get(id, {}).get("name") != GameConst.HEADLAMP_ITEM_NAME:
+   failures += 1
+   push_error("Missing headlamp " + id)
  for id in before:
   if id in world._depleted_action_ids: continue
   if before[id] != world.generated.get(id):

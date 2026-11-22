@@ -152,6 +152,85 @@ func _test_ground_transactions() -> void:
 	world.free()
 	current_scene = null
 
+func _world_mesh_aabb(node: Node) -> AABB:
+	var has_any := false
+	var acc := AABB()
+	var stack: Array = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Node3D and not (n as Node3D).visible:
+			continue
+		if n is MeshInstance3D and (n as MeshInstance3D).mesh != null:
+			var mi := n as MeshInstance3D
+			var ga := mi.global_transform * mi.get_aabb()
+			acc = ga if not has_any else acc.merge(ga)
+			has_any = true
+		for c in n.get_children():
+			stack.append(c)
+	return acc
+
+func _test_pickup_hand_dimensions() -> void:
+	var world := TestWorld.new()
+	root.add_child(world)
+	current_scene = world
+	var actor: Node = _make_player()
+	if actor.third_person_model == null:
+		actor._create_third_person_model()
+	var puppet: Node = _make_player()
+	puppet.stats = SurvivalStats.new()
+	puppet.add_child(puppet.stats)
+	puppet.stats.set_process(false)
+	puppet.setup_as_puppet()
+	puppet.puppet_apply_visuals("Camiseta,Pantalones,Zapatillas", "", "")
+	await process_frame
+
+	world._spawn_ground_pickup("Mochila militar", "backpack", Vector3(0.0, 0.0, -0.7), 1.8, 1, 0.0, "bp_scale_test")
+	var gvis := world.get_node_or_null("Pickup_bp_scale_test")
+	var ground_box := _world_mesh_aabb(gvis)
+	var ground_extent := maxf(ground_box.size.x, maxf(ground_box.size.y, ground_box.size.z))
+	actor.begin_ground_gesture("bp_scale_test", "Mochila militar", "backpack")
+	actor.play_action_animation("pickup", actor.GroundGesture.DURATION)
+	actor._ground_gesture.tick(actor.GroundGesture.GRAB_TIME + 0.05)
+	actor._update_hand_socket()
+	var hand_box := _world_mesh_aabb(actor.third_person_hand_item_root)
+	var hand_extent := maxf(hand_box.size.x, maxf(hand_box.size.y, hand_box.size.z))
+	check(actor.third_person_hand_item_root.find_child("ThirdPersonBackpack", true, false) != null,
+		"military backpack pickup builds the real backpack mesh in hand")
+	check(hand_extent >= 0.65 and absf(hand_extent - ground_extent) < 0.14,
+		"military backpack keeps its real dimensions in hand (ground=%.2f hand=%.2f)" % [ground_extent, hand_extent])
+	actor.end_ground_gesture()
+
+	var bp_item = preload("res://scripts/Item.gd").create("Mochila militar", "backpack", 1.8, 1, 0.0)
+	actor.inventory.items.append(bp_item)
+	actor._select_held_item(actor.inventory.items.size() - 1)
+	var held_box := _world_mesh_aabb(actor.third_person_hand_item_root)
+	var held_extent := maxf(held_box.size.x, maxf(held_box.size.y, held_box.size.z))
+	check(held_extent >= 0.65, "military backpack carried in hand from inventory keeps full dimensions (%.2f)" % held_extent)
+	actor.clear_hands()
+
+	puppet._update_puppet_held_item("Mochila militar")
+	puppet._update_hand_socket()
+	var puppet_bp_box := _world_mesh_aabb(puppet.third_person_hand_item_root)
+	var puppet_extent := maxf(puppet_bp_box.size.x, maxf(puppet_bp_box.size.y, puppet_bp_box.size.z))
+	check(puppet.third_person_hand_item_root.find_child("ThirdPersonBackpack", true, false) != null and puppet_extent >= 0.65,
+		"remote puppet carrying military backpack shows full-sized backpack (%.2f)" % puppet_extent)
+
+	for pair in [["Chaqueta militar", "clothing", "HeldClothing"], ["Piel de lobo", "resource", "HeldPelt"]]:
+		var pid := "dim_" + str(pair[0]).replace(" ", "_")
+		world._spawn_ground_pickup(pair[0], pair[1], Vector3(0.0, 0.0, -0.7), 1.0, 1, 0.0, pid)
+		actor.begin_ground_gesture(pid, pair[0], pair[1])
+		actor._ground_gesture.tick(actor.GroundGesture.GRAB_TIME + 0.05)
+		var pbox := _world_mesh_aabb(actor.third_person_hand_item_root)
+		var longest := maxf(pbox.size.x, maxf(pbox.size.y, pbox.size.z))
+		check(actor.third_person_hand_item_root.find_child(pair[2], true, false) != null and longest >= 0.55,
+			"%s keeps real mesh and dimensions in hand (longest=%.2f)" % [pair[0], longest])
+		actor.end_ground_gesture()
+
+	puppet.free()
+	actor.free()
+	world.free()
+	current_scene = null
+
 func _initialize() -> void:
 	print("=== PickupAnimRegression ===")
 	await process_frame
@@ -273,5 +352,6 @@ func _initialize() -> void:
 	puppet.queue_free()
 	await process_frame
 	await _test_ground_transactions()
+	await _test_pickup_hand_dimensions()
 	print("PickupAnimRegression failures=%d" % failures)
 	quit(1 if failures > 0 else 0)

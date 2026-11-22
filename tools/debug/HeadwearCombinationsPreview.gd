@@ -32,7 +32,8 @@ func run():
 	focus.y-=.05
 	var names:=["Casco militar", "Sombrero de pescador", "Gorra militar"]
 	var files:=["casco", "sombrero", "gorra"]
-	DirAccess.make_dir_recursive_absolute("/tmp/headwear_previews")
+	var out := ProjectSettings.globalize_path("res://build/tmp/headwear_previews")
+	DirAccess.make_dir_recursive_absolute(out)
 	for i in names.size():
 		actor.equip_clothing(names[i])
 		actor._update_head_worn_items()
@@ -41,6 +42,6 @@ func run():
 			cam.look_at(focus)
 			await create_timer(.3).timeout
 			await RenderingServer.frame_post_draw
-			root.get_texture().get_image().save_png("/tmp/headwear_previews/%s_%s.png" % [files[i],view])
+			root.get_texture().get_image().save_png("%s/%s_%s.png" % [out,files[i],view])
 		actor.unequip_clothing(names[i])
 	actor.stats.free();stage.free();quit()

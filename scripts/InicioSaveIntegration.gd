@@ -164,12 +164,14 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var hands_item := ""
 	var head_item := ""
 	var face_item := ""
+	var headlamp_item := ""
 	var has_vest := false
 	for it in equipped_items:
 		var n := str(it).strip_edges()
 		var slot := str(PlayerController.CLOTHING_SLOTS.get(n, ""))
 		if slot.is_empty():
 			if n == "Chaleco táctico": slot = "chaleco"
+			elif n == GameConst.HEADLAMP_ITEM_NAME: slot = "headlamp"
 			elif n == "Camiseta" or n.find("Chaqueta") >= 0: slot = "torso"
 			elif n == "Pantalones" or n.find("Pantalones") >= 0: slot = "legs"
 			elif n == "Zapatillas" or n.find("Botas") >= 0: slot = "feet"
@@ -184,6 +186,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			"hands": hands_item = n
 			"face": face_item = n
 			"head": head_item = n
+			"headlamp": headlamp_item = n
 	var has_torso := not torso_item.is_empty()
 	var has_legs := not legs_item.is_empty()
 	var has_feet := not feet_item.is_empty()
@@ -369,6 +372,8 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		_add_preview_hat(model, face_item, str(pelt_species.get(face_item, "")))
 	if not head_item.is_empty() and not is_autumn_hat:
 		_add_preview_hat(model, head_item, str(pelt_species.get(head_item, "")))
+	if not headlamp_item.is_empty():
+		_add_preview_headlamp(model, head_item, face_item, str(pelt_species.get(head_item, "")))
 	# Las manos del preview van vacias: se muestra ropa/mochila, pero no
 	# armas ni herramientas aunque el save tenga held_item.
 
@@ -497,10 +502,24 @@ const _MILITARY_TINTS := {
 static func _is_accessory_mesh(mi: MeshInstance3D) -> bool:
 	var p := mi.get_parent()
 	while p != null:
-		if p is Node3D and (p.name.begins_with("PreviewHat") or p.name.begins_with("PreviewBackpack") or p.name.begins_with("PreviewKnife")):
+		if p is Node3D and (p.name.begins_with("PreviewHat") or p.name.begins_with("PreviewHeadlamp") or p.name.begins_with("PreviewBackpack") or p.name.begins_with("PreviewKnife")):
 			return true
 		p = p.get_parent()
 	return false
+
+static func _add_preview_headlamp(model: Node3D, head_item: String, face_item: String, pelt_sp: String) -> void:
+	var packed := load(GameConst.HEADLAMP_MODEL)
+	if packed == null or not packed is PackedScene:
+		return
+	var hl := (packed as PackedScene).instantiate() as Node3D
+	if hl == null:
+		return
+	hl.name = "PreviewHeadlamp"
+	model.add_child(hl)
+	if preload("res://scripts/HeadwearFit.gd").fit_headlamp(model, hl, head_item, face_item, pelt_sp):
+		_bind_preview_bone(model, hl, ["mixamorig:Head", "mixamorig_Head", "Head"])
+	else:
+		hl.queue_free()
 
 static func _add_preview_hat(model: Node3D, item_name: String, pelt_species: String = "") -> void:
 	var hat_model := ""

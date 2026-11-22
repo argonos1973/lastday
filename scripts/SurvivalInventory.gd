@@ -238,8 +238,8 @@ func refresh() -> void:
 	var equipment_grid := GridContainer.new()
 	equipment_grid.columns = 2
 	equipment.add_child(equipment_grid)
-	for slot in ["head", "face", "torso", "chaleco", "hands", "legs", "feet", "backpack"]:
-		var names := {"head": "Cabeza", "face": "Cara", "torso": "Torso", "chaleco": "Chaleco", "hands": "Guantes", "legs": "Piernas", "feet": "Pies", "backpack": "Mochila"}
+	for slot in ["head", "headlamp", "face", "torso", "chaleco", "hands", "legs", "feet", "backpack"]:
+		var names := {"head": "Cabeza", "headlamp": "Frontal", "face": "Cara", "torso": "Torso", "chaleco": "Chaleco", "hands": "Guantes", "legs": "Piernas", "feet": "Pies", "backpack": "Mochila"}
 		var name: String = player.equipped_backpack if slot == "backpack" else str(player._equipped_slots.get(slot, ""))
 		var item = find_item(name)
 		equipment_grid.add_child(make_card(names[slot] if item == null else name, {} if item == null else {"item": item, "label": name}, "equip:" + slot))
@@ -758,6 +758,8 @@ func open_actions(data: Dictionary, position_on_screen: Vector2) -> void:
 			if item.item_type in ["clothing", "backpack"] and not is_worn:
 				add_action("Equipar", func(): equip(item))
 			if item.item_type == "clothing" and is_worn:
+				if item.item_name == GameConst.HEADLAMP_ITEM_NAME:
+					add_action("Encender / apagar [L]", func(): player._toggle_flashlight(); request_refresh(true))
 				add_action("Quitar prenda", func(): player.unequip_clothing(item.item_name))
 			if player.get_held_item() == item:
 				add_action("Guardar en inventario", func(): player._store_held_item())

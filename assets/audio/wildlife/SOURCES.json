@@ -59,6 +59,13 @@
       "path": "LOBOS/LOBO_GRUÑENDO.mp3",
       "license": "User-supplied recording; original license unspecified",
       "sha256": "1e361db1ddffcec2aaebad6cb5275fff90ebb1f267ece5628cd2c119865b130e"
+    },
+    "wolf_run_gallop": {
+      "author": "qubodup",
+      "title": "Dog Running Past",
+      "url": "https://freesound.org/people/qubodup/sounds/827320/",
+      "license": "CC0-1.0",
+      "sha256": "443a9a2e2c924283aad68b8c220c17424c95e44f298e715b4d338196f9f7eb40"
     }
   },
   "clips": {
@@ -151,31 +158,31 @@
       "normalization_db": 8.688
     },
     "wolf_run_1.wav": {
-      "source": "wolf_run_supplied",
-      "start": 4.7,
-      "duration": 0.24,
-      "filters": "highpass=f=65,lowpass=f=6000,afade=t=in:d=0.004,afade=t=out:st=0.19999999999999998:d=0.04",
+      "source": "wolf_run_gallop",
+      "start": 3.825,
+      "duration": 0.175,
+      "filters": "asetrate=44100*0.92,aresample=24000,asetpts=N/SR/TB,highpass=f=55,lowpass=f=3400,afade=t=in:d=0.005,afade=t=out:st=0.12:d=0.055",
       "rate": "24000 Hz mono s16",
       "peak_dbfs": -6,
-      "normalization_db": 8.251
+      "normalization_db": -4.814
     },
     "wolf_run_2.wav": {
-      "source": "wolf_run_supplied",
-      "start": 7.88,
-      "duration": 0.24,
-      "filters": "highpass=f=65,lowpass=f=6000,afade=t=in:d=0.004,afade=t=out:st=0.19999999999999998:d=0.04",
+      "source": "wolf_run_gallop",
+      "start": 4.195,
+      "duration": 0.16,
+      "filters": "asetrate=44100*0.92,aresample=24000,asetpts=N/SR/TB,highpass=f=55,lowpass=f=3400,afade=t=in:d=0.005,afade=t=out:st=0.10500000000000001:d=0.055",
       "rate": "24000 Hz mono s16",
       "peak_dbfs": -6,
-      "normalization_db": 17.07
+      "normalization_db": -5.639
     },
     "wolf_run_3.wav": {
-      "source": "wolf_run_supplied",
-      "start": 11.09,
-      "duration": 0.24,
-      "filters": "highpass=f=65,lowpass=f=6000,afade=t=in:d=0.004,afade=t=out:st=0.19999999999999998:d=0.04",
+      "source": "wolf_run_gallop",
+      "start": 3.46,
+      "duration": 0.165,
+      "filters": "asetrate=44100*0.92,aresample=24000,asetpts=N/SR/TB,highpass=f=55,lowpass=f=3400,afade=t=in:d=0.005,afade=t=out:st=0.11000000000000001:d=0.055",
       "rate": "24000 Hz mono s16",
       "peak_dbfs": -6,
-      "normalization_db": 14.233
+      "normalization_db": 4.474
     },
     "wolf_growl_1.wav": {
       "source": "wolf_growl_supplied",

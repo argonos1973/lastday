@@ -965,6 +965,9 @@ static func spawn_summit_base_loot(world: Node3D, tmpl: Dictionary) -> void:
 	]
 	for s in wt_spots:
 		put.call(s[0], s[1], wt + (s[2] as Vector3).rotated(Vector3.UP, yaw_rad), wt_top_y)
+	if tmpl.has("headlamp"):
+		put.call("summit_tentA_loot_headlamp", "headlamp", tent_a + Vector3(-1.0, 0.0, 1.9).rotated(Vector3.UP, tent_a_yaw), floor_y)
+		put.call("summit_watchtower_headlamp", "headlamp", wt + Vector3(0.2, 0.0, -0.7).rotated(Vector3.UP, yaw_rad), wt_top_y)
 
 	# Nido de francotirador del piso superior (cubierta 6, +52 m local): rifle + 2 cargadores,
 	# en el lado opuesto a la escotilla de la escalera (hatch a 20° -> loot a ~200°)

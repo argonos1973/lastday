@@ -190,6 +190,7 @@ const CLOTHING_PRIORITY := {
 	"Guantes de trabajo": 2, "Guantes survival": 3, "Guantes militares": 4, "Guantes de piel": 5,
 	"Gorra militar": 2, "Gorro de otoño": 2, "Sombrero de pescador": 3, "Gorro de piel": 4,
 	"Casco militar": 5, "Tocado de piel animal": 5,
+	"Linterna frontal": 5,
 	"Chaleco táctico": 6,
 }
 
@@ -1879,8 +1880,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var hiding_in_shelter: bool = float(b["hide_timer"]) > 0.0 and sh_pos != Vector3.INF and proxy.global_position.distance_to(sh_pos) < 2.6
 	# Luz nocturna con antorcha — o antorcha de rescate cuando se esta
 	# helando: de dia tambien da calor real (ver _bot_survival_tick).
+	var has_headlamp := _bot_has_headlamp_worn(b)
+	b["flashlight_on"] = is_night and has_headlamp and not hiding_in_shelter and not bool(b.get("sleeping", false))
+	proxy.set_meta("flashlight_on", bool(b["flashlight_on"]))
 	var was_torch_lit := bool(b.get("torch_lit", false))
-	b["torch_lit"] = (is_night or _bot_is_freezing(b)) and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
+	b["torch_lit"] = ((is_night and not has_headlamp) or _bot_is_freezing(b)) and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
 	if bool(b["torch_lit"]) and not was_torch_lit and not _bot_ignite_torch(b):
 		b["torch_lit"] = false
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
@@ -2518,7 +2522,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# para saquear, juntar los 11 palos y levantar su base en vez de quedarse
 	# clavado sentado en mitad del campo toda la noche — pero solo mientras
 	# pueda trabajar la luz: sin antorcha ni fogata propia no sale a explorar.
-	var has_night_light := bool(b["torch_lit"]) or _bot_has_item(proxy, "Antorcha")
+	var has_night_light := bool(b["torch_lit"]) or bool(b.get("flashlight_on", false)) or _bot_has_headlamp_worn(b) or _bot_has_item(proxy, "Antorcha")
 	var desperate_needs := _bot_needs_food_or_water(b)
 	var has_built_sh := not str(b["shelter_id"]).is_empty()
 	var vst: SurvivalStats = b.get("vstats")
@@ -3633,6 +3637,9 @@ func _worn_in_slot(worn: Array, slot: String) -> String:
 		if str(PlayerController.CLOTHING_SLOTS.get(nm, "")) == slot:
 			return nm
 	return ""
+
+func _bot_has_headlamp_worn(b: Dictionary) -> bool:
+	return _worn_in_slot(str(b.get("clothing", "")).split(",", false), "headlamp") == GameConst.HEADLAMP_ITEM_NAME
 
 func _swap_worn_slot(worn: Array, slot: String, new_nm: String) -> Array:
 	var out: Array = []
@@ -5041,6 +5048,11 @@ func _bot_target_is_lit(target: Node3D) -> bool:
 func _bot_within_aim_sight(b: Dictionary, target: Node3D, dist: float) -> bool:
 	# An acquired enemy still needs to be visible. A scope/overwatch position
 	# extends recognition, but neither grants night vision or sees through cover.
+	if _is_world_night() and bool(b.get("flashlight_on", false)) and dist <= 38.0:
+		var forward := Vector3.FORWARD.rotated(Vector3.UP, float(b.get("rot", 0.0)))
+		var direction := target.global_position - (b["proxy"] as Node3D).global_position
+		if forward.dot(direction.normalized()) >= cos(deg_to_rad(PlayerController.HEADLAMP_SPOT_ANGLE)):
+			return true
 	var scoped := str(b.get("held_item", "")) == "Rifle francotirador"
 	var elevated := (b["proxy"] as Node3D).global_position.y - target.global_position.y >= BOT_ROOF_MIN_ELEV
 	return dist <= _effective_human_sight(target, 85.0 if scoped or elevated else 52.0)
@@ -6609,6 +6621,8 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	b["anim"] = "dead_melee" if death_kind == "melee" else "dead"
 	b["_act"] = "dead"
 	b["torch_lit"] = false
+	b["flashlight_on"] = false
+	proxy.set_meta("flashlight_on", false)
 	b["is_aiming"] = false
 	b["crouching"] = false
 	b["sitting"] = false
@@ -7203,7 +7217,7 @@ func _bot_watch_eligible(b: Dictionary) -> bool:
 		return false
 	if b.get("aggro_target") != null or float(b.get("flee_until", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0:
 		return false
-	if _is_world_night() and not bool(b.get("torch_lit", false)):
+	if _is_world_night() and not bool(b.get("torch_lit", false)) and not bool(b.get("flashlight_on", false)):
 		return false
 	var role := _bot_member_role(b)
 	if _bot_member_index(b) > 0 and role not in ["soldier", "scout"]:
@@ -7284,7 +7298,7 @@ func _bot_overwatch_tick(b: Dictionary, leader: Node3D, cur: Vector3, lpos: Vect
 				release = _bot_leader_watch_zone(lpos) != zone
 		release = release or b.get("aggro_target") != null or _bot_vital_break(b) \
 				or float(b.get("hunger", 100.0)) < 24.0 or float(b.get("thirst", 100.0)) < 20.0 \
-				or (_is_world_night() and not bool(b.get("torch_lit", false)))
+				or (_is_world_night() and not bool(b.get("torch_lit", false)) and not bool(b.get("flashlight_on", false)))
 		if release:
 			b.erase("_overwatch")
 			return false
@@ -13636,7 +13650,7 @@ func _bot_supply_goal_lit(b: Dictionary, goal: Vector3) -> bool:
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null:
 		return false
-	if _bot_has_item(proxy, "Antorcha"):
+	if _bot_has_headlamp_worn(b) or _bot_has_item(proxy, "Antorcha"):
 		return true
 	# Both ends must share the same lit fire; no hopping between distant fires.
 	if world != null and "_lit_campfires" in world:
@@ -13684,6 +13698,11 @@ func _bot_supply_goal_allowed(b: Dictionary, goal: Vector3) -> bool:
 # Returns true while preparing light or unable to leave safely.
 func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
+	if _bot_has_headlamp_worn(b):
+		b.erase("_night_emergency_origin")
+		b["flashlight_on"] = true
+		proxy.set_meta("flashlight_on", true)
+		return false
 	if _bot_has_item(proxy, "Antorcha") and (bool(b.get("torch_lit", false)) or _bot_ignite_torch(b)):
 		b.erase("_night_emergency_origin")
 		b["torch_lit"] = true
@@ -19056,7 +19075,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	# De noche sin luz propia no se emprende la campana de los 11 palos ni el
 	# huerto: solo lo que falta para la antorcha/fogata, y cerca — el monte a
 	# oscuras no es sitio para recoger lena de obra.
-	var night_no_light := _is_world_night() and _bot_item_count(proxy, "Antorcha") == 0 \
+	var night_no_light := _is_world_night() and not _bot_has_headlamp_worn(b) and _bot_item_count(proxy, "Antorcha") == 0 \
 			and not _is_near_any_lit_campfire(proxy.global_position, 8.0)
 	if night_no_light:
 		palo_need = 1 + (2 if str(b["campfire_id"]).is_empty() else 0)
