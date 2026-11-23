@@ -4019,32 +4019,7 @@ func _apply_restored_inventory(items_data: Array, health: float, hunger: float, 
 				slot_name = _p[0]
 				slot_pelt = _p[1] if _p.size() > 1 else ""
 			if not slot_name.is_empty():
-				var _load_color := Color(0, 0, 0, 0)
-				var _found_in_inv := false
-				if player.get("inventory") != null:
-					for inv_item in player.inventory.items:
-						if str(inv_item.item_name) == slot_name:
-							_found_in_inv = true
-							if not slot_pelt.is_empty() and not inv_item.has_meta("pelt_species"):
-								inv_item.set_meta("pelt_species", slot_pelt)
-							if inv_item.has_meta("clothing_color"):
-								_load_color = inv_item.get_meta("clothing_color")
-							break
-				if not _found_in_inv and player.get("inventory") != null:
-					var ItemScript2 = load("res://scripts/Item.gd")
-					var _w := 0.3
-					var _u := 0.05
-					if slot_name == "Pantalones":
-						_w = 0.5
-						_u = 0.10
-					elif slot_name == "Zapatillas":
-						_w = 0.4
-						_u = 0.08
-					var _synth = ItemScript2.create(slot_name, "clothing", _w, 1, _u)
-					if not slot_pelt.is_empty():
-						_synth.set_meta("pelt_species", slot_pelt)
-					player.inventory.add_item(_synth)
-				player.equip_clothing(slot_name, _load_color, null, slot_pelt)
+				player.restore_worn_clothing(slot_name, slot_pelt)
 	if player.has_headlamp_equipped():
 		player._ensure_flashlight_node()
 		player.flashlight.visible = bool(extra.get("headlamp_on", false)) and not sleeping

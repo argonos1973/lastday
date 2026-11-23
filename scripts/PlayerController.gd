@@ -2626,6 +2626,28 @@ func get_current_clothing_color(item_name: String, slot := "") -> Color:
 		return SURVIVAL_CLOTHING[item_name]["tint"]
 	return Color(0, 0, 0, 0)
 
+func restore_worn_clothing(item_name: String, pelt_species := "") -> void:
+	if inventory == null or not CLOTHING_SLOTS.has(item_name):
+		return
+	var garment = null
+	for item in inventory.items:
+		if item.item_name == item_name:
+			if garment == null:
+				garment = item
+			if item.get_meta("equipped_slot", "") == CLOTHING_SLOTS[item_name]:
+				garment = item
+				break
+	if garment == null:
+		# Older saves can list worn gear separately. Restore it on the body,
+		# not through add_item: full pockets must not reject an equipped item.
+		var weight := 0.5 if item_name == "Pantalones" else (0.4 if item_name == "Zapatillas" else 0.3)
+		var use_value := 0.10 if item_name == "Pantalones" else (0.08 if item_name == "Zapatillas" else 0.05)
+		garment = ItemScript.create(item_name, "clothing", weight, 1, use_value)
+		inventory.items.append(garment)
+	if not pelt_species.is_empty():
+		garment.set_meta("pelt_species", pelt_species)
+	equip_clothing(item_name, garment.get_meta("clothing_color", Color.TRANSPARENT), garment, pelt_species)
+
 func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0), source_item = null, pelt_species: String = "") -> void:
 	var slot := ""
 	if CLOTHING_SLOTS.has(item_name):
@@ -2841,7 +2863,7 @@ func equip_clothing(item_name: String, clothing_color: Color = Color(0, 0, 0, 0)
 			var material := _clothing_material_for(str(cloth_node.name), Color.WHITE)
 			material.albedo_texture = _make_camo_texture()
 			cloth_node.material_override = material
-		if source_item != null:
+		if source_item != null and not _initializing:
 			source_item.set_meta("clothing_camo", camo)
 	_recalculate_carry_capacity()
 	_recalculate_warmth()
@@ -8003,17 +8025,24 @@ func craft_recipe(recipe: Dictionary, from_ground: bool = false) -> void:
 	# and capacity. Cancelling must not produce an item or wear out the tool.
 	if not await _await_local_action(duration):
 		return
+	var worn_inputs: Array = []
+	if not from_ground:
+		for name_in_recipe in recipe.inputs:
+			var slot: String = CLOTHING_SLOTS.get(name_in_recipe, "")
+			if not slot.is_empty() and _equipped_slots.get(slot) == name_in_recipe:
+				var garment = _equipped_item_for_slot(slot)
+				if garment != null:
+					worn_inputs.append(garment)
 	var crafted: bool = main.craft_ground_recipe(self, recipe) if from_ground else CraftingSystemScript.craft(recipe, inventory)
 	if not crafted:
 		notice.emit(CraftingSystemScript.craft_error)
 		return
+	for garment in worn_inputs:
+		if not inventory.items.has(garment):
+			unequip_clothing(garment.item_name)
 	_post_craft_success(recipe, out)
 
 func _post_craft_success(_recipe: Dictionary, out: Dictionary) -> void:
-	for slot in _equipped_slots.keys():
-		var clothing_name := str(_equipped_slots[slot])
-		if not clothing_name.is_empty() and not inventory.has_item_name(clothing_name):
-			unequip_clothing(clothing_name)
 	if (str(out.get("type", "")) == "weapon_bow" or str(out.get("name", "")) in ["Arco de madera", "Arco reforzado"]) and _find_free_back_slot() >= 0:
 		_store_inventory_item_type_on_back("weapon_bow", "el arco")
 	inventory.changed.emit()

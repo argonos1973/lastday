@@ -79,7 +79,7 @@ func run() -> void:
 			rag_recipe = recipe
 			break
 	check(not rag_recipe.is_empty(), "Shirt-to-rags recipe exists")
-	check(Crafting.craft(rag_recipe, player.inventory), "Cutting rags from a shirt succeeds: " + Crafting.craft_error)
+	await player.craft_recipe(rag_recipe)
 	check(worn_shirt.quantity == 1 and str(worn_shirt.get_meta("equipped_slot", "")) == "torso",
 		"Worn shirt is not consumed while a spare exists")
 	check(not player.inventory.items.has(spare_shirt), "Spare shirt is the one turned into rags")
@@ -89,6 +89,9 @@ func run() -> void:
 			rag_count += item.quantity
 	check(rag_count == 2, "Shirt recipe yields 2 rags")
 	check(knife.durability < 100.0, "Knife loses durability crafting rags")
+	await player.craft_recipe(rag_recipe)
+	check(not player._equipped_slots.has("torso") and not player.inventory.items.has(worn_shirt)
+		and player.inventory.get_item_count("Trapos") == 4, "Cutting the last shirt removes the actual garment used")
 
 	# --- Venda fits in clothing pockets even with the outfit on and pockets full.
 	_reset_player(player)
@@ -137,6 +140,24 @@ func run() -> void:
 		if item.item_name == "Trapos":
 			trapos_left += item.quantity
 	check(trapos_left == 5, "Rejected craft consumes no materials")
+
+	# A reconnect may list the worn outfit separately from the pocket contents.
+	world.player = player
+	var cargo := [ItemData.create("Trapos", "resource", 0.05, 3).to_dict()]
+	for n in ["Palo", "Piedra", "Cuerda", "Tronco", "Hueso", "Pluma"]:
+		cargo.append(ItemData.create(n, "resource", 0.1).to_dict())
+	var drops: Array = []
+	player.item_dropped.connect(func(n, _t, _w, _q, _u, _p, _c, _b, _s): drops.append(n))
+	for attempt in range(2):
+		world._apply_restored_inventory(cargo, 100, 100, 100, "Camiseta,Pantalones,Zapatillas", "", "", -1, false, false, 0)
+		for n in ["Camiseta", "Pantalones", "Zapatillas"]:
+			check(player.inventory.get_item_count(n) == 1, "Full pockets restore exactly one worn " + n)
+	await player.craft_recipe(venda_recipe)
+	check(player.inventory.get_item_count("Venda") == 1 and not player.inventory.has_item_name("Trapos"),
+		"Craft uses the slot freed by the last three rags")
+	check(player._equipped_slots == {"torso":"Camiseta", "legs":"Pantalones", "feet":"Zapatillas"},
+		"Completing a bandage does not strip restored equipment")
+	check(player.inventory.get_stored_count() == 7 and drops.is_empty(), "No pocket contents ejected by crafting")
 
 	print("CraftingCapacityRegression: %d failures" % failures)
 	world.queue_free()
