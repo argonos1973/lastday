@@ -3622,6 +3622,38 @@ func _bot_treatment_pressed(b: Dictionary) -> bool:
 			return true
 	return false
 
+func _garment_insulation(nm: String, wet: float) -> float:
+	var retain := PlayerController.WET_WARMTH_RETAIN_PELT if PlayerController.CLOTHING_WATER_RESIST.has(nm) else PlayerController.WET_WARMTH_RETAIN
+	return float(PlayerController.CLOTHING_WARMTH.get(nm, 0.0)) * lerpf(1.0, retain, clampf(wet, 0.0, 1.0))
+
+func _prefer_garment(cur: String, current: Dictionary, nm: String, candidate: Dictionary) -> bool:
+	if float(candidate.get("durability", 100.0)) <= 0.0:
+		return false
+	var wet := float(current.get("wetness", 0.0))
+	var other := float(candidate.get("wetness", 0.0))
+	if not cur.is_empty() and maxf(wet, other) >= 0.35:
+		var coverage := float(PlayerController.SLOT_WET_WEIGHT.get(PlayerController.CLOTHING_SLOTS[nm], 0.0))
+		var gain := _garment_insulation(nm, other) - _garment_insulation(cur, wet) + coverage * (wet - other)
+		if absf(gain) > 0.025:
+			return gain > 0.0
+	return int(CLOTHING_PRIORITY.get(nm, 0)) > int(CLOTHING_PRIORITY.get(cur, 0))
+
+func _bot_dry_upgrade(b: Dictionary, entry: Dictionary) -> bool:
+	var nm := str(entry.get("name", ""))
+	if not PlayerController.CLOTHING_SLOTS.has(nm):
+		return false
+	var cur := _worn_in_slot(str(b.get("clothing", "")).split(",", false), PlayerController.CLOTHING_SLOTS[nm])
+	var extra: Dictionary = b["proxy"].get_meta("saved_extra", {})
+	var current: Dictionary = extra.get("worn_clothing", {}).get(cur, {})
+	var wet := float(current.get("wetness", 0.0))
+	if wet < 0.35 or wet - float(entry.get("wetness", 0.0)) < 0.25 or not _prefer_garment(cur, current, nm, entry):
+		return false
+	for spare in b["proxy"].get_meta("saved_inventory", []):
+		if spare is Dictionary and str(spare.get("name", "")) == nm and float(spare.get("durability", 100.0)) > 0.0 \
+				and float(spare.get("wetness", 0.0)) <= float(entry.get("wetness", 0.0)) + 0.05:
+			return false
+	return true
+
 func _auto_equip_best_gear(b: Dictionary) -> void:
 	# Como un jugador real: empiezan con la ropa de su preview de inicio y van
 	# mejorando cada pieza que saquean. Aprenden que la ropa de piel es la
@@ -3652,7 +3684,7 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 		elif tp == "clothing" and PlayerController.CLOTHING_SLOTS.has(nm) and float(it.get("durability", 100.0)) > 0.0:
 			var slot := str(PlayerController.CLOTHING_SLOTS[nm])
 			var cur := _worn_in_slot(worn, slot)
-			if int(CLOTHING_PRIORITY.get(nm, 0)) > int(CLOTHING_PRIORITY.get(cur, 0)):
+			if _prefer_garment(cur, worn_items.get(cur, {}), nm, it):
 				var new_piece: Dictionary = it.duplicate(true)
 				new_piece["quantity"] = 1
 				var old_piece: Dictionary = (worn_items.get(cur, {"name": cur, "type": "clothing", "weight": 0.6, "quantity": 1, "use_value": 0.0}) as Dictionary).duplicate(true)
@@ -10421,7 +10453,10 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 				continue
 		var nm := str(entry.get("name", ""))
 		var tp := str(entry.get("type", ""))
-		if not _is_loot_desirable(b, nm, tp):
+		var dry_upgrade := tp == "clothing" and _bot_dry_upgrade(b, entry)
+		if dry_upgrade and _bot_is_freezing(b) and not _bot_loot_allowed_while_freezing(b, entry, false):
+			continue
+		if not dry_upgrade and not _is_loot_desirable(b, nm, tp, entry):
 			continue
 		# No le cabe en la mochila (slots/peso del modelo humano): ni lo mira
 		if not _bot_would_fit(b, proxy.get_meta("saved_inventory", []), _loot_entry_item_dict(entry)):
@@ -10433,7 +10468,8 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 			continue
 		# Un superviviente prioriza: arma/medicina > comida > equipo > materiales
 		# > reserva de agua. La distancia y el cambio de planta desempatan.
-		var score := _loot_priority(b, nm, tp) * 1000.0 - sqrt(flat_sq) - dy_loot * 14.0
+		var priority := 6.5 if dry_upgrade else _loot_priority(b, nm, tp)
+		var score := priority * 1000.0 - sqrt(flat_sq) - dy_loot * 14.0
 		if score > best_score:
 			best_score = score
 			best = entry
@@ -10487,7 +10523,7 @@ func _bot_wants_food(b: Dictionary) -> bool:
 	# Sin reserva comestible: guardar algo aunque no tenga hambre urgente
 	return not _bot_has_edible_food(b["proxy"], float(b["hunger"]) < 28.0)
 
-func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
+func _is_loot_desirable(b: Dictionary, nm: String, tp: String, entry: Dictionary = {}) -> bool:
 	if tp == "food":
 		if not _bot_wants_food(b):
 			return false
@@ -10573,7 +10609,8 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String) -> bool:
 			var cur := _worn_in_slot(str(b.get("clothing", "")).split(","), slot)
 			var pr := int(CLOTHING_PRIORITY.get(nm, 0))
 			# Mejora real sobre lo que lleva puesto: siempre interesa.
-			if pr > int(CLOTHING_PRIORITY.get(cur, 0)):
+			var extra: Dictionary = b["proxy"].get_meta("saved_extra", {})
+			if pr > int(CLOTHING_PRIORITY.get(cur, 0)) and _prefer_garment(cur, extra.get("worn_clothing", {}).get(cur, {}), nm, entry):
 				return true
 			# Tras aprender, ropa decente (>=4) vale como repuesto: maximo una
 			# por slot y sin acaparar prendas sueltas en la mochila.
@@ -10800,18 +10837,19 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	var id := str(entry.get("id", ""))
 	if id.is_empty() or world == null:
 		return
-	if not _bot_can_reach_loot((b["proxy"] as Node3D).global_position, _loot_entry_pos(entry)):
-		return
 	# La entrada viene de la cache de sentidos: otro bot pudo recogerla
 	# hace 0.2 s. Revalidar que sigue en el mundo antes de duplicar el item.
 	var still_there := false
 	if "_dropped_items" in world:
 		for e2 in world._dropped_items:
 			if e2 is Dictionary and str(e2.get("id", "")) == id:
+				entry = e2 # Use the actual garment moisture at pickup, not the sense snapshot.
 				still_there = true
 				break
 	if not still_there or ("_depleted_action_ids" in world and world._depleted_action_ids.has(id)):
 		_loot_clear(b)
+		return
+	if not _bot_can_reach_loot((b["proxy"] as Node3D).global_position, _loot_entry_pos(entry)):
 		return
 	if _loot_claimed_by_other(b, id):
 		_loot_clear(b)
@@ -11077,7 +11115,7 @@ func _find_nearby_raidable_shelter(b: Dictionary, radius: float) -> Dictionary:
 		var contents = sh.get("contents", [])
 		if contents is Array:
 			for cd in contents:
-				if cd is Dictionary and _is_loot_desirable(b, str(cd.get("name", "")), str(cd.get("type", "resource"))):
+				if cd is Dictionary and _is_loot_desirable(b, str(cd.get("name", "")), str(cd.get("type", "resource")), cd):
 					has_wanted = true
 					break
 		if has_wanted or _bot_wants_salvage(b, sh):
@@ -11105,7 +11143,7 @@ func _bot_raid_shelter(b: Dictionary, sh_entry: Dictionary) -> int:
 		var tp := str(cd.get("type", "resource"))
 		var qty := maxi(1, int(cd.get("quantity", cd.get("qty", 1))))
 		var took_from_stack := 0
-		while qty > 0 and _is_loot_desirable(b, nm, tp):
+		while qty > 0 and _is_loot_desirable(b, nm, tp, cd):
 			var one: Dictionary = (cd as Dictionary).duplicate(true)
 			one["quantity"] = 1
 			if not _bot_try_add_inventory_item(b, inv, one):
@@ -11245,6 +11283,8 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 			continue
 		var nm := str(cd.get("name", ""))
 		var tp := str(cd.get("type", ""))
+		if tp == "clothing" and _bot_dry_upgrade(b, cd):
+			return true
 		if need_food and tp == "food":
 			return true
 		if need_water and (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")):
@@ -11526,7 +11566,10 @@ func _bot_sync_own_shelter_stash_impl(b: Dictionary) -> int:
 		var nm := str(cd.get("name", ""))
 		var tp := str(cd.get("type", "resource"))
 		var want_withdraw := false
-		if tp == "food" and _bot_shelter_needs_supply(b, "food"):
+		var dry_upgrade := tp == "clothing" and _bot_dry_upgrade(b, cd)
+		if dry_upgrade:
+			want_withdraw = true
+		elif tp == "food" and _bot_shelter_needs_supply(b, "food"):
 			want_withdraw = true
 		elif (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")) and _bot_shelter_needs_supply(b, "water"):
 			want_withdraw = true
@@ -11549,6 +11592,9 @@ func _bot_sync_own_shelter_stash_impl(b: Dictionary) -> int:
 			if not _bot_try_add_inventory_item(b, inv, one):
 				continue # no le cabe: se queda guardado en su refugio
 			proxy.set_meta("saved_inventory", inv)
+			if dry_upgrade:
+				_auto_equip_best_gear(b)
+				inv = proxy.get_meta("saved_inventory", [])
 			var rem := int(cd.get("quantity", 1)) - take_qty
 			if rem <= 0:
 				contents.remove_at(i)
@@ -13446,26 +13492,10 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	if world.has_method("_is_near_camo_covered_shelter") and world._is_near_camo_covered_shelter(pos):
 		ambient_temp += 2.0
 		shelter_warmth += 0.35
-	# Abrigo/proteccion termica de la ropa equipada (mismas tablas que el
-	# jugador; la ropa empapada abriga menos, la piel casi nada pierde).
-	var wet := clampf(st.wetness, 0.0, 1.0)
-	var warmth_sum := 0.0
-	var heat_prot := 0.0
-	var heat_ret := 0.0
-	for nm in str(b["clothing"]).split(",", false):
-		var cn := nm.strip_edges()
-		if cn.is_empty():
-			continue
-		var w := float(PlayerController.CLOTHING_WARMTH.get(cn, 0.0))
-		if w > 0.0:
-			var retain: float = PlayerController.WET_WARMTH_RETAIN_PELT if PlayerController.CLOTHING_WATER_RESIST.has(cn) else PlayerController.WET_WARMTH_RETAIN
-			warmth_sum += w * lerpf(1.0, retain, wet)
-		heat_prot = maxf(heat_prot, float(PlayerController.CLOTHING_HEAT_PROTECTION.get(cn, 0.0)))
-		heat_ret += float(PlayerController.CLOTHING_HEAT_RETENTION.get(cn, 0.0))
-	st.warmth_bonus = warmth_sum
-	st.heat_protection_bonus = heat_prot
-	st.heat_retention_bonus = heat_ret
-
+	var extra: Dictionary = proxy.get_meta("saved_extra", {})
+	var skin := float(extra.get("skin_wetness", st.wetness))
+	var soak := 0.0
+	var drying := 0.0
 	# Lluvia y nieve empapan como al jugador; bajo techo no moja. Vadear el
 	# rio/lago cala mucho mas rapido.
 	if not sheltered:
@@ -13475,16 +13505,21 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 			var wet_gain := delta * 0.20 * clampf(rain_amt * 0.5, 0.1, 1.0)
 			if rain_amt <= 0.1:
 				wet_gain = delta * 0.05 * clampf(snow_amt, 0.1, 1.0)
-			st.wetness = minf(1.0, st.wetness + wet_gain * _bot_skin_wet_factor(b))
+			soak += wet_gain
+			skin = minf(1.0, skin + wet_gain * _bot_skin_wet_factor(b))
 	# Contato com agua = mesmo preco do jogador: empapa proporcional a
 	# profundidade, gasta energia vadeando e rouba calor do corpo.
 	var w_depth := 0.0
 	if world.has_method("get_river_depth_at"):
 		w_depth = float(world.get_river_depth_at(pos))
 	if w_depth > 0.02:
-		st.wetness = minf(1.0, st.wetness + delta * (0.38 + w_depth * 0.55))
+		var immersion := delta * (0.38 + w_depth * 0.55)
+		soak += immersion
+		skin = minf(1.0, skin + immersion)
 		st.energy = maxf(0.0, st.energy - delta * 0.018 * (0.8 + w_depth))
-		st.body_temperature = maxf(32.0, st.body_temperature - delta * 0.013 * (0.5 + st.wetness + w_depth))
+		st.body_temperature = maxf(32.0, st.body_temperature - delta * 0.013 * (0.5 + skin + w_depth))
+	if soak <= 0.0:
+		drying = delta * (0.0035 + maxf(0.0, ambient_temp - 10.0) * 0.0007)
 
 	# Calor de fogatas y antorchas igual que _apply_campfire_effect /
 	# _apply_torch_fire_effect del jugador: calienta, seca y quema al pisar
@@ -13501,7 +13536,7 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 		elif dist_sq < 16.0 and dy < 2.5:
 			var wf: float = 1.0 - (sqrt(dist_sq) - 0.6) / 3.4
 			st.apply_external_heat(wf * 3.0 * delta, 38.0)
-			st.wetness = maxf(0.0, st.wetness - wf * 0.05 * delta)
+			drying += wf * 0.05 * delta
 	for fire_pos in (world.get("torch_fire_positions") if world.get("torch_fire_positions") != null else []):
 		if not (fire_pos is Vector3):
 			continue
@@ -13511,7 +13546,7 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 		if dist_sq2 < 4.0 and absf(fire_pos.y - pos.y) < 2.5:
 			var wf2: float = 1.0 - sqrt(dist_sq2) / 2.0
 			st.apply_external_heat(wf2 * 1.5 * delta, 37.5)
-			st.wetness = maxf(0.0, st.wetness - wf2 * 0.02 * delta)
+			drying += wf2 * 0.02 * delta
 	# La antorcha en la mano calienta y seca igual que la del jugador
 	# (PlayerController: delta*1.5 a techo 37.5 y wetness -0.03/s) — para el
 	# bot torch_lit ES la llama; sin esto una antorcha encendida era solo luz.
@@ -13522,8 +13557,41 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 			proxy.set_meta("torch_lit", false)
 		else:
 			st.apply_external_heat(1.5 * torch_pct * delta, 37.5)
-			st.wetness = maxf(0.0, st.wetness - 0.03 * torch_pct * delta)
+			drying += 0.03 * torch_pct * delta
 
+	skin = maxf(0.0, skin - drying)
+	if drying > 0.0:
+		for carried in proxy.get_meta("saved_inventory", []):
+			if carried is Dictionary and carried.get("type") == "clothing" and float(carried.get("wetness", 0.0)) > 0.0:
+				carried["wetness"] = maxf(0.0, float(carried["wetness"]) - drying * 0.4)
+	extra["skin_wetness"] = skin
+	var items: Dictionary = extra.get("worn_clothing", {})
+	var effective_wet := skin
+	st.warmth_bonus = 0.0
+	st.heat_retention_bonus = 0.0
+	st.heat_protection_bonus = 0.0
+	for nm in str(b["clothing"]).split(",", false):
+		var slot := str(PlayerController.CLOTHING_SLOTS.get(nm, ""))
+		var piece: Dictionary = items.get(nm, {})
+		var wet := float(piece.get("wetness", 0.0))
+		var coverage := float(PlayerController.SLOT_WET_WEIGHT.get(slot, 0.0))
+		if coverage > 0.0:
+			var resist := float(PlayerController.CLOTHING_WATER_RESIST.get(nm, 0.0))
+			if resist > 0.0 and str(piece.get("pelt_species", "")) == "oso":
+				resist = minf(0.85, resist + 0.10)
+			wet = maxf(0.0, minf(1.0, wet + soak * (1.0 - resist)) - drying)
+			effective_wet += coverage * (wet - skin)
+			if wet > 0.0 or piece.has("wetness"):
+				if piece.is_empty():
+					piece = {"name": nm, "type": "clothing", "quantity": 1, "weight": 0.6}
+				piece["wetness"] = wet
+				items[nm] = piece
+		st.warmth_bonus += _garment_insulation(nm, wet)
+		st.heat_protection_bonus = maxf(st.heat_protection_bonus, float(PlayerController.CLOTHING_HEAT_PROTECTION.get(nm, 0.0)))
+		st.heat_retention_bonus += float(PlayerController.CLOTHING_HEAT_RETENTION.get(nm, 0.0))
+	extra["worn_clothing"] = items
+	proxy.set_meta("saved_extra", extra)
+	st.wetness = clampf(effective_wet, 0.0, 1.0)
 	var sleeping := bool(b.get("sleeping", false))
 	var anim_now := str(b["anim"])
 	var moving: bool = anim_now in ["walk", "run"] and not sleeping
@@ -13533,6 +13601,7 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var wind := float(obs.get("wind_speed", 0.0))
 	var resting := bool(b.get("sitting", false)) or str(b.get("_act", "")) == "rest"
 	st.tick(delta, sprinting, ambient_temp, sheltered, shelter_warmth, is_night, moving, sleeping, carry_ratio, false, false, sun, wind, resting)
+	st.wetness = clampf(effective_wet, 0.0, 1.0)
 	# Recuperacion de energia al caminar o descansar despierto (misma curva que
 	# PlayerController._physics_process: sin esto st.energy caia a 0 para siempre
 	# y multiplicaba x1.5 el desgaste de sueno hasta matar al bot de agotamiento).
@@ -13550,7 +13619,7 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	b["energy"] = st.energy
 	proxy.set_meta("proxy_health", st.health)
 	proxy.set_meta("saved_health", st.health)
-	var extra: Dictionary = proxy.get_meta("saved_extra", {})
+	extra = proxy.get_meta("saved_extra", {})
 	var sx: Dictionary = (extra.get("stats_extra", {}) as Dictionary).duplicate()
 	sx["energy"] = st.energy
 	sx["sleep"] = st.sleep
@@ -14789,7 +14858,7 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vec
 	var p: Vector3 = at if at != Vector3.INF else (b["proxy"] as Node3D).global_position + Vector3(randf_range(-0.7, 0.7), 0.0, randf_range(-0.7, 0.7))
 	if world.has_method("_spawn_ground_pickup"):
 		var pre_n: int = (world._dropped_items as Array).size() if "_dropped_items" in world else -1
-		world._spawn_ground_pickup(str(item_dict.get("name", "")), str(item_dict.get("type", "resource")), p, float(item_dict.get("weight", 0.2)), int(item_dict.get("quantity", 1)), float(item_dict.get("use_value", 0.0)))
+		world._spawn_ground_pickup(str(item_dict.get("name", "")), str(item_dict.get("type", "resource")), p, float(item_dict.get("weight", 0.2)), int(item_dict.get("quantity", 1)), float(item_dict.get("use_value", 0.0)), "", "", float(item_dict.get("wetness", 0.0)))
 		if pre_n >= 0 and (world._dropped_items as Array).size() > pre_n:
 			var dropped: Dictionary = (world._dropped_items as Array)[-1]
 			if item_dict.has("durability"):
@@ -14826,6 +14895,8 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vec
 			rec["spoilage"] = float(item_dict["spoilage"])
 		if item_dict.has("pelt_species"):
 			rec["pelt"] = str(item_dict["pelt_species"])
+		if item_dict.has("wetness"):
+			rec["wetness"] = float(item_dict["wetness"])
 		if item_dict.has("contents"):
 			rec["contents"] = item_dict["contents"]
 		world._dropped_items.append(rec)

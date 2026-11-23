@@ -192,6 +192,48 @@ func materials_for(species: String, count: int, tool: String = "Cuchillo", durab
 	return [{"name": "Piel de " + species, "type": "resource", "weight": .65, "quantity": count},
 		{"name": tool, "type": "weapon", "weight": .2, "quantity": 1, "durability": durability, "max_durability": 80.0}]
 
+func test_dry_change(manager: Bots, world: BotFixtures.TestWorld) -> void:
+	var a: Dictionary = manager.bots[901]
+	var control: Dictionary = manager.bots[902]
+	var jacket := "Chaqueta militar"
+	world.water_rect = Rect2(20, 20, 4, 4)
+	for actor in [a, control]:
+		reset_bot(actor, jacket, [])
+		actor.proxy.global_position = Vector3(22, 0.4, 22)
+		manager._bot_survival_tick(actor, 2.0)
+		check(actor.proxy.get_meta("saved_extra").worn_clothing[jacket].wetness > 0.95, "Immersion soaks the worn jacket")
+		actor.proxy.global_position = Vector3(28, 0.4, 22)
+		actor.vstats.body_temperature = 36.0
+	var dry := {"id":"dry_change", "name":jacket, "type":"clothing", "weight":0.6, "qty":1, "pos":[28,0.4,22]}
+	var soaked := dry.duplicate(true)
+	soaked.merge({"id":"wet_change", "wetness":1.0}, true)
+	world._dropped_items.append(soaked)
+	world._dropped_items.append(dry)
+	check(manager._find_nearby_valuable_loot(a, 10.0).get("id") == "dry_change", "A soaked bot seeks the dry copy, not the soaked one")
+	manager._tick_loot_pickup(a, dry, 0.1)
+	check(a.proxy.get_meta("saved_extra").worn_clothing[jacket].wetness > 0.95, "No change before pickup completes")
+	manager._tick_loot_pickup(a, dry, 1.4)
+	manager._auto_equip_best_gear(a)
+	var spares: Array = a.proxy.get_meta("saved_inventory")
+	check(spares.size() == 1 and spares[0].get("wetness", 0.0) > 0.95, "The replaced jacket stays soaked in inventory without swapping back")
+	for actor in [a, control]:
+		manager._bot_survival_tick(actor, 1.0)
+	check(a.vstats.wetness < control.vstats.wetness and a.vstats.wetness > 0.5, "Only the covered torso dries on changing")
+	check(a.vstats.warmth_bonus > control.vstats.warmth_bonus and a.vstats.body_temperature > control.vstats.body_temperature, "Dry jacket provides more insulation and reduces actual cooling")
+	world.campfire_positions.append(control.proxy.global_position + Vector3.RIGHT * 1.2)
+	var before: float = control.proxy.get_meta("saved_extra").worn_clothing[jacket].wetness
+	manager._bot_survival_tick(control, 4.0)
+	check(control.proxy.get_meta("saved_extra").worn_clothing[jacket].wetness < before - 0.12, "A nearby fire dries the actual garment")
+	world.campfire_positions.clear()
+	world._built_shelters.append({"id":"dry_stash", "pos":[28,0.4,22], "contents":[{"name":jacket, "type":"clothing", "quantity":1, "weight":0.6}]})
+	control.shelter_id = "dry_stash"
+	check(manager._own_shelter_has_needed_item(control), "A dry replacement in the bot's own stash is needed")
+	manager._bot_sync_own_shelter_stash(control)
+	check(float(control.proxy.get_meta("saved_extra").worn_clothing[jacket].get("wetness", 0.0)) < 0.1, "The bot wears the withdrawn jacket rather than immediately re-stashing it")
+	world._built_shelters.pop_back()
+	world._dropped_items.clear()
+	world.water_rect = Rect2(100000, 100000, 4, 4)
+
 func test_bot_pelts() -> void:
 	var world := BotFixtures.TestWorld.new()
 	root.add_child(world)
@@ -208,6 +250,7 @@ func test_bot_pelts() -> void:
 	world.survivor_bot_mgr = manager
 	# Spawn real bot state without loading/saving the user's AI memory.
 	manager.spawn_all_bots()
+	test_dry_change(manager, world)
 	var outfit := ["Chaqueta de piel", "Pantalones de piel", "Botas de piel", "Guantes de piel"]
 	var recipes := {}
 	for recipe in Crafting.RECIPES:
