@@ -147,9 +147,19 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	# Build a map of item_name -> clothing_color from save inventory
 	var inv_colors: Dictionary = {}
 	var inv_camo: Dictionary = {}
+	var seen_pants := {}
 	var inv: Array = pd.get("inventory", [])
 	for inv_item in inv:
 		var iname := str(inv_item.get("name", ""))
+		# Restore binds the first matching saved garment, not a later spare.
+		if PlayerController.CLOTHING_SLOTS.get(iname) == "legs":
+			if seen_pants.has(iname):
+				continue
+			seen_pants[iname] = true
+			if inv_item.has("clothing_camo"):
+				inv_camo[iname] = inv_item["clothing_camo"]
+			if not pelt_species.has(iname) and inv_item.has("pelt_species"):
+				pelt_species[iname] = str(inv_item["pelt_species"])
 		if inv_item.has("clothing_color") and PlayerController.clothing_accepts_color(iname):
 			var cc = inv_item["clothing_color"]
 			if cc is Array and cc.size() >= 3:
@@ -196,7 +206,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var top_color: Color = raw_top as Color if raw_top is Color else Color(0.2, 0.25, 0.12)
 	var bottom_color: Color = raw_bottom as Color if raw_bottom is Color else Color(0.2, 0.25, 0.12)
 	var top_is_camo := bool(cfg.get("top_camo", false)) or (raw_top is String and str(raw_top) == "camo") or bool(inv_camo.get(torso_item, false))
-	var bottom_is_camo := bool(cfg.get("bottom_camo", false)) or (raw_bottom is String and str(raw_bottom) == "camo") or bool(inv_camo.get(legs_item, false))
+	var bottom_is_camo := bool(inv_camo.get(legs_item, bool(cfg.get("bottom_camo", false)) or (raw_bottom is String and str(raw_bottom) == "camo")))
 	var shoes_color: Color = cfg.get("shoes", Color(0.15, 0.15, 0.15))
 	var skin_color: Color = cfg.get("skin", Color(0.8, 0.7, 0.6))
 	# Override with inventory clothing_color if available
@@ -211,21 +221,19 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 	var is_military_feet := feet_item == "Botas militares"
 	var is_pelt_torso := torso_item == "Chaqueta de piel"
 	var is_pelt_feet := feet_item == "Botas de piel"
-	var is_military_legs := legs_item in ["Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II", "Pantalones camuflaje", "Pantalones camuflaje desert"] or legs_item.find("Pantalones m") >= 0 or legs_item.find("Pantalones c") >= 0
-	var is_pelt_legs := legs_item == "Pantalones de piel"
+	var leg_cfg: Dictionary = PlayerController.SURVIVAL_CLOTHING.get(legs_item, {})
 	var is_military_torso := torso_item.find("Chaqueta") >= 0
 	# Field jackets are a separate skinned GLB hung on the skeleton (same as
 	# in-game MilitaryJackets.attach), not the soldier_torso mesh.
 	var is_field_torso := MilitaryJacketsScript.VARIANTS.has(torso_item)
 	var is_autumn_jacket := torso_item in ["Chaqueta de otoño", "Chaqueta militar digital"]
-	var is_autumn_pants := legs_item in ["Pantalones de senderismo", "Pantalones cargo con rodilleras"]
 	var is_autumn_boots := feet_item == "Botas de montaña"
 	var is_autumn_hat := head_item in ["Gorro de otoño", "Gorra militar"]
 	# Determine which clothing meshes to show
-	var show_soldier_legs := has_legs and (is_military_legs or is_pelt_legs)
+	var show_soldier_legs := str(leg_cfg.get("mesh", "")) == "soldier_legs"
 	var show_soldier_torso := has_torso and is_military_torso and not is_field_torso and not is_autumn_jacket and not is_pelt_torso
 	var show_tops := has_torso and not show_soldier_torso and not is_field_torso and not is_autumn_jacket and not is_pelt_torso
-	var show_bottoms := has_legs and not show_soldier_legs and not is_autumn_pants
+	var show_bottoms := legs_item == "Pantalones"
 	var show_shoes := has_feet and (feet_item == "Zapatillas")
 	var show_cloth_feet := has_feet and (is_survival_feet or is_pelt_feet)
 	var show_military_feet := has_feet and is_military_feet
@@ -281,7 +289,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 		elif nl == "body_arms":
 			m.visible = false
 		elif nl == "body_legs":
-			m.visible = has_legs and not is_military_legs and not is_pelt_legs and not is_autumn_pants
+			m.visible = show_bottoms
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_torso":
@@ -294,7 +302,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_legs":
-			m.visible = not (has_legs or is_military_legs or is_pelt_legs or is_autumn_pants)
+			m.visible = not has_legs
 			if m.visible:
 				_mat(m, skin_color)
 		elif nl == "desnudo_feet":
@@ -311,13 +319,7 @@ static func apply_saved_equipment_preview(model: Node3D, cfg: Dictionary) -> voi
 			if nl == "soldier_legs":
 				m.visible = show_soldier_legs
 				if m.visible:
-					var _pf := MaterialFactory.pelt_fur_material(str(pelt_species.get(legs_item, ""))) if is_pelt_legs else null
-					if _pf != null:
-						m.material_override = _pf
-					elif legs_item.find("camuflaje") >= 0:
-						_mat_camo(m, Color(0.32, 0.28, 0.16) if legs_item.find("desert") >= 0 else Color(0.18, 0.22, 0.13))
-					else:
-						_mat(m, _MILITARY_TINTS.get(legs_item, Color(0.2, 0.25, 0.12)))
+					m.material_override = PlayerController.soldier_pants_material(legs_item, inv_colors.get(legs_item, Color.TRANSPARENT), str(pelt_species.get(legs_item, "")))
 			elif nl == "soldier_torso":
 				m.visible = show_soldier_torso
 				if m.visible:
@@ -494,8 +496,6 @@ static func _add_preview_backpack(model: Node3D, backpack_name: String) -> void:
 	_bind_preview_bone(model, bp, ["mixamorig:Spine2", "mixamorig:Spine1", "mixamorig:Spine", "mixamorig_Spine2", "mixamorig_Spine1", "mixamorig_Spine", "Spine2", "Spine1", "Spine"])
 
 const _MILITARY_TINTS := {
-	"Pantalones militares azules": Color(0.02, 0.04, 0.08),
-	"Pantalones militares negros II": Color(0.02, 0.02, 0.03),
 	"Chaqueta militar azul": Color(0.02, 0.04, 0.08),
 	"Chaqueta militar negra II": Color(0.02, 0.02, 0.03),
 }

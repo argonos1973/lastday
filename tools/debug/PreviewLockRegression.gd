@@ -182,6 +182,24 @@ func _run() -> void:
 		_ok(skin_mesh != null and skin_mesh.visible and mat != null and source != null
 			and mat.albedo_color == starter["skin"] and mat.albedo_texture != null
 			and mat.albedo_texture == source.albedo_texture, "%s keeps its skin atlas and character tint" % part)
+	var pants_payload := payload.duplicate(true)
+	pants_payload["inventory"] = [
+		{"name":"Pantalones militares", "clothing_color":[0.12, 0.14, 0.10, 1.0]},
+		{"name":"Pantalones militares", "clothing_color":[0.5, 0.4, 0.3, 1.0]},
+	]
+	inicio._on_server_character_locked(pants_payload)
+	var pants_model := inicio._char_preview_anchor.get_child(-1) as Node3D
+	var military := pants_model.find_child("soldier_legs", true, false) as MeshInstance3D
+	var pants_mat := military.get_active_material(0) as StandardMaterial3D
+	_ok(military.visible and pants_mat.albedo_color.is_equal_approx(Color(0.12, 0.14, 0.10)),
+		"Military pants use the restored garment tint rather than olive or a spare")
+	pants_payload["equipped_clothing"] = "Pantalones cargo con rodilleras"
+	inicio._on_server_character_locked(pants_payload)
+	pants_model = inicio._char_preview_anchor.get_child(-1)
+	var cargo := pants_model.find_child("cargo_kneepad_pants", true, false) as MeshInstance3D
+	_ok(cargo != null and cargo.visible and cargo.material_override == null, "Cargo pants retain their authored surfaces")
+	for part in ["soldier_legs", "Bottoms", "Body_legs", "Desnudo_legs"]:
+		_ok(not pants_model.find_child(part, true, false).visible, "Cargo pants do not overlap " + part)
 	for camo_pants in ["Pantalones camuflaje", "Pantalones camuflaje desert"]:
 		var camo_payload := payload.duplicate(true)
 		camo_payload["equipped_clothing"] = "Chaqueta camuflaje," + camo_pants + ",Botas militares"

@@ -3492,6 +3492,18 @@ func _create_custom_desnudo_meshes(character_scale: float = 1.0) -> void:
 			cmi.visible = false
 	src_scene.free()
 
+static func soldier_pants_material(item_name: String, loot_color: Color, species: String) -> Material:
+	var cfg: Dictionary = SURVIVAL_CLOTHING[item_name]
+	if item_name in GameConst.PELT_FUR_ITEMS and not species.is_empty():
+		return MaterialFactory.pelt_fur_material(species)
+	if cfg.has("camo"):
+		var mat := StandardMaterial3D.new()
+		mat.albedo_texture = MaterialFactory.make_camo_texture(cfg["camo"])
+		MaterialFactory.cloth_detail(mat, "soldier")
+		return mat
+	var tint: Color = loot_color if loot_color.a > 0.0 else cfg.get("tint", Color(0.15, 0.18, 0.12))
+	return MaterialFactory.make_clothing_material("soldier", tint, -0.5)
+
 func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = Color(0, 0, 0, 0)) -> void:
 	if not SURVIVAL_CLOTHING.has(item_name):
 		return
@@ -3521,6 +3533,8 @@ func _wear_survival_clothing(item_name: String, worn: bool, loot_color: Color = 
 		if MilitaryJackets.VARIANTS.has(item_name) or AutumnClothes.VARIANTS.has(item_name):
 			# Preserve the distinct cloth, cuff and metal surfaces authored in Blender.
 			mi.material_override = null
+		elif worn and mesh_name == "soldier_legs":
+			mi.material_override = soldier_pants_material(item_name, loot_color, str(_equipped_pelt.get(item_name, _active_pelt_species)))
 		elif worn and item_name in GameConst.PELT_FUR_ITEMS and not str(_equipped_pelt.get(item_name, _active_pelt_species)).is_empty():
 			# Una prenda de piel recogida del suelo llega con clothing_color (el
 			# tinte plano del drop): el pelaje de SU especie siempre manda.
