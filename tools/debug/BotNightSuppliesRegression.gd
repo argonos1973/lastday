@@ -139,6 +139,20 @@ func run():
  world._lit_campfires = [{"id":"f2","pos":Vector3(25,0,0)}]
  world.world_actions_by_id["f2"] = {"position":Vector3(25,0,0)}
  check(manager._bot_night_home_walk(b4,.1) and str(b4.get("_act","")) == "rest", "lit campfire pulls the home walk")
+ var night_stats := SurvivalStats.new()
+ b4.vstats = night_stats
+ b4.shelter_id = "distant_home"
+ b4.shelter_pos = Vector3(-190,0,0)
+ night_stats.body_temperature = 34.8
+ var before_heat := proxy.global_position
+ check(manager._bot_night_home_walk(b4,.1) and proxy.global_position.x > before_heat.x,
+   "hypothermic bot walks to nearby fire, not distant home in opposite direction")
+ night_stats.body_temperature = 36.7
+ night_stats.sleep = 3.0
+ check(manager._bot_night_home_walk(b4,.1) and bool(b4.get("sleeping",false)),
+   "exhausted bot with reserves naps instead of walking to distant home")
+ b4.erase("vstats")
+ night_stats.free()
  proxy.set_meta("saved_inventory", [])
  # Old camp references must not prevent a new local fire or overwrite it.
  for invalid_pos in [Vector3.INF, Vector3(200,0,200)]:

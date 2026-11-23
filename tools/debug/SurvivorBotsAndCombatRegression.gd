@@ -3519,9 +3519,7 @@ func run() -> void:
 	check(chosen_targets[901] != chosen_targets[902] and chosen_targets[901] != chosen_targets[903] and chosen_targets[902] != chosen_targets[903],
 		"Dispersion 8b: los tres bots eligen POIs distintos y no convergen a la misma zona")
 
-	# Carne cruda = intoxicacion como en el jugador humano (get_sick 60s):
-	# primera ingestion reduce hambre/sed/salud a la mitad y bloquea la
-	# regeneracion pasiva mientras dura la enfermedad.
+	# La carne cruda no se consume aunque no quede otra comida.
 	var sick_b: Dictionary = mgr.bots[901]
 	var sick_p: Node3D = sick_b["proxy"]
 	sick_p.set_meta("saved_inventory", [{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 15.0}])
@@ -3529,17 +3527,16 @@ func run() -> void:
 	sick_b["_wolf_bite_msec"] = -999999
 	sick_b["_s_foe"] = null
 	sick_b["_s_predator"] = null
-	sick_b["hunger"] = 20.0  # desesperado: la come cruda
+	sick_b["hunger"] = 20.0
 	sick_b["thirst"] = 50.0
 	sick_b["health"] = 80.0
 	sick_b["eat_cooldown"] = 0.0
 	sick_b["sick_timer"] = 0.0
 	mgr._maintain_bot_needs(sick_b, 0.1)
-	check(float(sick_b.get("sick_timer", 0.0)) >= 59.0,
-		"Enfermedad 9a: comer carne cruda desesperado enferma al bot como a un humano (sick_timer=%.1f)" % float(sick_b.get("sick_timer", 0.0)))
-	check(float(sick_b["health"]) < 45.0 and float(sick_b["hunger"]) < 15.0,
-		"Enfermedad 9b: la intoxicacion reduce salud y hambre a la mitad como en SurvivalStats.get_sick")
-	# La carne cruda no se toca sin desesperacion: con hambre moderada la cocina
+	check(float(sick_b["sick_timer"]) == 0.0 and mgr._bot_item_count(sick_p, "Carne cruda de ciervo") == 2,
+		"Enfermedad 9a: conserva la carne sin intoxicarse")
+	check(float(sick_b["health"]) == 80.0 and float(sick_b["hunger"]) == 20.0,
+		"Enfermedad 9b: rechazar la carne no regala comida ni causa dano")
 	sick_b["sick_timer"] = 0.0
 	sick_b["hunger"] = 55.0
 	sick_b["eat_cooldown"] = 0.0
@@ -4165,8 +4162,8 @@ func run() -> void:
 	# agotamiento (Carlos, 165 muertes) pese a estar "descansando".
 	vs.sleep = 3.0
 	vs.body_temperature = 34.6 # demasiado frio para dormir en condiciones normales
-	fresh_b["hunger"] = 10.0   # y hambre serio, pero nada que comer a mano
-	fresh_b["thirst"] = 8.0
+	fresh_b["hunger"] = 15.0   # hambre, pero con reservas para la siesta
+	fresh_b["thirst"] = 12.0
 	fresh_b["aggro_target"] = null
 	fresh_b["_s_foe"] = null
 	fresh_b["_s_predator"] = null
@@ -6147,6 +6144,10 @@ func run() -> void:
 	mgr._tick_bot(b_log, 0.1)
 	check(str(b_log.get("_act", "")) == "tame" and float(b_log.get("_tame_wait_t", 0.0)) > 0.0,
 		"10J5k2: Con lobo salvaje a 10 m y carne cruda _tick_bot entra en 'tame' antes que 'predator' (act=%s)" % str(b_log.get("_act", "")))
+	b_log["hunger"] = 12.0
+	mgr._tick_bot(b_log, 0.1)
+	check(str(b_log.get("_act", "")) != "tame", "10J5k3: con hambre critica deja la doma para poder buscar comida")
+	b_log["hunger"] = 85.0
 	w_tame2.queue_free()
 
 	# 10J5l: Tactica de boleadoras en combate humano y anti-enganche en melee (<1.25 m)
@@ -7305,72 +7306,21 @@ func run() -> void:
 		"10U9: sin datos queda el aviso generico")
 
 	# ------------------------------------------------------------------
-	# 10V) Leccion 'medical': la carne cruda deja de ser comida segura —
-	#      solo se come con margen de vida/cura o con el hambre casi a 0.
-	# ------------------------------------------------------------------
+	# 10V: ni la urgencia, ni una orden, ni el historial convierten un crudo en comida.
 	var dl_save_med = mem_med.get("death_lessons", {})
-	# 10V0: sin leccion la carne cruda se come apenas apretando el hambre
 	mgr._respawn_bot(mgr.bots[903])
 	b_med = mgr.bots[903]
 	p_med = b_med["proxy"]
-	p_med.global_position = Vector3(400.0, 0.4, 400.0)
-	b_med["pos"] = p_med.global_position
-	b_med["aggro_target"] = null
-	b_med["eat_cooldown"] = 0.0
-	b_med["hunger"] = 20.0
-	b_med["health"] = 95.0
-	b_med["sick_timer"] = 0.0
-	p_med.set_meta("saved_inventory", [
-		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 20.0},
-	])
-	mem_med["death_lessons"] = {}
-	mgr._maintain_bot_needs(b_med, 0.25)
-	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
-		"10V0: sin leccion la carne cruda se come con hambre 20 (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
-	# 10V1: con leccion 'medical' y sin margen de cura no la arriesga
-	mgr._respawn_bot(mgr.bots[903])
-	b_med = mgr.bots[903]
-	p_med = b_med["proxy"]
-	p_med.global_position = Vector3(400.0, 0.4, 400.0)
-	b_med["pos"] = p_med.global_position
-	b_med["aggro_target"] = null
-	b_med["eat_cooldown"] = 0.0
-	b_med["hunger"] = 20.0
-	b_med["health"] = 95.0
-	b_med["sick_timer"] = 0.0
-	p_med.set_meta("saved_inventory", [
-		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 2, "use_value": 20.0},
-	])
-	mem_med["death_lessons"] = {"medical": 2}
-	mgr._maintain_bot_needs(b_med, 0.25)
-	var inv_med_v: Array = p_med.get_meta("saved_inventory", [])
-	check(float(b_med.get("sick_timer", 0.0)) <= 0.0 and inv_med_v.size() == 1 and int(inv_med_v[0].get("quantity", 0)) == 2,
-		"10V1: con leccion 'medical' no arriesga la cruda sin margen (sick=%.0f, inv=%d)" % [float(b_med.get("sick_timer", 0.0)), inv_med_v.size()])
-	# 10V2: el hambre casi a 0 es peor que el veneno — si que la come
-	b_med["hunger"] = 4.0
-	b_med["eat_cooldown"] = 0.0
-	mgr._maintain_bot_needs(b_med, 0.25)
-	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
-		"10V2: con hambre 4 la cruda sigue ganando a la inanicion (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
-	# 10V3: con vida alta y cura/comida encima la arriesga con margen
-	mgr._respawn_bot(mgr.bots[903])
-	b_med = mgr.bots[903]
-	p_med = b_med["proxy"]
-	p_med.global_position = Vector3(400.0, 0.4, 400.0)
-	b_med["pos"] = p_med.global_position
-	b_med["aggro_target"] = null
-	b_med["eat_cooldown"] = 0.0
-	b_med["hunger"] = 20.0
-	b_med["health"] = 95.0
-	b_med["sick_timer"] = 0.0
-	p_med.set_meta("saved_inventory", [
-		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
-		{"name": "Venda", "type": "medical", "weight": 0.05, "quantity": 2, "use_value": 35.0},
-	])
-	mem_med["death_lessons"] = {"medical": 2}
-	mgr._maintain_bot_needs(b_med, 0.25)
-	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
-		"10V3: con vida y cura de sobra si que arriesga la cruda (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
+	for raw_name in ["Carne cruda de ciervo", "Pez crudo", "Carne ensartada", "Pez ensartado"]:
+		for lessons in [{}, {"medical": 2}]:
+			mem_med["death_lessons"] = lessons
+			b_med["hunger"] = 0.0
+			b_med["eat_cooldown"] = 0.0
+			b_med["forced_eat"] = true
+			p_med.set_meta("saved_inventory", [{"name": raw_name, "type": "food", "quantity": 1, "use_value": 20.0}])
+			mgr._maintain_bot_needs(b_med, 0.25)
+			check(not mgr._bot_has_edible_food(p_med) and mgr._bot_item_count(p_med, raw_name) == 1 and float(b_med["hunger"]) == 0.0,
+				"10V: no come %s ni deja de buscar alimento" % raw_name)
 	# 10V4: con un filete bueno en la mochila el crudo ni se mira — el bot
 	# come el plato de mas valor aunque el crudo vaya primero en el array.
 	b_med["hunger"] = 20.0
@@ -7439,45 +7389,6 @@ func run() -> void:
 	mgr._maintain_bot_needs(b_med, 0.25)
 	check(float(b_med.get("sick_timer", 0.0)) <= 0.0 and not (b_med.get("_craft_state", {}) as Dictionary).is_empty(),
 		"10X2: filo sustituto (Cuchillo de piedra) tambien afila (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
-	# 10X3: Palo sin filo -> no puede afilar: la cruda sigue siendo el ultimo recurso
-	mgr._respawn_bot(mgr.bots[903])
-	b_med = mgr.bots[903]
-	p_med = b_med["proxy"]
-	p_med.global_position = Vector3(400.0, 0.4, 400.0)
-	b_med["pos"] = p_med.global_position
-	b_med["aggro_target"] = null
-	b_med["eat_cooldown"] = 0.0
-	b_med["hunger"] = 20.0
-	b_med["health"] = 95.0
-	b_med["sick_timer"] = 0.0
-	p_med.set_meta("saved_inventory", [
-		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
-		{"name": "Palo", "type": "resource", "weight": 0.5, "quantity": 1},
-	])
-	mem_med["death_lessons"] = {}
-	mgr._maintain_bot_needs(b_med, 0.25)
-	check(float(b_med.get("sick_timer", 0.0)) > 0.0 and (b_med.get("_craft_state", {}) as Dictionary).is_empty(),
-		"10X3: sin filo no puede afilar — la cruda sigue ganando a la inanicion (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
-	# 10X4: con espeton listo pero sin fogata posible, a hambre~0 el crudo
-	# deja de estar vedado (la inanicion es peor que el veneno)
-	mgr._respawn_bot(mgr.bots[903])
-	b_med = mgr.bots[903]
-	p_med = b_med["proxy"]
-	p_med.global_position = Vector3(400.0, 0.4, 400.0)
-	b_med["pos"] = p_med.global_position
-	b_med["aggro_target"] = null
-	b_med["eat_cooldown"] = 0.0
-	b_med["hunger"] = 4.0
-	b_med["health"] = 95.0
-	b_med["sick_timer"] = 0.0
-	p_med.set_meta("saved_inventory", [
-		{"name": "Carne cruda de ciervo", "type": "food", "weight": 0.3, "quantity": 1, "use_value": 20.0},
-		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1},
-	])
-	mem_med["death_lessons"] = {}
-	mgr._maintain_bot_needs(b_med, 0.25)
-	check(float(b_med.get("sick_timer", 0.0)) > 0.0,
-		"10X4: a hambre 4 el crudo gana aunque pueda cocinarlo (sick=%.0f)" % float(b_med.get("sick_timer", 0.0)))
 	mem_med["death_lessons"] = dl_save_med
 
 	# ------------------------------------------------------------------
@@ -7563,7 +7474,7 @@ func run() -> void:
 	# 10W) Siesta de emergencia: sueño letal (<=4) sin despensa — dormir
 	#      con hambre mata lento, quedarse de pie con sueño~0 mata ya.
 	# ------------------------------------------------------------------
-	# 10W0: agotado letal + hambriento SIN comida -> colapsa a dormir donde esta
+	# 10W0: agotado sin comida al borde de la expedicion no oscila
 	mgr._respawn_bot(mgr.bots[903])
 	b_med = mgr.bots[903]
 	p_med = b_med["proxy"]
@@ -7581,8 +7492,8 @@ func run() -> void:
 	vst_med.hunger = 8.0
 	vst_med.thirst = 60.0
 	vst_med.body_temperature = 36.6
-	check(mgr._bot_try_start_sleep(b_med, false) and bool(b_med.get("sleeping", false)),
-		"10W0: sueño 3 + hambre sin comida -> siesta de emergencia donde esta")
+	check(not mgr._bot_try_start_sleep(b_med, false),
+		"10W0: con hambre 8 no empieza una siesta que se interrumpe de inmediato")
 	# 10W1: igual pero CON comida en la mochila -> primero come, no se duerme
 	mgr._respawn_bot(mgr.bots[903])
 	b_med = mgr.bots[903]

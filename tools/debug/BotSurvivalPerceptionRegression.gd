@@ -118,6 +118,12 @@ func test_forage_search(manager: Manager, proxy: Node3D) -> void:
 	manager.supply_checks = 0
 	check(manager._find_forage_target(bot, 20.0).get("id") == "0", "near mushrooms retain priority over nearer fruit")
 	check(manager.supply_checks == 1, "two thousand distant foods trigger no supply/lighting evaluations")
+	var ground_food: WorldAction = world.world_actions_by_id["0"]
+	ground_food.set_meta("item_name", "Pez ensartado")
+	check(manager._find_forage_target(bot, 20.0).get("id") == "1", "uncooked skewer on ground does not divert bot from fruit")
+	manager._bot_forage_complete(bot, {"kind":"eat", "id":"0", "name":"comida"})
+	check(bot.hunger == 20.0 and world._depleted_action_ids.is_empty(), "stale forage job cannot eat a raw skewer")
+	ground_food.remove_meta("item_name")
 	world._depleted_action_ids.append("0")
 	check(manager._find_forage_target(bot, 20.0).get("id") == "1", "fruit becomes available after mushroom depletion")
 	world._pickup_claims["1"] = 902
