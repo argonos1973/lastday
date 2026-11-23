@@ -419,7 +419,8 @@ static func _mat(m: MeshInstance3D, c: Color) -> void:
 			grow = -0.5
 		m.material_override = MaterialFactory.make_clothing_material(kind, c, grow)
 		return
-	var original := m.get_active_material(0) as StandardMaterial3D
+	# Inicio has already applied preview colors: its active override has no skin atlas.
+	var original := m.mesh.surface_get_material(0) as StandardMaterial3D
 	var mat := original.duplicate() as StandardMaterial3D if original != null else StandardMaterial3D.new()
 	mat.albedo_color = c
 	MaterialFactory.skin_detail(mat)

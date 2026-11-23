@@ -171,6 +171,17 @@ func _run() -> void:
 	var initial_beard := initial_preview.find_child("GrowingBeard", true, false) as MeshInstance3D if initial_preview != null else null
 	_ok(initial_beard != null and initial_beard.visible and initial_beard.mesh != null and initial_beard.mesh.get_surface_count() > 0,
 		"saved_server preview builds and shows GrowingBeard after HeadMesh is extracted")
+	var starter := payload.duplicate(true)
+	starter["equipped_clothing"] = "Camiseta,Pantalones,Zapatillas"
+	inicio._on_server_character_locked(starter)
+	var dressed := inicio._char_preview_anchor.get_child(-1) as Node3D
+	for part in ["HeadMesh", "Desnudo_arms", "Desnudo_hands", "Body_legs"]:
+		var skin_mesh := dressed.find_child(part, true, false) as MeshInstance3D
+		var mat := skin_mesh.get_active_material(0) as StandardMaterial3D if skin_mesh != null else null
+		var source := skin_mesh.mesh.surface_get_material(0) as StandardMaterial3D if skin_mesh != null else null
+		_ok(skin_mesh != null and skin_mesh.visible and mat != null and source != null
+			and mat.albedo_color == starter["skin"] and mat.albedo_texture != null
+			and mat.albedo_texture == source.albedo_texture, "%s keeps its skin atlas and character tint" % part)
 	for camo_pants in ["Pantalones camuflaje", "Pantalones camuflaje desert"]:
 		var camo_payload := payload.duplicate(true)
 		camo_payload["equipped_clothing"] = "Chaqueta camuflaje," + camo_pants + ",Botas militares"
@@ -260,9 +271,15 @@ func _run() -> void:
 		if cid == "saved" or cid == "saved_server":
 			inicio.CHAR_CONFIGS.remove_at(i)
 	var fsgm := FakeSGM.new()
+	var live_sgm := root.get_node_or_null("SaveGameManager")
+	if live_sgm != null:
+		live_sgm.name = "PreviewTestRealSGM"
 	fsgm.name = "SaveGameManager"
 	root.add_child(fsgm)
 	SaveInt.maybe_insert_saved_character(inicio)
+	fsgm.free()
+	if live_sgm != null:
+		live_sgm.name = "SaveGameManager"
 	var srv_count := 0
 	var saved_count := 0
 	for c in inicio.CHAR_CONFIGS:
@@ -289,7 +306,6 @@ func _run() -> void:
 	_ok(not still_there, "exit join removes the transient server card")
 	_ok(str(inicio.CHAR_CONFIGS[inicio._char_index].get("id", "")) == "marc",
 		"exit join restores the prejoin card")
-	fsgm.queue_free()
 
 	inicio.queue_free()
 	print("PreviewLockRegression: %s" % ("ALL PASS" if _failures == 0 else "%d FAILURES" % _failures))
