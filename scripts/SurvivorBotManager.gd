@@ -496,8 +496,15 @@ func _ground_y(x: float, z: float, from_y: float = -INF) -> float:
 # Terreno firme y seguro: tierra seca, sin carretera ni edificio, libre de
 # obstaculos/bloqueadores, con pendiente suave y lejos de zonas habitadas.
 # ignore_shelter_id permite a un bot validar su propia fogata junto a su refugio.
+const NAV_CAMP_MAX_X := 476.0
+const NAV_CAMP_MIN_Z := -480.0
+const NAV_CAMP_MAX_Z := 880.0
+
+func _is_within_camp_bounds(pos: Vector3) -> bool:
+	return absf(pos.x) <= NAV_CAMP_MAX_X and pos.z >= NAV_CAMP_MIN_Z and pos.z <= NAV_CAMP_MAX_Z
+
 func _is_flat_dry_pos(pos: Vector3, ignore_shelter_id: String = "") -> bool:
-	if world == null:
+	if world == null or not _is_within_camp_bounds(pos):
 		return false
 	if world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > 0.02:
 		return false
@@ -655,6 +662,8 @@ func _pick_remote_base_spot(bot_id: int, spawn_pos: Vector3, mem: Dictionary) ->
 	bad.append_array(mem.get("death_spots", []))
 	var sector := TAU * float(bot_id % 97) / 7.0
 	var anchor := spawn_pos + Vector3(cos(sector), 0.0, sin(sector)) * 230.0
+	anchor.x = clampf(anchor.x, -460.0, 460.0)
+	anchor.z = clampf(anchor.z, -460.0, 860.0)
 	var best := anchor
 	var best_score := -1.0
 	var cands: Array = [anchor]
@@ -663,6 +672,8 @@ func _pick_remote_base_spot(bot_id: int, spawn_pos: Vector3, mem: Dictionary) ->
 			cands.append(p["pos"])
 	for c in cands:
 		var cp: Vector3 = _sanitize_ground_point(c)
+		if not _is_within_camp_bounds(cp):
+			continue
 		var d_center := Vector2(cp.x, cp.z).length()
 		if d_center < 140.0:
 			continue
@@ -738,10 +749,12 @@ func _base_spot_safety(mem: Dictionary, cp: Vector3) -> float:
 # Busca en espiral alrededor del punto preferido un sitio valido de campamento,
 # preferiblemente junto a arboles (oculto) en vez de en mitad del campo.
 func _find_valid_camp_spot(preferred: Vector3, _near: Vector3, ally_id: int = 0, avoid_spots: Array = [], self_id: int = 0) -> Vector3:
+	if not _is_within_camp_bounds(preferred):
+		preferred = Vector3(clampf(preferred.x, -460.0, 460.0), preferred.y, clampf(preferred.z, -460.0, 860.0))
 	var best := preferred
 	var best_score := -1.0
 	var found := false
-	for radius in [0.0, 8.0, 16.0, 26.0, 40.0, 60.0, 90.0, 120.0]:
+	for radius in [0.0, 8.0, 16.0, 26.0, 40.0, 60.0, 90.0, 120.0, 160.0, 220.0]:
 		var steps := 8 if radius > 0.0 else 1
 		for i in range(steps):
 			var ang := TAU * float(i) / float(steps)
@@ -2192,12 +2205,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# a una fuente — con sed moderada y agua a tiro se desvia a beber y a
 	# rellenar la botella antes de que la necesidad apriete.
 	var prevent_drink := false
-	if thirst_lessons > 0 and float(b["thirst"]) < 78.0 and not _bot_has_drink(proxy):
+	if not _bot_is_freezing(b) and thirst_lessons > 0 and float(b["thirst"]) < 78.0 and not _bot_has_drink(proxy):
 		var wp_pre := _preventive_water_pos(b)
 		if wp_pre != Vector3.INF and Vector2(proxy.global_position.x - wp_pre.x, proxy.global_position.z - wp_pre.z).length() < 9.0:
 			prevent_drink = true
 			b["drink_at"] = wp_pre
-	if (float(b["thirst"]) < thirsty_line or prevent_drink) and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or _bot_vital_break(b) or prevent_drink):
+	if (float(b["thirst"]) < thirsty_line or prevent_drink) and (not _bot_is_freezing(b) or float(b["thirst"]) < 22.0) \
+			and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or _bot_vital_break(b) or prevent_drink):
 		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
 			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
@@ -2306,16 +2320,21 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# cazar, seguir al lider o saquear: ninguna tarea vale quedarse a oscuras.
 	# Sin materiales para hacerla se resguarda en wants_camp mas abajo.
 	# Oculto, dormido, agotado o helandose: primero eso.
-	if (is_night or _is_pre_night()) and not _bot_has_item(proxy, "Antorcha") \
-			and float(b.get("hide_timer", 0.0)) <= 0.0 and not bool(b.get("sleeping", false)) \
-			and not _bot_is_exhausted(b) and not _bot_is_freezing(b):
-		var need_palo_t := _bot_item_count(proxy, "Palo") < 1
-		var need_trapos_t := _bot_item_count(proxy, "Trapos") < 1
-		if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
-				or (need_trapos_t and _bot_try_craft_named(b, delta, ["Trapos"], false)) \
-				or (need_palo_t and not need_trapos_t and _bot_item_count(proxy, "Tronco") > 0 and _bot_try_craft_named(b, delta, ["Palo"], false)):
-			b["_act"] = "torch"
-			return
+	if not _bot_has_item(proxy, "Antorcha") and float(b.get("hide_timer", 0.0)) <= 0.0 \
+			and not bool(b.get("sleeping", false)) and not _bot_is_exhausted(b):
+		if _bot_is_freezing(b):
+			var can_light_rescue_torch := _bot_has_usable_matches(proxy) or _bot_item_count(proxy, "Palo") >= (4 if _bot_needs_campfire(b) else 3)
+			if can_light_rescue_torch and _bot_try_craft_named(b, delta, ["Antorcha"], false):
+				b["_act"] = "torch"
+				return
+		elif is_night or _is_pre_night():
+			var need_palo_t := _bot_item_count(proxy, "Palo") < 1
+			var need_trapos_t := _bot_item_count(proxy, "Trapos") < 1
+			if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
+					or (need_trapos_t and _bot_try_craft_named(b, delta, ["Trapos"], false)) \
+					or (need_palo_t and not need_trapos_t and _bot_item_count(proxy, "Tronco") > 0 and _bot_try_craft_named(b, delta, ["Palo"], false)):
+				b["_act"] = "torch"
+				return
 
 	# Inanicion desesperada (mismo umbral que starving_or_parched, l.1259):
 	# un miembro de equipo muerto de hambre rompe la formacion para buscar
@@ -2333,7 +2352,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 4d) Pesca en la orilla: el pez cocinado es la comida mas nutritiva del
 	# juego — con caña (o materiales para hacerla) y agua a mano se sienta a
 	# pescar igual que un jugador humano.
-	if (leader == null or desperate_food or _bot_vital_break(b)) and _bot_try_fish(b, delta):
+	if (not _bot_is_freezing(b) or desperate_food) and (leader == null or desperate_food or _bot_vital_break(b)) and _bot_try_fish(b, delta):
 		b["_act"] = "fish"
 		return
 
@@ -2354,8 +2373,20 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# 5) Saqueo oportuno de objetos cercanos (comida, armas, ropa mejor, materiales)
 	# Reserve only when actually pursuing loot, not while asleep/in combat.
-	_loot_commit_claim(b)
-	var loot_action: Dictionary = b.get("_s_loot", {})
+	var loot_candidate: Dictionary = b.get("_s_loot", {})
+	var allow_opportunistic_loot := true
+	if _bot_is_freezing(b) and not loot_candidate.is_empty():
+		var lnm := str(loot_candidate.get("name", ""))
+		if lnm in ["Tronco", "Palo", "Cerillas"]:
+			# Defer fire materials to _bot_try_cold_rescue so nearby lit fires
+			# and immediate campfire construction take precedence first.
+			allow_opportunistic_loot = false
+		elif not _bot_loot_allowed_while_freezing(b, loot_candidate, desperate_food):
+			_loot_clear(b)
+			allow_opportunistic_loot = false
+	if allow_opportunistic_loot:
+		_loot_commit_claim(b)
+	var loot_action: Dictionary = b.get("_s_loot", {}) if allow_opportunistic_loot else {}
 	if not loot_action.is_empty():
 		b["_act"] = "loot"
 		b["sitting"] = false
@@ -2374,7 +2405,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# 5a) Saqueo y desmontaje de refugios ajenos: roba lo util y si el refugio
 	# le sirve como material lo desmonta (3 s) para llevarse los 11 palos.
 	var salv: Dictionary = b.get("_salvage", {})
-	if not salv.is_empty():
+	if not salv.is_empty() and not _bot_is_freezing(b):
 		b["_act"] = "salvage"
 		b["sitting"] = false
 		b["crouching"] = true
@@ -2387,7 +2418,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_bot_dismantle_shelter_exec(b, str(salv.get("id", "")))
 		return
 	var raid_sh: Dictionary = b.get("_s_raid_shelter", {})
-	if not raid_sh.is_empty():
+	if not raid_sh.is_empty() and not _bot_is_freezing(b):
 		b["_act"] = "raid_shelter"
 		b["sitting"] = false
 		b["crouching"] = false
@@ -2402,6 +2433,22 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		else:
 			_move_bot_towards(b, rpos, 6.2, delta, "run")
 		return
+
+	if float(b.get("hide_timer", 0.0)) <= 0.0 and not bool(b.get("sleeping", false)) \
+			and not _bot_is_exhausted(b) and not _bot_is_freezing(b):
+		var need_sticks_now := not _can_bot_build_shelter(proxy, b) and str(b.get("shelter_id", "")).is_empty() \
+			or _bot_item_count(proxy, "Palo") < _bot_fire_stick_reserve(b) + (1 if _bot_item_count(proxy, "Antorcha") == 0 else 0)
+		if need_sticks_now and _bot_bush_tool(proxy).is_empty() and _bot_item_count(proxy, "Piedra") >= 2:
+			if _bot_try_craft_named(b, delta, ["Piedra afilada"], false):
+				b["_act"] = "craft"
+				return
+		elif _bot_axe_tool(proxy).is_empty() and _bot_needs_campfire(b) and _bot_item_count(proxy, "Tronco") < 2:
+			var can_cord_axe := _bot_item_count(proxy, "Cuerda") == 0 \
+				and _bot_item_count(proxy, "Tendón") == 0 and _bot_item_count(proxy, "Trapos") >= 2
+			if _bot_try_craft_named(b, delta, ["Hacha de piedra"], false) \
+					or (can_cord_axe and _bot_try_craft_named(b, delta, ["Cuerda"], false)):
+				b["_act"] = "craft"
+				return
 
 	# 5b) Materiales de campamento: si faltan palos para el refugio/fogata y no
 	# hay drops a mano, el bot tala arbustos (fell_bush) igual que un jugador —
@@ -2587,7 +2634,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if rest_pos != Vector3.INF and wants_camp:
 		b["_act"] = "rest"
 		var d_sh := Vector2(proxy.global_position.x - rest_pos.x, proxy.global_position.z - rest_pos.z).length()
-		if d_sh > 1.8:
+		var rest_stop_d := 1.8 if has_built_sh else 1.25
+		if d_sh > rest_stop_d:
 			var rush_refuge: bool = _bot_is_freezing(b) and d_sh > 4.0 and (vst == null or vst.sleep > 12.0)
 			_move_bot_towards(b, rest_pos, 5.8 if rush_refuge else 3.8, delta, "run" if rush_refuge else "walk")
 			return
@@ -4137,20 +4185,25 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 				var hb: Rect2 = (blk as Dictionary)["house_bounds"]
 				var hc := hb.get_center()
 				candidates.append(Vector3(hc.x, _ground_y(hc.x, hc.y), hc.y))
+	var freezing_now := _bot_is_freezing(b)
 	var best := Vector3.INF
-	var best_d := max_dist
+	var best_score := INF
 	for cand in candidates:
 		var cpos: Vector3 = cand
 		var d := Vector2(cur.x - cpos.x, cur.z - cpos.z).length()
-		if d > best_d or _is_goal_blacklisted(b, cpos):
+		if d > max_dist or _is_goal_blacklisted(b, cpos):
 			continue
 		if has_threat and d > 2.5 and to_threat.length_squared() > 0.01:
 			var to_c := cpos - cur
 			to_c.y = 0.0
 			if to_c.length_squared() > 0.01 and to_c.normalized().dot(to_threat.normalized()) > 0.25:
 				continue
-		best_d = d
-		best = cpos
+		var score := d
+		if freezing_now and not has_threat and not InterruptionManager.dry_recovery_leg(world, cur, cpos):
+			score += 65.0
+		if score < best_score:
+			best_score = score
+			best = cpos
 	return best
 
 # Un humano no destripa cada cadáver que mata: solo le interesa si le falta
@@ -4349,7 +4402,9 @@ func _bot_should_hunt_prey(b: Dictionary) -> bool:
 	if _sensed_node(b, "_s_leader") != null:
 		return false
 	var hunger := float(b["hunger"])
-	if (_is_world_night() or _bot_is_exhausted(b) or _bot_is_freezing(b)) and hunger >= 40.0:
+	if _bot_is_freezing(b) and hunger >= 26.0:
+		return false
+	if (_is_world_night() or _bot_is_exhausted(b)) and hunger >= 40.0:
 		return false
 	var starved_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("starved", 0))
 	var hunt_hunger_line := 62.0 + minf(15.0, float(starved_lessons) * 5.0)
@@ -10547,6 +10602,24 @@ func _is_gear_item(nm: String, tp: String) -> bool:
 		return true
 	return PlayerController.CLOTHING_SLOTS.has(nm) or nm.begins_with("Mochila")
 
+func _bot_loot_allowed_while_freezing(b: Dictionary, entry: Dictionary, desperate_food: bool) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	if st != null and st.body_temperature <= 34.85:
+		return false
+	var proxy: Node3D = b["proxy"]
+	var lpos := _loot_entry_pos(entry)
+	if Vector2(proxy.global_position.x - lpos.x, proxy.global_position.z - lpos.z).length() > 10.0:
+		return false
+	if not InterruptionManager.dry_recovery_leg(world, proxy.global_position, lpos):
+		return false
+	var nm := str(entry.get("name", ""))
+	var tp := str(entry.get("type", ""))
+	if tp in ["clothing", "tool_axe", "tool_torch", "tool_matches", "medical", "backpack"]:
+		return true
+	if nm in BUSH_TOOLS or nm in ["Piedra", "Cuerda", "Trapos", "Antorcha", "Cerillas"]:
+		return true
+	return tp == "food" and desperate_food
+
 # Sube o baja una ruta de peldaños (torre militar, pisos): movimiento directo
 # entre waypoints, el sondeo de _ground_y lo pega a la rampa/piso real.
 func _tick_bot_climb(b: Dictionary, delta: float) -> void:
@@ -12381,12 +12454,16 @@ func _bot_door_queue_wait(b: Dictionary, cur: Vector3, dc: Vector3, out_dir: Vec
 	for bid in bots.keys():
 		if int(bid) == int(b.get("bot_id", 0)):
 			continue
-		var op: Node3D = (bots[bid] as Dictionary).get("proxy")
+		var ob: Dictionary = bots[bid]
+		var op: Node3D = ob.get("proxy")
 		if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
 			continue
 		var po := Vector2(op.global_position.x, op.global_position.z)
 		var rel_o := po - Vector2(dc.x, dc.z)
-		var in_vano: bool = absf(rel_o.dot(side_dir)) <= 0.95 and rel_o.dot(out_dir) >= -1.8 and rel_o.dot(out_dir) <= 2.6
+		var along_o := rel_o.dot(out_dir)
+		if along_o <= -0.45 and (bool(ob.get("sitting", false)) or bool(ob.get("sleeping", false)) or (str(ob.get("anim", "")) == "idle" and along_o <= -0.65)):
+			continue
+		var in_vano: bool = absf(rel_o.dot(side_dir)) <= 0.95 and along_o >= -1.15 and along_o <= 2.6
 		if in_vano or po.distance_to(approach) <= 1.15:
 			# Puesto de espera lateral determinista: cada bot se aparta a un
 			# lado distinto segun su id, sin apelotonarse en el umbral.
@@ -13258,21 +13335,32 @@ func _bot_skin_wet_factor(b: Dictionary) -> float:
 
 func _bot_is_freezing(b: Dictionary) -> bool:
 	var st: SurvivalStats = b.get("vstats")
+	if st == null or st.dead:
+		b["_cold_alert"] = false
+		return false
 	var cold_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("cold", 0))
-	# "Helandose" empieza donde empieza el daño (SurvivalStats: <35.4 ya
-	# resta vida). Con el umbral viejo (35.2) quedaba una banda en la que
-	# el bot perdia vida sin sentirse en peligro ni buscar calor — antes la
-	# tapaba comer sin hambre para curarse; ya no se desperdicia comida asi.
-	# La cascada letal es frio->hambre: a <36 C el cuerpo quema comida x1.6
-	# y la hipotermia e inanicion llegan juntas. Quien ya murio de frio
-	# empieza a buscar calor antes (cap 0.45: a 3 muertes actua a 35.9 C —
-	# justo sobre la banda del multiplicador de hambre). El cap no puede
-	# subir mas: bajo techo el cuerpo equilibra ~36.1-36.4 C (SurvivalStats
-	# lerea el target hacia 36.6 max), asi que un umbral 36.35 nunca se
-	# satisface sentado y el bot quedaba acampado en casa para siempre —
-	# moverse al sol calienta mas (+0.4/+0.8) que el propio techo.
-	var thresh := 35.45 + minf(0.45, float(cold_lessons) * 0.15)
-	return st != null and not st.dead and st.body_temperature < thresh
+	# Bajo techo sin fuego en invierno/noche fria el equilibrio termico con ropa
+	# inicial ronda ~35.65-35.85 C: un umbral de entrada >35.70 C nunca se
+	# satisfacia sentado en una casa y dejaba al bot encerrado hasta morir de
+	# hambre o aleteando en el umbral. Con histeresis sale templado y seco.
+	var enter_thresh := 35.45 + minf(0.25, float(cold_lessons) * 0.08)
+	var exit_thresh := enter_thresh + 0.20
+	var active := bool(b.get("_cold_alert", false))
+	if st.body_temperature < enter_thresh:
+		b["_cold_alert"] = true
+		return true
+	if not active:
+		return false
+	if st.body_temperature >= exit_thresh and st.wetness <= 0.35:
+		b["_cold_alert"] = false
+		return false
+	var proxy = b.get("proxy")
+	if proxy is Node3D and is_instance_valid(proxy) and not _is_world_night() \
+			and st.wetness <= 0.12 and st.body_temperature >= 35.58 \
+			and _bot_is_sheltered(b, (proxy as Node3D).global_position):
+		b["_cold_alert"] = false
+		return false
+	return true
 
 func _bot_is_exhausted(b: Dictionary) -> bool:
 	var st: SurvivalStats = b.get("vstats")
@@ -18533,7 +18621,7 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 		b["_night_eat_chain"] = false
 	# A threat can still keep it hidden, but darkness alone must not stop
 	# a hungry survivor from finding food after waking up.
-	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or (_is_world_night() and hunger >= 40.0 and not bool(b.get("_night_eat_chain", false)))):
+	if allowed and not desperate and (float(b.get("hide_timer", 0.0)) > 0.0 or _bot_is_freezing(b) or (_is_world_night() and hunger >= 40.0 and not bool(b.get("_night_eat_chain", false)))):
 		allowed = false
 	var st0: Dictionary = b.get("_forage", {})
 	if not allowed or _bot_has_edible_food(proxy, desperate):
@@ -18657,6 +18745,9 @@ func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 			continue
 		if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
 			continue
+		if _bot_is_freezing(b) and float(b.get("hunger", 100.0)) >= 14.0 \
+				and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, a.global_position):
+			continue
 		if d < best_d:
 			best_d = d
 			best = {"kind": "eat", "id": str(aid), "pos": a.global_position, "t": 0.0, "t_need": 1.2,
@@ -18675,6 +18766,9 @@ func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 			if d2 >= best_d:
 				continue
 			if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
+				continue
+			if _bot_is_freezing(b) and float(b.get("hunger", 100.0)) >= 14.0 \
+					and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, a.global_position):
 				continue
 			if d2 < best_d:
 				best_d = d2
@@ -19206,6 +19300,10 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 		if depth <= 0.05 and _bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9)):
 			b["_act"] = "fire_rescue"
 			return true
+	if _bot_axe_tool(proxy).is_empty() and _bot_item_count(proxy, "Tronco") < 2 \
+			and _bot_try_craft_named(b, delta, ["Hacha de piedra"], false):
+		b["_act"] = "fire_rescue"
+		return true
 	# Sin material: recoger los troncos y el palo del fuego ES el rescate —
 	# el veto a recoger helandose queda para expediciones, no para salvarse.
 	if _bot_try_gather_mats(b, delta, true):
@@ -19227,12 +19325,15 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	if _bot_has_raw_meat(proxy) or _bot_has_skewered_meat(proxy):
 		var cook_palos := (1 if _bot_item_count(proxy, "Palo afilado") == 0 and not _bot_has_skewered_meat(proxy) else 0) + fire_sticks
 		palo_need = maxi(palo_need, cook_palos)
-	# Las piedras sirven para herramientas, nunca sustituyen los troncos.
+	var tool := _bot_bush_tool(proxy)
+	# Las piedras sirven para herramientas (2 para lascar Piedra afilada si va
+	# desarmado; 1 para Hacha/Azada de piedra), nunca sustituyen los troncos.
 	var piedra_need := 0
-	if (needs_fire and _bot_axe_tool(proxy).is_empty()) \
+	if tool.is_empty():
+		piedra_need = 2
+	elif (needs_fire and _bot_axe_tool(proxy).is_empty()) \
 			or (_bot_wants_farm_tool(b) and _bot_item_count(proxy, "Semillas") >= 1):
 		piedra_need = 1
-	var tool := _bot_bush_tool(proxy)
 	# Arbustos tambien dan Semillas: quien quiere huerto tala aunque no le
 	# falten palos (2 paquetes de semillas bastan para un bancal).
 	var seeds_need := _bot_wants_seeds(b) and _bot_item_count(proxy, "Semillas") < 2
@@ -19249,19 +19350,23 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	# de emergencia — ni los 11 palos del refugio ni el huerto. Recoger la
 	# lena del fuego que le salva la vida ES el rescate, no una expedicion.
 	var freezing_rescue := fire_rescue and _bot_is_freezing(b)
+	var can_fell_tree := _bot_can_fell_tree_for_fire(b, proxy)
 	if freezing_rescue:
 		tronco_need = 2 if needs_fire else 0
 		palo_need = fire_sticks
 		piedra_need = 0
 		seeds_need = false
 	var tronco_short := _bot_item_count(proxy, "Tronco") < tronco_need
-	var can_fell_tree := _bot_can_fell_tree_for_fire(b, proxy)
-	var palo_short := _bot_palo_supply(proxy, tool, tronco_need) < palo_need
-	var piedra_short := _bot_item_count(proxy, "Piedra") < piedra_need
 	if (needs_fire or fire_sticks > 0) and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
 			and (not _bot_is_freezing(b) or freezing_rescue) and (b.get("_gather", {}) as Dictionary).is_empty():
 		if _bot_try_fire_material_pickup(b, delta, 120.0 if freezing_rescue else (24.0 if night_no_light else 80.0)):
 			return true
+	if freezing_rescue and tronco_short and not can_fell_tree:
+		# Sin hacha ni troncos en el suelo no puede levantar una fogata: no
+		# entretenerse cortando arbustos bajo la lluvia en vez de ir a refugio.
+		palo_need = 0
+	var palo_short := _bot_palo_supply(proxy, tool, tronco_need) < palo_need
+	var piedra_short := _bot_item_count(proxy, "Piedra") < piedra_need
 	# Escondido, agotado, helandose o reclutado no sale a recoger: descansar,
 	# calentarse, las ordenes del lider y la amenaza van primero. El seguidor
 	# solo se exime cuando su salida es el material del fuego —
@@ -19414,6 +19519,8 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 		var d := proxy.global_position.distance_to((a as Node3D).global_position)
 		if d > radius:
 			continue
+		if _bot_is_freezing(b) and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, (a as Node3D).global_position):
+			continue
 		# Prefiere nodos entre el bot y su campamento: el humano recoge cerca
 		# de donde va a construir, no en la punta opuesta del mapa.
 		var d_camp := (a as Node3D).global_position.distance_to(camp)
@@ -19425,7 +19532,9 @@ func _find_mat_target(b: Dictionary, radius: float, tool: String, need_palo: boo
 			var t_need := 10.0 if atype == "fell_tree" else (5.0 if atype == "fell_bush" else 1.4)
 			best = {"id": str(aid), "pos": (a as Node3D).global_position, "t": 0.0, "t_need": t_need, "kind": atype}
 	if can_fell_tree and world.has_method("_find_bot_tree_target"):
-		var tree: Dictionary = world._find_bot_tree_target(proxy.global_position, radius, camp, func(pos: Vector3): return _is_goal_blacklisted(b, pos))
+		var freezing_tree := _bot_is_freezing(b)
+		var tree: Dictionary = world._find_bot_tree_target(proxy.global_position, radius, camp, func(pos: Vector3):
+			return _is_goal_blacklisted(b, pos) or (freezing_tree and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, pos)))
 		if not tree.is_empty():
 			var score := proxy.global_position.distance_to(tree.pos) + (tree.pos as Vector3).distance_to(camp) * 0.5
 			if score < best_score:
@@ -19651,6 +19760,8 @@ func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false,
 		var pos := _loot_entry_pos(entry)
 		var d := Vector2(pos.x - proxy.global_position.x, pos.z - proxy.global_position.z).length()
 		if d >= best_d or absf(pos.y - proxy.global_position.y) > 2.4 or _is_goal_blacklisted(b, pos):
+			continue
+		if _bot_is_freezing(b) and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, pos):
 			continue
 		var item_d: Dictionary = _loot_entry_item_dict(entry)
 		if not _bot_would_fit(b, proxy.get_meta("saved_inventory", []), item_d) \

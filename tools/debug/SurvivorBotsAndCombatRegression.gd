@@ -207,6 +207,7 @@ class TestWorld extends "res://scripts/Main.gd":
 	var water_rect := Rect2(100000.0, 100000.0, 4.0, 4.0) # lejos por defecto
 	var water_depth := 1.0
 	var road_rect := Rect2(200000.0, 200000.0, 4.0, 4.0)
+	var house_rect := Rect2(300000.0, 300000.0, 4.0, 4.0)
 	var hit_events: Array = []
 	var river_segs: Array = []
 	func _ready() -> void:
@@ -222,8 +223,8 @@ class TestWorld extends "res://scripts/Main.gd":
 		return water_depth if water_rect.has_point(Vector2(pos.x, pos.z)) else 0.0
 	func _is_on_road(pos: Vector3) -> bool:
 		return road_rect.has_point(Vector2(pos.x, pos.z))
-	func _is_player_in_house(_pos: Vector3) -> bool:
-		return false
+	func _is_player_in_house(pos: Vector3) -> bool:
+		return house_rect.has_point(Vector2(pos.x, pos.z))
 	func _default_river_segments() -> Array:
 		return river_segs
 	func _net_player_hit_event(peer_id: int, kind: String, pos: Vector3) -> void:
@@ -7884,6 +7885,106 @@ func run() -> void:
 	rb["_farm"] = {"pos": Vector3(1.0, 0.0, 1.0), "phase": "plant"}
 	check(mgr._ai_step_busy(rb), "10Y8b: sembrar en ruta cuenta como trabajo del paso")
 	rb["_farm"] = {}
+
+	# --- 10Z) Prevencion de muertes por hipotermia ---
+	# 10Z1: ocupante descansando dentro de casa pequena (house_5: -12,42, dc=-11.85,45.5)
+	# no bloquea el vano ni congela fuera en cola a otros bots.
+	var dc_h5 := Vector3(-11.85, 0.0, 45.5)
+	var out_h5 := Vector2(0.0, 1.0)
+	var b_h1: Dictionary = mgr.bots[904]
+	var b_h2: Dictionary = mgr.bots[902]
+	var p_h1: Node3D = b_h1["proxy"]
+	var p_h2: Node3D = b_h2["proxy"]
+	var save_h1 := p_h1.global_position
+	var save_h2 := p_h2.global_position
+	var save_sit1 := bool(b_h1.get("sitting", false))
+	p_h1.global_position = Vector3(-12.0, 0.0, 43.8)
+	b_h1["sitting"] = true
+	p_h2.global_position = Vector3(-14.9, 0.0, 48.2)
+	check(mgr._bot_door_queue_wait(b_h2, p_h2.global_position, dc_h5, out_h5) == Vector3.INF,
+		"10Z1: ocupante sentado dentro de casa pequena no bloquea la puerta a quien entra")
+	p_h1.global_position = save_h1
+	p_h2.global_position = save_h2
+	b_h1["sitting"] = save_sit1
+
+	# 10Z2: bot helandose no se distrae forrajeando, bebiendo por prevencion ni
+	# vadeando el rio para recoger ropa de un cadaver; prefiere refugio seco.
+	mgr._respawn_bot(mgr.bots[901])
+	var b_hyp: Dictionary = mgr.bots[901]
+	var p_hyp: Node3D = b_hyp["proxy"]
+	var st_hyp: SurvivalStats = b_hyp["vstats"]
+	dc.time_of_day = 10.0
+	p_hyp.global_position = Vector3(72.0, 0.4, 72.0)
+	b_hyp["pos"] = p_hyp.global_position
+	b_hyp["hunger"] = 64.0
+	b_hyp["thirst"] = 68.0
+	(b_hyp["_mem"] as Dictionary)["death_lessons"] = {"cold": 12, "starved": 8, "dehydrated": 5}
+	st_hyp.body_temperature = 34.9
+	st_hyp.wetness = 0.5
+	check(mgr._bot_is_freezing(b_hyp), "10Z2a: 34.9 C activa estado de congelacion")
+	var hyp_seta := WorldActionScript.new()
+	hyp_seta.setup("hyp_seta", "eat_food", "Seta", Vector3(0.4, 0.4, 0.4), Color.BROWN, true, false)
+	hyp_seta.set_meta("item_name", "Seta")
+	hyp_seta.set_meta("item_use_value", 12.0)
+	world.add_child(hyp_seta)
+	hyp_seta.global_position = Vector3(76.0, 0.4, 72.0)
+	world.world_actions_by_id["hyp_seta"] = hyp_seta
+	mgr._cached_wa_size = -1
+	b_hyp["_forage"] = {}
+	b_hyp["_forage_scan"] = 0.0
+	check(not mgr._bot_try_forage(b_hyp, 0.1),
+		"10Z2b: helandose con hambre 64 no se entretiene forrajeando")
+	world.world_actions_by_id.erase("hyp_seta")
+	hyp_seta.queue_free()
+	mgr._cached_wa_size = -1
+	world.water_rect = Rect2(58.0, 58.0, 10.0, 10.0)
+	world.water_depth = 1.2
+	var wet_jacket := {"id": "wet_corpse_jacket", "name": "Chaqueta de cuadros", "type": "clothing", "weight": 0.9, "qty": 1, "use": 0.22, "pos": [63.0, 0.1, 63.0]}
+	check(not mgr._bot_loot_allowed_while_freezing(b_hyp, wet_jacket, false),
+		"10Z2c: helandose no vadea el rio para saquear un cadaver")
+	var saved_blockers := world.wildlife_blockers.duplicate()
+	world.wildlife_blockers = [
+		{"pos": Vector3(50.0, 0.0, 50.0), "house_bounds": Rect2(46.0, 46.0, 8.0, 8.0)}, # cruza el rio (58..68)
+		{"pos": Vector3(110.0, 0.0, 72.0), "house_bounds": Rect2(106.0, 68.0, 8.0, 8.0)}, # ruta seca
+	]
+	var dry_ref := mgr._nearest_safe_refuge(b_hyp, 220.0)
+	check(dry_ref.distance_to(Vector3(110.0, 0.4, 72.0)) < 2.0,
+		"10Z2d: helandose prefiere refugio por tierra seca antes que cruzar el rio (got %s)" % [dry_ref])
+	world.wildlife_blockers = saved_blockers
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+
+	# 10Z3: equilibrio bajo techo en dia frio no deja al bot encerrado para siempre.
+	world.house_rect = Rect2(70.0, 70.0, 6.0, 6.0)
+	st_hyp.body_temperature = 35.78
+	st_hyp.wetness = 0.0
+	b_hyp["sitting"] = true
+	check(not mgr._bot_is_freezing(b_hyp),
+		"10Z3: seco y bajo techo de dia a 35.78 C sale del bloqueo por frio aunque acumule lecciones")
+	b_hyp["sitting"] = false
+	world.house_rect = Rect2(300000.0, 300000.0, 4.0, 4.0)
+
+	# 10Z4: los solares nunca caen fuera de la malla de navegacion ([556, 856]) y
+	# un bot desarmado recoge piedra para lascar su primera Piedra afilada.
+	var oob_camp := mgr._find_valid_camp_spot(Vector3(556.0, 0.0, 872.0), Vector3(260.0, 0.0, 840.0), 0, [], 901)
+	check(mgr._is_within_camp_bounds(oob_camp) and not mgr._is_valid_camp_pos(Vector3(556.0, 0.0, 872.0)),
+		"10Z4a: camp_spot fuera de limites [556,872] se rechaza y reubica dentro del nav (%s)" % [oob_camp])
+	st_hyp.body_temperature = 36.6
+	p_hyp.set_meta("saved_inventory", [])
+	var boot_stone := WorldActionScript.new()
+	boot_stone.setup("boot_stone", "stone", "Piedras", Vector3(0.5, 0.3, 0.5), Color.GRAY, true, false)
+	boot_stone.set_meta("item_quantity", 3)
+	world.add_child(boot_stone)
+	boot_stone.global_position = p_hyp.global_position + Vector3(3.0, 0.0, 0.0)
+	world.world_actions_by_id["boot_stone"] = boot_stone
+	mgr._cached_wa_size = -1
+	b_hyp["_gather"] = {}
+	b_hyp["_gather_scan"] = 0.0
+	check(mgr._bot_try_gather_mats(b_hyp, 0.1) and str((b_hyp.get("_gather", {}) as Dictionary).get("kind", "")) == "stone",
+		"10Z4b: desarmado sin filo recoge piedras para lascar Piedra afilada")
+	b_hyp["_gather"] = {}
+	world.world_actions_by_id.erase("boot_stone")
+	boot_stone.queue_free()
+	mgr._cached_wa_size = -1
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
