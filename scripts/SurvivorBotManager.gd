@@ -2597,7 +2597,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# Sueño letal (<=4, ya drena vida): la siesta de emergencia entra aunque
 	# haya hambre/sed — sin despensa que saquear, seguir despierto es morir
 	# de pie; dormir recupera sueño y frena tambien el desgaste de hambre.
+	# Hipotermia inminente (<=35.3 C): el frio mata antes que el hambre, asi
+	# que ni la inanicion ni la sed vetan el refugio — comer sigue pasando por
+	# la ruta de comida/botin, pero el cuerpo camina al calor.
+	var fatal_cold: bool = _bot_is_freezing(b) and vst != null and not vst.dead and vst.body_temperature <= 35.3
 	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or (is_night and not has_night_light) \
+		or fatal_cold \
 		or (_bot_is_freezing(b) and not starving_or_parched) \
 		or (vst != null and not vst.dead and vst.sleep <= 4.0) \
 		or (not desperate_needs and not starving_or_parched and (night_needs_sleep or float(b["health"]) < 65.0 or _bot_is_freezing(b) or _bot_is_exhausted(b) or _bot_wants_day_rest(b)))
@@ -13035,7 +13040,14 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 	var step := minf(spd * delta, d)
 	var chosen_dir := dir if in_building_3d else (sm if sm.length_squared() > 0.001 else dir)
 	var new_pos := cur + chosen_dir * step
+	# Helado no se adentra en agua fria: solo puede salir a lo somero o usar
+	# los vados de carretera (~0.45 m); internarse mas hondo es suicida.
+	var freeze_wet_limit := -1.0
+	if _bot_is_freezing(b) and not in_building_3d and world != null and world.has_method("get_river_depth_at"):
+		freeze_wet_limit = maxf(0.5, depth_cur)
 	var front_blocked := false if on_stair_segment else _is_step_blocked(cur, new_pos, deep_now)
+	if not front_blocked and freeze_wet_limit >= 0.0 and float(world.get_river_depth_at(new_pos)) > freeze_wet_limit:
+		front_blocked = true
 	# Una puerta cerrada no es un muro: si el paso choca y hay una puerta
 	# cerrada al alcance, el bot la abre como un jugador y repatha ya libre.
 	if front_blocked and world != null and world.has_method("bot_try_open_door_at") and world.bot_try_open_door_at(cur):
@@ -13051,7 +13063,8 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 			var ang := deg_to_rad(deg * sign_pref)
 			var cand_dir := dir.rotated(Vector3.UP, ang)
 			var cand_pos := cur + cand_dir * step
-			if not _is_step_blocked(cur, cand_pos, deep_now):
+			if not _is_step_blocked(cur, cand_pos, deep_now) \
+					and (freeze_wet_limit < 0.0 or float(world.get_river_depth_at(cand_pos)) <= freeze_wet_limit):
 				chosen_dir = cand_dir
 				new_pos = cand_pos
 				steered = true

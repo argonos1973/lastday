@@ -7935,6 +7935,79 @@ func run() -> void:
 	boot_stone.queue_free()
 	mgr._cached_wa_size = -1
 
+	# 10Z5a: la inanicion (hambre<26 sin comida) NO veta el refugio cuando la
+	# hipotermia ya es inminente (<=35.3 C): el calor manda sobre el hambre.
+	var wa_bak5a: Dictionary = world.world_actions_by_id.duplicate()
+	world.world_actions_by_id.clear()
+	var wb_bak5a: Array = world.wildlife_blockers.duplicate()
+	world.wildlife_blockers.clear()
+	var sh_bak5a: Array = world._built_shelters.duplicate()
+	world._built_shelters.clear()
+	var lc_bak5a: Array = world._lit_campfires.duplicate()
+	var drops_bak5a: Array = world._dropped_items.duplicate() if "_dropped_items" in world else []
+	if "_dropped_items" in world:
+		world._dropped_items.clear()
+	var fire5a := Vector3(352.0, 0.4, 300.0)
+	world._lit_campfires = [{"id": "cf_z5", "fire_name": "Fogata", "pos": fire5a}]
+	var cf_z5_node := Node3D.new()
+	cf_z5_node.position = fire5a
+	cf_z5_node.set_meta("lit", true)
+	world.add_child(cf_z5_node)
+	world.world_actions_by_id["cf_z5"] = cf_z5_node
+	p_hyp.global_position = Vector3(300.0, 0.4, 300.0)
+	b_hyp["pos"] = p_hyp.global_position
+	b_hyp["shelter_id"] = ""
+	b_hyp["shelter_pos"] = Vector3.INF
+	b_hyp["campfire_id"] = ""
+	b_hyp["hide_timer"] = 0.0
+	b_hyp["hunger"] = 20.0
+	b_hyp["thirst"] = 80.0
+	st_hyp.body_temperature = 34.9
+	st_hyp.wetness = 0.5
+	st_hyp.sleep = 60.0
+	p_hyp.set_meta("saved_inventory", [])
+	b_hyp["_forage"] = {}
+	b_hyp["_forage_scan"] = 0.0
+	var d0_5a := Vector2(p_hyp.global_position.x - fire5a.x, p_hyp.global_position.z - fire5a.z).length()
+	for i5a in range(40):
+		mgr._tick_bot(b_hyp, 0.1)
+	var d1_5a := Vector2(p_hyp.global_position.x - fire5a.x, p_hyp.global_position.z - fire5a.z).length()
+	check(d1_5a < d0_5a - 4.0 or str(b_hyp.get("_act", "")) in ["rest", "fire_rescue"],
+		"10Z5a: helado critico (34.9) con hambre 20 camina al fuego aunque pase hambre (d=%.1f->%.1f act=%s)" % [d0_5a, d1_5a, str(b_hyp.get("_act", ""))])
+	world.world_actions_by_id = wa_bak5a
+	world.wildlife_blockers = wb_bak5a
+	world._built_shelters = sh_bak5a
+	world._lit_campfires = lc_bak5a
+	if "_dropped_items" in world:
+		world._dropped_items.assign(drops_bak5a)
+	cf_z5_node.queue_free()
+
+	# 10Z5b: helado no se interna en agua >0.5 m — solo puede salir a lo
+	# somero o usar vados; templado si que vadea hacia la meta.
+	world.water_rect = Rect2(-62.0, -62.0, 6.0, 6.0)
+	world.water_depth = 1.0
+	p_hyp.global_position = Vector3(-55.5, 0.375, -59.0)
+	b_hyp["pos"] = p_hyp.global_position
+	b_hyp["_speed"] = 0.0
+	b_hyp["_mdir"] = Vector3.ZERO
+	b_hyp["stuck_count"] = 0
+	st_hyp.body_temperature = 34.9
+	for i5b in range(6):
+		mgr._move_bot_towards(b_hyp, Vector3(-60.0, 0.375, -59.0), 5.0, 0.2, "run")
+	var depth5b := float(world.get_river_depth_at(p_hyp.global_position))
+	check(depth5b <= 0.55,
+		"10Z5b: helado no se interna en agua de 1 m hacia la meta (depth=%.2f pos=%s)" % [depth5b, p_hyp.global_position])
+	st_hyp.body_temperature = 36.6
+	p_hyp.global_position = Vector3(-55.5, 0.375, -59.0)
+	b_hyp["_speed"] = 0.0
+	for i5c in range(6):
+		mgr._move_bot_towards(b_hyp, Vector3(-60.0, 0.375, -59.0), 5.0, 0.2, "run")
+	check(float(world.get_river_depth_at(p_hyp.global_position)) > 0.5,
+		"10Z5b-ctl: templado si que vadea el rio hacia la meta")
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	st_hyp.body_temperature = 36.6
+	st_hyp.wetness = 0.0
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()
