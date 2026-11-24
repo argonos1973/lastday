@@ -1,4 +1,8 @@
 extends SceneTree
+class HouseWorld extends Node3D:
+	var wildlife_blockers := [{"house_bounds": Rect2(-5, -5, 15, 10)}]
+	var server_proxies := {}
+
 class Manager extends "res://scripts/SurvivorBotManager.gd":
 	var cover := true
 	var blocked := false
@@ -45,7 +49,7 @@ func run():
 	# Enemigo perdido: el aggro ya no es un radar — exige LOS u oido; al
 	# perderlo arma una busqueda acotada sobre la ultima posicion conocida.
 	manager.blocked = false
-	var world_stub := Node3D.new()
+	var world_stub := HouseWorld.new()
 	root.add_child(world_stub)
 	manager.world = world_stub
 	var last_seen := Vector3(20, 0, 20)
@@ -303,6 +307,33 @@ func run():
 	for n in [lead_p, memb_p, band_p, hunter_p, victim_p, escort_p]:
 		n.free()
 	manager.bots.clear()
+	var human := Node3D.new()
+	world_stub.add_child(human)
+	human.add_to_group("net_player_proxy")
+	human.set_meta("has_real_pos", true)
+	world_stub.server_proxies[42] = human
+	human.position = Vector3(4, 0, 0)
+	proxy.position = Vector3.ZERO
+	var resting := {"proxy":proxy, "bot_id":901, "faction":"hostile", "_s_foe":null,
+		"_mem":{"personality":{"survival_instinct":0.9, "bravery":0.3}}}
+	manager._ensure_bot_memory(901)["relationships"] = {"player_42":{"fear":0.8}}
+	manager.cover = true
+	check(not manager._bot_interrupt_indoor_rest(resting), "silent hidden occupant does not reveal the room")
+	human.set_meta("moving", true)
+	check(manager._bot_interrupt_indoor_rest(resting), "audible footsteps interrupt settling indoors")
+	human.set_meta("moving", false)
+	manager.cover = false
+	resting["_s_foe"] = null
+	resting["flee_until"] = 0.0
+	proxy.position = Vector3(2.5, 0, 0) # Arrived at the house centre after the previous scan.
+	manager.night = true
+	check(manager._bot_night_home_walk(resting, 0.1) and resting["_s_foe"] == human and resting["flee_until"] > 0
+		and not resting.get("sitting", false) and not resting.get("sleeping", false),
+		"night refuge arrival detects a feared human and prompts retreat rather than sitting or sleeping")
+	check(not manager._bot_can_hide_from(proxy.position, human), "cannot retreat to a seat beside a detected enemy")
+	resting["_truce_peer"] = 42
+	resting["_truce_t"] = 30.0
+	check(not manager._bot_interrupt_indoor_rest(resting), "a truce allows a peaceful rest")
 	world_stub.free()
 	proxy.free()
 	foe.free()

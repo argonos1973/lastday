@@ -13,7 +13,7 @@ static func prompt_steps(steps: Array) -> Array:
 		if not (step is Dictionary):
 			continue
 		var decision := {}
-		for key in ["goal", "action", "target", "priority", "reason", "purpose"]:
+		for key in ["goal", "action", "target", "priority", "reason", "purpose", "prey"]:
 			if step.has(key):
 				decision[key] = step[key]
 		result.append(decision)
@@ -24,7 +24,7 @@ static func step_key(step: Dictionary) -> String:
 	var target := str(step.get("target", ""))
 	if target.is_empty() and action in ["return_home", "rest", "fortify_camp"]:
 		target = "camp"
-	return JSON.stringify([action, target, Validator.purpose(step)])
+	return JSON.stringify([action, target, Validator.purpose(step), step.prey] if step.has("prey") else [action, target, Validator.purpose(step)])
 
 static func same_steps(a: Array, b: Array) -> bool:
 	if a.size() != b.size():
@@ -100,7 +100,8 @@ static func start(b: Dictionary, d: Dictionary, steps: Array, now: int, previous
 	elif previous.is_empty():
 		Diagnostics.metric(b, "plans_started")
 		Diagnostics.event(b, d, "plan_started", "decision_accepted")
-		Diagnostics.event(b, d, "decision_local" if str(d.get("source", "")).begins_with("local") else "decision_qwen" if str(d.get("source", "")).begins_with("qwen") else "decision_memory")
+	var source := str(d.get("source", ""))
+	Diagnostics.event(b, d, "decision_advisor" if source.begins_with("advisor:") else "decision_local" if source.begins_with("local") else "decision_qwen" if source.begins_with("qwen") else "decision_memory")
 	Diagnostics.event(b, d, "step_started")
 
 static func finish(b: Dictionary, d: Dictionary, state: String, reason: String, now: int) -> void:

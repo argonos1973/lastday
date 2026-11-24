@@ -302,11 +302,11 @@
   </div>
   <div class="metrics-row">
     <div class="metric-pill">
-      <div class="label">Estado Groq / Qwen</div>
+      <div class="label">Estado del asesor IA</div>
       <div class="val" id="mGroqStatus"><span class="badge info">Cargando...</span></div>
     </div>
     <div class="metric-pill">
-      <div class="label">Proveedor IA</div>
+      <div class="label">Proveedor base</div>
       <div class="val" id="mProvider"><span class="badge info">groq</span></div>
     </div>
     <div class="metric-pill">
@@ -336,6 +336,10 @@
   </div>
 </header>
 
+<details class="card" open>
+  <summary class="card-title">Llamadas IA: decisiones y chat</summary>
+  <div id="callActivity" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;padding:0 14px 12px"></div>
+</details>
 <div class="top-grid">
   <details class="card" data-sec id="mapCard" open>
     <summary class="card-title">
@@ -448,6 +452,16 @@ function barColor(val) {
 function renderHeader(data) {
   const srv = data.server || {};
   const g = data.groq || {};
+  const live = g.active_calls || [], recent = g.recent_calls || [];
+  const callLine = (c, state) => {
+    const cost = typeof c.cost_usd === "number" ? `USD ${c.cost_usd} (declarado)` : c.free_route ? "Ruta gratuita · USD 0" : "Coste no informado";
+    const model = c.served_model || c.model;
+    return `${new Date(c.started * 1000).toLocaleTimeString()} · ${state} · #${c.bot} · ${c.channel}/${c.task} · ${c.provider} / ${model} · ${cost}`;
+  };
+  document.getElementById("callActivity").textContent = [
+    ...(live.length ? live.map(c => callLine(c, "En curso")) : ["Sin llamadas en curso"]),
+    "Últimas llamadas", ...recent.map(c => callLine(c, c.http ? `HTTP ${c.http}` : "Error de red"))
+  ].join("\n");
   const st = String(g.status || "idle");
   let cls = "info";
   if (st.includes("online") || st.includes("200")) cls = "ok";
@@ -461,7 +475,7 @@ function renderHeader(data) {
   document.getElementById("mProvider").innerHTML = `<span class="badge ${provCls}">${esc(provName)}</span>`;
   // Desglose por pozo: cada proveedor tiene su cuota (gemini-* -> gemini).
   const budgets = g.providers || {groq: {max_calls: 380, max_tokens: 120000}, gemini: {max_calls: 600, max_tokens: 900000}};
-  const provOf = m => m.startsWith("gemini") ? "gemini" : "groq";
+  const provOf = m => m.endsWith(":free") ? "openrouter" : m.startsWith("gemini") ? "gemini" : "groq";
   const tokByModel = g.tokens_day_by_model || {};
   const provTag = bud => bud.day_done ? ' <span class="badge bwarn">veto diario</span>' : (bud.blocked_s > 0 ? ` <span class="badge bwarn">espera ${bud.blocked_s}s</span>` : "");
   const modelRows = Object.entries(g.calls_day_by_model || {}).map(([m, c]) => {
@@ -488,7 +502,7 @@ function renderHeader(data) {
   document.getElementById("mWorldCounts").textContent = `${srv.wildlife_count || 0} fauna · ${srv.players_online || 0} jug.${plNames ? ` (${plNames})` : ""}`;
   const chatM = g.chat_model && g.chat_model !== g.model ? ` · chat ${g.chat_model}` : "";
   const prov = g.provider && g.provider !== "groq" ? g.provider + ":" : "";
-  document.getElementById("modelBadge").textContent = prov + (g.model || "qwen/qwen3.8-27b") + chatM;
+  document.getElementById("modelBadge").textContent = (live.length ? live.map(c => c.model).join(" · ") : (g.last_decision_model || prov + (g.model || "—"))) + chatM;
   const dt = data.timestamp ? new Date(data.timestamp * 1000).toLocaleTimeString() : "--:--:--";
   const teams = data.teams || [];
   const teamTxt = teams.length

@@ -214,7 +214,7 @@ var _poi_cache_built := false
 # Un LLM remoto (p.ej. Groq, endpoint compatible con OpenAI) decide a nivel
 # estrategico que hacer: a que zona ir, si volver a casa, si descansar o que
 # tipo de zona evitar. NUNCA toca supervivencia, combate, crafteo ni ordenes:
-# eso sigue siendo GDScript. Si no hay API key (OS.get_environment("GROQ_API_KEY")),
+# eso sigue siendo GDScript. Si no hay credencial de OpenRouter,
 # la API falla o la respuesta no valida, los bots se comportan igual sin asesor.
 # Las peticiones de los bots comparten UNA cola (_ai_queue, una en vuelo) y solo
 # salen cuando la situacion cambia o el plan termina — no por temporizador. La
@@ -236,6 +236,40 @@ const AI_CHAT_MODEL := "openai/gpt-oss-120b"
 # GEMINI_URL / GEMINI_MODEL / GEMINI_CHAT_MODEL; la key va en GEMINI_API_KEY.
 const AI_PROVIDER2_URL := "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 const AI_PROVIDER2_MODEL := "gemini-3.5-flash-lite"
+const AdvisorRoles = preload("res://scripts/bot_ai/BotAdvisorRoles.gd")
+const AI_OPENROUTER_URL := "https://openrouter.ai/api/v1/chat/completions"
+var _ai_pending_topic := ""
+var _ai_pending_actor := 0
+var _ai_pending_foe := 0
+var _ai_router_until := 0
+var _monitor_active := {}
+var _monitor_recent: Array = []
+
+func _monitor_call_start(channel: String, bot: int, provider: int, model: String, task: String) -> void:
+	_monitor_active[channel] = {"channel":channel, "bot":bot, "provider":_ai_provider_name(provider),
+		"model":model, "task":task, "started":int(Time.get_unix_time_from_system()),
+		"free_route":provider == 2 and model in [AdvisorRoles.LING, AdvisorRoles.GEMMA]}
+
+func _monitor_call_end(channel: String, result: int, code: int, body: PackedByteArray) -> void:
+	if not _monitor_active.has(channel):
+		return
+	var row: Dictionary = _monitor_active[channel]
+	_monitor_active.erase(channel)
+	row["http"] = code
+	row["ok"] = result == HTTPRequest.RESULT_SUCCESS and code == 200
+	if row.ok:
+		var response = JSON.parse_string(body.get_string_from_utf8())
+		if response is Dictionary:
+			if response.get("model") is String and not response.model.is_empty():
+				row["served_model"] = str(response.model).left(128)
+			var usage = response.get("usage")
+			if row.provider == "openrouter" and usage is Dictionary:
+				var usd = usage.get("cost")
+				if (usd is float or usd is int) and is_finite(float(usd)) and usd >= 0:
+					row["cost_usd"] = usd
+	_monitor_recent.push_front(row)
+	if _monitor_recent.size() > 24:
+		_monitor_recent.pop_back()
 const AI_DIRECTIVE_TTL_MSEC := 1500 * 1000 # base temporal del plan (referencia para el watchdog de planes atascados)
 const AI_SIG_POLL_SEC := 4.0           # sondeo local de firma por turnos (un bot por ciclo)
 const AI_MIN_CALL_GAP_SEC := 150.0     # minimo entre llamadas remotas de un mismo bot
@@ -324,6 +358,22 @@ var _chat_backoff_until_msec := 0
 var _chat_backoff_sec := 30.0
 var _chat_conn_status := "idle"
 
+var _router_file_checked := false
+var _router_file_key := ""
+
+func _ai_router_key() -> String:
+	var key := OS.get_environment("OPENROUTER_API_KEY").strip_edges()
+	if not key.is_empty() or not OS.has_feature("dedicated_server") or OS.get_name() != "Linux":
+		return key
+	if not _router_file_checked:
+		_router_file_checked = true
+		var path := OS.get_config_dir().path_join("lastday/openrouter.key")
+		if FileAccess.file_exists(path) and FileAccess.get_unix_permissions(path) == (FileAccess.UNIX_READ_OWNER | FileAccess.UNIX_WRITE_OWNER):
+			var file := FileAccess.open(path, FileAccess.READ)
+			if file != null and file.get_length() <= 256:
+				_router_file_key = file.get_line().strip_edges()
+	return _router_file_key
+
 # Relevo de modelo dentro de cada pozo ("" = modelo base de la cadena). La
 # cuota diaria se mide por MODELO (RPD 500 por modelo en Gemini; en Groq la
 # TPD es org-wide pero los limites de minuto son por modelo), asi que un
@@ -350,16 +400,19 @@ var _ai_provider_day_probe_at: Array = [0, 0]
 
 func _ai_provider_name(p: int = -1) -> String:
 	var pv := _ai_provider if p < 0 else p
+	if pv == 2:
+		return "openrouter"
 	return "gemini" if pv == 1 else "groq"
 
 func _ai_provider_has_key(p: int) -> bool:
 	return not OS.get_environment("GEMINI_API_KEY" if p == 1 else "GROQ_API_KEY").strip_edges().is_empty()
 
-func _ai_provider_key() -> String:
-	return OS.get_environment("GEMINI_API_KEY" if _ai_provider == 1 else "GROQ_API_KEY").strip_edges()
+func _ai_provider_key(provider := -1) -> String:
+	var p := _ai_provider if provider < 0 else provider
+	return OS.get_environment("GEMINI_API_KEY" if p == 1 else "GROQ_API_KEY").strip_edges()
 
-func _ai_provider_url() -> String:
-	if _ai_provider == 1:
+func _ai_provider_url(provider := -1) -> String:
+	if (provider if provider >= 0 else _ai_provider) == 1:
 		var u := OS.get_environment("GEMINI_URL").strip_edges()
 		return u if not u.is_empty() else AI_PROVIDER2_URL
 	return AI_ADVISOR_URL
@@ -454,6 +507,32 @@ func _ai_advance_model_chain(p: int) -> bool:
 func _ai_chat_model() -> String:
 	var m := OS.get_environment("GROQ_CHAT_MODEL").strip_edges()
 	return m if not m.is_empty() else AI_CHAT_MODEL
+func _ai_role_route(topic: String, now: int) -> Dictionary:
+	if not AdvisorRoles.BRIEFS.has(topic):
+		return {}
+	var specialist := AdvisorRoles.model_for(topic)
+	if not specialist.is_empty() and now >= _ai_router_until and not _ai_router_key().is_empty() and _ai_model_quota_open(specialist, 2):
+		return {"provider":2, "model":specialist, "topic":topic}
+	# Keep the existing advisor when the optional specialist is unavailable.
+	var first := 1 if topic == "social" else 0
+	for provider in [first, 1 - first]:
+		if not _ai_provider_usable(provider, now) or now < _ai_backoff_until_msec:
+			continue
+		var chain := _ai_model_chain(provider)
+		for model in chain.slice(maxi(0, chain.find(_ai_chain_current_model(provider)))):
+			if _ai_model_quota_open(model, provider):
+				return {"provider":provider, "model":model, "topic":topic}
+	return {}
+
+func _ai_send_free(http: HTTPRequest, payload: Dictionary) -> Error:
+	var wire := AdvisorRoles.free_payload(payload)
+	var key := _ai_router_key()
+	if wire.is_empty() or key.is_empty():
+		return ERR_UNAUTHORIZED
+	http.max_redirects = 0
+	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + key])
+	return http.request(AI_OPENROUTER_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(wire))
+
 var ai_max_calls_per_day := AI_MAX_CALLS_PER_DAY
 var ai_max_tokens_per_day := AI_MAX_TOKENS_PER_DAY
 var memory_path: String = AI_MEMORY_PATH
@@ -2051,8 +2130,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# el valiente aguanta algo mas, el prudente se va antes.
 		var outgunned := _actor_holds_ranged(human_foe) and not _bot_has_ranged_weapon(proxy) \
 			and float(b["health"]) < 42.0 + float(_get_bot_personality(b).get("survival_instinct", 0.7)) * 22.0 - float(_get_bot_personality(b).get("bravery", 0.5)) * 14.0
-		if (float(b["health"]) < retreat_hp or fleeing or unarmed or outgunned) and not _has_combat_edge(b, human_foe):
-			if sh_pos != Vector3.INF:
+		var advised_retreat := int(b.get("_avoid_foe_until", 0)) > Time.get_ticks_msec() \
+			and int(b.get("_avoid_foe_id", 0)) == human_foe.get_instance_id()
+		if advised_retreat or ((float(b["health"]) < retreat_hp or fleeing or unarmed or outgunned) and not _has_combat_edge(b, human_foe)):
+			if _bot_can_hide_from(sh_pos, human_foe):
 				b["hide_timer"] = 20.0
 				_move_bot_towards(b, sh_pos, 6.0, delta, "run")
 				if proxy.global_position.distance_to(sh_pos) < 1.8:
@@ -2646,6 +2727,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			var rush_refuge: bool = _bot_is_freezing(b) and d_sh > 4.0 and (vst == null or vst.sleep > 12.0)
 			_move_bot_towards(b, rest_pos, 5.8 if rush_refuge else 3.8, delta, "run" if rush_refuge else "walk")
 			return
+		if _bot_interrupt_indoor_rest(b):
+			return
 		# Dentro del refugio: encender fogata si se apagó, asar carne (solo si tiene Palo afilado / Carne ensartada) y descansar/ocultarse
 		if resting_at_home:
 			if _bot_try_light_own_fire(b, delta):
@@ -2693,6 +2776,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# Quiere acampar pero no hay refugio alcanzable (de noche sin luz, por
 		# ejemplo): se parapeta donde esta — duerme si puede, si no, sentado.
 		b["_act"] = "rest"
+		if _bot_interrupt_indoor_rest(b):
+			return
 		if str(b["campfire_id"]).is_empty() and float(b["hide_timer"]) <= 0.0 \
 				and (is_night or _is_pre_night() or _bot_is_freezing(b)) \
 				and _can_bot_build_campfire(proxy) \
@@ -2735,6 +2820,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# En casa: sentado junto a su refugio, recuperando algo de vida como
 		# en el descanso de wants_camp. El lobo domestico recibe 'stay' por
 		# _sync_bot_wolf_orders (resting_home detecta sitting).
+		if _bot_interrupt_indoor_rest(b):
+			return
 		b["_act"] = "rest_home"
 		b["sitting"] = true
 		b["crouching"] = false
@@ -4424,6 +4511,8 @@ func _find_huntable_prey(b: Dictionary, max_dist: float) -> Node3D:
 	var proxy: Node3D = b["proxy"]
 	var best: Node3D = null
 	var best_d := max_dist
+	var directive := _ai_active_directive(b)
+	var preferred := str(directive.get("prey", "")) if str(directive.get("action", "")) == "hunt" else ""
 	for w in world.get_tree().get_nodes_in_group("wildlife"):
 		if not (w is Node3D) or not is_instance_valid(w) or bool(w.get("_is_dead")):
 			continue
@@ -4433,8 +4522,9 @@ func _find_huntable_prey(b: Dictionary, max_dist: float) -> Node3D:
 		if _is_goal_blacklisted(b, w.global_position):
 			continue
 		var d := proxy.global_position.distance_to((w as Node3D).global_position)
-		if d < best_d and (_can_bot_hear_actor(b, w as Node3D, d) or _has_clear_shot(proxy.global_position, (w as Node3D).global_position)):
-			best_d = d
+		var score := d - (max_dist if at == preferred else 0.0)
+		if d < max_dist and score < best_d and (_can_bot_hear_actor(b, w as Node3D, d) or _has_clear_shot(proxy.global_position, (w as Node3D).global_position)):
+			best_d = score
 			best = w as Node3D
 	return best
 
@@ -5009,11 +5099,30 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 	_move_bot_towards(b, proxy.global_position + (away+side*sign_side*.8).normalized()*6.0, 6.4, delta, "run")
 	return true
 
+const BOT_CLOSE_THREAT_RANGE := 12.0
+
+func _bot_can_hide_from(spot: Vector3, foe: Node3D) -> bool:
+	return spot != Vector3.INF and (spot.distance_to(foe.global_position) > BOT_CLOSE_THREAT_RANGE \
+		or not _has_clear_shot(spot, foe.global_position))
+
+func _bot_interrupt_indoor_rest(b: Dictionary) -> bool:
+	# Crossing the door can open a sightline since the last staggered scan.
+	# Once seated, the normal sensor cadence takes over.
+	if bool(b.get("sitting", false)) or not _pos_in_house_bounds(b["proxy"].global_position):
+		return false
+	var foe := _find_combat_foe(b)
+	if foe == null:
+		return false
+	b["_s_foe"] = foe
+	b["_act"] = "alert"
+	b["anim"] = "idle"
+	return true
+
 func _bot_avoid_nemesis(b: Dictionary, foe: Node3D, nem_name: String, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	b["is_aiming"] = false
 	var sh: Vector3 = b["shelter_pos"]
-	if sh != Vector3.INF:
+	if _bot_can_hide_from(sh, foe):
 		b["hide_timer"] = 24.0
 		_move_bot_towards(b, sh, 6.0, delta, "run")
 		if proxy.global_position.distance_to(sh) < 1.8:
@@ -5403,6 +5512,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 	var sight := 44.0 if faction == "hostile" else 28.0
 	var best: Node3D = null
 	var best_d := sight
+	var avoid_best := false
 
 	# Si es hostil ("Kael"), busca jugadores humanos y bots aliados. Un bot sin
 	# arma TAMBIEN registra al humano que se acerca como amenaza — no para
@@ -5427,28 +5537,30 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			# Tregua vigente: el bot no retoma la ofensiva contra quien la acordo.
 			if pid3 > 0 and int(b.get("_truce_peer", 0)) == pid3 and float(b.get("_truce_t", 0.0)) > 0.0:
 				continue
-			if cautious_h:
-				if pid3 > 0 and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid3)).get("fear", 0.0)) > 0.68:
-					continue
-			var heard := _can_bot_hear_actor(b, p3, proxy.global_position.distance_to(p3.global_position))
-			var max_r := minf(best_d, maxf(34.0 if heard else 0.0, _effective_human_sight(p3, sight)))
 			var d := proxy.global_position.distance_to(p3.global_position)
+			var feared := cautious_h and pid3 > 0 and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid3)).get("fear", 0.0)) > 0.68
+			if feared and d > BOT_CLOSE_THREAT_RANGE:
+				continue
+			var heard := _can_bot_hear_actor(b, p3, d)
+			var max_r := minf(best_d, maxf(34.0 if heard else 0.0, _effective_human_sight(p3, sight)))
 			if d < max_r and (heard or _has_clear_shot(proxy.global_position, p3.global_position)):
 				best_d = d
 				best = p3
+				avoid_best = feared
 		var local_p = world.get("player")
 		if local_p is Node3D and is_instance_valid(local_p) and local_p.get("is_dead") != true:
 			var lp3 := local_p as Node3D
 			var pid_l := _peer_id_for_actor(lp3)
 			var truce_l := pid_l > 0 and int(b.get("_truce_peer", 0)) == pid_l and float(b.get("_truce_t", 0.0)) > 0.0
 			var fear_local := cautious_h and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(1)).get("fear", 0.0)) > 0.68
-			if not fear_local and not truce_l:
-				var heard_l := _can_bot_hear_actor(b, lp3, proxy.global_position.distance_to(lp3.global_position))
+			var dl := proxy.global_position.distance_to(lp3.global_position)
+			if not truce_l and (not fear_local or dl <= BOT_CLOSE_THREAT_RANGE):
+				var heard_l := _can_bot_hear_actor(b, lp3, dl)
 				var max_rl := minf(best_d, maxf(34.0 if heard_l else 0.0, _effective_human_sight(lp3, sight)))
-				var dl := proxy.global_position.distance_to(lp3.global_position)
 				if dl < max_rl and (heard_l or _has_clear_shot(proxy.global_position, lp3.global_position)):
 					best_d = dl
 					best = lp3
+					avoid_best = fear_local
 	else:
 		# Aliado/cooperativo: ataca bandidos hostiles que se acerquen a él o a su líder
 		for other_id in bots.keys():
@@ -5468,6 +5580,8 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			if d < max_ro and (heard_o or _has_clear_shot(proxy.global_position, op.global_position)):
 				best_d = d
 				best = op
+	if avoid_best:
+		b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 14.0)
 	return best
 
 # Un superviviente armado y con el enemigo a distancia no huye aunque este
@@ -10069,7 +10183,7 @@ func _chat_attempt_llm(b: Dictionary, kind: String, to_id: int, to_name: String,
 	if key.is_empty() or not _ai_model_quota_open(chat_model):
 		return false
 	_chat_ensure_http()
-	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent, "t": Time.get_ticks_msec(), "model": chat_model}
+	_chat_pending = {"bot_id": int(b["bot_id"]), "to_id": to_id, "to_name": to_name, "kind": kind, "intent": intent, "t": Time.get_ticks_msec(), "model": chat_model, "provider":_ai_provider}
 	_ai_calls_day += 1
 	_ai_calls_total += 1
 	_ai_count_model_call(chat_model)
@@ -10090,6 +10204,7 @@ func _chat_attempt_llm(b: Dictionary, kind: String, to_id: int, to_name: String,
 	if _chat_http.request(_ai_provider_url(), headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
 		_chat_pending = {}
 		return false
+	_monitor_call_start("chat", int(b.bot_id), _ai_provider, chat_model, intent)
 	return true
 
 func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String, ctx: String, intent: String) -> String:
@@ -10161,6 +10276,7 @@ func _chat_build_prompt(b: Dictionary, kind: String, to_id: int, to_name: String
 		to_name, rel_desc, tr, ho, rel_rule, sit, anti_repeat]
 
 func _chat_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_monitor_call_end("chat", result, response_code, body)
 	var req := _chat_pending
 	_chat_pending = {}
 	if req.is_empty():
@@ -10175,7 +10291,7 @@ func _chat_on_response(result: int, response_code: int, _headers: PackedStringAr
 	var intent := str(req.get("intent", ""))
 	var text := ""
 	if response_code == 429:
-		_ai_register_429(_headers, true)
+		_ai_register_429(_headers, true, "", int(req.get("provider", _ai_provider)))
 	elif result == HTTPRequest.RESULT_SUCCESS and response_code == 200:
 		_chat_backoff_sec = 30.0
 		_chat_conn_status = "online (200)"
@@ -14093,6 +14209,8 @@ func _bot_night_home_walk(b: Dictionary, delta: float) -> bool:
 			return true
 		_move_bot_towards(b, refuge_n, 3.8, delta, "walk")
 	else:
+		if _bot_interrupt_indoor_rest(b):
+			return true
 		# Ya en el refugio: quedarse sentado toda la noche con necesidades
 		# sin resolver era la muerte por agotamiento en casa — el callejon
 		# sin salida cortaba el alijo guardado y el sueño. Aqui si puede:
@@ -15999,6 +16117,8 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 				rel.erase("heard_about")
 			rel["fear"] = snappedf(clampf(float(rel.get("fear", 0.0)) - step * 0.45, 0.0, 1.0), 0.001)
 			if not b.is_empty():
+				if kind == "help" or int(rel.get("shared_experiences", 0)) == 1:
+					b["_advisor_social_until"] = Time.get_ticks_msec() + 180000
 				_evolve_personality(b, "player_helped", step)
 		"attack":
 			rel["attacked"] = int(rel.get("attacked", 0)) + 1
@@ -16533,13 +16653,20 @@ func _ai_can_query_remote() -> bool:
 func _ai_night_allows_remote(reason: String) -> bool:
 	if not _is_world_night():
 		return true
-	return reason.begins_with("attacked_by_")
+	return reason.begins_with("attacked_by_") or reason in ["encounter_review", "situation_weather", "situation_clothing"]
+
+func _ai_encounter_eligible(b: Dictionary) -> bool:
+	var leader := int(b.get("team_leader_id", 0))
+	var proxy = b.get("proxy")
+	return is_instance_valid(proxy) and not proxy.get_meta("proxy_dead", false) and not b.get("sleeping", false) \
+		and (leader == 0 or is_bot_peer_id(leader)) and _sensed_node(b, "_s_foe") != null
 
 func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "periodic", force: bool = false) -> void:
 	if bots.has(bot_id):
 		var b: Dictionary = bots[bot_id]
 		PlanManager.sync(self, b, Time.get_ticks_msec())
-		if bool(b.get("sleeping", false)) or str(b.get("ai_directive", {}).get("state", "")) == "SUSPENDED":
+		if (bool(b.get("sleeping", false)) or str(b.get("ai_directive", {}).get("state", "")) == "SUSPENDED") \
+				and not (reason == "encounter_review" and _ai_encounter_eligible(b)):
 			# Reactive actions do not require a new strategic API request.
 			PlanDiagnostics.metric(b, "suspended_queries_skipped")
 			if _is_world_night():
@@ -16553,7 +16680,7 @@ func _ai_enqueue_request(bot_id: int, priority: int = 3, reason: String = "perio
 	var merged := false
 	for item in _ai_queue:
 		if int((item as Dictionary).get("bot_id", 0)) == bot_id:
-			if p > int((item as Dictionary).get("priority", 1)):
+			if p > int(item.priority) or (p == int(item.priority) and force and not bool(item.get("force", false))):
 				item["priority"] = p
 				item["reason"] = reason
 			item["force"] = bool(item.get("force", false)) or force
@@ -16574,7 +16701,7 @@ func _ai_pop_next_request(now: int) -> Dictionary:
 	while i < _ai_queue.size():
 		var item: Dictionary = _ai_queue[i]
 		var bid := int(item.get("bot_id", 0))
-		if not bots.has(bid) or not _ai_bot_eligible(bots[bid]):
+		if not bots.has(bid) or not (_ai_encounter_eligible(bots[bid]) if item.reason == "encounter_review" else _ai_bot_eligible(bots[bid])):
 			_ai_queue.remove_at(i)
 			continue
 		# Encolado antes del anochecer: de noche solo sale lo de ataque real.
@@ -16688,6 +16815,7 @@ func _ai_ensure_http() -> void:
 		return
 	_ai_http = HTTPRequest.new()
 	_ai_http.timeout = 12.0
+	_ai_http.max_redirects = 0
 	_ai_http.request_completed.connect(_ai_on_response)
 	add_child(_ai_http)
 
@@ -16707,7 +16835,7 @@ func _ai_tick(delta: float) -> void:
 	elif _ai_provider_has_key(1):
 		_ai_provider = 1
 	var key := _ai_provider_key()
-	if key.is_empty():
+	if key.is_empty() and _ai_router_key().is_empty():
 		_ai_conn_status = "no_api_key (local_brain)"
 		# Review local objectives at bounded intervals, including completed/stuck
 		# directives. Offline operation must not pin a goal forever.
@@ -16736,14 +16864,8 @@ func _ai_tick(delta: float) -> void:
 	if _ai_sig_accum >= AI_SIG_POLL_SEC:
 		_ai_sig_accum = 0.0
 		_ai_sig_poll(now)
-	if now < _ai_backoff_until_msec:
-		return
-	# El proveedor elegido debe poder servir ya: si los dos pozos estan en
-	# enfriamiento por minuto o vetados por cuota diaria queda el cerebro
-	# local con su revision de objetivos, igual que en modo sin key; el
-	# primario vuelve a ganar en cuanto se abre cualquier ventana.
-	if not _ai_provider_usable(_ai_provider, now):
-		_ai_conn_status = "providers_daily_exhausted (local_brain)" if (bool(_ai_provider_day_done[0]) and bool(_ai_provider_day_done[1])) else "providers_cooling (local_brain)"
+	if now < _ai_router_until and not _ai_provider_usable(0, now) and not _ai_provider_usable(1, now):
+		_ai_conn_status = "openrouter_cooling (local_brain)"
 		for bid in bots.keys():
 			_ai_review_local_goal(int(bid), now)
 		return
@@ -16751,22 +16873,6 @@ func _ai_tick(delta: float) -> void:
 	# en el monitor mucho despues de recuperar el servicio — se limpia aqui.
 	if _ai_conn_status.begins_with("rate_limited") or _ai_conn_status.begins_with("pacing"):
 		_ai_conn_status = "ready (post-backoff)"
-	if not _ai_model_quota_open(_ai_active_model()):
-		# Presupuesto local del modelo actual agotado: como la cuota real es
-		# por modelo, se encadena al siguiente del pozo si le queda — la misma
-		# idea que el 429 "per day" pero sin quemar el ultimo token del pozo.
-		if _ai_advance_model_chain(_ai_provider):
-			_ai_conn_status = "fallback_model (presupuesto -> %s)" % _ai_active_model()
-		else:
-			# Todos los modelos del proveedor activo sin presupuesto local: veto
-			# diario propio hasta el reset y el otro pozo sirve si esta libre.
-			_ai_provider_day_done[_ai_provider] = true
-			_ai_provider_day_probe_at[_ai_provider] = now + int(AI_PROVIDER_DAY_PROBE_SEC * 1000.0)
-			if _ai_provider_usable(1 - _ai_provider, now):
-				_ai_switch_provider("presupuesto %s" % _ai_active_model(), 1 - _ai_provider)
-			else:
-				_ai_conn_status = "quota_reached (local_brain)"
-				return
 	if _ai_pending_bot != 0:
 		return
 	_ai_ensure_http()
@@ -16775,16 +16881,22 @@ func _ai_tick(delta: float) -> void:
 		return
 	var target_bot := int(req["bot_id"])
 	var tb: Dictionary = bots[target_bot]
-	var sig := _ai_situation_signature(tb)
+	var reason := str(req.get("reason", ""))
+	var topic := AdvisorRoles.topic(self, tb, reason)
+	var route := _ai_role_route(topic, now)
+	if route.is_empty():
+		_ai_review_local_goal(target_bot, now)
+		return
+	var sig := _ai_situation_signature(tb) + "|" + topic + "|" + str(route.model)
 	tb["_ai_req_sig"] = sig
 	if _ai_try_decision_cache(target_bot, sig, str(req.get("reason", ""))):
 		return
-	if not bool(req.get("force", false)) and _ai_last_sig.get(target_bot, "") == sig and not _ai_active_directive(tb).is_empty():
+	if reason != "encounter_review" and not bool(req.get("force", false)) and _ai_last_sig.get(target_bot, "") == sig and not _ai_active_directive(tb).is_empty():
 		_ai_cache_hits += 1
 		_ai_next_at[target_bot] = now + int(AI_REVIEW_MAX_SEC * 1000.0)
 		return
 	_ai_last_sig[target_bot] = sig
-	_ai_request_decision(target_bot, tb)
+	_ai_request_decision(target_bot, tb, route)
 
 # Las revalidaciones de planes rotos/ataques jamás pasan por el caché:
 # reaplicar la directiva que acaba de atascarse sería el bucle exacto que
@@ -16796,7 +16908,7 @@ func _ai_try_decision_cache(bot_id: int, sig: String, reason: String) -> bool:
 	var cent: Dictionary = _ai_decision_cache.get(ck, {})
 	if cent.is_empty() or Time.get_ticks_msec() - int(cent.get("t", 0)) >= int(AI_DECISION_CACHE_TTL_SEC * 1000.0):
 		return false
-	if _ai_apply_decision(bot_id, str(cent.get("content", "")), "qwen_cache"):
+	if _ai_apply_decision(bot_id, str(cent.get("content", "")), str(cent.get("source", "qwen")) + "_cache"):
 		_ai_cache_hits += 1
 		if bots.has(bot_id):
 			_ai_stat_inc(bots[bot_id], "cache_hits")
@@ -16809,7 +16921,7 @@ func _ai_note_decision_cache(bot_id: int, content: String) -> void:
 	var req_sig := str(lb.get("_ai_req_sig", ""))
 	if req_sig.is_empty():
 		return
-	_ai_decision_cache[str(bot_id) + "|" + req_sig] = {"t": Time.get_ticks_msec(), "content": content}
+	_ai_decision_cache[str(bot_id) + "|" + req_sig] = {"t": Time.get_ticks_msec(), "content": content, "source":_ai_pending_source()}
 	_ai_prune_decision_cache()
 
 # Sondeo por turnos de un bot por ciclo: encola una peticion a la cola
@@ -16822,6 +16934,9 @@ func _ai_sig_poll(now: int) -> void:
 	var bot_id: int = ids[_ai_rr]
 	var b: Dictionary = bots[bot_id]
 	PlanManager.sync(self, b, now)
+	if _ai_encounter_eligible(b) and now >= int(b.get("_encounter_review_at", 0)):
+		b["_encounter_review_at"] = now + int(AI_MIN_CALL_GAP_SEC * 1000)
+		_ai_enqueue_request(bot_id, 5, "encounter_review")
 	if str(b.get("ai_directive", {}).get("state", "")) == "SUSPENDED":
 		return
 	if not _ai_bot_eligible(b):
@@ -16864,12 +16979,17 @@ func _ai_sig_poll(now: int) -> void:
 				_ai_stat_inc(b, "plans_failed")
 				_ai_stat_inc(b, "blocked_recoveries")
 				_ai_apply_local_fallback_decision(bot_id, "plan_impossible")
+				_ai_enqueue_request(bot_id, 5, "plan_impossible", true)
 				return
 			_ai_enqueue_request(bot_id, 3, "plan_stuck", true)
 			return
-	elif _ai_situation_signature(b) != str(_ai_last_sig.get(bot_id, "")):
+	elif not str(_ai_last_sig.get(bot_id, "")).begins_with(_ai_situation_signature(b) + "|"):
 		var urgency := 4 if (float(b["hunger"]) < 45.0 or float(b["health"]) < 60.0) else 3
 		_ai_enqueue_request(bot_id, urgency, "sig_change")
+	var topic := AdvisorRoles.topic(self, b, "")
+	if b.get("_advisor_seen_topic", "") != topic:
+		b["_advisor_seen_topic"] = topic
+		_ai_enqueue_request(bot_id, 3, "situation_" + topic)
 	var next_at := int(_ai_next_at.get(bot_id, 0))
 	if next_at == 0:
 		_ai_next_at[bot_id] = now + (90 + _ai_rr * 150 + randi() % 120) * 1000
@@ -17020,47 +17140,55 @@ func _ai_bot_eligible(b: Dictionary) -> bool:
 		return false
 	return true
 
-func _ai_request_decision(bot_id: int, b: Dictionary) -> void:
+func _ai_pending_source() -> String:
+	return "qwen" if _ai_pending_model.begins_with("qwen") or _ai_pending_model.is_empty() else "advisor:" + _ai_pending_model
+
+func _ai_request_decision(bot_id: int, b: Dictionary, route: Dictionary) -> void:
+	var model := str(route.model)
+	_ai_pending_provider = int(route.provider)
+	_ai_pending_topic = str(route.topic)
+	_ai_pending_actor = b["proxy"].get_instance_id()
+	var foe := _sensed_node(b, "_s_foe")
+	_ai_pending_foe = foe.get_instance_id() if _ai_pending_topic == "risk" and foe != null else 0
 	_ai_pending_bot = bot_id
 	_ai_calls_day += 1
 	_ai_calls_total += 1
 	_ai_last_call_msec[bot_id] = Time.get_ticks_msec()
 	_ai_last_any_call_msec = Time.get_ticks_msec()
-	_ai_conn_status = "requesting (%s)" % _ai_provider_name()
+	_ai_conn_status = "requesting (%s/%s)" % [_ai_provider_name(_ai_pending_provider), _ai_pending_topic]
 	_ai_next_at[bot_id] = Time.get_ticks_msec() + int(AI_REVIEW_MAX_SEC * 1000.0)
-	var model := _ai_active_model()
 	_ai_count_model_call(model)
 	_ai_pending_model = model
-	_ai_pending_provider = _ai_provider
 	var payload := {
 		"model": model,
 		"temperature": 0.4,
-		# gpt-oss y gemini-3 razonan antes de responder: 160 solo alcanza para
-		# la cadena de pensamiento y el JSON salia vacio (json_validate_failed).
-		"max_tokens": 600 if ("gpt-oss" in model or model.begins_with("gemini-3")) else 360,
+		"max_tokens": 800,
 		"response_format": {"type": "json_object"},
 		"messages": [
-			{"role": "system", "content": AI_SYSTEM_PROMPT + " Optional purpose: general, gear, food, water, ammo, clothing, tools, weapons, meat. Use forage with purpose water for drinking; rest requires actual recovery. Temporary emergencies suspend the current plan locally; do not restart completed steps."},
+			{"role": "system", "content": AI_SYSTEM_PROMPT + " Optional purpose: general, gear, food, water, ammo, clothing, tools, weapons, meat. Use forage with purpose water for drinking; rest requires actual recovery. Temporary emergencies suspend the current plan locally; do not restart completed steps. Your assignment: " + str(AdvisorRoles.BRIEFS[_ai_pending_topic])},
 			{"role": "user", "content": _ai_build_prompt(b)},
 		],
 	}
-	if "gpt-oss" in model:
-		payload["reasoning_effort"] = "low"
-	var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + _ai_provider_key()])
-	if _ai_http.request(_ai_provider_url(), headers, HTTPClient.METHOD_POST, JSON.stringify(payload)) != OK:
+	var err: Error
+	if _ai_pending_provider == 2:
+		err = _ai_send_free(_ai_http, payload)
+	else:
+		if "gpt-oss" in model:
+			payload["reasoning_effort"] = "low"
+		var headers := PackedStringArray(["Content-Type: application/json", "Authorization: Bearer " + _ai_provider_key(_ai_pending_provider)])
+		err = _ai_http.request(_ai_provider_url(_ai_pending_provider), headers, HTTPClient.METHOD_POST, JSON.stringify(payload))
+	if err != OK:
 		_ai_pending_bot = 0
-		# Fallo al enviar: el proveedor queda en enfriamiento breve y el otro
-		# pozo merece un intento antes del cerebro local; la recursion queda
-		# acotada porque el que falla entra en su propio backoff.
-		_ai_provider_blocked_until[_ai_provider] = Time.get_ticks_msec() + 15000
-		var other := 1 - _ai_provider
-		if _ai_provider_usable(other, Time.get_ticks_msec()):
-			_ai_switch_provider("send_error", other)
-			_ai_request_decision(bot_id, b)
-			return
+		if _ai_pending_provider == 2:
+			_ai_router_until = Time.get_ticks_msec() + 15000
+		else:
+			_ai_provider_blocked_until[_ai_pending_provider] = Time.get_ticks_msec() + 15000
 		_ai_conn_status = "request_error (local_fallback)"
-		_ai_apply_local_fallback_decision(bot_id, "http_send_error")
+		if _ai_pending_foe == 0:
+			_ai_apply_local_fallback_decision(bot_id, "http_send_error")
 		print("[AI-ADV] peticion fallida para bot %d" % bot_id)
+	else:
+		_monitor_call_start("decision", bot_id, _ai_pending_provider, model, _ai_pending_topic)
 
 func _ai_build_prompt(b: Dictionary) -> String:
 	var proxy: Node3D = b["proxy"]
@@ -17130,6 +17258,9 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		if obs_p.size() >= 4:
 			break
 	var vst_p: SurvivalStats = b.get("vstats")
+	var weather := _bot_weather_observation()
+	var foe := _sensed_node(b, "_s_foe")
+	var visible_foe := foe != null and _has_clear_shot(pos, foe.global_position)
 	var state := {
 		"name": str(b["name"]),
 		"faction": str(b["faction"]),
@@ -17142,6 +17273,15 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"weapon": str(b.get("held_item", "")),
 		"night": _is_world_night(),
 		"threat": _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null,
+		"dusk": _is_pre_night(),
+		"weather": {"code":int(weather.get("weather_code", 3)), "rain":float(weather.get("rain", 0)),
+			"snow":float(weather.get("snow", 0)), "wind":float(weather.get("wind_speed", 0))},
+		"safe_food": _bot_has_edible_food(proxy), "drink": _bot_has_drink(proxy),
+		"foe_distance": int(pos.distance_to(foe.global_position)) if visible_foe else -1,
+		"foe_armed_at_range": _actor_holds_ranged(foe) if visible_foe else null,
+		"wetness": snappedf(vst_p.wetness, 0.1) if vst_p != null else 0.0,
+		"worn": str(b.get("clothing", "")),
+		"observed_prey": str(b["_s_prey"].get("animal_type")) if _sensed_node(b, "_s_prey") != null else "",
 		"pos": [int(pos.x), int(pos.z)],
 		"visited_pois": visited.size(),
 		"deaths": int(mem.get("deaths", 0)),
@@ -17188,7 +17328,7 @@ func _ai_parse_retry_seconds(body_text: String) -> float:
 			return float(body_text.substr(q1 + 1, q2 - q1 - 1).trim_suffix("s"))
 	return -1.0
 
-func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text := "") -> void:
+func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text := "", chat_provider := -1) -> void:
 	_ai_429_count += 1
 	var wait := -1.0
 	for h in headers:
@@ -17199,7 +17339,11 @@ func _ai_register_429(headers: PackedStringArray, for_chat := false, body_text :
 	if wait < 0.0:
 		wait = _ai_parse_retry_seconds(body_text)
 	var now := Time.get_ticks_msec()
-	var pending := _ai_pending_provider
+	var pending := (chat_provider if chat_provider >= 0 else _ai_provider) if for_chat else _ai_pending_provider
+	if pending == 2:
+		_ai_router_until = now + int(maxf(2.0, wait if wait >= 0 else 60.0) * 1000)
+		_ai_conn_status = "rate_limited (openrouter 429)"
+		return
 	# Cuota DIARIA agotada (TPD/RPD, "on tokens/requests per day") en el modelo
 	# primario de Groq: el wait solo libera hueco para una llamada y el cartel
 	# de rate_limited se repite todo el dia. Como la cuota es por modelo, se
@@ -17321,11 +17465,16 @@ func _ai_note_rate_headers(headers: PackedStringArray, for_chat := false) -> voi
 			_ai_conn_status = status
 
 func _ai_on_response(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_monitor_call_end("decision", result, response_code, body)
 	var bot_id := _ai_pending_bot
 	_ai_pending_bot = 0
 	if bot_id == 0 or not bots.has(bot_id):
 		return
 	var lb: Dictionary = bots[bot_id]
+	var actor = lb.get("proxy")
+	var current: bool = is_instance_valid(actor) and (_ai_pending_actor == 0 or actor.get_instance_id() == _ai_pending_actor)
+	var can_change_plan: bool = current and _ai_bot_eligible(lb) and _ai_pending_foe == 0
+	var metric_prefix := "qwen" if _ai_pending_source() == "qwen" else _ai_pending_model
 	# Latencia real de la consulta (incluye errores): diagnostico del monitor.
 	var lat := Time.get_ticks_msec() - int(_ai_last_call_msec.get(bot_id, 0))
 	_ai_stat_set(lb, "latency_ms_last", lat)
@@ -17335,25 +17484,28 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 	_ai_latency_ms_avg = lat if _ai_latency_ms_avg <= 0 else int(_ai_latency_ms_avg * 0.8 + lat * 0.2)
 	if response_code == 429:
 		_ai_register_429(_headers, false, body.get_string_from_utf8())
-		_ai_apply_local_fallback_decision(bot_id, "http_429_backoff")
+		if can_change_plan:
+			_ai_apply_local_fallback_decision(bot_id, "http_429_backoff")
 		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		_ai_conn_status = "offline_fallback (%d)" % response_code
-		var snippet := body.get_string_from_utf8().strip_edges().substr(0, 160)
-		if not snippet.is_empty():
-			print("[AI-ADV] HTTP %d: %s" % [response_code, snippet])
+		if _ai_pending_provider == 2:
+			_ai_router_until = Time.get_ticks_msec() + (900000 if response_code in [401, 402, 403] else 30000)
 		_ai_stat_inc(lb, "http_errors")
-		_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
+		if can_change_plan:
+			_ai_apply_local_fallback_decision(bot_id, "http_error_%d" % response_code)
 		return
-	_ai_provider_backoff_sec[_ai_pending_provider] = 4.0
-	_ai_provider_day_done[_ai_pending_provider] = false
-	_ai_429_streak = 0
+	if _ai_pending_provider != 2:
+		_ai_provider_backoff_sec[_ai_pending_provider] = 4.0
+		_ai_provider_day_done[_ai_pending_provider] = false
+		_ai_429_streak = 0
+		_ai_note_rate_headers(_headers)
 	_ai_conn_status = "online (%s 200)" % _ai_provider_name(_ai_pending_provider)
-	_ai_note_rate_headers(_headers)
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if not (parsed is Dictionary):
-		_ai_stat_inc(lb, "qwen_invalid")
-		_ai_apply_local_fallback_decision(bot_id, "invalid_json")
+		_ai_stat_inc(lb, metric_prefix + "_invalid")
+		if can_change_plan:
+			_ai_apply_local_fallback_decision(bot_id, "invalid_json")
 		return
 	var usage = parsed.get("usage", {})
 	if usage is Dictionary:
@@ -17362,38 +17514,56 @@ func _ai_on_response(result: int, response_code: int, _headers: PackedStringArra
 			tok = 220
 		_ai_tokens_day += tok
 		_ai_tokens_total += tok
-		_ai_count_model_tokens(_ai_pending_model if not _ai_pending_model.is_empty() else _ai_decision_model(), tok)
+		_ai_count_model_tokens(_ai_pending_model if not _ai_pending_model.is_empty() else AdvisorRoles.LING, tok)
 	else:
 		_ai_tokens_day += 220
 		_ai_tokens_total += 220
-		_ai_count_model_tokens(_ai_pending_model if not _ai_pending_model.is_empty() else _ai_decision_model(), 220)
+		_ai_count_model_tokens(_ai_pending_model if not _ai_pending_model.is_empty() else AdvisorRoles.LING, 220)
+	if not can_change_plan and not (current and _ai_pending_foe != 0 and _ai_encounter_eligible(lb)):
+		return
 	var choices = parsed.get("choices", [])
 	if not (choices is Array) or choices.is_empty():
-		_ai_stat_inc(lb, "qwen_invalid")
-		_ai_apply_local_fallback_decision(bot_id, "missing_choices")
+		_ai_stat_inc(lb, metric_prefix + "_invalid")
+		if can_change_plan:
+			_ai_apply_local_fallback_decision(bot_id, "missing_choices")
 		return
 	var ch = choices[0]
 	if not (ch is Dictionary):
-		_ai_stat_inc(lb, "qwen_invalid")
-		_ai_apply_local_fallback_decision(bot_id, "invalid_choice")
+		_ai_stat_inc(lb, metric_prefix + "_invalid")
+		if can_change_plan:
+			_ai_apply_local_fallback_decision(bot_id, "invalid_choice")
 		return
 	var msg = ch.get("message", {})
 	if not (msg is Dictionary):
-		_ai_stat_inc(lb, "qwen_invalid")
-		_ai_apply_local_fallback_decision(bot_id, "invalid_message")
+		_ai_stat_inc(lb, metric_prefix + "_invalid")
+		if can_change_plan:
+			_ai_apply_local_fallback_decision(bot_id, "invalid_message")
 		return
 	var content = msg.get("content", "")
+	if _ai_pending_foe != 0:
+		# Advice for this encounter only. Never replace a suspended mission or
+		# force a fight. A positive risk assessment leaves local reflexes intact.
+		var foe := _sensed_node(lb, "_s_foe")
+		if foe != null and foe.get_instance_id() == _ai_pending_foe and content is String:
+			var steps := _ai_parse_plan(content, lb)
+			_ai_stat_inc(lb, metric_prefix + ("_invalid" if steps.is_empty() else "_ok"))
+			if not steps.is_empty() and steps[0].action == "avoid_zone":
+				lb["_avoid_foe_id"] = _ai_pending_foe
+				lb["_avoid_foe_until"] = Time.get_ticks_msec() + 20000
+		return
 	if not (content is String) or (content as String).strip_edges().is_empty():
-		_ai_stat_inc(lb, "qwen_invalid")
+		_ai_stat_inc(lb, metric_prefix + "_invalid")
 		_ai_apply_local_fallback_decision(bot_id, "empty_content")
-	elif not _ai_apply_decision(bot_id, content):
-		_ai_stat_inc(lb, "qwen_invalid")
+	elif not _ai_apply_decision(bot_id, content, _ai_pending_source()):
+		_ai_stat_inc(lb, metric_prefix + "_invalid")
 		# Muestra que propuso el modelo: depura por que un bot invalida
 		# (acciones fuera de catalogo, sitios inventados, requisitos rotos).
 		print("[AI-ADV] %s rechazada: %s" % [str(bots.get(bot_id, {}).get("name", bot_id)), (content as String).strip_edges().substr(0, 120)])
 		_ai_apply_local_fallback_decision(bot_id, "invalid_or_impossible_decision")
+		if _ai_pending_topic != "recovery":
+			_ai_enqueue_request(bot_id, 4, "invalid_or_impossible_decision")
 	else:
-		_ai_stat_inc(lb, "qwen_ok")
+		_ai_stat_inc(lb, metric_prefix + "_ok")
 		_ai_note_decision_cache(bot_id, content)
 
 func _ai_prune_decision_cache() -> void:
@@ -17475,6 +17645,10 @@ func _ai_parse_decision(text: String, b: Dictionary = {}) -> Dictionary:
 	}
 	if parsed.has("purpose"):
 		out["purpose"] = str(parsed["purpose"])
+	if parsed.has("prey"):
+		if action != "hunt" or parsed.prey not in ["fox", "deer"]:
+			return {}
+		out["prey"] = parsed.prey
 	if specific_pos != Vector3.INF:
 		out["mode"] = "pos"
 		out["pos"] = specific_pos
@@ -18541,18 +18715,23 @@ func get_full_web_status() -> Dictionary:
 			"players_online": online_p,
 		},
 		"groq": {
+			"active_calls": _monitor_active.values().duplicate(true),
+			"recent_calls": _monitor_recent.duplicate(true),
 			"provider": _ai_provider_name(),
+			"last_decision_provider": _ai_provider_name(_ai_pending_provider) if not _ai_pending_model.is_empty() else "",
+			"last_decision_model": _ai_pending_model,
+			"last_assignment": _ai_pending_topic,
 			"model": _ai_active_model(),
 			"chat_model": _ai_active_chat_model(),
 			"status": _ai_conn_status,
 			"chat_status": _chat_conn_status,
 			"calls_day": _ai_calls_day,
 			"calls_day_by_model": _ai_calls_day_by_model.duplicate(),
-			"max_calls_day": AI_MAX_CALLS_PER_DAY_2 if _ai_provider == 1 else ai_max_calls_per_day,
+			"max_calls_day": ai_max_calls_per_day,
 			"calls_total": _ai_calls_total,
 			"tokens_day": _ai_tokens_day,
 			"tokens_day_by_model": _ai_tokens_day_by_model.duplicate(),
-			"max_tokens_day": AI_MAX_TOKENS_PER_DAY_2 if _ai_provider == 1 else ai_max_tokens_per_day,
+			"max_tokens_day": ai_max_tokens_per_day,
 			"providers": {
 				"groq": {"max_calls": ai_max_calls_per_day, "max_tokens": ai_max_tokens_per_day,
 					"blocked_s": maxi(0, int((int(_ai_provider_blocked_until[0]) - Time.get_ticks_msec()) / 1000)),
@@ -18560,6 +18739,8 @@ func get_full_web_status() -> Dictionary:
 				"gemini": {"max_calls": AI_MAX_CALLS_PER_DAY_2, "max_tokens": AI_MAX_TOKENS_PER_DAY_2,
 					"blocked_s": maxi(0, int((int(_ai_provider_blocked_until[1]) - Time.get_ticks_msec()) / 1000)),
 					"day_done": bool(_ai_provider_day_done[1])},
+				"openrouter": {"max_calls": ai_max_calls_per_day, "max_tokens": ai_max_tokens_per_day,
+					"blocked_s": maxi(0, int((_ai_router_until - Time.get_ticks_msec()) / 1000))},
 			},
 			"tokens_total": _ai_tokens_total,
 			"cache_hits": _ai_cache_hits,

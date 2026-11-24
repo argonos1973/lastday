@@ -2,7 +2,36 @@
 
 `SurvivorBotManager` remains the authoritative world/reactive coordinator. These
 modules operate on its existing `b.ai_directive`; there is no second planner,
-action queue, navigation engine, or model provider.
+action queue or navigation engine.
+
+## Remote specialists
+
+`BotAdvisorRoles` classifies observations and recovery events. One strategic
+queue dispatches at most one decision at a time, with existing per-bot/global
+pacing, per-model budgets and a local planner if no suitable pool is available.
+Preferred assignments:
+
+| Model | Assignment |
+| --- | --- |
+| Groq decision model (Qwen by default) | Supplies, hunting, resource expeditions and encounter risk |
+| Gemini decision model | Trust and alliance reviews |
+| `inclusionai/ling-3.2-flash:free` | Long-term plans, scouting camps and replanning after failure |
+| `google/gemma-4-31b-it:free` | Night and storm preparation, clothing and cold |
+
+Configure `OPENROUTER_API_KEY` in the server process environment. A dedicated
+Linux build can alternatively read `$XDG_CONFIG_HOME/lastday/openrouter.key`
+(default `~/.config/lastday/openrouter.key`) owned by the service account with
+mode `0600`. This fallback is checked once per process. No key
+belongs in client exports, project settings or source. Endpoint:
+`https://openrouter.ai/api/v1/chat/completions`. Only the two exact OpenRouter
+IDs above are allowed there, with maximum request/input/output price zero and
+no paid plugins, model substitution or redirects. Without the specialist key
+or during cooldown, normal Groq/Gemini advice remains available. If no pool
+can serve, the NPC continues locally. Chat retains the existing Groq/Gemini
+chat models and settings; the separate voice daemon is unchanged. See `last_decision_provider`,
+`last_decision_model` and `last_assignment` in the existing `groq` status block.
+Run `tools/debug/BotPlanReliabilityRegression.gd` headless to test routing,
+backoff and encounter responses without sending live requests.
 
 - `BotPlanManager`: accepts decisions through the existing parser, preserves
   objective inertia, advances steps, owns execution clocks and terminal results,

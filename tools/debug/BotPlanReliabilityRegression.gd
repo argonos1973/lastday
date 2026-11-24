@@ -102,6 +102,7 @@ func _poll_until(mgr, bid: int, max_calls: int = 6) -> void:
 		# round-robin garantiza su turno dentro de bots.size() llamadas.
 
 func run() -> void:
+	OS.unset_environment("OPENROUTER_API_KEY") # No real inference from a regression process.
 	var mem_path := "user://test_bot_plan_reliability_mem.json"
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(mem_path))
 	var w := _make_world()
@@ -691,6 +692,49 @@ func run() -> void:
 	var prev_groq := OS.get_environment("GROQ_API_KEY")
 	OS.set_environment("GEMINI_API_KEY", "test-gem-key")
 	OS.set_environment("GROQ_API_KEY", "test-groq-key")
+	var prev_router := OS.get_environment("OPENROUTER_API_KEY")
+	OS.set_environment("OPENROUTER_API_KEY", "offline-fixture")
+	var now_route := Time.get_ticks_msec()
+	mgr._ai_router_until = 0
+	for topic in ["strategy", "recovery", "weather", "clothing"]:
+		var route := mgr._ai_role_route(topic, now_route)
+		var wire := mgr.AdvisorRoles.free_payload({"model":route.model, "models":["paid"], "plugins":[{"id":"web"}]})
+		check(wire.model in [mgr.AdvisorRoles.LING, mgr.AdvisorRoles.GEMMA] and not wire.has("models") and wire.plugins.is_empty()
+			and wire.provider.max_price == {"request":0,"prompt":0,"completion":0}, "Free-only wire policy: " + str(topic))
+	check(mgr.AdvisorRoles.free_payload({"model":"thinkingmachines/inkling-2-small"}).is_empty(), "Paid model rejected at transport")
+	mgr._ai_provider_blocked_until = [0, 0]
+	mgr._ai_backoff_until_msec = 0
+	check(mgr._ai_role_route("logistics", now_route).get("provider") == 0 and mgr._ai_role_route("risk", now_route).get("provider") == 0 and mgr._ai_role_route("social", now_route).get("provider") == 1, "Existing providers keep logistics, risk and social assignments")
+	mgr._ai_pending_provider = 2
+	mgr._ai_register_429(PackedStringArray(["Retry-After: 90"]))
+	check(mgr._ai_role_route("recovery", now_route).get("provider") == 0 and mgr._ai_provider_usable(1, now_route), "OpenRouter cooldown leaves established advisors available")
+	mgr._ai_pending_provider = 0
+	check(mgr._ai_parse_decision('{"action":"hunt","prey":"deer"}', carlos).get("prey") == "deer"
+		and mgr._ai_parse_decision('{"action":"hunt","prey":"player"}', carlos).is_empty(), "Hunt accepts game species only")
+	var risk_reply := JSON.stringify({"choices":[{"message":{"content":'{"action":"avoid_zone","target":"wild"}'}}]}).to_utf8_buffer()
+	var foe: Node3D = mgr.bots[901].proxy
+	carlos["_s_foe"] = foe
+	carlos["team_leader_id"] = 0
+	carlos["sleeping"] = false
+	mgr._ai_pending_actor = carlos.proxy.get_instance_id()
+	mgr._ai_pending_foe = foe.get_instance_id()
+	mgr._ai_pending_model = mgr.AdvisorRoles.LING
+	mgr._ai_pending_bot = 902
+	var old_plan: Dictionary = carlos.ai_directive.duplicate(true)
+	mgr._ai_on_response(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), risk_reply)
+	check(carlos.get("_avoid_foe_id") == foe.get_instance_id() and carlos.ai_directive == old_plan,
+		"A risk review can recommend retreat without replacing the mission")
+	carlos.erase("_avoid_foe_id")
+	carlos["team_leader_id"] = 1
+	mgr._ai_pending_bot = 902
+	mgr._ai_on_response(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), risk_reply)
+	check(not carlos.has("_avoid_foe_id"), "Late advice cannot override a human who took command")
+	carlos["team_leader_id"] = 0
+	carlos["_s_foe"] = null
+	mgr._ai_pending_actor = 0
+	mgr._ai_pending_foe = 0
+	mgr._ai_pending_model = ""
+	OS.set_environment("OPENROUTER_API_KEY", prev_router)
 	mgr._ai_provider = 0
 	check(mgr._ai_provider_url().contains("groq.com") and mgr._ai_provider_key() == "test-groq-key",
 		"Proveedor 0 resuelve URL y key de Groq")
