@@ -334,6 +334,27 @@ func run():
 	resting["_truce_peer"] = 42
 	resting["_truce_t"] = 30.0
 	check(not manager._bot_interrupt_indoor_rest(resting), "a truce allows a peaceful rest")
+	manager.bots[901] = resting
+	resting["sitting"] = true
+	resting["anim"] = "sit"
+	resting["_act"] = "rest"
+	manager.cover = true
+	human.position = Vector3(300, 0, 0)
+	manager.notify_sound_event(42, human.position, "gunshot", 220.0)
+	check(resting.sitting, "out-of-range gunfire does not disturb the seated bot")
+	human.position = Vector3(26, 0, 0)
+	resting["_s_foe"] = null
+	resting["flee_until"] = 0.0
+	manager.notify_sound_event(42, human.position, "gunshot", 220.0)
+	check(not resting.sitting and manager._bot_effective_net_anim(resting) == "sneak"
+		and resting.get("aggro_target") == null and resting.flee_until == 0.0,
+		"a shot under truce interrupts rest without creating hostility")
+	resting["_truce_t"] = 0.0
+	manager.notify_sound_event(42, human.position, "gunshot", 220.0)
+	human.position += Vector3(6, 0, 0)
+	check(manager._find_combat_foe(resting) == null and manager._bot_interrupt_indoor_rest(resting),
+		"a heard shot leaves the room alert without tracking a silent shooter through its wall")
+	manager.bots.clear()
 	world_stub.free()
 	proxy.free()
 	foe.free()

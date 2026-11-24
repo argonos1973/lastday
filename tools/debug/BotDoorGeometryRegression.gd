@@ -3,6 +3,11 @@ extends SceneTree
 const CityBlock = preload("res://scripts/CityBlock.gd")
 const CityExpansion = preload("res://scripts/CityExpansion.gd")
 
+class Village extends "res://scripts/Main.gd":
+	func _ready() -> void: pass
+	func _exit_tree() -> void: pass
+	func _save_world_change_silent() -> void: pass
+
 var failures := 0
 func _initialize() -> void: call_deferred("run")
 func check(ok: bool, message: String) -> void:
@@ -30,6 +35,28 @@ func run() -> void:
 			outside = origin + Vector3(wall_x,0.12,8.3).rotated(Vector3.UP,yaw)
 			inside = origin + Vector3(wall_x,0.12,4.6).rotated(Vector3.UP,yaw)
 			check(manager._wall_between(outside, inside), building.id + " adjacent facade stays blocked (side %s)" % side)
+	var village := Village.new()
+	root.add_child(village)
+	village.nav = NavPathfinding.new()
+	village._register_server_house_blockers()
+	manager.world = village
+	var door := Vector3(42.15, 0, 31)
+	var inside := Vector3(42, 0, 26)
+	var outside := door + Vector3(0, 0, 0.95)
+	var actor := Node3D.new()
+	village.add_child(actor)
+	actor.position = inside
+	var crossings := 0
+	var state := {"bot_id": 904, "proxy": actor, "path": [], "path_timer": 0.0, "path_idx": 0,
+		"rot": 0.0, "stuck_timer": 0.0, "stuck_count": 0}
+	for i in 160:
+		var was_inside := village._is_player_in_house(actor.position)
+		manager._move_bot_towards(state, outside, 3.8, 0.1, "walk")
+		if was_inside != village._is_player_in_house(actor.position):
+			crossings += 1
+	check(Vector2(actor.position.x-outside.x, actor.position.z-outside.z).length() < 0.4 and crossings == 1,
+		"bot reaches the outdoor destination beside the door without re-entering (at %s; crossings=%d)" % [actor.position, crossings])
+	village.free()
 	manager.free()
 	print("BotDoorGeometryRegression failures=", failures)
 	quit(1 if failures else 0)

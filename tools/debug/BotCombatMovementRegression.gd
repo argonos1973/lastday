@@ -14,9 +14,16 @@ class MotionManager extends SurvivorBotManager:
 	func _bot_carry_ratio(_b: Dictionary) -> float: return 0.0
 
 class WaterWorld extends Node3D:
+	var bot_nav = null
 	var depth := 3.0
 	func get_river_depth_at(pos: Vector3) -> float: return depth if pos.x > 4.0 else 0.0
 	func _get_exact_ground_y(_x: float, _z: float) -> float: return 0.025
+
+class BendNav extends RefCounted:
+	var calls := 0
+	func find_path(start: Vector3, goal: Vector3) -> Array:
+		calls += 1
+		return [start.lerp(goal, 0.5) + Vector3(0, 0, 2), goal]
 
 class CombatManager extends MotionManager:
 	var clear_los := true
@@ -61,6 +68,56 @@ func bot(p: Node3D, id: int = 901) -> Dictionary:
 		"_mem": {"personality": {}, "stats": {}}}
 
 func _initialize() -> void: call_deferred("run")
+
+func test_escort_motion(manager: MotionManager) -> void:
+	var leader := Node3D.new()
+	var follower := Node3D.new()
+	root.add_child(leader)
+	root.add_child(follower)
+	var b := bot(follower)
+	b["team_leader_id"] = 77
+	b["torch_lit"] = false
+	leader.set_meta("anim", "walk")
+	var slot := manager._bot_formation_slot(b, leader, leader.position)
+	follower.position = slot + Vector3.BACK * 7.0
+	var changes := 0
+	var last := ""
+	for i in 160:
+		leader.position.z -= 5.2 * 0.05
+		manager._tick_teammate_behavior(b, leader, 0.05)
+		if last != "" and b.anim != last:
+			changes += 1
+		last = b.anim
+	check(changes <= 6 and absf(follower.position.z - (leader.position.z + slot.z)) < 8.0,
+		"steady leader: follower keeps up without flickering walk/run (%d changes in 8 s)" % changes)
+	var idle_ticks := 0
+	for i in 120:
+		leader.position.z -= 2.0 * 0.05
+		manager._tick_teammate_behavior(b, leader, 0.05)
+		if i >= 60 and b.anim == "idle":
+			idle_ticks += 1
+	check(idle_ticks == 0, "slow walking leader: escort matches pace rather than stopping between steps (%d idle ticks)" % idle_ticks)
+	# Strafe backwards with positions delivered every fourth tick; looking
+	# over a shoulder must not swap the formation to the other side.
+	leader.rotation.y = PI
+	var wrong_side_ticks := 0
+	for i in 40:
+		if i % 4 == 0:
+			leader.position.z -= 0.4
+		manager._tick_teammate_behavior(b, leader, 0.05)
+		var target := manager._bot_formation_slot(b, leader, leader.position)
+		if (target - leader.position).dot(slot) <= 0.0:
+			wrong_side_ticks += 1
+	check(wrong_side_ticks == 0, "formation holds travel heading between position updates (%d flipped slots)" % wrong_side_ticks)
+	print("ESCORT_MOTION gait_changes=%d idle_ticks=%d flipped_slots=%d" % [changes, idle_ticks, wrong_side_ticks])
+	for i in 4:
+		leader.position.z += 0.4
+		manager._tick_teammate_behavior(b, leader, 0.05)
+	check((manager._bot_formation_slot(b, leader, leader.position) - leader.position).dot(slot) < 0.0,
+		"formation changes sides when the leader actually turns back")
+	follower.free()
+	leader.free()
+
 func run() -> void:
 	var manager := CombatManager.new()
 	root.add_child(manager)
@@ -129,6 +186,25 @@ func run() -> void:
 	check(proxy.position.x > 7.5 and b._speed <= 3.401, "one metre of water is fordable without excess speed")
 	manager.world = null
 	water.free()
+	test_escort_motion(manager)
+
+	# A cached bend belongs to the previous trip, not to the new retreat.
+	var nav_world := WaterWorld.new()
+	nav_world.depth = 0.0
+	nav_world.bot_nav = BendNav.new()
+	root.add_child(nav_world)
+	manager.world = nav_world
+	proxy.position = Vector3.ZERO
+	b = bot(proxy)
+	manager._move_bot_towards(b, Vector3(30,0,0), 6.2, 0.1, "run")
+	var turn_x := proxy.position.x
+	manager._move_bot_towards(b, Vector3(-30,0,0), 6.2, 0.1, "run")
+	check(proxy.position.x < turn_x, "new destination behind the bot: first step follows the new route, not the old bend")
+	for i in 6:
+		manager._move_bot_towards(b, Vector3(-30.0-i*0.05,0,0), 6.2, 0.1, "run")
+	check(nav_world.bot_nav.calls == 2, "small forward goal changes reuse the new path (%d searches)" % nav_world.bot_nav.calls)
+	manager.world = null
+	nav_world.free()
 
 	# Combat cadence: actual movement, a fixed sidestep target, weapon facing,
 	# stationary firing intervals and a finite turn when the foe changes side.

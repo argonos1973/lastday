@@ -15616,22 +15616,32 @@ func _shoot_rifle() -> void:
 			if world != null and world.get("hud") != null and world.hud.has_method("_update_equipment_labels"):
 				world.hud._update_equipment_labels()
 			_spawn_muzzle_flash(b_origin, b_dir)
-			if not is_puppet:
-				var b_net := get_node_or_null("/root/NetworkManager")
-				if b_net != null and b_net.is_connected:
-					b_net.player_shot_rifle.rpc_id(1, b_net.get_my_id(), b_origin, b_dir, shot_wind))
+			_report_local_rifle_shot(b_origin, b_dir, shot_wind))
 	if _is_aiming and _scope_overlay != null and is_instance_valid(_scope_overlay) and _scope_overlay.has_method("muzzle_flash"):
 		_scope_overlay.muzzle_flash()
-	if not is_puppet:
-		var net_node := get_node_or_null("/root/NetworkManager")
-		if net_node != null and net_node.is_connected:
-			net_node.player_shot_rifle.rpc_id(1, net_node.get_my_id(), shot_origin, aim_dir, shot_wind)
+	_report_local_rifle_shot(shot_origin, aim_dir, shot_wind)
 	# Refrescar contador de municion en el HUD
 	if CombatProf.enabled: _cpt2 = Time.get_ticks_usec()
 	var main := get_tree().current_scene
 	if main != null and main.get("hud") != null and main.hud.has_method("_update_equipment_labels"):
 		main.hud._update_equipment_labels()
 	if CombatProf.enabled: CombatProf.mark("pc.shoot_hud", _cpt2); CombatProf.mark("pc.shoot_local", _cpt)
+
+func _report_local_rifle_shot(origin: Vector3, direction: Vector3, wind: Vector3) -> void:
+	if is_puppet:
+		return
+	var net := get_node_or_null("/root/NetworkManager")
+	if net != null and net.is_connected and not net.is_host:
+		net.player_shot_rifle.rpc_id(1, net.get_my_id(), origin, direction, wind)
+		return
+	# The host cannot RPC itself. Its player already played the shot locally.
+	var scene := get_tree().current_scene
+	if scene != null and scene.get("survivor_bot_mgr") != null:
+		scene.survivor_bot_mgr.notify_sound_event(1, origin, "gunshot", 220.0)
+	if net != null and net.is_connected and net.is_host:
+		for pid in multiplayer.get_peers():
+			if net.peer_alive(pid):
+				net.player_shot_rifle.rpc_id(pid, 1, origin, direction, wind)
 
 func _apply_rifle_damage(collider, hit_pos: Vector3, hit_dist: float, hit_normal: Vector3 = Vector3.UP, is_m4 := false) -> void:
 	var _cpt := Time.get_ticks_usec()

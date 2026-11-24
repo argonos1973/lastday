@@ -1854,6 +1854,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# lumbre, y moria de frio/exhausto huyendo de un fantasma.
 	b["flee_until"] = maxf(0.0, float(b.get("flee_until", 0.0)) - delta)
 	b["hide_timer"] = maxf(0.0, float(b.get("hide_timer", 0.0)) - delta)
+	if float(b.get("_shot_alert_t", 0.0)) > 0.0:
+		b["_shot_alert_t"] = maxf(0.0, float(b["_shot_alert_t"]) - delta)
 	# La punteria decae igual que la del jugador: retroceso y sacudidas se
 	# recuperan con el tiempo aunque el bot no este combatiendo ahora.
 	_bot_aim_decay(b, delta)
@@ -5173,7 +5175,27 @@ func _bot_can_hide_from(spot: Vector3, foe: Node3D) -> bool:
 	return spot != Vector3.INF and (spot.distance_to(foe.global_position) > BOT_CLOSE_THREAT_RANGE \
 		or not _has_clear_shot(spot, foe.global_position))
 
+func _bot_listen_for_shots(b: Dictionary) -> bool:
+	if float(b.get("_shot_alert_t", 0.0)) <= 0.0:
+		return false
+	var proxy: Node3D = b["proxy"]
+	var toward: Vector3 = b["_shot_origin"] - proxy.global_position
+	if Vector2(toward.x, toward.z).length_squared() > 0.01:
+		b["rot"] = atan2(-toward.x, -toward.z)
+		proxy.rotation.y = float(b["rot"])
+	_stop_bot_motion(b)
+	b["sitting"] = false
+	b["sleeping"] = false
+	b["prone"] = false
+	b["is_aiming"] = false
+	b["crouching"] = true
+	proxy.set_meta("crouching", true)
+	b["_act"] = "alert"
+	return true
+
 func _bot_interrupt_indoor_rest(b: Dictionary) -> bool:
+	if _bot_listen_for_shots(b):
+		return true
 	# Crossing the door can open a sightline since the last staggered scan.
 	# Once seated, the normal sensor cadence takes over.
 	if bool(b.get("sitting", false)) or not _pos_in_house_bounds(b["proxy"].global_position):
@@ -5328,7 +5350,8 @@ func _can_bot_hear_actor(b: Dictionary, target: Node3D, dist: float) -> bool:
 	if is_moving and not is_crouch and not is_prone and dist <= 16.0:
 		return true
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
-	if float(b.get("last_heard_until", 0.0)) > now_s:
+	# A past shot is a clue at its origin, not continuous footsteps.
+	if str(b.get("last_heard_kind", "")) != "gunshot" and float(b.get("last_heard_until", 0.0)) > now_s:
 		var hpos: Vector3 = b.get("last_heard_pos", Vector3.INF)
 		var heard_actor := int(b.get("last_heard_actor", 0))
 		# A known shooter's noise must not reveal a different silent actor.
@@ -5360,16 +5383,24 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 		b["last_heard_until"] = now_s + (18.0 if kind == "gunshot" else 9.0)
 		b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 14.0 if kind == "gunshot" else 7.0)
 		# Un ruido real lo despierta: sale del sueño como un jugador humano.
-		if bool(b.get("sleeping", false)):
+		var was_asleep := bool(b.get("sleeping", false))
+		if was_asleep:
 			b["sleeping"] = false
 			b["anim"] = "idle"
 		record_bot_event(int(bid), "heard_" + kind, "actor_%d" % actor_id, _poi_kind_near(sound_pos), sound_pos, "%s:%.0fm" % [kind, d])
 		if kind == "gunshot":
+			b["_shot_alert_t"] = 8.0
+			b["_shot_origin"] = sound_pos
+			if was_asleep or (bool(b.get("sitting", false)) and not bool(b.get("is_aiming", false))) \
+					or str(b.get("_act", "")) == "alert":
+				_bot_listen_for_shots(b)
 			var my_faction := str(b.get("faction", "hostile"))
-			var same_team := actor_id > 0 and (actor_id in _bot_team_ids(b))
+			var same_team := actor_id > 0 and (actor_id == int(b.get("team_leader_id", 0)) or actor_id in _bot_team_ids(b))
+			if same_team or (actor_id > 0 and actor_id == int(b.get("_truce_peer", 0)) and float(b.get("_truce_t", 0.0)) > 0.0):
+				continue
 			var shooter_faction := str(bots[actor_id].get("faction", "hostile")) if bots.has(actor_id) else "friendly"
-			var shooter_hostile := not same_team and (shooter_faction != my_faction or (actor_id <= 0 and my_faction == "hostile"))
-			if not shooter_hostile and not same_team and actor_id > 0:
+			var shooter_hostile := shooter_faction != my_faction or (actor_id <= 0 and my_faction == "hostile")
+			if not shooter_hostile and actor_id > 0:
 				var rel := get_bot_relationship(int(bid), _actor_persist_key(actor_id))
 				var host_thr := 0.58 if shooter_faction == my_faction else 0.25
 				shooter_hostile = float(rel.get("hostility", 0.0)) > host_thr and (shooter_faction != my_faction or int(rel.get("attacked", 0)) > 0)
@@ -5379,12 +5410,13 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 			if shooter_hostile:
 				if (has_gun or (my_faction == "hostile" and brave >= 0.45)) and float(b.get("health", 100.0)) >= 55.0:
 					if actor_node != null and is_instance_valid(actor_node) and d <= 130.0:
-						b["aggro_target"] = actor_node
-						b["aggro_timer"] = 14.0
-						# Localizo al tirador solo por el oido: la pista es
-						# donde sono el disparo, no donde esta el ahora.
 						_ai_note_foe_intel(b, actor_node, sound_pos, "heard")
-					elif b.get("explore_target", Vector3.INF) == Vector3.INF or d <= 140.0:
+						if _bot_within_aim_sight(b, actor_node, proxy.global_position.distance_to(actor_node.global_position)):
+							b["aggro_target"] = actor_node
+							b["aggro_timer"] = 14.0
+						elif str(b.get("_act", "")) != "alert" and b.get("explore_target", Vector3.INF) == Vector3.INF:
+							b["explore_target"] = b["_foe_mem"]["pos"]
+					elif str(b.get("_act", "")) != "alert" and (b.get("explore_target", Vector3.INF) == Vector3.INF or d <= 140.0):
 						b["explore_target"] = sound_pos
 				elif d <= 95.0:
 					b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 10.0)
@@ -7099,6 +7131,8 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 
 	# Si el líder está bajo ataque de otro jugador/bot o depredador, asistirle
 	if mode == "stay":
+		if _bot_listen_for_shots(b):
+			return
 		b["sitting"] = true
 		b["crouching"] = false
 		b["anim"] = "sit"
@@ -7128,13 +7162,30 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 	# seguidor no vive pegado a él — recoge el botín de la zona de escolta
 	# (<=16 m) y hace rondas de vigilancia. Líder en marcha (sprint, su
 	# propio anim de paso o desplazamiento real) = seguirle, sin recados.
-	var leader_moving := bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true) \
+	var escort: Dictionary = b.get("_escort", {})
+	var leader_id := leader.get_instance_id()
+	if int(escort.get("leader", leader_id)) != leader_id:
+		escort = {}
+	escort["leader"] = leader_id
+	if not escort.has("heading"):
+		escort["heading"] = Vector3(-sin(leader.rotation.y), 0.0, -cos(leader.rotation.y))
+	var anchor: Vector3 = escort.get("heading_anchor", lpos)
+	var advance := Vector3(lpos.x - anchor.x, 0.0, lpos.z - anchor.z)
+	var moving_t := maxf(0.0, float(escort.get("moving_t", 0.0)) - delta)
+	if advance.length_squared() > 0.15 * 0.15:
+		escort["heading"] = advance.normalized()
+		anchor = lpos
+		moving_t = 0.35
+	escort["heading_anchor"] = anchor
+	escort["moving_t"] = moving_t
+	var leader_sprinting := bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false))
+	var leader_moving := moving_t > 0.0 or leader_sprinting or bool(leader.get_meta("moving", false)) \
 		or str(leader.get_meta("anim", "")) in ["walk", "run", "riflewalk", "riflerun", "sneak_walk", "stairs", "climb"]
 	if leader_moving:
-		var esc0: Dictionary = b.get("_escort", {})
-		esc0["pos"] = null
-		esc0["idle_t"] = 0.0
-		b["_escort"] = esc0
+		escort["pos"] = null
+		escort["idle_t"] = 0.0
+	b["_escort"] = escort
+	var leader_inside := _pos_in_house_bounds(lpos)
 	if not separated_by_structure:
 		var nearby_loot: Dictionary = b.get("_s_loot", {})
 		if not nearby_loot.is_empty():
@@ -7157,10 +7208,11 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 			elif grab_role == "forager":
 				idle_grab = 18.0
 			var grab_limit := 4.0 if leader_moving else idle_grab
-			if d_nl <= grab_limit and absf(cur.y - lp.y) <= 1.8 and dist <= 20.0:
+			if d_nl <= grab_limit and absf(cur.y - lp.y) <= 1.8 and dist <= 20.0 \
+					and (not leader_inside or _pos_in_house_bounds(lp)):
 				_move_bot_towards(b, lp, 4.2, delta, "walk")
 				return
-		if not leader_moving and _bot_escort_patrol(b, leader, delta):
+		if not leader_moving and not leader_inside and _bot_escort_patrol(b, leader, delta):
 			return
 	# Con amenaza a la vista el escolta no se mueve a su puesto de formacion:
 	# se queda quieto junto al lider listo para reaccionar.
@@ -7171,7 +7223,7 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 	# separado del lider (nada de fila india pegada a su espalda). La cuña es
 	# tactica de campo abierto — en interiores (casa, piso compartido) o con
 	# muro/escalera de por medio se va directo a la posicion real del lider.
-	var in_close := _pos_in_house_bounds(lpos) or _pos_in_house_bounds(cur)
+	var in_close := leader_inside or _pos_in_house_bounds(cur)
 	var fgoal := lpos if (separated_by_structure or in_close) else _bot_formation_slot(b, leader, lpos)
 	var d_goal := Vector2(cur.x - fgoal.x, cur.z - fgoal.z).length()
 	# Separado del lider por un muro/piso y sin progreso real hacia el: la
@@ -7192,10 +7244,17 @@ func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> voi
 	else:
 		b["_follow_sep_d"] = INF
 		b["_follow_stall"] = 0.0
-	if d_goal > 1.7 or separated_by_structure:
-		var leader_sprinting: bool = bool(leader.get("is_sprinting") == true or leader.get_meta("sprinting", false) == true)
-		var should_run: bool = not bool(b.get("crouching", false)) and (d_goal > 7.0 or (d_goal > 3.0 and leader_sprinting))
-		var spd := 6.8 if should_run else 4.2
+	var pacing := leader_moving and not in_close and not separated_by_structure
+	if d_goal > (0.2 if pacing else 1.7) or separated_by_structure:
+		# Catch up in one run; near a moving slot ease down to the leader's
+		# pace rather than stopping and restarting at the arrival radius.
+		var running := str(b.get("anim", "")) == "run"
+		var run_dist := 3.8 if running else 7.0
+		if leader_sprinting:
+			run_dist = 1.8 if running else 3.0
+		var should_run := not bool(b.get("crouching", false)) and d_goal > run_dist
+		var walk_speed := minf(4.2, d_goal * 2.0) if pacing else 4.2
+		var spd := 6.8 if should_run else walk_speed
 		var clip := "run" if should_run else "walk"
 		_move_bot_towards(b, fgoal, spd, delta, clip)
 	else:
@@ -7681,14 +7740,10 @@ func _bot_formation_slot(b: Dictionary, leader: Node3D, lpos: Vector3) -> Vector
 	var proxy: Node3D = b["proxy"]
 	var dir := Vector3(-sin(leader.rotation.y), 0.0, -cos(leader.rotation.y))
 	var esc: Dictionary = b.get("_escort", {})
-	var lprev: Variant = esc.get("ldir_pos", null)
-	if lprev is Vector3:
-		var dm := lpos - (lprev as Vector3)
-		dm.y = 0.0
-		if dm.length() > 0.15:
-			dir = dm.normalized()
-	esc["ldir_pos"] = lpos
-	b["_escort"] = esc
+	# Position snapshots repeat between packets; keep the last measured
+	# travel heading instead of switching to the direction of the gaze.
+	if int(esc.get("leader", 0)) == leader.get_instance_id():
+		dir = esc.get("heading", dir)
 	var right := Vector3(-dir.z, 0.0, dir.x)
 	var off := Vector3.ZERO
 	match _bot_member_role(b):
@@ -12717,8 +12772,11 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 			continue
 		var dblk: Dictionary = blk
 		var hb: Rect2 = dblk["house_bounds"]
-		var cur_in := hb.grow(-0.25).has_point(p_cur)
-		var goal_in := hb.grow(0.8).has_point(p_goal)
+		# Use the same boundary both ways: outdoor loot beside a facade
+		# must not become an indoor destination every time the bot exits.
+		var interior := hb.grow(-0.25)
+		var cur_in := interior.has_point(p_cur)
+		var goal_in := interior.has_point(p_goal)
 		if cur_in == goal_in:
 			continue
 		var bpos: Vector3 = dblk.get("pos", Vector3.ZERO)
@@ -13084,6 +13142,17 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 		var path: Array = b["path"]
 		var prev_pgoal: Vector3 = b.get("_path_goal", Vector3.INF) if b.get("_path_goal") is Vector3 else Vector3.INF
 		var goal_shifted: bool = prev_pgoal == Vector3.INF or Vector2(goal.x - prev_pgoal.x, goal.z - prev_pgoal.z).length() > 2.5
+		# A new destination on the opposite side supersedes the old path
+		# immediately. Compare commanded goals, not bends on the same route.
+		if goal_shifted and not path.is_empty() and prev_pgoal.is_finite() and float(b["path_timer"]) > 1.2 \
+				and previous_waypoint.is_finite() and previous_waypoint != goal:
+			var old_dir := Vector2(previous_waypoint.x - cur.x, previous_waypoint.z - cur.z)
+			if old_dir.dot(Vector2(goal.x - cur.x, goal.z - cur.z)) < 0.0:
+				# Use checked local steering until the next allowed nav query.
+				path = []
+				b["path"] = path
+				b["path_idx"] = 0
+				b["_path_goal"] = Vector3.INF
 		if float(b["path_timer"]) <= 0.0 or (goal_shifted and float(b["path_timer"]) <= 1.2):
 			var _npt := Time.get_ticks_usec()
 			b["path"] = bot_nav_ref.find_path(cur, goal)
@@ -13594,18 +13663,24 @@ func _bot_is_freezing(b: Dictionary) -> bool:
 	var enter_thresh := 35.45 + minf(0.25, float(cold_lessons) * 0.08)
 	var exit_thresh := enter_thresh + 0.20
 	var active := bool(b.get("_cold_alert", false))
+	# Leaving a dry roof at its winter equilibrium needs a re-entry margin
+	# too. Otherwise the first step out immediately recalls the follower.
+	if st.body_temperature < 35.45 or st.body_temperature >= exit_thresh or st.wetness > 0.12 or _is_world_night():
+		b.erase("_cold_departure")
+	elif st.body_temperature >= 35.58 and (active or st.body_temperature < enter_thresh) \
+			and not b.has("_cold_departure") and world != null:
+		var proxy: Node3D = b.get("proxy")
+		if is_instance_valid(proxy) and _bot_is_sheltered(b, proxy.global_position):
+			b["_cold_departure"] = true
+	if b.has("_cold_departure"):
+		b["_cold_alert"] = false
+		return false
 	if st.body_temperature < enter_thresh:
 		b["_cold_alert"] = true
 		return true
 	if not active:
 		return false
 	if st.body_temperature >= exit_thresh and st.wetness <= 0.35:
-		b["_cold_alert"] = false
-		return false
-	var proxy = b.get("proxy")
-	if proxy is Node3D and is_instance_valid(proxy) and not _is_world_night() \
-			and st.wetness <= 0.12 and st.body_temperature >= 35.58 \
-			and _bot_is_sheltered(b, (proxy as Node3D).global_position):
 		b["_cold_alert"] = false
 		return false
 	return true
@@ -14026,6 +14101,8 @@ func _bot_needs_awake_care(st: SurvivalStats, waking := false) -> bool:
 # Condiciones para tumbarse a dormir en el punto de descanso (llamado desde el
 # bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
 func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
+	if float(b.get("_shot_alert_t", 0.0)) > 0.0:
+		return false
 	var st: SurvivalStats = b.get("vstats")
 	var proxy: Node3D = b.get("proxy")
 	# Colapso por agotamiento letal: el cuerpo se apaga aunque este escondido
@@ -14284,6 +14361,8 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 	# quedarse de pie hasta el amanecer — el desgaste dormido es x0.3 y
 	# el despertar de _bot_should_wake cubre hambre/sed letales y frio.
 	b["_act"] = "need_light"
+	if _bot_listen_for_shots(b):
+		return true
 	if _bot_try_start_sleep(b, true):
 		return true
 	b["anim"] = "idle"
@@ -19665,6 +19744,11 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 
 func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> bool:
 	var proxy: Node3D = b["proxy"]
+	var st: Dictionary = b.get("_gather", {})
+	# The daytime chores pass runs before cold rescue. Yield without
+	# cancelling the rescue job that resumes later in the same tick.
+	if not fire_rescue and bool(st.get("fire_rescue", false)) and _bot_is_freezing(b):
+		return false
 	var needs_fire := _bot_needs_campfire(b)
 	var tronco_need := 2 if needs_fire else 0
 	var fire_sticks := _bot_fire_stick_reserve(b)
@@ -19729,13 +19813,11 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 			and not _bot_is_exhausted(b) \
 			and (not _bot_is_freezing(b) or freezing_rescue) \
 			and (_sensed_node(b, "_s_leader") == null or (palo_need <= fire_sticks + 1 and piedra_need <= 2))
-	var st0: Dictionary = b.get("_gather", {})
 	if not allowed:
-		if not st0.is_empty():
-			_bot_release_gather_claim(b, st0)
+		if not st.is_empty():
+			_bot_release_gather_claim(b, st)
 			b["_gather"] = {}
 		return false
-	var st: Dictionary = b.get("_gather", {})
 	if not st.is_empty():
 		var aid := str(st.get("id", ""))
 		var apos = st.get("pos")
@@ -19815,6 +19897,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 		b["_prep_logged"] = true
 		record_bot_event(int(b["bot_id"]), "night_prep", "self", _poi_kind_near(proxy.global_position), proxy.global_position,
 			"junta fuego/luz: " + str(target.get("kind", "fell_bush")))
+	target["fire_rescue"] = freezing_rescue
 	b["_gather"] = target
 	return _bot_try_gather_mats(b, 0.0, fire_rescue)
 

@@ -3928,8 +3928,8 @@ func run() -> void:
 	check(float(fresh_b.get("caution_until", 0.0)) >= 10.0 and float(fresh_b.get("flee_until", 0.0)) >= 8.0 and mgr.bot_knows_event(902, "heard_gunshot"),
 		"SpawnReal 10o: bot desarmado a 85 m oye el disparo de rifle, registra heard_gunshot y entra en cautela/huida")
 	mgr.notify_sound_event(902, fresh_b["proxy"].global_position, "gunshot", 220.0)
-	check(kael_b.get("aggro_target") == fresh_b["proxy"],
-		"SpawnReal 10p: bot hostil armado a 85 m oye el disparo y localiza al tirador")
+	check(kael_b.get("aggro_target") == null and kael_b.get("_foe_mem", {}).get("src", "") == "heard",
+		"SpawnReal 10p: a 85 m sin contacto visual conserva una pista, no un blanco vivo")
 
 	# 10q: sin refugio construido, un bot con Pez crudo + Palo afilado +
 	# 2 Troncos + 1 Palo crea hoguera, ensarta el pez (Pez ensartado) y lo
@@ -4215,13 +4215,18 @@ func run() -> void:
 		"SpawnReal 10w2: dormir recupera el sueño (%.1f->%.1f)" % [sleep0, vs.sleep])
 	check(str(mgr._bot_effective_net_anim(fresh_b)) == "sleep",
 		"SpawnReal 10w3: el avatar remoto muestra la pose de dormir")
-	mgr.notify_sound_event(777, fresh_b["proxy"].global_position + Vector3(4.0, 0.0, 0.0), "gunshot", 220.0)
+	world._net_player_shot_rifle(777, fresh_b["proxy"].global_position + Vector3(4.0, 0.0, 0.0), Vector3.RIGHT)
 	check(not bool(fresh_b["sleeping"]),
 		"SpawnReal 10w4: un disparo cercano lo despierta")
 	fresh_b["caution_until"] = 0.0
 	fresh_b["flee_until"] = 0.0
 	vs.sleep = 60.0
-	mgr._tick_bot(fresh_b, 0.1)
+	for i in 60:
+		mgr._tick_bot(fresh_b, 0.1)
+	check(not bool(fresh_b["sleeping"]) and not bool(fresh_b["sitting"]) and mgr._bot_effective_net_anim(fresh_b) == "sneak",
+		"SpawnReal 10w4b: seis segundos despues del disparo sigue de guardia, incluso sin ver al tirador")
+	for i in 25:
+		mgr._tick_bot(fresh_b, 0.1)
 	check(bool(fresh_b["sleeping"]),
 		"SpawnReal 10w5: pasado el susto vuelve a tumbarse a dormir")
 	dc.time_of_day = 8.0
@@ -6548,6 +6553,19 @@ func run() -> void:
 	b_nt["aggro_target"] = null
 	b_nt["_escort"] = {}
 	b_nt["_s_loot"] = {}
+	var old_house := world.house_rect
+	var guard_pos := p_nt.global_position
+	world.house_rect = Rect2(guard_pos.x - 3.0, guard_pos.z - 3.0, 6.0, 6.0)
+	esc_leader.global_position = guard_pos + Vector3.RIGHT
+	b_nt["_escort"] = {"idle_t": 30.0, "n": 0}
+	b_nt["_s_loot"] = {"id":"exterior", "name":"Palo", "pos":guard_pos + Vector3(0, 0, 8)}
+	for i in 30:
+		mgr._tick_teammate_behavior(b_nt, esc_leader, 0.1)
+	check(p_nt.global_position.distance_to(guard_pos) < 0.2,
+		"10J5p6: el escolta no abre una salida sin destino tras botin o una ronda fuera de la casa de su lider")
+	world.house_rect = old_house
+	b_nt["_s_loot"] = {}
+	b_nt["_escort"] = {}
 	b_nt["team_leader_id"] = 0
 	esc_leader.queue_free()
 
@@ -8009,6 +8027,13 @@ func run() -> void:
 		"10Z3: seco y bajo techo de dia a 35.78 C sale del bloqueo por frio aunque acumule lecciones")
 	b_hyp["sitting"] = false
 	world.house_rect = Rect2(300000.0, 300000.0, 4.0, 4.0)
+	st_hyp.body_temperature = 35.66
+	check(not mgr._bot_vital_break(b_hyp),
+		"10Z3: salir de la casa con el equipo no invierte el destino al cruzar la puerta")
+	st_hyp.wetness = 0.5
+	check(mgr._bot_vital_break(b_hyp),
+		"10Z3: si se moja a esa misma temperatura vuelve a necesitar rescate")
+	st_hyp.wetness = 0.0
 
 	# 10Z4: los solares nunca caen fuera de la malla de navegacion ([556, 856]) y
 	# un bot desarmado recoge piedra para lascar su primera Piedra afilada.
@@ -8072,6 +8097,31 @@ func run() -> void:
 	var d1_5a := Vector2(p_hyp.global_position.x - fire5a.x, p_hyp.global_position.z - fire5a.z).length()
 	check(d1_5a < d0_5a - 4.0 or str(b_hyp.get("_act", "")) in ["rest", "fire_rescue"],
 		"10Z5a: helado critico (34.9) con hambre 20 camina al fuego aunque pase hambre (d=%.1f->%.1f act=%s)" % [d0_5a, d1_5a, str(b_hyp.get("_act", ""))])
+	# A cold bot with an axe can finish a local rescue instead of shuttling
+	# between the tree to the west and the distant refuge to the east.
+	p_hyp.global_position = Vector3(280, 0.4, 300)
+	b_hyp["pos"] = p_hyp.global_position
+	b_hyp["hunger"] = 85.0
+	b_hyp["thirst"] = 85.0
+	st_hyp.body_temperature = 34.5
+	b_hyp["_fire_tree_count"] = 0
+	b_hyp["_gather"] = {}
+	b_hyp["_gather_scan"] = 0.0
+	p_hyp.set_meta("saved_inventory", [{"name":"Hacha","type":"tool_axe","quantity":1,"durability":80.0},
+		{"name":"Palo","type":"resource","quantity":1}, {"name":"Cerillas","quantity":1,"durability":5.0}])
+	var rescue_tree := WorldActionScript.new()
+	rescue_tree.setup("rescue_tree", "fell_tree", "Tree", Vector3.ONE, Color.BROWN, false, false)
+	world.add_child(rescue_tree)
+	rescue_tree.global_position = p_hyp.global_position + Vector3.LEFT * 8.0
+	world.world_actions_by_id["rescue_tree"] = rescue_tree
+	mgr._cached_wa_size = -1
+	for i in 180:
+		mgr._tick_bot(b_hyp, 0.1)
+		if world._depleted_action_ids.has("rescue_tree"):
+			break
+	check(world._depleted_action_ids.has("rescue_tree") and p_hyp.global_position.distance_to(rescue_tree.global_position) <= 3.0,
+		"10Z5c: daytime rescue reaches the tree and finishes chopping before resuming other travel (act=%s, pos=%s)" % [b_hyp.get("_act"), p_hyp.global_position])
+	rescue_tree.queue_free()
 	world.world_actions_by_id = wa_bak5a
 	world.wildlife_blockers = wb_bak5a
 	world._built_shelters = sh_bak5a

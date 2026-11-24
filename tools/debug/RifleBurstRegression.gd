@@ -1,6 +1,12 @@
 extends SceneTree
 class World extends Node3D:
 	var hud = null
+	var survivor_bot_mgr = null
+class Listener extends Node:
+	var origins: Array[Vector3] = []
+	func notify_sound_event(id: int, origin: Vector3, kind: String, radius: float):
+		if id == 1 and kind == "gunshot" and radius == 220.0:
+			origins.append(origin)
 class Actor extends "res://scripts/PlayerController.gd":
 	var test_item
 	var shots := 0
@@ -29,6 +35,9 @@ func check(ok: bool, label: String):
 func _initialize(): call_deferred("run")
 func run():
 	var scene:=World.new();root.add_child(scene);current_scene=scene
+	var listener := Listener.new()
+	scene.add_child(listener)
+	scene.survivor_bot_mgr = listener
 	var actor:=Actor.new();scene.add_child(actor)
 	actor.camera=Camera3D.new();actor.add_child(actor.camera)
 	actor.stats=preload("res://scripts/SurvivalStats.gd").new()
@@ -36,6 +45,7 @@ func run():
 	for i in 3: actor.play_rifle_shot_remote(Vector3.ZERO, Vector3.FORWARD)
 	await create_timer(.3).timeout
 	check(actor.shots==3 and actor.flashes==3,"Three received bullets must produce exactly three projectiles and flashes")
+	check(listener.origins.is_empty(), "puppet visuals do not report local shots")
 	actor.is_puppet=false;actor._puppet_held=""
 	actor.camera.position = Vector3(0, 2, 6.5)
 	actor._rifle_muzzle = Marker3D.new()
@@ -45,6 +55,7 @@ func run():
 	actor.test_item=item_script.create(actor.M4_NAME,"weapon_rifle",3.0,1,0.0)
 	for mode in ["complete", "reload", "swap", "reequip", "death", "last_round"]:
 		actor.shot_origins.clear()
+		listener.origins.clear()
 		actor.shots=0;actor.sounds=0;actor._shoot_cooldown=0;actor._is_reloading=false;actor.is_dead=false
 		actor.stats.energy=100;actor._m4_magazine=1 if mode=="last_round" else 30
 		actor._m4_reserve_ammo=60
@@ -57,6 +68,7 @@ func run():
 		await create_timer(.3).timeout
 		var expected:=3 if mode=="complete" else 1
 		check(actor.shots==expected,"Pending shots follow cancellation rules: "+mode)
+		check(listener.origins == actor.shot_origins, "local bots hear each fired round at its origin, never a cancelled round: "+mode)
 		check(actor._m4_magazine==(0 if mode=="last_round" else 30-expected),"Only fired rounds consume ammunition: "+mode)
 		check(actor.sounds==actor.shots,"Every real M4 round plays exactly one shot sound: "+mode)
 		for origin in actor.shot_origins:
