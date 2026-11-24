@@ -4,6 +4,8 @@ class_name SurvivalStats
 signal changed
 signal died
 
+const HEAT_DAMAGE_TEMP := 37.8
+
 @export var max_health := 100.0
 @export var max_stat := 100.0
 var health := 100.0
@@ -182,7 +184,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		health = max(0.0, health - 0.5 * delta)
 	if body_temperature < 34.5:
 		health = max(0.0, health - 1.5 * delta)
-	if body_temperature > 37.8:
+	if body_temperature > HEAT_DAMAGE_TEMP:
 		health = max(0.0, health - 1.0 * delta)
 	if body_temperature > 39.0:
 		health = max(0.0, health - 3.0 * delta)

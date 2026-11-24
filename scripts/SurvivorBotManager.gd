@@ -14203,6 +14203,8 @@ func _on_bot_stats_died(b: Dictionary) -> void:
 			kind = "sick"
 		elif st.sleep <= 10.0:
 			kind = "exhausted"
+		elif st.body_temperature > SurvivalStats.HEAT_DAMAGE_TEMP:
+			kind = "heatstroke"
 	_kill_bot(b, kind)
 
 # Anillo templado de la lumbre: el calor de fogata llega hasta 4 m con
@@ -14279,6 +14281,25 @@ func _bot_fire_safe_spot_impl(pos: Vector3, y: float, b = null) -> Vector3:
 		return pos
 	return cand
 
+# Use the registered door, not a radial goal on the other side of a wall.
+func _bot_hot_room_exit(cur: Vector3, fire: Vector3) -> Vector3:
+	if absf(cur.y - fire.y) >= 2.5 or world == null or not ("wildlife_blockers" in world):
+		return Vector3.INF
+	if world.has_method("_is_player_in_house") and not world._is_player_in_house(cur):
+		return Vector3.INF
+	for blk in world.wildlife_blockers:
+		if not (blk is Dictionary) or not blk.has("door_center") or not blk.has("door_out_dir"):
+			continue
+		var room: Rect2 = blk.get("house_bounds", Rect2())
+		if not room.has_point(Vector2(cur.x, cur.z)) or not room.has_point(Vector2(fire.x, fire.z)):
+			continue
+		var door: Vector3 = blk.door_center
+		var out_dir: Vector2 = blk.door_out_dir
+		var landing := door + Vector3(out_dir.x, 0, out_dir.y) * 4.8
+		if not _is_pos_blocked(landing, 0.42):
+			return landing
+	return Vector3.INF
+
 # Termostato de campamento: la lumbre empuja la temperatura hacia 38 °C
 # con la misma curva que al jugador — pegado a las brasas te cocinas
 # ("succumbed" invisible), en el borde frio te hielas. Regula la distancia
@@ -14311,10 +14332,32 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 		fp = own_fp
 	if fp == Vector3.INF:
 		b.erase("_fire_band")
+		b.erase("_fire_exit")
 		return false
 	var d := Vector2(proxy.global_position.x - fp.x, proxy.global_position.z - fp.z).length()
 	var dir2 := Vector2(proxy.global_position.x - fp.x, proxy.global_position.z - fp.z)
 	var dir := dir2.normalized() if dir2.length() > 0.05 else Vector2(1.0, 0.0)
+	var escape: Dictionary = b.get("_fire_exit", {})
+	if escape.is_empty() and d < 4.15 and (d < 0.85 or st.body_temperature > SurvivalStats.HEAT_DAMAGE_TEMP):
+		var exit_goal := _bot_hot_room_exit(proxy.global_position, fp)
+		if exit_goal.is_finite():
+			escape = {"goal": exit_goal, "left": 8.0}
+			b["_fire_exit"] = escape
+	if not escape.is_empty():
+		# Finish crossing even if the door takes us out of the heating radius mid-step.
+		escape.left -= delta
+		if escape.left > 0.0:
+			var goal: Vector3 = escape.goal
+			if Vector2(goal.x - proxy.global_position.x, goal.z - proxy.global_position.z).length() > 0.35:
+				b["_act"] = "cool_off"
+				b["crouching"] = false
+				_move_bot_towards(b, goal, 3.8, delta, "walk")
+				return true
+			if d >= 4.15 and st.body_temperature > GameConst.BOT_HEAT_RECOVERY_TEMP and not _bot_under_immediate_threat(b):
+				b["_act"] = "cool_off"
+				_stop_bot_motion(b)
+				return true
+		b.erase("_fire_exit")
 	# Pisar las brasas (-5 hp/s): salir siempre, incluso en combate — medio
 	# metro de paso es supervivencia, no desatender la amenaza. Aunque el
 	# punto de salida este tapado se intenta: salir del fuego es urgente.
@@ -14327,7 +14370,7 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 		return true
 	# Amenaza inmediata manda sobre el confort termico — salvo dano letal ya
 	# en curso: cocinarse vivo mientras se pelea tampoco es defenderse.
-	var lethal_thermal := st.body_temperature >= 37.8 or st.body_temperature <= 34.5
+	var lethal_thermal := st.body_temperature >= SurvivalStats.HEAT_DAMAGE_TEMP or st.body_temperature <= 34.5
 	if not lethal_thermal and _bot_under_immediate_threat(b):
 		return false
 	# Una bebida en marcha (caminata a la orilla o el trago de 2.6 s) no se

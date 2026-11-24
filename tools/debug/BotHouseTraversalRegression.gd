@@ -5,9 +5,11 @@ const CityExpansion = preload("res://scripts/CityExpansion.gd")
 class World extends "res://scripts/Main.gd":
 	func _ready() -> void: set_process(false); set_physics_process(false)
 	func _exit_tree() -> void: pass
+	func _spawn_remote_player(_id: int) -> void: pass
 	func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float: return .025
 class Manager extends SurvivorBotManager:
 	func _bot_carry_ratio(_b: Dictionary) -> float: return 0.0
+	func _kill_bot(b: Dictionary, cause: String) -> void: b["death_cause"] = cause
 	func _abandon_unreachable_goal(b: Dictionary, _goal: Vector3) -> void: b["abandoned"] = true
 	func _ai_note_loot(_b: Dictionary, _nm: String, _tp: String) -> void: pass
 	func _auto_equip_best_gear(_b: Dictionary) -> void: pass
@@ -40,6 +42,57 @@ func travel(goal: Vector3, label: String) -> void:
 		if tick % 10 == 0: await physics_frame
 	check(actor.position.distance_to(goal)<.4,"%s reaches goal: %s -> %s waypoint=%s" % [label,actor.position,goal,b.get("_interior_last_waypoint")])
 	check(not crossed,label+" crosses no walls")
+
+func hot_house_escape() -> void:
+	var fire := Vector3(-20,0,30)
+	var pit := WorldAction.new()
+	world.add_child(pit)
+	pit.position = fire
+	world.world_actions_by_id["hot_house"] = pit
+	check(world._net_campfire_lit("hot_house","TestHouseFire",fire),"house 10 fire is burning")
+	var door := world.get_node("Casa abandonada 10 Door") as Door
+	door.set_open(false,false)
+	if door._tween != null: door._tween.custom_step(1.0)
+	world._server_door_states[door.name] = false
+	world._refresh_nav_door_caches()
+	world.day_cycle = DayNightCycle.new()
+	world.day_cycle.process_mode = Node.PROCESS_MODE_DISABLED
+	world.day_cycle.time_of_day = 23.0
+	world.add_child(world.day_cycle)
+	manager._spawn_bot(manager.BOT_CONFIGS[1])
+	var b: Dictionary = manager.bots[902]
+	var carlos: Node3D = b.proxy
+	carlos.position = Vector3(-20.5,.1,30.7)
+	carlos.set_meta("proxy_health",14.0)
+	b.merge({"pos":carlos.position,"health":14.0,"hide_timer":5.0,"sleeping":true},true)
+	var st: SurvivalStats = b.vstats
+	st.body_temperature = 37.95
+	var crossed := 0
+	var through_door := true
+	var min_hp := float(b.health)
+	for i in 400:
+		var before := carlos.position
+		manager._tick_bot(b,.05)
+		min_hp = minf(min_hp,st.health)
+		if st.dead: break
+		if world._is_player_in_house(before) != world._is_player_in_house(carlos.position):
+			crossed += 1
+			through_door = through_door and door.is_open and absf(carlos.position.x + 20.0) < 1.0 and carlos.position.z > 33.0
+		if door._tween != null and door._tween.is_running(): door._tween.custom_step(.05)
+		if i % 5 == 0: await physics_frame
+	print("Hot house 10: crossings=%d min_hp=%.2f final_hp=%.2f temp=%.2f" % [crossed,min_hp,st.health,st.body_temperature])
+	check(crossed == 1 and through_door and not world._is_player_in_house(carlos.position),
+		"hot house 10: escapes through the door once (pos=%s crossings=%s)" % [carlos.position,crossed])
+	check(not st.dead and st.body_temperature < 37.8 and st.health > min_hp and min_hp < 14.0,
+		"hot house 10: thermal damage stops and health recovers (min=%.2f hp=%.2f temp=%.2f)" % [min_hp,st.health,st.body_temperature])
+	# Same exposure without an escape: the fatal tick must name the damage.
+	carlos.position = fire + Vector3(1,0,0)
+	b.health = .04
+	st.dead = false
+	st.body_temperature = 37.95
+	manager._bot_survival_tick(b,.05)
+	check(b.get("death_cause") == "heatstroke","fatal moderate overheating is not an unexplained death")
+
 func run() -> void:
 	world = World.new()
 	root.add_child(world)
@@ -118,6 +171,7 @@ func run() -> void:
 			actor.position = origin+Vector3(9,0,side*6)
 			await travel(origin,"barn %s enter %s" % [origin,side])
 			await travel(origin+Vector3(-9,0,side*6),"barn %s exit %s" % [origin,side])
+	await hot_house_escape()
 	print("BotHouseTraversal: checks=%d errors=%d" % [checks,errors])
 	actor.free(); manager.free(); world.free()
 	quit(1 if errors else 0)
