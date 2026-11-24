@@ -285,6 +285,7 @@ static func apply(m, bot_id: int, content: String, source: String = "qwen", prev
 	m._ai_stat_inc(b, "steps_started")
 	b["_ai_last_apply"] = "applied"
 	print("[AI-ADV] %s: %s -> %s (p=%d, %s)" % [str(b.get("name", bot_id)), str(d.get("goal", "?")), str(d.get("action", "?")), int(d.get("priority", 3)), str(d.get("reason", ""))])
+	m._bot_trip_water_review(bot_id, b, d)
 	return true
 
 static func checkpoint(b: Dictionary, now: int) -> void:

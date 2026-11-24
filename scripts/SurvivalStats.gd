@@ -219,6 +219,11 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 		dead = true
 		died.emit()
 
+static func wound_severity(cause: String) -> float:
+	if cause == "bear_bite":
+		return 1.5
+	return 1.0 if cause == "melee" or cause.ends_with("_bite") else 0.0
+
 func apply_bleeding(amount: float) -> void:
 	if dead or amount <= 0.0:
 		return

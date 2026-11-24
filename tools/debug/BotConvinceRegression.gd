@@ -193,11 +193,19 @@ func run() -> void:
 	check(foe == human, "Kael hostil armado toma al jugador cercano como objetivo")
 
 	# --- 3) Tregua por chat: deja de disparar al emisor ---
+	kael["_s_foe"] = human
+	kael["aggro_target"] = human
+	kael["is_aiming"] = true
 	mgr.on_chat_received(903, 7, "Tester", "alto ahi, basta de disparar")
 	check(int(kael.get("_truce_peer", 0)) == 7 and float(kael.get("_truce_t", 0.0)) > 0.0,
 		"'alto ahi' activa la tregua (_truce_peer=7, _truce_t>0)")
 	foe = mgr._find_combat_foe(kael)
 	check(foe != human, "Con tregua vigente Kael ya no apunta al jugador")
+	check(kael["_s_foe"] == null and not kael["is_aiming"], "La tregua baja el arma sin esperar otro escaneo")
+	# A delayed team report can arrive after the chat response.
+	kael["aggro_target"] = human
+	kael["aggro_timer"] = 25.0
+	check(mgr._find_combat_foe(kael) != human and kael["aggro_target"] == null, "Un aviso atrasado no rompe la tregua")
 	kael["_truce_t"] = 0.0 # expira la tregua para el resto del test
 
 	# --- 4) "sigueme" con confianza baja NO convierte; la respuesta llega al chat ---
@@ -362,6 +370,79 @@ func run() -> void:
 		"Sin Groq la revision local asigna un objetivo ejecutable")
 	check(str((kael2.get("ai_directive", {}) as Dictionary).get("action", "")) != "",
 		"El objetivo local lleva una accion del catalogo")
+
+	# The leader calls a rendezvous, then leaves the meeting point. This
+	# order must work even if the follower was waiting with a cached foe.
+	var member: Dictionary = mgr2.bots[901]
+	var follower: Node3D = member.proxy
+	follower.global_position = Vector3(390, 0.4, 390)
+	member["pos"] = follower.global_position
+	member["team_leader_id"] = 7
+	member["follow_mode"] = "stay"
+	member["sense_t"] = 1000.0
+	member["_s_foe"] = mgr2.bots[902].proxy
+	member["aggro_target"] = member["_s_foe"]
+	member["aggro_timer"] = 20.0
+	human.global_position = follower.global_position + Vector3(12, 0, 0)
+	var meeting := human.global_position
+	var mate: Dictionary = mgr2.bots[903]
+	var far_mate: Dictionary = mgr2.bots[904]
+	mate["team_leader_id"] = 7
+	mate.proxy.global_position = meeting + Vector3(8,0,0)
+	far_mate["team_leader_id"] = 7
+	far_mate.proxy.global_position = meeting + Vector3(80,0,0)
+	mgr2.on_chat_received(901, 8, "Otro", "reagrupaos")
+	check(not member.has("_regroup"), "Otro jugador no puede retirar al equipo")
+	human.position.x += 100.0
+	mgr2.on_chat_received(901, 7, "Tester", "reagrupaos")
+	check(not member.has("_regroup"), "Una llamada fuera de alcance no mueve al equipo")
+	human.global_position = meeting
+	mgr2.on_chat_received(901, 7, "Tester", "¡Reagrupaos!")
+	check(member.has("_regroup") and member["follow_mode"] == "follow", "El lider llama al equipo incluso durante un encuentro")
+	check(mate.has("_regroup") and not far_mate.has("_regroup"), "Solo se suman los miembros al alcance de la llamada plural")
+	mgr2.on_chat_received(903, 7, "Tester", "quedate aqui")
+	check(not mate.has("_regroup") and mate["follow_mode"] == "stay", "Una nueva orden de esperar sustituye la reunion")
+	human.position.z += 25.0
+	var walked := false
+	for i in 100:
+		mgr2._tick_bot(member, 0.1)
+		walked = walked or member.get("_act") == "regroup"
+		if not member.has("_regroup"): break
+	check(walked and not member.has("_regroup") and follower.global_position.distance_to(meeting) <= 3.0,
+		"Llega por sus medios al punto comunicado, no a la posicion oculta posterior del lider")
+
+	# Autonomous case: an independent bot leader just used its own dressing.
+	# A busy follower cannot abandon an immediate danger on someone else's say-so.
+	member["team_leader_id"] = 0
+	member["_s_foe"] = null
+	member["_shot_alert_t"] = 0.0
+	member["_last_attacker_msec"] = -999999
+	mate["team_leader_id"] = 901
+	mgr2._chat_touch_rel(903, "bot_901", "Elena")["trust"] = 0.8
+	mate["follow_mode"] = "follow"
+	mate["aggro_target"] = null
+	far_mate["team_leader_id"] = 901
+	far_mate["follow_mode"] = "follow"
+	mgr2._set_bot_faction(far_mate, "friendly")
+	far_mate.proxy.global_position = meeting + Vector3(15,0,0)
+	far_mate["_s_predator"] = human
+	member["vstats"].apply_bleeding(1.0)
+	follower.set_meta("saved_inventory", [{"name":"Venda", "type":"medical", "quantity":1, "use_value":24.0}])
+	mgr2._maintain_bot_needs(member, 0.1)
+	check(member["vstats"].bleeding == 0.0 and member.has("_regroup") and mate.has("_regroup") and not far_mate.has("_regroup"),
+		"Tras vendarse, el lider bot reune al companero libre y no reclama al que esta en peligro")
+	var waiting_at := follower.global_position
+	var waited := false
+	var arrived := false
+	for i in 90:
+		mgr2._tick_bot(member, 0.1)
+		waited = waited or member.get("_act") == "regroup_wait"
+		mgr2._tick_bot(mate, 0.1)
+		arrived = arrived or (not mate.has("_regroup") and mate.proxy.global_position.distance_to(waiting_at) <= 3.0)
+		if not member.has("_regroup"): break
+	check(waited and arrived and not member.has("_regroup"),
+		"El lider espera la llegada real y despues libera al grupo (lider=%s, miembro=%s, distancia=%.1f)" %
+		[member.get("_act"), mate.get("_act"), mate.proxy.global_position.distance_to(waiting_at)])
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(mem_path))
 	print("BotConvinceRegression: %d failures" % failures)

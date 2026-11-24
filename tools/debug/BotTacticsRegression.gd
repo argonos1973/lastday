@@ -121,6 +121,22 @@ func run():
 	check(manager._find_combat_foe(b5) == null, "stale clue drops the live target")
 	check(int(b5["_lost_foe_until_msec"]) == 0,
 		"a clue older than 120s does NOT arm a search")
+	var no_clue := b5.duplicate(true)
+	no_clue["aggro_target"] = foe
+	no_clue["_foe_mem"] = {}
+	no_clue["_last_foe_pos"] = Vector3.INF
+	no_clue["last_heard_pos"] = Vector3(-5,0,2)
+	no_clue["last_heard_actor"] = 72 # unrelated sound
+	no_clue["last_heard_until"] = Time.get_ticks_msec() / 1000.0 + 8.0
+	manager._find_combat_foe(no_clue)
+	check(no_clue["_lost_foe_pos"] == Vector3.INF and no_clue["aggro_target"] == null,
+		"a hidden actor cannot borrow someone else's noise as a search location")
+	no_clue["aggro_target"] = foe
+	no_clue["last_heard_pos"] = Vector3.INF
+	no_clue["_lost_foe_until_msec"] = 0
+	no_clue["_lost_foe_pos"] = Vector3.INF
+	manager._find_combat_foe(no_clue)
+	check(no_clue["_lost_foe_until_msec"] == 0, "no clue means no search at a hidden actor's live coordinates")
 	# Un aviso reciente de aliado sí arma búsqueda, pero más corta que una vista
 	var b6 := b2.duplicate(true)
 	b6["aggro_target"] = foe

@@ -315,6 +315,10 @@ const SHARE_MAX_RELS := 3
 # Minimo de compromiso con un objetivo vivo: una revalidacion remota de igual
 # o menor prioridad no desbanca una directiva mas joven que esta ventana.
 const AI_DIRECTIVE_MIN_COMMIT_SEC := 300.0
+const BOT_TRIP_WATER_THIRST := 58.0
+const BOT_TRIP_WATER_MIN_SEC := 18.0
+const BOT_TRIP_WATER_TIMEOUT_MSEC := 45000
+const BOT_TRIP_WATER_ARRIVE_M := 2.4
 const AI_MEMORY_SAVE_SEC := 90.0
 const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. State scales (0..100 reserves, HIGHER IS BETTER): hp=100 healthy/0 dead, hunger=100 full/0 starving, thirst=100 hydrated/0 dehydrated, sleep=100 rested/0 exhausted (<35 urgent, >75 satisfied — NEVER treat 75+ hunger/thirst as hungry or thirsty). Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. There is no combat action: aggression or self-defense is expressed only through movement goals — hunt targets wild game, explore/scavenge/avoid_zone position the bot. Never output attack, ambush, raid, steal, kill, chase or similar verbs. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
 var _ai_http: HTTPRequest = null
@@ -1838,6 +1842,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["tame_cooldown"] = maxf(0.0, float(b["tame_cooldown"]) - delta)
 	b["_tame_wait_t"] = maxf(0.0, float(b.get("_tame_wait_t", 0.0)) - delta)
 	b["eat_cooldown"] = maxf(0.0, float(b["eat_cooldown"]) - delta)
+	b["_medical_cooldown"] = maxf(0.0, float(b.get("_medical_cooldown", 0.0)) - delta)
 	b["sick_timer"] = maxf(0.0, float(b.get("sick_timer", 0.0)) - delta)
 	b["cook_cooldown"] = maxf(0.0, float(b["cook_cooldown"]) - delta)
 	b["_soc_t"] = maxf(0.0, float(b.get("_soc_t", 0.0)) - delta)
@@ -1876,18 +1881,6 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var needs_started := Time.get_ticks_usec()
 	_maintain_bot_needs(b, delta)
 	_pbm("maintain_needs", needs_started)
-
-	# Herida sangrante sin venda: se detiene a improvisar una (3 Trapos -> Venda;
-	# ropa + cuchillo -> Trapos). Se desangrar huyendo era la muerte "succumbed"
-	# mas habitual. En combate o huyendo no se para: primero zafarse.
-	var vst_med: SurvivalStats = b.get("vstats")
-	if vst_med != null and not vst_med.dead and vst_med.bleeding > 0.0 \
-			and _bot_item_count(proxy, "Venda") + _bot_item_count(proxy, "Vendaje") == 0 \
-			and b.get("aggro_target") == null and b.get("_s_predator") == null \
-			and float(b.get("flee_until", 0.0)) <= 0.0:
-		if _bot_try_craft_named(b, delta, ["Venda", "Trapos"], false):
-			b["_act"] = "firstaid"
-			return
 
 	# Si acaba de recibir un disparo o golpe, acusa el impacto (flinch) antes de
 	# reanudar movimiento o ataque, manteniendo la animacion shot/hit visible.
@@ -2047,6 +2040,22 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if _bot_camp_fire_standoff(b, delta):
 		return
 
+	# Check current senses and physical interruptions before settling to
+	# make a bandage. Starting this before the scan starved the scan itself.
+	var vst_med: SurvivalStats = b.get("vstats")
+	if vst_med != null and vst_med.bleeding > 0.0 and _sensed_node(b, "aggro_target") == null \
+			and _sensed_node(b, "_s_predator") == null and _sensed_node(b, "_s_foe") == null and float(b["flee_until"]) <= 0.0 \
+			and _bot_item_count(proxy, "Venda") + _bot_item_count(proxy, "Vendaje") == 0:
+		if _bot_try_craft_named(b, delta, ["Venda", "Trapos"], false):
+			b["_act"] = "firstaid"
+			return
+
+	if b.has("_regroup") and _bot_tick_regroup(b, delta):
+		return
+
+	if _bot_trip_water_tick(b, delta):
+		return
+
 	# La postura agachada vale solo para el tick en curso: cada rama que la
 	# quiere (acecho, cobertura, escondite, trabajo en cuclillas) la re-afirma
 	# dentro de su propio bloque. Si quedara pegada de un tick anterior, las
@@ -2138,7 +2147,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			and float(b["health"]) < 42.0 + float(_get_bot_personality(b).get("survival_instinct", 0.7)) * 22.0 - float(_get_bot_personality(b).get("bravery", 0.5)) * 14.0
 		var advised_retreat := int(b.get("_avoid_foe_until", 0)) > Time.get_ticks_msec() \
 			and int(b.get("_avoid_foe_id", 0)) == human_foe.get_instance_id()
-		if advised_retreat or ((float(b["health"]) < retreat_hp or fleeing or unarmed or outgunned) and not _has_combat_edge(b, human_foe)):
+		if _bot_critical_blood_loss(b) or advised_retreat or ((float(b["health"]) < retreat_hp or fleeing or unarmed or outgunned) and not _has_combat_edge(b, human_foe)):
 			if _bot_can_hide_from(sh_pos, human_foe):
 				b["hide_timer"] = 20.0
 				_move_bot_towards(b, sh_pos, 6.0, delta, "run")
@@ -2312,16 +2321,25 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if wp_pre != Vector3.INF and Vector2(proxy.global_position.x - wp_pre.x, proxy.global_position.z - wp_pre.z).length() < 9.0:
 			prevent_drink = true
 			b["drink_at"] = wp_pre
-	if (float(b["thirst"]) < thirsty_line or prevent_drink) and (not _bot_is_freezing(b) or float(b["thirst"]) < 22.0) \
-			and (float(b["thirst"]) < 18.0 or float(b.get("drink_giveup", 0.0)) <= 0.0) and not _bot_has_drink(proxy) and (leader == null or _bot_vital_break(b) or prevent_drink):
+	var trip_leg: Dictionary = b.get("_trip_water_leg", {})
+	var trip_drink := not trip_leg.is_empty() and str(trip_leg.get("done", "")) == "" and trip_leg.get("pos") is Vector3
+	if (float(b["thirst"]) < thirsty_line or prevent_drink or trip_drink) and (not _bot_is_freezing(b) or float(b["thirst"]) < 22.0) \
+			and (float(b["thirst"]) < 18.0 or float(b.get("drink_giveup", 0.0)) <= 0.0 or trip_drink) and not _bot_has_drink(proxy) and (leader == null or _bot_vital_break(b) or prevent_drink or trip_drink):
 		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
-			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
-			if float(b["drink_scan"]) <= 0.0:
-				b["drink_at"] = _bot_drink_destination(b)
+			if trip_drink:
+				var leg_pos: Vector3 = trip_leg["pos"]
+				b["drink_at"] = leg_pos
+				b["_reported_water"] = leg_pos
 				b["drink_walk_t"] = 0.0
 				b["_drink_best_d"] = INF
-				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
+			else:
+				b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
+				if float(b["drink_scan"]) <= 0.0:
+					b["drink_at"] = _bot_drink_destination(b)
+					b["drink_walk_t"] = 0.0
+					b["_drink_best_d"] = INF
+					b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
 		if b["drink_at"] != Vector3.INF and not _bot_supply_goal_allowed(b, b["drink_at"]):
 			# Solo la sed critica retiene una meta de agua no permitida (oscura
 			# o vetada): para el resto, reescanear a la espera de la urgencia.
@@ -2652,7 +2670,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			_bot_build_shelter(b, build_pos)
 			return
 
-	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)) and _can_bot_build_campfire(proxy):
+	if not str(b["shelter_id"]).is_empty() and str(b["campfire_id"]).is_empty() and not bool(b.get("no_fire_spot", false)) \
+			and _can_bot_build_campfire(proxy) and _bot_wants_fire_now(b) and _bot_needs_campfire(b):
 		b["_act"] = "campfire"
 		var fire_spot := _find_nearby_campfire_spot(b, sh_pos)
 		if fire_spot != Vector3.INF:
@@ -2777,7 +2796,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			return
 		# Dentro del refugio: encender fogata si se apagó, asar carne (solo si tiene Palo afilado / Carne ensartada) y descansar/ocultarse
 		if resting_at_home:
-			if _bot_try_light_own_fire(b, delta):
+			if (is_night or _is_pre_night() or _bot_fire_band_update(b) == "warm") and _bot_try_relight_campfire(b, delta):
 				return
 		# Sin fogata aun y con material a mano: la monta junto a donde acampa —
 		# los troncos y el palo que junto al caer la tarde se vuelven luz y
@@ -3127,6 +3146,10 @@ func _is_pos_already_visited(b: Dictionary, pos: Vector3) -> bool:
 	return false
 
 func _abandon_water_access(b: Dictionary) -> void:
+	var leg: Dictionary = b.get("_trip_water_leg", {})
+	if not leg.is_empty() and str(leg.get("done", "")) == "" and not bool(leg.get("failed", false)):
+		leg["failed"] = true
+		b["_trip_water_leg"] = leg
 	var now := Time.get_ticks_msec() / 1000.0
 	var failed: Vector3 = b["drink_at"]
 	var kept := []
@@ -3563,9 +3586,9 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 	var want_bandage := is_bleeding
 	if not want_bandage and hp_now < bandage_line:
 		want_bandage = hp_now < 45.0 or not can_regen or _bot_under_immediate_threat(b)
-	if want_bandage and pressed and hp_now >= 25.0 and not (is_bleeding and vst_b.bleeding >= 2.0):
+	if want_bandage and pressed and hp_now >= 25.0 and not (is_bleeding and (vst_b.bleeding >= 2.0 or _bot_critical_blood_loss(b))):
 		want_bandage = false
-	if want_bandage and float(b["eat_cooldown"]) <= 0.0:
+	if want_bandage and float(b.get("flinch_timer", 0.0)) <= 0.0 and (is_bleeding or float(b.get("_medical_cooldown", 0.0)) <= 0.0):
 		for i in range(inv.size()):
 			var it = inv[i]
 			if it is Dictionary and str(it.get("name", "")) in ["Venda", "Vendaje"] and int(it.get("quantity", 1)) > 0:
@@ -3587,8 +3610,10 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 				proxy.set_meta("proxy_health", new_hp)
 				proxy.set_meta("saved_health", new_hp)
 				proxy.set_meta("saved_inventory", inv)
-				b["eat_cooldown"] = 8.0
-				break
+				b["_medical_cooldown"] = 8.0
+				if is_bleeding:
+					_bot_reunite_after_care(b)
+				return
 	# Comer si tiene hambre o necesita recuperar vida. Si ya murio de inanicion
 	# aprendio a no apurar: come antes de llegar al limite.
 	var hunger_line := 60.0 + (16.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(16.0, float(int(d_lessons.get("starved", 0))) * 6.0)
@@ -3747,6 +3772,10 @@ func _bot_treatment_pressed(b: Dictionary) -> bool:
 		if n != null and proxy.global_position.distance_to(n.global_position) <= 10.0:
 			return true
 	return false
+
+func _bot_critical_blood_loss(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	return st != null and st.blood <= st.max_stat * 0.15
 
 func _garment_insulation(nm: String, wet: float) -> float:
 	var retain := PlayerController.WET_WARMTH_RETAIN_PELT if PlayerController.CLOTHING_WATER_RESIST.has(nm) else PlayerController.WET_WARMTH_RETAIN
@@ -4073,8 +4102,8 @@ func _is_near_any_lit_campfire(pos: Vector3, max_dist: float) -> bool:
 		return false
 	var r_sq := max_dist * max_dist
 	for lc in world._lit_campfires:
-		if _campfire_entry_alive(lc) and lc.get("pos") is Vector3:
-			if pos.distance_squared_to(lc["pos"] as Vector3) <= r_sq:
+		if _campfire_entry_alive(lc):
+			if pos.distance_squared_to(_campfire_entry_pos(lc)) <= r_sq:
 				return true
 	return false
 
@@ -4323,8 +4352,10 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 			candidates.append(sh_pos)
 	if world != null and "_lit_campfires" in world:
 		for lc in world._lit_campfires:
-			if _campfire_entry_alive(lc) and lc.get("pos") is Vector3:
-				var fpos: Vector3 = lc["pos"]
+			if _campfire_entry_alive(lc):
+				var fpos := _campfire_entry_pos(lc)
+				if not fpos.is_finite():
+					continue
 				# Fogata cuyo anillo ya resulto inalcanzable: no atrae como
 				# refugio termico hasta que el veto caduque y se reevalué.
 				if _bot_fire_vetoed(b, fpos):
@@ -5439,11 +5470,9 @@ func _bot_in_watch_zone(pos: Vector3) -> bool:
 func _bot_considers_foe(b: Dictionary, p3: Node3D) -> bool:
 	if p3 == b.get("proxy") or not is_instance_valid(p3):
 		return false
-	if bool(p3.get_meta("proxy_dead", false)) or not bool(p3.get_meta("has_real_pos", false)):
+	if _bot_stood_down(b, p3) or not bool(p3.get_meta("has_real_pos", false)):
 		return false
 	var pid := _peer_id_for_actor(p3)
-	if pid > 0 and int(b.get("_truce_peer", 0)) == pid and float(b.get("_truce_t", 0.0)) > 0.0:
-		return false
 	var is_bot := bool(p3.get_meta("is_ai_bot", false)) or is_bot_peer_id(pid)
 	if str(b["faction"]) == "hostile":
 		# Un hostil no ataca a otro hostil salvo rencor personal maximo.
@@ -5561,8 +5590,8 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 	if world == null or world.get_tree() == null:
 		return null
 	var proxy: Node3D = b["proxy"]
-	var aggro: Node3D = b.get("aggro_target")
-	if aggro != null and is_instance_valid(aggro) and not bool(aggro.get_meta("proxy_dead", false)) and aggro.get("is_dead") != true:
+	var aggro := _sensed_node(b, "aggro_target")
+	if aggro != null:
 		var d_aggro := proxy.global_position.distance_to(aggro.global_position)
 		if d_aggro < 130.0:
 			# El aggro no es un radar: sigue al enemigo solo mientras lo ve u
@@ -5588,15 +5617,13 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 					# Sin ficha de intel (estado heredado o rutas que solo
 					# fijan _last_foe_pos): era el enemigo que seguiamos.
 					anchor = b.get("_last_foe_pos", Vector3.INF)
-				# Si la ficha es de otro enemigo no ancla a este: el respaldo
-				# honesto es su posicion viva en el instante de perderlo.
-				if anchor == Vector3.INF and b.get("last_heard_pos", Vector3.INF) != Vector3.INF:
+				# No sighting: only a fresh sound from this same actor is a clue.
+				if anchor == Vector3.INF and int(b.get("last_heard_actor", 0)) > 0 \
+						and int(b["last_heard_actor"]) == _peer_id_for_actor(aggro) \
+						and float(b.get("last_heard_until", 0.0)) > Time.get_ticks_msec() / 1000.0:
 					anchor = b.get("last_heard_pos", Vector3.INF)
 					src = "heard"
 					persist *= 0.65
-				if anchor == Vector3.INF:
-					anchor = aggro.global_position
-					src = "seen"
 				if anchor != Vector3.INF and clue_age <= 120.0 and persist >= 2.5:
 					b["_lost_foe_pos"] = anchor
 					b["_lost_sector"] = Vector3.INF
@@ -5604,9 +5631,9 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 					b["_lost_scan_t"] = 0.0
 					b["_lost_foe_until_msec"] = Time.get_ticks_msec() + int(persist * 1000.0)
 					record_bot_event(int(b["bot_id"]), "lost_foe", _actor_persist_key(_peer_id_for_actor(aggro)), _poi_kind_near(anchor), anchor, "%s %.0fs (%.0fs)" % [src, persist, clue_age])
-			# El rastro termina: el nodo ya no revela su posicion viva.
-			b["aggro_target"] = null
-			b["aggro_timer"] = 0.0
+		# El rastro termina: el nodo ya no revela su posicion viva.
+		b["aggro_target"] = null
+		b["aggro_timer"] = 0.0
 
 	var faction := str(b["faction"])
 	var sight := 44.0 if faction == "hostile" else 28.0
@@ -5624,7 +5651,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 		for p in world.get_tree().get_nodes_in_group("net_player_proxy"):
 			if not (p is Node3D) or p == proxy or not is_instance_valid(p):
 				continue
-			if bool(p.get_meta("proxy_dead", false)) or not bool(p.get_meta("has_real_pos", false)):
+			if _bot_stood_down(b, p) or not bool(p.get_meta("has_real_pos", false)):
 				continue
 			if bool(p.get_meta("is_ai_bot", false)) and str(p.get_meta("bot_faction", "")) == "hostile":
 				# Ex-compañero con rencor maximo (p.ej. expulsado por traicion o el
@@ -5634,9 +5661,6 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 					continue
 			var p3 := p as Node3D
 			var pid3 := _peer_id_for_actor(p3)
-			# Tregua vigente: el bot no retoma la ofensiva contra quien la acordo.
-			if pid3 > 0 and int(b.get("_truce_peer", 0)) == pid3 and float(b.get("_truce_t", 0.0)) > 0.0:
-				continue
 			var d := proxy.global_position.distance_to(p3.global_position)
 			var feared := cautious_h and pid3 > 0 and float(get_bot_relationship(int(b["bot_id"]), _actor_persist_key(pid3)).get("fear", 0.0)) > 0.68
 			if feared and d > BOT_CLOSE_THREAT_RANGE:
@@ -5668,7 +5692,7 @@ func _find_combat_foe(b: Dictionary) -> Node3D:
 			if str(ob["faction"]) != "hostile":
 				continue
 			var op: Node3D = ob.get("proxy")
-			if op == null or not is_instance_valid(op) or bool(op.get_meta("proxy_dead", false)):
+			if _bot_stood_down(b, op):
 				continue
 			# Sentidos PROPIOS: la distancia se mide siempre desde el bot que
 			# mira/escucha. Un bandido pegado al lider pero a 100 m de este
@@ -6392,7 +6416,7 @@ func _bot_fire_rifle_round(b: Dictionary, target: Node3D, dmg: float, weapon: St
 	var _cpt := Time.get_ticks_usec()
 	var proxy: Node3D = b["proxy"]
 	# Recheck at release: navigation can move the shooter after perception.
-	if not is_instance_valid(proxy) or not is_instance_valid(target) or bool(proxy.get_meta("proxy_dead", false)) \
+	if not is_instance_valid(proxy) or _bot_stood_down(b, target) or bool(proxy.get_meta("proxy_dead", false)) \
 			or bool(b.get("gun_reloading", false)) or str(b.get("held_item", "")) != weapon \
 			or not _has_clear_shot(proxy.global_position, target.global_position):
 		if CombatProf.enabled: CombatProf.mark("bot_fire.recheck_fail", _cpt)
@@ -6475,19 +6499,22 @@ func _bot_fire_bow(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 	if _bot_arrow_count(proxy) <= 0:
 		return
 	b["_bow_drawing"] = true
-	var mgr = self
+	var order_revision := int(b.get("_order_revision", 0))
 	get_tree().create_timer(PlayerController.BOW_RELEASE_DELAY, false).timeout.connect(func():
-		if is_instance_valid(mgr):
-			mgr._bot_bow_release(b, foe, bow_name))
+		if is_instance_valid(self) and int(b.get("_order_revision", 0)) == order_revision:
+			if is_instance_valid(foe):
+				_bot_bow_release(b, foe, bow_name)
+			else:
+				b["_bow_drawing"] = false)
 
 # La liberacion: la flecha sale con la mira de ESE momento (la oscilacion ha
 # seguido corriendo durante la preparacion) + compensacion de caida real.
 func _bot_bow_release(b: Dictionary, foe: Node3D, bow_name: String) -> void:
 	b["_bow_drawing"] = false
-	b["_bow_shot_anim_until"] = Time.get_ticks_msec() + 900
 	var proxy: Node3D = b["proxy"]
-	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
+	if not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)) or _bot_stood_down(b, foe):
 		return
+	b["_bow_shot_anim_until"] = Time.get_ticks_msec() + 900
 	if not _bot_pay_shot_energy(b, "bow"):
 		return
 	var arrow_name := _consume_bot_arrow(proxy)
@@ -6519,15 +6546,19 @@ func _bot_fire_thrown(b: Dictionary, foe: Node3D, item_name: String, is_bola: bo
 	b["_throw_pending"] = {"item": item_name, "origin": proxy.global_position, "health": float(b.get("health", 100.0))}
 	_stop_bot_motion(b)
 	b["is_aiming"] = false
+	var order_revision := int(b.get("_order_revision", 0))
 	get_tree().create_timer(PlayerController.THROW_RELEASE_DELAY, false).timeout.connect(func():
-		if is_instance_valid(self):
-			_bot_release_thrown(b, foe, item_name, is_bola))
+		if is_instance_valid(self) and int(b.get("_order_revision", 0)) == order_revision:
+			if is_instance_valid(foe):
+				_bot_release_thrown(b, foe, item_name, is_bola)
+			else:
+				b.erase("_throw_pending"))
 
 func _bot_can_release_throw(b: Dictionary, foe: Node3D, item_name: String) -> bool:
 	var proxy: Node3D = b.get("proxy")
-	if not is_instance_valid(proxy) or not is_instance_valid(foe) or world == null \
+	if not is_instance_valid(proxy) or _bot_stood_down(b, foe) or world == null \
 			or proxy.get_meta("proxy_dead", false) == true or float(b.get("health", 100.0)) <= 0.0 \
-			or b.get("sleeping", false) == true or foe.get("is_dead") == true or foe.get_meta("proxy_dead", false) == true \
+			or b.get("sleeping", false) == true \
 			or str(b.get("held_item", "")) != item_name or _bot_item_count(proxy, item_name) <= 0 \
 			or _bot_energy(b) < 6.0 or proxy.global_position.distance_to(foe.global_position) > GameConst.BOT_THROW_EFFECTIVE_RANGE:
 		return false
@@ -6735,12 +6766,17 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 		return
 	if amount > 0.0:
 		_bot_cancel_gun_reload(b)
+		b.erase("_regroup")
 	var prev_hp := float(proxy.get_meta("proxy_health", 100.0))
 	var min_hp := minf(1.0, prev_hp) if (weapon in ["arco", "arco_madera", "arrow", "flecha"] and prev_hp > 0.0) else 0.0
 	var hp := maxf(min_hp, prev_hp - amount)
 	b["health"] = hp
 	proxy.set_meta("proxy_health", hp)
 	proxy.set_meta("saved_health", hp)
+	var st: SurvivalStats = b.get("vstats")
+	var wound := SurvivalStats.wound_severity(weapon)
+	if hp > 0.0 and hp < prev_hp and st != null and wound > 0.0:
+		st.apply_bleeding(wound)
 	# Recibir un impacto descompone la punteria (jugador: _recoil_pitch en
 	# _net_apply_damage). La sacudida se recupera con el tiempo.
 	var aim_hit := _bot_aim_st(b)
@@ -6750,6 +6786,9 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	# atacante es un jugador/bot, actualizar relación social (desconfianza/hostilidad/miedo).
 	record_zone_hazard(bot_id, proxy.global_position, _poi_kind_near(proxy.global_position), clampf(amount / 45.0, 0.08, 0.65), attacker_id > 0 and _bot_survivor_combat_cause(weapon))
 	if attacker_id > 0:
+		if hp < prev_hp and attacker_id == int(b.get("_truce_peer", 0)):
+			b["_truce_t"] = 0.0
+			b["_truce_peer"] = 0
 		b["_last_attacker_id"] = attacker_id
 		b["_last_attacker_msec"] = Time.get_ticks_msec()
 		b["_last_hit_weapon"] = weapon
@@ -7119,6 +7158,92 @@ func _find_actor_by_peer_id(pid: int) -> Node3D:
 	if pid == my_id and local_p is Node3D and is_instance_valid(local_p):
 		return local_p as Node3D
 	return null
+
+const REGROUP_WAIT_MSEC := 20000
+const REGROUP_REACH := 2.75
+
+func _bot_start_regroup(b: Dictionary, leader_id: int, meeting: Vector3) -> void:
+	b["_regroup"] = {"leader": leader_id, "pos": meeting, "until": Time.get_ticks_msec() + REGROUP_WAIT_MSEC}
+	b["_order_revision"] = int(b.get("_order_revision", 0)) + 1
+	b["_gun_burst_revision"] = int(b.get("_gun_burst_revision", 0)) + 1
+	_bot_cancel_gun_reload(b)
+	b["_bow_drawing"] = false
+	b.erase("_throw_pending")
+	b["is_aiming"] = false
+	b["sitting"] = false
+	b["_ambush"] = {}
+	b.erase("_ambush_route")
+	b.erase("_overwatch")
+	b["_lost_foe_until_msec"] = 0
+	b["aggro_target"] = null
+	b["aggro_timer"] = 0.0
+	if str(b.get("follow_mode", "")) != "follow" and leader_id != int(b["bot_id"]):
+		b["follow_mode"] = "follow"
+		b["proxy"].set_meta("bot_follow_mode", "follow")
+		_publish_bot_to_net_players(b)
+		_apply_local_avatar_metadata(b)
+
+func _bot_reunite_after_care(b: Dictionary) -> void:
+	# Reunite only existing followers. No cross-map call, forced recruitment
+	# or recall of a companion that is busy surviving on its own.
+	if int(b.get("team_leader_id", 0)) != 0 or b.has("_regroup") or _bot_under_immediate_threat(b) or _bot_vital_break(b) or _bot_critical_blood_loss(b):
+		return
+	var lid := int(b["bot_id"])
+	var meeting: Vector3 = b["proxy"].global_position
+	var expected: Array[int] = []
+	for mate: Dictionary in bots.values():
+		if int(mate.get("team_leader_id", 0)) != lid or str(mate.get("follow_mode", "")) != "follow" or mate.has("_regroup"):
+			continue
+		var mp: Node3D = mate.get("proxy")
+		if not is_instance_valid(mp) or bool(mp.get_meta("proxy_dead", false)) or bool(mate.get("sleeping", false)):
+			continue
+		var distance := mp.global_position.distance_to(meeting)
+		if distance <= REGROUP_REACH or distance > BOT_VOICE_RANGE or _bot_under_immediate_threat(mate) or _bot_vital_break(mate) or _bot_critical_blood_loss(mate):
+			continue
+		_bot_start_regroup(mate, lid, meeting)
+		expected.append(int(mate["bot_id"]))
+	if not expected.is_empty():
+		_bot_start_regroup(b, lid, meeting)
+		b["_regroup"]["waiting_for"] = expected
+
+func _bot_tick_regroup(b: Dictionary, delta: float) -> bool:
+	var order: Dictionary = b["_regroup"]
+	var goal: Vector3 = order["pos"]
+	var proxy: Node3D = b["proxy"]
+	if Time.get_ticks_msec() >= int(order["until"]) or _is_goal_blacklisted(b, goal) or _bot_vital_break(b) \
+			or _bot_critical_blood_loss(b) or _sensed_node(b, "_s_predator") != null:
+		b.erase("_regroup")
+		return false
+	if order.has("waiting_for"):
+		if int(b.get("team_leader_id", 0)) == 0 and not _bot_under_immediate_threat(b):
+			for id in order.waiting_for:
+				var mate: Dictionary = bots.get(id, {})
+				var active: Dictionary = mate.get("_regroup", {})
+				if not bool(mate.get("dead", false)) and int(active.get("leader", 0)) == int(b["bot_id"]) and active.get("pos") == goal:
+					_stop_bot_motion(b)
+					b["_act"] = "regroup_wait"
+					return true
+		b.erase("_regroup")
+		return false
+	if int(order["leader"]) != int(b.get("team_leader_id", 0)) or _resolve_team_leader(b) == null \
+			or (is_bot_peer_id(int(order["leader"])) and _bot_under_immediate_threat(b)):
+		b.erase("_regroup")
+		return false
+	if bots.has(order.leader):
+		var leader_order: Dictionary = bots[order.leader].get("_regroup", {})
+		if leader_order.get("pos") != goal or not leader_order.has("waiting_for"):
+			b.erase("_regroup")
+			return false
+	b["_act"] = "regroup"
+	b["crouching"] = false
+	var cur := proxy.global_position
+	if cur.distance_to(goal) <= REGROUP_REACH and _resolve_building_interior_waypoint(b, cur, goal) == goal \
+			and _has_clear_shot(cur, goal):
+		b.erase("_regroup")
+		_stop_bot_motion(b)
+	else:
+		_move_bot_towards(b, goal, 4.2, delta, "walk")
+	return true
 
 func _tick_teammate_behavior(b: Dictionary, leader: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
@@ -8299,7 +8424,7 @@ func _find_ambush_target(b: Dictionary) -> Dictionary:
 	var my_team := _bot_team_ids(b)
 	var desperate: bool = float(b["hunger"]) < 30.0 or float(b["thirst"]) < 25.0
 	# Malherido no se sale a asaltar a nadie: primero recuperarse.
-	if float(b["health"]) < 45.0:
+	if float(b["health"]) < 45.0 or _bot_critical_blood_loss(b):
 		return {}
 	var has_ranged := _bot_has_ranged_weapon(proxy)
 	var sight := 52.0
@@ -8479,7 +8604,7 @@ func _bot_try_ambush(b: Dictionary, delta: float) -> bool:
 	# Una tregua o un vinculo sellado a mitad del acecho lo cancela.
 	if _bot_ambush_forbidden(b, int(amb.get("target_id", 0))):
 		return abort.call(90.0)
-	if float(b["thirst"]) < 16.0 or float(b["hunger"]) < 10.0 or float(b["health"]) < 30.0:
+	if float(b["thirst"]) < 16.0 or float(b["hunger"]) < 10.0 or float(b["health"]) < 30.0 or _bot_critical_blood_loss(b):
 		return abort.call(60.0)
 	amb["t"] = float(amb.get("t", 0.0)) + delta
 	# El acecho sigue la ultima posicion CONOCIDA de la presa: se refresca
@@ -8745,6 +8870,11 @@ func _chat_classify(text: String) -> String:
 
 func _chat_parse_order(text: String) -> Dictionary:
 	var t := " " + text.to_lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("?", " ").replace("¿", " ").replace("!", " ").replace("¡", " ").replace(",", " ").replace(".", " ") + " "
+	for kw in [" reagrupaos ", " reagrupense ", " reagrupemonos "]:
+		if t.contains(kw):
+			return {"cmd": "regroup", "arg": "team"}
+	if t.contains(" reagrupate ") or t.contains(" vuelve al grupo "):
+		return {"cmd": "regroup"}
 	# follow antes que come: "ven/vente conmigo" es seguir, no solo acercarse
 	for kw in ["sigueme", "siguenos", "ven conmigo", "vente conmigo", "venga conmigo", "acompaname", "unete a mi", "en mi equipo", "follow me"]:
 		if t.contains(kw):
@@ -8792,6 +8922,8 @@ func _convince_threshold(b: Dictionary) -> float:
 
 # Umbral de obediencia por orden: compromiso mayor exige mas confianza.
 func _chat_order_gate(b: Dictionary, sender_id: int, skey: String, cmd: String) -> Dictionary:
+	if cmd == "regroup":
+		return {"ok": sender_id > 0 and int(b.get("team_leader_id", 0)) == sender_id, "why": "not_leader"}
 	# Bajo fuego nadie acepta compromisos — ni siquiera la orden del propio
 	# lider (desacuerdo justificado: primero sobrevivir, luego obedecer).
 	# stay/dismiss/attack si pasan: son ordenes coherentes en combate.
@@ -8842,7 +8974,23 @@ func _chat_apply_order(b: Dictionary, sender_id: int, sname: String, cmd: String
 	var proxy: Node3D = b["proxy"]
 	var bot_id := int(b["bot_id"])
 	var skey := _actor_persist_key(sender_id)
+	var by_leader := sender_id > 0 and int(b.get("team_leader_id", 0)) == sender_id
 	match cmd:
+		"regroup":
+			if sender_id <= 0 or int(b.get("team_leader_id", 0)) != sender_id:
+				return "not_leader"
+			var leader := _resolve_team_leader(b)
+			if leader == null or not bool(leader.get_meta("has_real_pos", true)) or proxy.global_position.distance_to(leader.global_position) > BOT_VOICE_RANGE:
+				return "out_of_earshot"
+			var meeting := leader.global_position
+			_bot_start_regroup(b, sender_id, meeting)
+			if arg == "team":
+				for mate: Dictionary in bots.values():
+					if int(mate["bot_id"]) == bot_id or int(mate.get("team_leader_id", 0)) != sender_id:
+						continue
+					var mp: Node3D = mate.get("proxy")
+					if is_instance_valid(mp) and not bool(mp.get_meta("proxy_dead", false)) and mp.global_position.distance_to(meeting) <= BOT_VOICE_RANGE:
+						_bot_start_regroup(mate, sender_id, meeting)
 		"follow":
 			var other := int(b.get("team_leader_id", 0))
 			if other != 0 and other != sender_id:
@@ -8935,6 +9083,13 @@ func _chat_apply_order(b: Dictionary, sender_id: int, sname: String, cmd: String
 			_ai_note_foe_intel(b, foe, foe.global_position, "told")
 			b["sitting"] = false
 			b["sense_t"] = 0.0
+	if by_leader and cmd in ["stay", "follow", "come", "dismiss", "attack"]:
+		b.erase("_regroup")
+		if cmd == "follow":
+			b["follow_mode"] = "follow"
+			proxy.set_meta("bot_follow_mode", "follow")
+			_publish_bot_to_net_players(b)
+			_apply_local_avatar_metadata(b)
 	return ""
 
 func _chat_give_match(arg: String) -> String:
@@ -9028,6 +9183,8 @@ func _chat_order_line(b: Dictionary, cmd: String, ok: bool, why: String) -> Stri
 	var fem := int(b.get("bot_id", 0)) == 901
 	if ok:
 		match cmd:
+			"regroup":
+				return "Recibido, vuelvo al punto."
 			"follow":
 				return "Vale, voy contigo... tú mandas." if warm else "De acuerdo, te sigo. No me hagas arrepentirme."
 			"stay":
@@ -9045,6 +9202,10 @@ func _chat_order_line(b: Dictionary, cmd: String, ok: bool, why: String) -> Stri
 			"attack":
 				return "¡Voy a por él!" if float(pers.get("aggression", 0.35)) > 0.5 else "Vale, vamos a por él... cúbreme."
 	match why:
+		"not_leader":
+			return "No estoy en tu equipo."
+		"out_of_earshot":
+			return "No te tengo cerca para reunirnos."
 		"hostile":
 			return "¿Órdenes? A mí no me mandas."
 		"wary":
@@ -9095,6 +9256,9 @@ func _chat_handle_truce(b: Dictionary, sender_id: int, sname: String, skey: Stri
 		b["aggro_timer"] = 0.0
 	b["_truce_peer"] = sender_id
 	b["_truce_t"] = 75.0
+	if b.get("_s_foe") == snode or (fighting and not is_instance_valid(b.get("_s_foe"))):
+		b["_s_foe"] = null
+		b["is_aiming"] = false
 	b["sitting"] = false
 	b["sleeping"] = false
 	record_social_event(bot_id, skey, sname, "ally", 0.06, "truce")
@@ -10636,17 +10800,24 @@ func _command_bot_wolf_against(b: Dictionary, target: Node3D) -> void:
 			if w.has_method("notify_threat"):
 				w.notify_threat(target, 20.0)
 
-# Lee un nodo cacheado por el sentido escalonado descartando referencias muertas.
+# A queued action or cached observation can predate a death or ceasefire.
+func _bot_stood_down(b: Dictionary, actor) -> bool:
+	if not is_instance_valid(actor) or actor.is_queued_for_deletion() or actor.get("is_dead") == true or actor.get("_is_dead") == true \
+			or bool(actor.get_meta("proxy_dead", false)):
+		return true
+	return int(b.get("_truce_peer", 0)) > 0 and float(b.get("_truce_t", 0.0)) > 0.0 \
+		and _peer_id_for_actor(actor) == int(b["_truce_peer"])
+
 func _sensed_node(b: Dictionary, key: String) -> Node3D:
 	var n = b.get(key, null)
-	if n != null and is_instance_valid(n):
-		if n.is_queued_for_deletion():
-			return null
-		if key in ["_s_foe", "_s_predator", "_s_prey", "_s_tame_wolf"] and (n.get("is_dead") == true or n.get("_is_dead") == true or bool(n.get_meta("proxy_dead", false))):
-			b[key] = null
-			return null
-		return n as Node3D
-	return null
+	if n == null:
+		return null
+	if not is_instance_valid(n) or n.is_queued_for_deletion() \
+			or (key in ["_s_foe", "aggro_target"] and _bot_stood_down(b, n)) \
+			or (key in ["_s_predator", "_s_prey", "_s_tame_wolf"] and (n.get("is_dead") == true or n.get("_is_dead") == true or bool(n.get_meta("proxy_dead", false)))):
+		b[key] = null
+		return null
+	return n as Node3D
 
 func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 	if world == null or not ("_dropped_items" in world):
@@ -11194,7 +11365,7 @@ func _bot_has_usable_matches(proxy: Node3D) -> bool:
 func _bot_has_nearby_campfire(b: Dictionary) -> bool:
 	var pos: Vector3 = b.get("campfire_pos", Vector3.INF)
 	return world != null and "world_actions_by_id" in world and world.world_actions_by_id.has(str(b.get("campfire_id", ""))) \
-		and pos.is_finite() and (b["proxy"] as Node3D).global_position.distance_to(pos) <= 40.0
+		and pos.is_finite() and (b["proxy"] as Node3D).global_position.distance_to(pos) <= 40.0 and _bot_fire_leg_ok(b, pos)
 
 func _bot_own_fire_lit(b: Dictionary) -> bool:
 	var id := str(b.get("campfire_id", ""))
@@ -11206,26 +11377,27 @@ func _bot_own_fire_lit(b: Dictionary) -> bool:
 	return false
 
 func _bot_fire_stick_reserve(b: Dictionary) -> int:
-	var build := _bot_needs_campfire(b)
-	if not build and not (_bot_has_nearby_campfire(b) and not _bot_own_fire_lit(b)):
+	if not _bot_local_fire(b, true).is_empty():
 		return 0
+	var build := _bot_needs_campfire(b)
+	if not build and _bot_local_fire(b, false).is_empty():
+		if not _bot_has_nearby_campfire(b) or _bot_own_fire_lit(b):
+			return 0
 	return (1 if build else 0) + (0 if _bot_has_usable_matches(b["proxy"]) else GameConst.CAMPFIRE_IGNITION_STICKS)
+
+func _bot_wants_fire_now(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	return _is_world_night() or _is_pre_night() or _bot_is_freezing(b) \
+		or (st != null and st.wetness > 0.35 and st.body_temperature <= 36.6) or _bot_can_cook_raw_meat(b["proxy"])
 
 # Reserva comun para recoleccion, crafteo y alijo. Un fuego remoto no
 # resuelve el frio ni la cocina de aqui; no_fire_spot solo veta el solar.
 func _bot_needs_campfire(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
-	if _is_near_any_lit_campfire(proxy.global_position, 8.0):
+	if _bot_has_nearby_campfire(b) or not _bot_local_fire(b, true).is_empty() or not _bot_local_fire(b, false).is_empty():
 		return false
-	if _bot_has_nearby_campfire(b):
-		return false
-	if _bot_is_freezing(b):
-		return true
-	var own_pos: Vector3 = b.get("campfire_pos", Vector3.INF)
-	if not str(b.get("campfire_id", "")).is_empty() and own_pos != Vector3.INF \
-			and proxy.global_position.distance_to(own_pos) <= NIGHT_SUPPLY_FIRE_RADIUS:
-		return false
-	return _is_world_night() or _is_pre_night() or _bot_has_raw_meat(proxy) or _bot_has_skewered_meat(proxy) \
+	# Save wood for the evening without actually lighting it at midday.
+	return _is_world_night() or _is_pre_night() or _bot_is_freezing(b) or _bot_has_skewered_meat(proxy) or _bot_has_raw_meat(proxy) \
 		or (str(b.get("campfire_id", "")).is_empty() and not str(b.get("shelter_id", "")).is_empty() and not bool(b.get("no_fire_spot", false)))
 
 func _bot_craft_preserves_fire(b: Dictionary, recipe: Dictionary) -> bool:
@@ -11881,6 +12053,68 @@ func _is_water_fire_pos(pos: Vector3) -> bool:
 		return bool(world._is_water_drop_position(pos))
 	return world.has_method("get_river_depth_at") and float(world.get_river_depth_at(pos)) > 0.02
 
+# Search the small fire registries, not every world action. Reservations and
+# recipe scoring may ask repeatedly in a tick; construction/ignition recheck.
+const SHARED_FIRE_RANGE := 40.0
+
+func _campfire_entry_pos(entry: Dictionary) -> Vector3:
+	var p = entry.get("pos")
+	if p is Array and p.size() == 3:
+		return Vector3(float(p[0]), float(p[1]), float(p[2]))
+	return p if p is Vector3 else Vector3.INF
+
+func _bot_fire_leg_ok(b: Dictionary, p: Vector3, can_hear := false) -> bool:
+	var cur: Vector3 = b["proxy"].global_position
+	return absf(cur.y - p.y) <= 2.5 and not _bot_fire_vetoed(b, p) and not _is_goal_blacklisted(b, p, 5.0) \
+		and ((can_hear and cur.distance_squared_to(p) < GameConst.CAMPFIRE_AUDIBLE_RANGE ** 2) or (not _wall_between(cur, p) and _has_clear_shot(cur, p))) \
+		and InterruptionManager.dry_recovery_leg(world, cur, p)
+
+func _bot_local_fire(b: Dictionary, lit: bool, fresh := false) -> Dictionary:
+	var registry := "_lit_campfires" if lit else "_built_campfires"
+	if world == null or not (registry in world) or not ("world_actions_by_id" in world):
+		return {}
+	var fires: Array = world.get(registry)
+	if fires.is_empty():
+		return {}
+	var cur: Vector3 = b["proxy"].global_position
+	var tick := int(b.get("_ground_tick", -1))
+	var key := "_local_flame" if lit else "_local_pit"
+	var cached: Dictionary = b.get(key, {})
+	if not fresh and tick >= 0 and cached.get("tick") == tick and cached.get("from") == cur and cached.get("count") == fires.size():
+		return cached["fire"]
+	var best := {}
+	var best_d := SHARED_FIRE_RANGE * SHARED_FIRE_RANGE
+	for fire in fires:
+		if not (fire is Dictionary):
+			continue
+		var p := _campfire_entry_pos(fire)
+		if not p.is_finite():
+			continue
+		var d := cur.distance_squared_to(p)
+		if d > best_d:
+			continue
+		var id := str(fire.get("id", ""))
+		if lit:
+			if not _campfire_entry_alive(fire):
+				continue
+		else:
+			var action = world.world_actions_by_id.get(id)
+			if action == null or (action is Object and (not is_instance_valid(action) or bool(action.get_meta("lit", false)))):
+				continue
+			if id != str(b.get("campfire_id", "")) and id != str(b.get("_team_fire_notice", "")):
+				var sight := 6.0 if _is_world_night() and not bool(b.get("torch_lit", false)) and not bool(b.get("flashlight_on", false)) else 16.0
+				if d > sight * sight:
+					continue
+		# A short audible approach may go around a wall; hearing a flame
+		# does not reveal an unlit pit or permit using it through the wall.
+		if not _bot_fire_leg_ok(b, p, lit):
+			continue
+		best_d = d
+		best = {"id":id, "pos":p}
+	if tick >= 0:
+		b[key] = {"tick":tick, "from":cur, "count":fires.size(), "fire":best}
+	return best
+
 func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> bool:
 	var proxy: Node3D = b["proxy"]
 	if world == null or not world.has_method("_net_campfire_built") or not _can_bot_build_campfire(proxy):
@@ -11898,6 +12132,8 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> bool:
 		pos = dry
 	if proxy.global_position.distance_to(pos) > GameConst.CAMPFIRE_REACH:
 		return false
+	if not _bot_local_fire(b, true, true).is_empty() or not _bot_local_fire(b, false, true).is_empty():
+		return false
 	var cf_id := "bot_campfire_%d" % int(b["bot_id"])
 	# A remote/invalid old camp must not be moved or overwritten by a new one.
 	if not str(b.get("campfire_id", "")).is_empty() or ("world_actions_by_id" in world and world.world_actions_by_id.has(cf_id)):
@@ -11909,6 +12145,13 @@ func _bot_build_and_light_campfire(b: Dictionary, pos: Vector3) -> bool:
 	b["campfire_id"] = cf_id
 	b["campfire_pos"] = pos
 	b["_fire_tree_count"] = 0
+	for bid in _bot_team_ids(b):
+		if bid == int(b["bot_id"]) or not bots.has(bid):
+			continue
+		var mate: Dictionary = bots[bid]
+		var actor: Node3D = mate.get("proxy")
+		if is_instance_valid(actor) and not bool(actor.get_meta("proxy_dead", false)) and actor.global_position.distance_to(pos) <= 18.0:
+			mate["_team_fire_notice"] = cf_id
 	var net = world.get("net")
 	if net != null and net.is_host and net.peer != null:
 		for pid in net.players.keys():
@@ -11939,16 +12182,18 @@ func _campfire_entry_alive(lc) -> bool:
 				return false
 	return true
 
-func _ensure_bot_campfire_lit(b: Dictionary, delta := 0.0) -> bool:
-	var cf_id := str(b.get("campfire_id", ""))
+func _ensure_bot_campfire_lit(b: Dictionary, delta := 0.0, pit: Dictionary = {}) -> bool:
+	var state: Dictionary = b.get("_fire_ignition", {})
+	var cf_id := str(pit.get("id", state.get("id", b.get("campfire_id", ""))))
 	if cf_id.is_empty() or world == null:
 		b.erase("_fire_ignition")
 		return false
 	# La fogata expiro o la quitaron: el id ya no es un objeto real —
 	# limpiar la referencia en vez de reencender una fogata fantasma.
 	if "world_actions_by_id" in world and not (world.world_actions_by_id as Dictionary).has(cf_id):
-		b["campfire_id"] = ""
-		b["campfire_pos"] = Vector3.INF
+		if cf_id == str(b.get("campfire_id", "")):
+			b["campfire_id"] = ""
+			b["campfire_pos"] = Vector3.INF
 		b.erase("_fire_ignition")
 		return false
 	for lc in world.get("_lit_campfires") if "_lit_campfires" in world else []:
@@ -11956,12 +12201,12 @@ func _ensure_bot_campfire_lit(b: Dictionary, delta := 0.0) -> bool:
 			b.erase("_fire_ignition")
 			return false
 	var proxy: Node3D = b["proxy"]
-	var pos: Vector3 = b["campfire_pos"]
-	var state: Dictionary = b.get("_fire_ignition", {})
+	var pos: Vector3 = pit.get("pos", state.get("pos", b.get("campfire_pos", Vector3.INF)))
 	var action = world.world_actions_by_id.get(cf_id)
 	if action is Node3D and is_instance_valid(action):
 		pos = action.global_position
-		b["campfire_pos"] = pos
+		if cf_id == str(b.get("campfire_id", "")):
+			b["campfire_pos"] = pos
 	var already_lit := action is Object and is_instance_valid(action) and bool(action.get_meta("lit", false))
 	if already_lit or proxy.global_position.distance_to(pos) > GameConst.CAMPFIRE_REACH \
 			or bool(b.get("sleeping", false)) or float(b.get("health", 100.0)) <= 0.0 \
@@ -11969,11 +12214,14 @@ func _ensure_bot_campfire_lit(b: Dictionary, delta := 0.0) -> bool:
 			or (not state.is_empty() and proxy.global_position.distance_to(state.origin) > 0.4):
 		b.erase("_fire_ignition")
 		return false
+	if not _bot_local_fire(b, true, true).is_empty():
+		b.erase("_fire_ignition")
+		return false
 	if state.is_empty() or str(state.get("id", "")) != cf_id:
 		var matches := _bot_has_usable_matches(proxy)
 		if not matches and _bot_item_count(proxy, "Palo") < GameConst.CAMPFIRE_IGNITION_STICKS:
 			return false
-		state = {"id":cf_id,"matches":matches,"t":0.0,"origin":proxy.global_position,"tick":-1}
+		state = {"id":cf_id,"pos":pos,"matches":matches,"t":0.0,"origin":proxy.global_position,"tick":-1}
 	if (state.matches and not _bot_has_usable_matches(proxy)) or (not state.matches and _bot_item_count(proxy, "Palo") < GameConst.CAMPFIRE_IGNITION_STICKS):
 		b.erase("_fire_ignition")
 		return false
@@ -12012,17 +12260,38 @@ func _ensure_bot_campfire_lit(b: Dictionary, delta := 0.0) -> bool:
 		world._save_world_change_silent()
 	return true
 
-func _bot_try_light_own_fire(b: Dictionary, delta: float) -> bool:
-	if not _bot_has_nearby_campfire(b) or _bot_own_fire_lit(b):
-		return false
+func _bot_try_relight_campfire(b: Dictionary, delta: float) -> bool:
 	if not _bot_has_usable_matches(b["proxy"]) and _bot_item_count(b["proxy"], "Palo") < GameConst.CAMPFIRE_IGNITION_STICKS:
 		return false
-	var pos: Vector3 = b["campfire_pos"]
+	if not _bot_local_fire(b, true).is_empty():
+		return false
+	var pit := _bot_local_fire(b, false)
+	if pit.is_empty():
+		if not _bot_has_nearby_campfire(b) or _bot_own_fire_lit(b):
+			return false
+		pit = {"id": b["campfire_id"], "pos": b["campfire_pos"]}
+	var pos: Vector3 = pit.pos
 	if (b["proxy"] as Node3D).global_position.distance_to(pos) > GameConst.CAMPFIRE_REACH:
 		b.erase("_fire_ignition")
 		_move_bot_towards(b, pos, 3.8, delta, "walk")
 		return true
-	return _ensure_bot_campfire_lit(b, delta)
+	# One pair of hands is enough. If the volunteer leaves the pit,
+	# loses the fuel or is interrupted, the next camper can take over.
+	for bid in _bot_team_ids(b):
+		if bid == int(b["bot_id"]):
+			continue
+		var mate: Dictionary = bots[bid]
+		var work: Dictionary = mate.get("_fire_ignition", {})
+		if work.get("id") != pit.id:
+			continue
+		var actor: Node3D = mate.get("proxy")
+		if is_instance_valid(actor) and not actor.get_meta("proxy_dead", false) and not mate.get("sleeping", false) \
+				and actor.global_position.distance_to(work.origin) <= 0.4 and actor.global_position.distance_to(pos) <= GameConst.CAMPFIRE_REACH \
+				and (_bot_has_usable_matches(actor) if work.matches else _bot_item_count(actor, "Palo") >= GameConst.CAMPFIRE_IGNITION_STICKS):
+			_stop_bot_motion(b)
+			b["_act"] = "wait_campfire"
+			return true
+	return _ensure_bot_campfire_lit(b, delta, pit)
 
 func _find_nearby_campfire_spot(b: Dictionary, origin: Vector3) -> Vector3:
 	for off in [Vector3(2.8, 0.0, 1.4), Vector3(-2.8, 0.0, 1.4), Vector3(0.0, 0.0, 3.2), Vector3(2.8, 0.0, -1.4), Vector3(0.0, 0.0, -3.2), Vector3(4.2, 0.0, 0.0), Vector3(-4.2, 0.0, 0.0)]:
@@ -12039,12 +12308,14 @@ func _nearest_lit_campfire_pos(from_pos: Vector3, max_dist: float, b = null) -> 
 	var best_d := max_dist
 	var dead := []
 	for lc in world._lit_campfires:
-		if not (lc is Dictionary) or not (lc.get("pos") is Vector3):
+		if not (lc is Dictionary):
 			continue
 		if not _campfire_entry_alive(lc):
 			dead.append(lc)
 			continue
-		var cp: Vector3 = lc["pos"]
+		var cp := _campfire_entry_pos(lc)
+		if not cp.is_finite():
+			continue
 		if b != null and _bot_fire_vetoed(b, cp):
 			continue
 		var d := Vector2(from_pos.x - cp.x, from_pos.z - cp.z).length()
@@ -12114,12 +12385,17 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 	if not bool(b.get("_s_has_wolf", false)) and float(b.get("hunger", 100.0)) >= 52.0 and not _bot_has_skewered_meat(proxy) and _bot_tame_bait_count(proxy) <= WildlifeController.TAME_FEEDINGS:
 		return false
 	var cur := proxy.global_position
-	var fire_pos := _nearest_lit_campfire_pos(cur, 12.0 if _is_world_night() and not _bot_has_item(proxy, "Antorcha") else 85.0)
+	var fire_pos: Vector3 = _bot_local_fire(b, true).get("pos", Vector3.INF)
+	if fire_pos == Vector3.INF and (not _is_world_night() or bool(b.get("torch_lit", false))):
+		var farther := _nearest_lit_campfire_pos(cur, 85.0, b)
+		if farther.is_finite() and _bot_fire_leg_ok(b, farther):
+			fire_pos = farther
 	var cf_pos: Vector3 = b.get("campfire_pos", Vector3.INF)
-	if fire_pos == Vector3.INF and cf_pos != Vector3.INF and _bot_own_fire_lit(b) and _bot_supply_goal_lit(b, cf_pos) and Vector2(cur.x - cf_pos.x, cur.z - cf_pos.z).length() < 110.0:
+	if fire_pos == Vector3.INF and cf_pos != Vector3.INF and _bot_own_fire_lit(b) and _bot_supply_goal_lit(b, cf_pos) \
+			and cur.distance_to(cf_pos) < 110.0 and _bot_fire_leg_ok(b, cf_pos):
 		fire_pos = cf_pos
 	if fire_pos == Vector3.INF:
-		if _bot_try_light_own_fire(b, delta):
+		if _bot_try_relight_campfire(b, delta):
 			return true
 		if _bot_has_nearby_campfire(b):
 			return false
@@ -12157,7 +12433,9 @@ func _bot_try_cook_meat(b: Dictionary, delta: float) -> bool:
 
 func _bot_cook_meat_at_fire(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
-	if not _is_near_any_lit_campfire(proxy.global_position, GameConst.CAMPFIRE_REACH):
+	var fire := _bot_local_fire(b, true)
+	if fire.is_empty() or proxy.global_position.distance_to(fire.pos) > GameConst.CAMPFIRE_REACH or _wall_between(proxy.global_position, fire.pos) \
+			or not _has_clear_shot(proxy.global_position, fire.pos):
 		return false
 	# Regla idéntica al jugador humano: no se puede cocinar carne cruda ni
 	# pescado crudo sin ensartarlos en un Palo afilado ("Carne ensartada" / "Pez ensartado").
@@ -14020,9 +14298,6 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 	# different fire forever without ever taking the escape step.
 	var fp := _nearest_lit_campfire_pos(proxy.global_position, 4.15 if st.body_temperature >= 36.9 else 0.85)
 	var own_fp: Vector3 = b.get("campfire_pos", Vector3.INF)
-	if fp == Vector3.INF and not str(b.get("campfire_id", "")).is_empty() and own_fp != Vector3.INF \
-		and _nearest_lit_campfire_pos(own_fp, 4.5) != Vector3.INF:
-		fp = own_fp
 	# Alcance del termostato = alcance del gate de despertar por frio: un
 	# bot desplazado tras una pelea (lobo, empujon) y dormido a >5 m del
 	# fuego entraba en un ciclo despertar/dormir en zona sin calor hasta
@@ -14030,7 +14305,10 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 	# standoff no lo veia. Con frio, caminar hacia la lumbre conocida ES
 	# la respuesta humana (la rama warm_up le lleva hasta el anillo).
 	if fp == Vector3.INF:
-		fp = _nearest_lit_campfire_pos(proxy.global_position, 30.0, b)
+		fp = _bot_local_fire(b, true).get("pos", Vector3.INF)
+	if fp == Vector3.INF and own_fp != Vector3.INF and _bot_own_fire_lit(b) \
+			and proxy.global_position.distance_to(own_fp) <= GameConst.BOT_EMERGENCY_REFUGE_RADIUS and _bot_fire_leg_ok(b, own_fp):
+		fp = own_fp
 	if fp == Vector3.INF:
 		b.erase("_fire_band")
 		return false
@@ -14249,8 +14527,8 @@ func _bot_supply_goal_lit(b: Dictionary, goal: Vector3) -> bool:
 	# Both ends must share the same lit fire; no hopping between distant fires.
 	if world != null and "_lit_campfires" in world:
 		for fire in world._lit_campfires:
-			if fire is Dictionary and fire.get("pos") is Vector3 and _campfire_entry_alive(fire):
-				var center: Vector3 = fire["pos"]
+			if fire is Dictionary and _campfire_entry_alive(fire):
+				var center := _campfire_entry_pos(fire)
 				if proxy.global_position.distance_to(center) <= NIGHT_SUPPLY_FIRE_RADIUS and goal.distance_to(center) <= NIGHT_SUPPLY_FIRE_RADIUS:
 					return true
 	return false
@@ -14304,7 +14582,7 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 		proxy.set_meta("torch_lit", true)
 		proxy.set_meta("saved_held_item", "Antorcha")
 		return false
-	if _bot_try_light_own_fire(b, delta):
+	if _bot_try_relight_campfire(b, delta):
 		return true
 	# Sin antorcha la fabrica; con antorcha pero sin yesca lo que falta es la
 	# ignicion (2 Palos frotados sirven), no otra antorcha.
@@ -14315,6 +14593,14 @@ func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 		b["_act"] = "torch"
 		return true
 	if not _bot_supply_goal_lit(b, proxy.global_position):
+		var flame := _bot_local_fire(b, true)
+		var stats: SurvivalStats = b.get("vstats")
+		if not flame.is_empty() and not _bot_night_supply_emergency(b) and (stats == null or stats.sleep > 8.0):
+			var ring := _bot_fire_safe_spot(flame.pos, flame.pos.y, b)
+			if not _bot_fire_vetoed(b, flame.pos):
+				b["_act"] = "rest"
+				_move_bot_towards(b, ring, 3.8, delta, "walk")
+				return true
 		var own_fire: Vector3 = b.get("campfire_pos", Vector3.INF)
 		if own_fire != Vector3.INF and proxy.global_position.distance_to(own_fire) <= NIGHT_SUPPLY_FIRE_RADIUS:
 			_ensure_bot_campfire_lit(b)
@@ -15485,7 +15771,14 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 		# para que los primeros Trapos + Palo den luz y ahuyenten lobos.
 		return 6.95 if (_is_world_night() or _is_pre_night()) else 5.8
 	if oname == "Venda":
-		return 5.2 if float(b.get("health", 100.0)) < 80.0 else 1.8
+		if _bot_item_count(proxy, "Venda") + _bot_item_count(proxy, "Vendaje") > 0:
+			return -1.0
+		if float(b.get("health", 100.0)) < 80.0:
+			return 6.85
+		# Use rags already in the pack for one dressing, not a new loot
+		# expedition. Leave one rag for a torch if night is approaching.
+		var reserve_light := (_is_pre_night() or _is_world_night()) and not _bot_has_headlamp_worn(b) and not _bot_has_item(proxy, "Antorcha")
+		return 6.85 if _bot_item_count(proxy, "Trapos") >= int(r_inputs["Trapos"]) + int(reserve_light) else -1.0
 	if otype == "food":
 		if oname in ["Carne ensartada", "Pez ensartado"]:
 			return 6.8
@@ -18059,6 +18352,257 @@ func _ai_pin_poi_destination(b: Dictionary, d: Dictionary) -> bool:
 	d["_dest_id"] = str(pick.get("id", ""))
 	return true
 
+func _bot_trip_water_source(b: Dictionary, reporters: Array) -> Vector3:
+	var best := _known_water_pos(b)
+	var proxy = b.get("proxy")
+	var origin: Vector3 = proxy.global_position if proxy != null and is_instance_valid(proxy) else Vector3.INF
+	for rb in reporters:
+		var wp := _known_water_pos(rb)
+		if wp == Vector3.INF:
+			continue
+		if best == Vector3.INF or (origin != Vector3.INF and origin.distance_to(wp) < origin.distance_to(best)):
+			best = wp
+	return best
+
+func _bot_trip_water_warning_line(b: Dictionary, water_pos: Vector3) -> String:
+	var who := _actor_display_name(int(b.get("bot_id", 0)))
+	if water_pos == Vector3.INF:
+		return "%s: me queda poca agua para este trayecto." % who
+	return "%s: me queda poca agua; conozco un punto de agua cerca." % who
+
+func _bot_trip_water_shorten(b: Dictionary, d: Dictionary, stay: Vector3, now: int) -> void:
+	PlanManager.finish(b, d, "CANCELLED", "trip_water_no_source", now)
+	b["ai_directive"] = {}
+	var mem: Dictionary = b.get("_mem", {})
+	if not mem.is_empty():
+		mem["pending_goals"] = []
+	var proxy = b.get("proxy")
+	b["explore_target"] = proxy.global_position if proxy != null and is_instance_valid(proxy) else stay
+	b["explore_dwell"] = 0.0
+	b["path_timer"] = 0.0
+	PlanDiagnostics.metric(b, "trip_water_shortened")
+	if not d.is_empty():
+		PlanDiagnostics.event(b, d, "trip_water_shortened", "no_known_source", "CANCELLED")
+
+func _bot_trip_water_review(bot_id: int, b: Dictionary, d: Dictionary) -> void:
+	if b.is_empty() or d.is_empty() or b.has("_trip_water"):
+		return
+	var action := str(d.get("action", ""))
+	if action not in ["explore", "scavenge", "hunt", "forage"]:
+		return
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy) or bool(proxy.get_meta("proxy_dead", false)):
+		return
+	var dest := _ai_step_target_pos(b, d)
+	if dest == Vector3.INF:
+		return
+	var origin: Vector3 = (proxy as Node3D).global_position
+	if origin.distance_to(dest) / 3.0 < BOT_TRIP_WATER_MIN_SEC:
+		return
+	var reporters: Array = []
+	for rid in _bot_team_ids(b):
+		var rid_i := int(rid)
+		if rid_i == bot_id or not bots.has(rid_i):
+			continue
+		var rb: Dictionary = bots[rid_i]
+		if int(rb.get("team_leader_id", 0)) != bot_id:
+			continue
+		if str(rb.get("follow_mode", "follow")) != "follow":
+			continue
+		if not _bot_pair_can_cooperate(bot_id, rid_i):
+			continue
+		var rproxy = rb.get("proxy")
+		if rproxy == null or not is_instance_valid(rproxy) or bool(rproxy.get_meta("proxy_dead", false)) or bool(rb.get("sleeping", false)):
+			continue
+		if (rproxy as Node3D).global_position.distance_to(origin) > BOT_VOICE_RANGE:
+			continue
+		if _bot_has_drink(rproxy):
+			continue
+		if float(rb.get("thirst", 100.0)) >= BOT_TRIP_WATER_THIRST:
+			continue
+		reporters.append(rb)
+	if reporters.is_empty():
+		return
+	var water_pos := _bot_trip_water_source(b, reporters)
+	var now := Time.get_ticks_msec()
+	for rb in reporters:
+		_bot_chat_send(rb, bot_id, _actor_display_name(bot_id), _bot_trip_water_warning_line(rb, water_pos), "trip_water")
+	if water_pos == Vector3.INF:
+		_bot_trip_water_shorten(b, d, origin, now)
+		return
+	var plan_id := str(d.get("plan_id", ""))
+	var until := now + BOT_TRIP_WATER_TIMEOUT_MSEC
+	d["state"] = "SUSPENDED"
+	d["_suspend_ms"] = now
+	d["suspended_at"] = Time.get_unix_time_from_system()
+	d["interruptions"] = ["trip_water"]
+	d["interruption_priority"] = InterruptionManager.priority(["trip_water"])
+	d.erase("_resume_clear_ms")
+	b["_trip_water"] = {"plan_id": plan_id, "water_pos": water_pos, "reporters": [], "until": until, "started_ms": now}
+	for rb in reporters:
+		var rid_i := int(rb["bot_id"])
+		(b["_trip_water"]["reporters"] as Array).append(rid_i)
+		rb["_trip_water_leg"] = {"leader": bot_id, "plan_id": plan_id, "pos": water_pos, "until": until}
+	b["explore_target"] = Vector3.INF
+	b["explore_dwell"] = 0.0
+	PlanDiagnostics.metric(b, "trip_water_holds")
+	PlanDiagnostics.event(b, d, "trip_water_hold", "reporters=%d" % reporters.size())
+
+func _bot_trip_water_member_tick(b: Dictionary, leg: Dictionary, delta: float) -> bool:
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return false
+	var now := Time.get_ticks_msec()
+	if now > int(leg.get("until", now)):
+		leg["done"] = "failed"
+		b["_trip_water_leg"] = leg
+		return false
+	if str(leg.get("done", "")) == "failed" or bool(leg.get("failed", false)):
+		return false
+	var target = leg.get("pos")
+	if not (target is Vector3) or (target as Vector3) == Vector3.INF:
+		leg["done"] = "failed"
+		b["_trip_water_leg"] = leg
+		return false
+	if _bot_has_drink(proxy) or float(b.get("thirst", 100.0)) >= 95.0:
+		b.erase("_trip_water_leg")
+		return false
+	if _is_water_blacklisted(b, target as Vector3) or _is_goal_blacklisted(b, target as Vector3, 8.0):
+		leg["done"] = "failed"
+		b["_trip_water_leg"] = leg
+		return false
+	var dist := Vector2((proxy as Node3D).global_position.x - (target as Vector3).x, (proxy as Node3D).global_position.z - (target as Vector3).z).length()
+	if dist > BOT_TRIP_WATER_ARRIVE_M:
+		leg["arrived"] = false
+		b["_trip_water_leg"] = leg
+		_move_bot_towards(b, target as Vector3, 6.2, delta, "run")
+		return true
+	leg["arrived"] = true
+	b["_trip_water_leg"] = leg
+	if b.get("drink_at") != target:
+		b["drink_at"] = target
+		b["_reported_water"] = target
+		b["drink_walk_t"] = 0.0
+		b["_drink_best_d"] = INF
+	return false
+
+func _bot_trip_water_leader_tick(b: Dictionary, hold: Dictionary, delta: float) -> bool:
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		_bot_trip_water_abort(b, hold, "actor_lost", Time.get_ticks_msec())
+		return true
+	var now := Time.get_ticks_msec()
+	var target = hold.get("water_pos")
+	if now > int(hold.get("until", now)) or not (target is Vector3) or (target as Vector3) == Vector3.INF:
+		_bot_trip_water_abort(b, hold, "timeout" if now > int(hold.get("until", now)) else "no_source", now)
+		return true
+	if _is_water_blacklisted(b, target as Vector3) or _is_goal_blacklisted(b, target as Vector3, 8.0):
+		_bot_trip_water_abort(b, hold, "unreachable", now)
+		return true
+	var leader_dist := Vector2((proxy as Node3D).global_position.x - (target as Vector3).x, (proxy as Node3D).global_position.z - (target as Vector3).z).length()
+	if leader_dist > 2.0:
+		_move_bot_towards(b, target as Vector3, 6.2, delta, "run")
+	else:
+		_stop_bot_motion(b)
+		b["_act"] = "trip_water"
+	var all_ok := true
+	var any_fail := false
+	for rid in hold.get("reporters", []):
+		var rb: Dictionary = bots.get(int(rid), {})
+		if rb.is_empty():
+			any_fail = true
+			all_ok = false
+			break
+		var rproxy = rb.get("proxy")
+		if rproxy == null or not is_instance_valid(rproxy) or bool(rproxy.get_meta("proxy_dead", false)):
+			any_fail = true
+			all_ok = false
+			break
+		var leg = rb.get("_trip_water_leg", {})
+		if leg is Dictionary and (str((leg as Dictionary).get("done", "")) == "failed" or bool((leg as Dictionary).get("failed", false))):
+			any_fail = true
+			all_ok = false
+			break
+		var hydrated := _bot_has_drink(rproxy) or float(rb.get("thirst", 100.0)) >= 95.0
+		if hydrated:
+			if leg is Dictionary and not (leg as Dictionary).is_empty():
+				rb.erase("_trip_water_leg")
+			continue
+		if leg is Dictionary and not (leg as Dictionary).is_empty():
+			all_ok = false
+		else:
+			any_fail = true
+			all_ok = false
+			break
+	if any_fail:
+		_bot_trip_water_abort(b, hold, "water_failed", now)
+		return true
+	if all_ok and leader_dist <= 2.5:
+		_bot_trip_water_resume(b, hold, now)
+		return false
+	return true
+
+func _bot_trip_water_resume(b: Dictionary, hold: Dictionary, now: int) -> void:
+	var d: Dictionary = b.get("ai_directive", {})
+	b.erase("_trip_water")
+	for rid in hold.get("reporters", []):
+		var rb: Dictionary = bots.get(int(rid), {})
+		if not rb.is_empty():
+			rb.erase("_trip_water_leg")
+	if d.is_empty() or str(d.get("plan_id", "")) != str(hold.get("plan_id", "")):
+		return
+	var invalid := GoalValidator.viable(self, b, d, now)
+	if not invalid.is_empty():
+		_ai_fail_stalled_step(int(b.get("bot_id", 0)), b, d, invalid)
+		return
+	var paused := maxi(0, now - int(hold.get("started_ms", now)))
+	if d.has("_step_deadline_ms"):
+		d["_step_deadline_ms"] = int(d["_step_deadline_ms"]) + paused
+	d["state"] = "RUNNING"
+	d["interruptions"] = []
+	d["interruption_priority"] = 0
+	d["resume_status"] = "trip_water_resumed"
+	d["_prog_ref_m"] = _ai_step_target_dist(b, d)
+	d["_prog_ref_ms"] = now
+	d.erase("_resume_clear_ms")
+	d.erase("_avoided_reported")
+	b["path_timer"] = 0.0
+	if str(d.get("mode", "")) == "poi":
+		b["explore_target"] = d.get("_dest_pos", Vector3.INF)
+	PlanDiagnostics.metric(b, "trip_water_resumes")
+	PlanDiagnostics.event(b, d, "trip_water_resumed", "supply_restored")
+
+func _bot_trip_water_abort(b: Dictionary, hold: Dictionary, reason: String, now: int) -> void:
+	var d: Dictionary = b.get("ai_directive", {})
+	var same := not d.is_empty() and str(d.get("plan_id", "")) == str(hold.get("plan_id", ""))
+	if same:
+		PlanManager.finish(b, d, "CANCELLED", "trip_water_" + reason, now)
+		b["ai_directive"] = {}
+		var mem: Dictionary = b.get("_mem", {})
+		if not mem.is_empty():
+			mem["pending_goals"] = []
+	b.erase("_trip_water")
+	for rid in hold.get("reporters", []):
+		var rb: Dictionary = bots.get(int(rid), {})
+		if not rb.is_empty():
+			rb.erase("_trip_water_leg")
+	var proxy = b.get("proxy")
+	b["explore_target"] = proxy.global_position if proxy != null and is_instance_valid(proxy) else Vector3.INF
+	b["explore_dwell"] = 0.0
+	b["path_timer"] = 0.0
+	PlanDiagnostics.metric(b, "trip_water_aborts")
+	if same and not d.is_empty():
+		PlanDiagnostics.event(b, d, "trip_water_aborted", reason, "CANCELLED")
+
+func _bot_trip_water_tick(b: Dictionary, delta: float) -> bool:
+	var leg = b.get("_trip_water_leg", {})
+	if leg is Dictionary and not (leg as Dictionary).is_empty():
+		return _bot_trip_water_member_tick(b, leg as Dictionary, delta)
+	var hold = b.get("_trip_water", {})
+	if hold is Dictionary and not (hold as Dictionary).is_empty():
+		return _bot_trip_water_leader_tick(b, hold as Dictionary, delta)
+	return false
+
 func _ai_apply_decision(bot_id: int, content: String, source: String = "qwen") -> bool:
 	return PlanManager.apply(self, bot_id, content, source)
 
@@ -19711,7 +20255,7 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 	if not _bot_is_freezing(b) or bool(b.get("sleeping", false)):
 		return false
 	# Calor real al alcance: correr al anillo caliente, no inventar otro fuego.
-	var lit_pos := _nearest_lit_campfire_pos(proxy.global_position, 40.0, b)
+	var lit_pos: Vector3 = _bot_local_fire(b, true).get("pos", Vector3.INF)
 	if lit_pos != Vector3.INF:
 		var spot := _bot_fire_safe_spot(lit_pos, lit_pos.y, b)
 		b["sitting"] = false
@@ -19719,7 +20263,7 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 		_move_bot_towards(b, spot, 5.8, delta, "run")
 		b["_act"] = "fire_rescue"
 		return true
-	if _bot_try_light_own_fire(b, delta):
+	if _bot_try_relight_campfire(b, delta):
 		b["_act"] = "fire_rescue"
 		return true
 	# Material a mano: la fogata se monta donde esta — ni en el agua ni donde
@@ -20103,7 +20647,7 @@ func _bot_night_fire_ready(b: Dictionary, proxy: Node3D) -> bool:
 		return true
 	if _bot_item_count(proxy, "Palo") >= 1 + _bot_fire_stick_reserve(b) and _bot_item_count(proxy, "Trapos") >= 1:
 		return true
-	if _bot_own_fire_lit(b):
+	if not _bot_local_fire(b, true).is_empty():
 		return true
 	return not str(b.get("shelter_id", "")).is_empty() \
 		and (_bot_has_nearby_campfire(b) or _can_bot_build_campfire(proxy)) \
@@ -20160,8 +20704,9 @@ func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false,
 	var needs_fire := _bot_needs_campfire(b)
 	var need_tronco := needs_fire and _bot_item_count(proxy, "Tronco") < 2
 	var need_torch := _bot_item_count(proxy, "Antorcha") < 1
-	var need_palo := _bot_item_count(proxy, "Palo") < (_bot_fire_stick_reserve(b) + (1 if need_torch else 0))
-	var need_matches := (needs_fire or _bot_has_nearby_campfire(b)) and not _bot_has_usable_matches(proxy)
+	var fire_sticks := _bot_fire_stick_reserve(b)
+	var need_palo := _bot_item_count(proxy, "Palo") < (fire_sticks + (1 if need_torch else 0))
+	var need_matches := fire_sticks >= GameConst.CAMPFIRE_IGNITION_STICKS
 	var need_trapos := need_torch and _bot_item_count(proxy, "Trapos") < 1
 	var best := {}
 	var best_d := radius

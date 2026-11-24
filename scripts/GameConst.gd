@@ -27,6 +27,7 @@ const CAMPFIRE_MATCH_SECONDS := 1.5
 const CAMPFIRE_STICK_SECONDS := 8.0
 const CAMPFIRE_IGNITION_STICKS := 2
 const CAMPFIRE_REACH := 3.5
+const CAMPFIRE_AUDIBLE_RANGE := 16.0
 const BOT_MAX_TREES_PER_CAMPFIRE := 1
 
 # -- Firearms (human player and survivor bots) -----------------------------

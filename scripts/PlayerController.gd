@@ -14791,8 +14791,9 @@ func apply_damage(amount: float, cause: String = "") -> void:
 					dmg_hud.toggle_craft_panel()
 	# Mordiscos y armas blancas abren heridas sangrantes (DayZ): la sangre
 	# drena salud hasta vendarla — el daño del golpe es solo el principio.
-	if stats.has_method("apply_bleeding") and (cause == "melee" or cause.ends_with("_bite")):
-		stats.apply_bleeding(1.5 if cause == "bear_bite" else 1.0)
+	var wound := SurvivalStats.wound_severity(cause)
+	if stats.has_method("apply_bleeding") and wound > 0.0:
+		stats.apply_bleeding(wound)
 		notice.emit("¡Estás sangrando! Usa una venda antes de desangrarte.")
 	_play_damage_audio(cause)
 	stats.changed.emit()

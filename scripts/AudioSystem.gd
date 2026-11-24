@@ -515,8 +515,8 @@ func _update_campfire(delta: float, refresh_spatial := true) -> void:
 	campfire_player.global_position = _cached_campfire_audio["position"]
 	var distance: float = _cached_campfire_audio["distance"]
 	var target := -80.0
-	if distance < 16.0:
-		target = lerp(-2.5, -30.0, clamp((distance - 1.2) / 14.8, 0.0, 1.0))
+	if distance < GameConst.CAMPFIRE_AUDIBLE_RANGE:
+		target = lerp(-2.5, -30.0, clamp((distance - 1.2) / (GameConst.CAMPFIRE_AUDIBLE_RANGE - 1.2), 0.0, 1.0))
 	campfire_player.volume_db = lerp(campfire_player.volume_db, target, delta * 4.0)
 	if target > -75.0 and not campfire_player.playing:
 		campfire_player.play()

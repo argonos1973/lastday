@@ -14,6 +14,7 @@ func check(ok: bool, msg: String) -> void:
 		print("FAIL: ", msg)
 
 class Arena extends Node3D:
+	var server_proxies := {}
 	var distant_cover := false
 	var shots: Array = []
 	var day_cycle: DayNightCycle
@@ -174,6 +175,18 @@ func _check_night_aim(mgr: Manager, arena: Arena) -> void:
 	check(after_first == ammo - 1 and mgr._bot_gun_loaded(mgr._bot_gun_ammo(proxy), "Fusil de asalto") == after_first,
 		"the real burst callbacks stop when the target extinguishes its light")
 	target.set_meta("torch_lit", true)
+	arena.server_proxies[73] = target
+	mgr._bot_fire_rifle_at(b, target, 26.0, "Fusil de asalto")
+	b["_truce_peer"] = 73
+	b["_truce_t"] = 75.0
+	await create_timer(0.22).timeout
+	check(mgr._bot_gun_loaded(mgr._bot_gun_ammo(proxy), "Fusil de asalto") == after_first - 1,
+		"a ceasefire between callbacks stops the outstanding rounds")
+	b["_truce_t"] = 0.0
+	target.set_meta("proxy_dead", true)
+	check(not mgr._bot_fire_rifle_round(b, target, 26.0, "Fusil de asalto"), "no more shots at a dead actor")
+	target.set_meta("proxy_dead", false)
+	arena.server_proxies.erase(73)
 	arena.distant_cover = true
 	check(not mgr._bot_fire_rifle_round(b, target, 26.0, "Fusil de asalto"),
 		"a target's light never authorizes shooting through a wall")
@@ -438,5 +451,48 @@ func _initialize() -> void:
 		check(dev < dist * 0.06, "dispersion acotada a %.0f m (peor %.2f m)" % [dist, dev])
 
 	await _check_night_aim(mgr, arena)
+	await _check_recall(mgr, arena)
 	print("BotAimRecoilRegression failures=%d" % failures)
 	quit(1 if failures > 0 else 0)
+
+func _check_recall(mgr: Manager, arena: Arena) -> void:
+	var leader := _mk_proxy()
+	var foe := _mk_proxy()
+	arena.add_child(leader)
+	arena.add_child(foe)
+	leader.position = Vector3(8, 0, 0)
+	foe.position = Vector3(0, 0, -10)
+	arena.server_proxies[73] = leader
+	for weapon in ["Fusil de asalto", "Rifle francotirador", "Arco de madera", "Lanza"]:
+		var proxy := _mk_proxy([{"name":weapon,"quantity":1,"durability":100.0},
+			{"name":"Flecha de madera","quantity":3,"type":"ammo_arrow"}],
+			{"m4_magazine":3,"m4_reserve":0,"magazine":0,"reserve":5})
+		arena.add_child(proxy)
+		var b := _mk_bot(proxy, {"held_item":weapon,"team_leader_id":73})
+		match weapon:
+			"Fusil de asalto":
+				mgr._bot_fire_rifle_at(b, foe, 26.0, weapon)
+				check(mgr._bot_gun_loaded(mgr._bot_gun_ammo(proxy), weapon) == 2, "M4 first round already in flight")
+			"Rifle francotirador":
+				check(mgr._bot_start_gun_reload(b, weapon), "sniper reload started")
+			"Arco de madera":
+				mgr._bot_fire_bow(b, foe, weapon)
+				check(b.get("_bow_drawing", false), "bow draw started")
+			"Lanza":
+				mgr._bot_fire_thrown(b, foe, weapon, false)
+				check(b.has("_throw_pending"), "spear windup started")
+		var energy := float(b.energy)
+		mgr._chat_apply_order(b, 73, "Leader", "regroup", "")
+		# Even if the order ends before the timers fire, old releases stay cancelled.
+		b.erase("_regroup")
+		await create_timer(0.9).timeout
+		mgr._bot_tick_gun_reload(b, 3.0)
+		var ammo := mgr._bot_gun_ammo(proxy)
+		check(mgr._bot_gun_loaded(ammo, "Fusil de asalto") == (2 if weapon == "Fusil de asalto" else 3)
+			and mgr._bot_gun_loaded(ammo, "Rifle francotirador") == 0 and int(ammo.reserve) == 5
+			and mgr._bot_arrow_count(proxy) == 3 and mgr._bot_item_count(proxy, weapon) == 1
+			and is_equal_approx(b.energy, energy), "regroup cancels unfinished action without paying twice: " + weapon)
+		proxy.free()
+	arena.server_proxies.erase(73)
+	foe.free()
+	leader.free()

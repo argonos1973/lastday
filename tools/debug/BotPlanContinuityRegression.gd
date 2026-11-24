@@ -179,6 +179,11 @@ func run() -> void:
 	check((d["interruptions"] as Array).has("bleeding"), "Recovery after combat preserves mission")
 	b["vstats"].bleeding = 0.0
 	b["thirst"] = 85.0
+	m._bot_start_regroup(b, 901, m.bots[901]["proxy"].global_position)
+	Plans.sync(m, b, now + 2500)
+	check(d["interruptions"] == ["regroup"] and d["state"] == "SUSPENDED",
+		"After treatment the rendezvous keeps the original mission paused")
+	b.erase("_regroup")
 	b["_act"] = "explore"
 	Plans.sync(m, b, now + 3000)
 	Plans.sync(m, b, now + 5001)

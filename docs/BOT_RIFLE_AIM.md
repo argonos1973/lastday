@@ -20,8 +20,9 @@ coordenada exacta actualizada en cada tick.
   Oírlo puede conservar una pista, pero no actualiza su posición como si
   estuviera a la vista.
 - Cada bala pendiente de una ráfaga vuelve a comprobar cobertura y
-  visibilidad antes de consumir munición o energía. Perder de vista al
-  objetivo obliga a adquirirlo de nuevo.
+  visibilidad antes de consumir munición o energía. Si el objetivo ha muerto
+  o el bot acaba de aceptar una tregua con él, no sale otra bala. Esto no
+  modifica la trayectoria de un proyectil que ya está en vuelo.
 - La vigilancia de azoteas también respeta la visibilidad nocturna.
 
 No se decide el daño mediante un porcentaje de éxito. La dirección estimada,

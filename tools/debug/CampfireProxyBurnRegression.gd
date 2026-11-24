@@ -2,6 +2,13 @@ extends SceneTree
 
 # Verifies that parked offline proxies burn when standing in a lit campfire
 # on the dedicated server, using the same radius/damage as the local player.
+class TestWorld extends "res://scripts/Main.gd":
+	func _ready() -> void:
+		set_process(false)
+		set_physics_process(false)
+	func _save_world_change_silent() -> void: pass
+	func _exit_tree() -> void: pass
+
 class FakeNet extends Node:
 	signal player_connected(id)
 	signal player_disconnected(id)
@@ -36,9 +43,7 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func run() -> void:
-	# net stays null through _ready so Main skips the dedicated-server boot
-	# path (which would delete the server save); the fake is assigned after.
-	var main: Node = load("res://scripts/Main.gd").new()
+	var main := TestWorld.new()
 	get_root().add_child(main)
 	var fake := FakeNet.new()
 	get_root().add_child(fake)

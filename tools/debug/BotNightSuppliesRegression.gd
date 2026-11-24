@@ -1,5 +1,6 @@
 extends SceneTree
 class Arena extends Node3D:
+ var _built_campfires: Array = []
  var _lit_campfires: Array = []
  var world_actions_by_id: Dictionary = {}
  var net = null
@@ -10,6 +11,7 @@ class Arena extends Node3D:
  func get_river_depth_at(pos): return 1.0 if pos.x >= 100.0 and pos.x <= 110.0 else 0.0
  func _net_campfire_built(id, pos, _pid):
   if reject_build: return false
+  _built_campfires.append({"id":id,"pos":pos})
   world_actions_by_id[id] = {"position": pos}
   return true
  func _net_campfire_lit(id, name, pos, _pid):
@@ -34,7 +36,80 @@ func finish_fire(manager, b: Dictionary) -> void:
  for i in range(36):
   manager._ensure_bot_campfire_lit(b, 0.25)
   if manager._bot_own_fire_lit(b): return
+func test_shared_fire() -> void:
+ var world := Arena.new()
+ root.add_child(world)
+ var mgr := Manager.new()
+ world.add_child(mgr)
+ mgr.world = world
+ var kit := [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1},{"name":"Cerillas","quantity":1,"durability":4.0}]
+ var a := Node3D.new()
+ var z := Node3D.new()
+ world.add_child(a)
+ world.add_child(z)
+ z.position = Vector3(10,0,0)
+ a.set_meta("saved_inventory", kit.duplicate(true))
+ z.set_meta("saved_inventory", kit.duplicate(true))
+ var owner := {"proxy":a,"bot_id":901,"hunger":30.0,"thirst":30.0}
+ var guest := {"proxy":z,"bot_id":902,"hunger":30.0,"thirst":30.0,"path":[],"path_idx":0,"path_timer":0.0,
+  "rot":0.0,"anim":"idle","stuck_count":0,"stuck_timer":0.0,"shelter_pos":Vector3.INF}
+ guest["team_leader_id"] = 901
+ mgr.bots = {901:owner,902:guest}
+ mgr._bot_prepare_night_supplies(owner,0.1)
+ var outsider := {"proxy":z,"bot_id":903}
+ check(mgr._bot_needs_campfire(outsider), "a stranger in the dark does not know about an unlit pit nine metres away")
+ mgr._bot_prepare_night_supplies(guest,0.1)
+ check(world._built_campfires.size() == 1 and world._lit_campfires.is_empty() and mgr._bot_item_count(z,"Tronco") == 2
+  and z.position.x < 10.0, "a teammate heads to the announced pit instead of building a second one")
+ for i in 25:
+  mgr._bot_prepare_night_supplies(guest,0.1)
+  if z.position.distance_to(Vector3(1,0,0)) < 3.5: break
+ mgr._bot_prepare_night_supplies(guest,0.1)
+ check(world._lit_campfires.is_empty() and guest.get("_fire_ignition",{}).is_empty(),
+  "only one teammate tends the pending ignition")
+ # The builder leaves before striking the match. The other survivor can
+ # finish without owning the campsite or needing a second construction kit.
+ a.position = Vector3(60,0,0)
+ for i in 16: mgr._bot_prepare_night_supplies(guest,0.1)
+ check(world._lit_campfires.size() == 1 and world._lit_campfires[0].id == owner.campfire_id
+  and str(guest.get("campfire_id","")).is_empty() and float(z.get_meta("saved_inventory")[-1].durability) == 3.0,
+  "guest lights the builder's pit with one real match without claiming it")
+ z.position = Vector3(20,0,0)
+ z.set_meta("saved_inventory", kit.duplicate(true))
+ var arrival := guest.duplicate()
+ arrival["campfire_id"] = ""
+ arrival["campfire_pos"] = Vector3.INF
+ world._lit_campfires[0]["pos"] = [1,0,0] # Saved world representation.
+ for i in 55: mgr._bot_prepare_night_supplies(arrival,0.1)
+ check(world._built_campfires.size() == 1 and z.position.distance_to(Vector3(1,0,0)) <= 12.0
+  and z.get_meta("saved_inventory") == kit, "new arrival walks into shared firelight without spending wood or matches")
+ # Two *already built* cold pits: if the first one lights while another
+ # camper is rubbing sticks, the second ignition must not spend supplies.
+ world._lit_campfires.clear()
+ z.position = Vector3(4,0,0)
+ world._net_campfire_built("older_pit",z.position,0)
+ arrival["campfire_id"] = "older_pit"
+ arrival["campfire_pos"] = z.position
+ mgr._ensure_bot_campfire_lit(arrival,1.4)
+ world._net_campfire_lit(owner.campfire_id,"lit_first",owner.campfire_pos,0)
+ mgr._ensure_bot_campfire_lit(arrival,0.2)
+ check(world._lit_campfires.size() == 1 and z.get_meta("saved_inventory") == kit,
+  "a nearby flame cancels redundant ignition even at the last moment")
+ # Fire across the river cannot save this side; dry ground is still usable.
+ z.position = Vector3(96,0,0)
+ z.set_meta("saved_inventory", kit.duplicate(true))
+ world._net_campfire_built("far_bank",Vector3(113,0,0),0)
+ world._net_campfire_lit("far_bank","river_fire",Vector3(113,0,0),0)
+ var cold := SurvivalStats.new()
+ cold.body_temperature = 34.5
+ arrival["vstats"] = cold
+ check(not mgr._bot_camp_fire_standoff(arrival,0.1) and mgr._bot_try_cold_rescue(arrival,0.1)
+  and mgr._bot_item_count(z,"Tronco") == 0 and arrival.campfire_pos.distance_to(z.position) < 3.5,
+  "unusable fire across water does not veto a local emergency camp")
+ cold.free()
+ world.free()
 func run():
+ test_shared_fire()
  var world := Arena.new()
  root.add_child(world)
  current_scene = world
@@ -215,6 +290,9 @@ func run():
  proxy.global_position = Vector3(0,0,0)
  # --- Nunca una fogata dentro del agua: punto en el rio se reubica a suelo
  # seco si el anillo lo permite, y rodeado de agua no gasta material ---
+ world._lit_campfires.clear()
+ world._built_campfires.clear()
+ world.world_actions_by_id.clear()
  proxy.global_position = Vector3(99,0,0)
  proxy.set_meta("saved_inventory", [{"name":"Tronco","quantity":2},{"name":"Palo","quantity":1}])
  var b9 := {"proxy":proxy,"bot_id":910,"campfire_id":"","campfire_pos":Vector3.INF}

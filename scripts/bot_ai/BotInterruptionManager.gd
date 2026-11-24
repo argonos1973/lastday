@@ -3,7 +3,7 @@ extends RefCounted
 ## Ordered reasons share ONE suspended interval, including chained emergencies.
 const PRIORITY := {"combat": 100, "escape": 95, "cold": 90, "heat": 90, "bleeding": 85,
 	"thirst": 80, "hunger": 75, "exhaustion": 70, "recovery": 70, "night_refuge": 65,
-	"sleep": 60, "supplies": 50}
+	"sleep": 60, "supplies": 50, "trip_water": 55, "regroup": 45}
 
 static func priority(reasons_list: Array) -> int:
 	var value := 0
@@ -66,4 +66,8 @@ static func reasons(b: Dictionary, d: Dictionary, night: bool = false) -> Array:
 	if action not in ["forage", "hunt"] and act in ["forage", "farm", "cook", "eat", "drink"] \
 			and (float(b.get("hunger", 100.0)) < 75.0 or float(b.get("thirst", 100.0)) < 65.0):
 		out.append("supplies")
+	if b.has("_trip_water"):
+		out.append("trip_water")
+	if b.has("_regroup") and int(b["_regroup"].get("until", 0)) > Time.get_ticks_msec():
+		out.append("regroup")
 	return out

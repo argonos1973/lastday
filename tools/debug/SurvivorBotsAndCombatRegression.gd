@@ -406,9 +406,17 @@ func run() -> void:
 			built_sh_ok = bool(sh.get("camo_covered", false)) and bool(sh.get("pelt_lined", false))
 	check(built_sh_ok, "Kael forra su refugio con pieles y lo cubre con tela de camuflaje")
 
-	# Siguiente tick construye y enciende fogata junto al refugio
+	# Warm, dry daylight is not a reason to light a new camp.
 	mgr._tick_bot(kael, 0.2)
-	check(not str(kael["campfire_id"]).is_empty(), "Superviviente IA construye y enciende fogata junto al refugio (%s)" % str(kael["campfire_id"]))
+	check(world.built_campfires.is_empty(), "No gasta lena solo por tener un refugio a mediodia")
+	dc.time_of_day = 18.0
+	# The evening decision may require walking to the site after midday
+	# chores. Do not teleport away while the match is still being struck.
+	for i in 60:
+		mgr._tick_bot(kael, 0.2)
+		if mgr._bot_own_fire_lit(kael):
+			break
+	check(mgr._bot_own_fire_lit(kael), "Superviviente IA construye y enciende fogata junto al refugio (%s)" % str(kael["campfire_id"]))
 
 	# De noche fuera del refugio enciende su antorcha; al ocultarse dentro del refugio la apaga
 	dc.time_of_day = 22.0
@@ -2183,6 +2191,29 @@ func run() -> void:
 	elena["_want_cache"] = {}
 	check(not mgr._is_loot_desirable(elena, "Trapos", "resource"),
 		"Sano, con cuerda, arco y antorcha: los trapos del suelo NO interesan")
+	# Already carrying the supplies: prepare one dressing before leaving,
+	# even when healthy. Don't spend a second batch on redundant dressings.
+	var kit_b := elena.duplicate()
+	var kit_proxy := Node3D.new()
+	world.add_child(kit_proxy)
+	kit_b["proxy"] = kit_proxy
+	kit_b["_craft_state"] = {}
+	kit_b["_craft_check"] = 0.0
+	kit_proxy.set_meta("saved_inventory", [
+		{"name":"Antorcha", "type":"tool_torch", "quantity":1},
+		{"name":"Trapos", "type":"resource", "quantity":6},
+	])
+	for i in 50:
+		mgr._bot_try_craft(kit_b, 0.1)
+		if mgr._bot_item_count(kit_proxy, "Venda") + mgr._bot_item_count(kit_proxy, "Cuerda") > 0:
+			break
+	check(mgr._bot_item_count(kit_proxy, "Venda") == 1 and mgr._bot_item_count(kit_proxy, "Trapos") == 3,
+		"Prepara una venda de reserva estando sano antes de hacer cuerda")
+	for i in 70:
+		mgr._bot_try_craft(kit_b, 0.1)
+	check(mgr._bot_item_count(kit_proxy, "Cuerda") == 1 and mgr._bot_item_count(kit_proxy, "Venda") == 1,
+		"Guarda solo una venda preventiva y dedica los siguientes trapos a otros usos")
+	kit_proxy.free()
 	check(mgr._is_loot_desirable(elena, "Pluma", "resource"),
 		"Con arco y sin flechas: las plumas interesan (para fabricarlas)")
 	check(mgr._is_loot_desirable(elena, "Hueso", "resource"),
@@ -2257,7 +2288,7 @@ func run() -> void:
 		"La venda cura lo mismo que al jugador: use_value 24, no 32 (hp=%.0f)" % float(elena["health"]))
 	# Herida grave sin sangrado: tampoco espera a la regeneracion
 	elena["health"] = 40.0
-	elena["eat_cooldown"] = 0.0
+	elena["_medical_cooldown"] = 0.0
 	elena_proxy.set_meta("saved_inventory", [{"name": "Venda", "type": "medical", "weight": 0.12, "quantity": 2, "use_value": 24.0}])
 	mgr._maintain_bot_needs(elena, 0.1)
 	check(is_equal_approx(float(elena["health"]), 64.0) and mgr._bot_item_count(elena_proxy, "Venda") == 1,
@@ -2273,7 +2304,7 @@ func run() -> void:
 	foe_near.global_position = elena_proxy.global_position + Vector3(4.0, 0.0, 0.0)
 	elena["_s_foe"] = foe_near
 	elena["health"] = 40.0
-	elena["eat_cooldown"] = 0.0
+	elena["_medical_cooldown"] = 0.0
 	mgr._maintain_bot_needs(elena, 0.1)
 	check(mgr._bot_item_count(elena_proxy, "Venda") == 1,
 		"Con el enemigo a 4 m pospone la venda (primero cobertura/huida)")
@@ -7367,7 +7398,8 @@ func run() -> void:
 	check(str(mem_med.get("last_death_cause", "")) == "sick",
 		"10U2: salud a 0 enfermo clasifica 'sick' y no 'succumbed' (cause=%s)" % str(mem_med.get("last_death_cause", "")))
 
-	# 10U3: bot desangrandose sin venda fabrica una (3 Trapos) y se cura
+	# 10U3: a real bite, not a manually injected bleed. A recent meal
+	# must not prevent a survivor from using the bandage it makes.
 	mgr._respawn_bot(mgr.bots[903])
 	b_med = mgr.bots[903]
 	var p_med: Node3D = b_med["proxy"]
@@ -7392,14 +7424,22 @@ func run() -> void:
 	vst_med.body_temperature = 36.6
 	vst_med.sick = false
 	vst_med.blood = 60.0
-	vst_med.bleeding = 2.0
+	vst_med.bleeding = 0.0
+	p_med.set_meta("proxy_health", 65.0)
+	mgr.on_bot_damaged(903, 20.0, 0, "bear_bite")
+	check(is_equal_approx(vst_med.bleeding, 1.5), "10U3: la mordedura de oso abre la misma herida que al jugador")
+	b_med["eat_cooldown"] = 10.0
 	p_med.set_meta("saved_inventory", [
 		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 3, "use_value": 0.0},
 	])
 	var healed_med := false
-	for i in range(60):
+	mgr._tick_bot(b_med, 0.1)
+	check(b_med["_act"] == "flinch" and (b_med.get("_craft_state", {}) as Dictionary).is_empty(),
+		"10U3: reacciona al golpe antes de fabricar vendas")
+	for i in range(30):
 		mgr._tick_bot(b_med, 0.25)
-		if vst_med.bleeding <= 0.0:
+		if vst_med.bleeding <= 0.0 and vst_med.blood < 60.0 and mgr._bot_item_count(p_med, "Trapos") == 0 \
+				and mgr._bot_item_count(p_med, "Venda") == 0 and float(b_med["health"]) > 65.0:
 			healed_med = true
 			break
 	check(healed_med, "10U3: desangrandose fabrica Venda con 3 Trapos y se vende (bleeding=%.1f)" % vst_med.bleeding)
@@ -7432,6 +7472,41 @@ func run() -> void:
 			med_craft_recipe = str((cs.get("recipe", {}) as Dictionary).get("output", {}).get("name", ""))
 			med_gate_ok = med_craft_recipe != "Venda"
 	check(med_gate_ok, "10U4: con enemigo fijado no inicia cura de campo (recipe=%s)" % med_craft_recipe)
+
+	# A fresh, equipped survivor still has plenty of HP but is losing
+	# the last of their blood. A full magazine must not veto withdrawal.
+	mgr._respawn_bot(mgr.bots[903])
+	b_med = mgr.bots[903]
+	p_med = b_med["proxy"]
+	vst_med = b_med["vstats"]
+	var danger := Node3D.new()
+	world.add_child(danger)
+	p_med.global_position = Vector3(390, 0.4, 390)
+	b_med["pos"] = p_med.global_position
+	danger.global_position = p_med.global_position + Vector3(0, 0, 26)
+	b_med["sense_t"] = 60.0
+	b_med["_s_foe"] = danger
+	b_med["shelter_pos"] = Vector3.INF
+	b_med["_ambush"] = {}
+	b_med["health"] = 85.0
+	p_med.set_meta("proxy_health", 85.0)
+	p_med.set_meta("saved_inventory", [{"name":"Fusil de asalto","type":"weapon_rifle","quantity":1,"durability":100.0}])
+	p_med.set_meta("bot_gun_ammo", {"m4_magazine":30,"m4_reserve":0,"magazine":0,"reserve":0})
+	vst_med.blood = 6.0
+	vst_med.bleeding = 1.0
+	var initial_dist := p_med.global_position.distance_to(danger.global_position)
+	mgr._tick_bot(b_med, 0.15)
+	check(float(b_med["flee_until"]) > 0.0 and p_med.global_position.distance_to(danger.global_position) > initial_dist,
+		"10U: con 85 HP y poca sangre se aleja en vez de seguir el combate")
+	danger.global_position = p_med.global_position + Vector3(2,0,0)
+	b_med["_s_foe"] = danger
+	b_med["eat_cooldown"] = 8.0
+	p_med.set_meta("saved_inventory", [{"name":"Venda","type":"medical","quantity":1,"use_value":24.0}])
+	mgr._maintain_bot_needs(b_med, 0.1)
+	check(vst_med.bleeding == 0.0 and mgr._bot_item_count(p_med, "Venda") == 0,
+		"10U: una sola herida con la sangre casi agotada justifica gastar la venda")
+	b_med["_s_foe"] = null
+	danger.free()
 
 	# 10U5-7: atribucion de muerte del jugador (texto del aviso)
 	world._death_killer = ""
