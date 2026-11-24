@@ -8,6 +8,19 @@ const WORLD_LIMIT := 480.0
 # Fauna puede adentrarse en la expansión sur; el límite en X sigue WORLD_LIMIT.
 const WORLD_LIMIT_Z := 892.0
 const WORLD_SEED := 1337
+const CHARACTER_WALK_SPEED := 4.0
+
+static func wading_speed_factor(depth: float) -> float:
+	# Beyond the river channel, keep forward movement possible in deep lakes.
+	return lerpf(0.72, 0.48, minf(depth, 2.5))
+
+static func wading_depth(world: Node, feet: Vector3, channel_depth: float) -> float:
+	if channel_depth <= 0.02:
+		return 0.0
+	# The channel query uses X/Z only; a deck above the water is dry.
+	if world.has_method("get_river_surface_y_at") and feet.y > float(world.get_river_surface_y_at(feet)) + 0.5:
+		return 0.0
+	return channel_depth
 
 const CAMPFIRE_INPUTS := {"Tronco": 2, "Palo": 1}
 const CAMPFIRE_MATCH_SECONDS := 1.5

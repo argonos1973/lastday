@@ -13017,19 +13017,20 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 		anim_name = "walk"
 	var base_spd := maxf(speed, 6.2) if (anim_name == "run" and not on_stair_segment) else speed
 	var eff_speed := minf(base_spd, 3.2) if on_stair_segment else base_spd
+	var wading := GameConst.wading_depth(world, cur, depth_cur) if depth_cur > 0.02 else 0.0
+	if wading > 0.0:
+		anim_name = "walk"
+		eff_speed = minf(speed, GameConst.CHARACTER_WALK_SPEED) * GameConst.wading_speed_factor(wading)
 	# Sobrepeso: frena igual que al jugador humano (walk * (1 - carry * 0.2))
 	var carry_ratio := _bot_carry_ratio(b)
 	if carry_ratio > 0.0:
 		eff_speed *= 1.0 - carry_ratio * 0.2
 	var cur_spd := float(b.get("_speed", 0.0))
-	if crouched_move:
+	if crouched_move or wading > 0.0:
 		cur_spd = minf(cur_spd, eff_speed)
 	if anim_name == "run" and not on_stair_segment and cur_spd < 3.8:
 		cur_spd = 3.8
-	# Vadear frena como al jugador (speed *= lerp(0.72,0.48,profundidad)): a la
-	# orilla casi nada, con agua al pecho es un tercio de la marcha normal.
-	var water_factor := lerpf(0.72, 0.38, clampf(depth_cur / FORD_MAX_DEPTH, 0.0, 1.0)) if depth_cur > 0.02 else 1.0
-	var spd := move_toward(cur_spd, eff_speed * water_factor, delta * 15.0)
+	var spd := move_toward(cur_spd, eff_speed, delta * 15.0)
 	b["_speed"] = spd
 	var step := minf(spd * delta, d)
 	var chosen_dir := dir if in_building_3d else (sm if sm.length_squared() > 0.001 else dir)
@@ -13065,6 +13066,15 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 	# bloqueado. Conservar el detector de atasco para que busque otra ruta.
 	if front_blocked:
 		new_pos = cur
+	elif anim_name == "run" and not in_building_3d and world != null and world.has_method("get_river_depth_at"):
+		# The first step off the bank starts dry; check the actual (possibly
+		# steered) landing point before committing a sprint into the water.
+		var landing_depth := GameConst.wading_depth(world, new_pos, float(world.get_river_depth_at(new_pos)))
+		if landing_depth > 0.0:
+			anim_name = "walk"
+			var wet_speed := minf(speed, GameConst.CHARACTER_WALK_SPEED) * GameConst.wading_speed_factor(landing_depth)
+			step = minf(step, wet_speed * (1.0 - carry_ratio * 0.2) * delta)
+			new_pos = cur + chosen_dir * step
 	var gy := _ground_y(new_pos.x, new_pos.z, cur.y)
 	if front_blocked:
 		new_pos.y = cur.y

@@ -919,7 +919,45 @@ func run() -> void:
 		mgr._move_bot_towards(carlos, carlos["patrol"][0], 3.4, 0.2, "walk")
 	check(float(carlos["_speed"]) < 3.4 * 0.75,
 		"Vadeando, la marcha es menor que en seco (speed=%.2f)" % float(carlos["_speed"]))
+	var ford_start := Vector3(-58.0, 0.375, -58.0)
+	var ford_goal := ford_start + Vector3.LEFT * 3.0
+	var bank := Vector3(-55.95, 0.375, -58.0)
+	carlos_proxy.global_position = bank
+	carlos["_speed"] = 6.2
+	carlos["_mdir"] = Vector3.LEFT
+	mgr._move_bot_towards(carlos, ford_start, 6.2, 0.1, "run")
+	check(world.get_river_depth_at(bank) == 0.0 and world.get_river_depth_at(carlos_proxy.global_position) > 0.0
+		and bank.distance_to(carlos_proxy.global_position) <= player.walk_speed * 0.48 * 0.1 + 0.001
+		and mgr._bot_effective_net_anim(carlos) != "run" and not carlos_proxy.get_meta("sprinting"),
+		"The first step from dry land into water cannot sprint")
+	carlos_proxy.global_position = ford_start
+	carlos["_speed"] = 6.2
+	mgr._move_bot_towards(carlos, ford_goal, 6.2, 0.1, "run")
+	var ford_step := ford_start.distance_to(carlos_proxy.global_position)
+	check(ford_step > 0.05 and ford_step <= player.walk_speed * 0.48 * 0.1 + 0.001
+		and carlos["anim"] == "walk" and not carlos_proxy.get_meta("sprinting"),
+		"A sprint entering one metre of water immediately slows to human wading pace")
+	var wader := TestPlayer.new()
+	wader.is_puppet = true
+	world.add_child(wader)
+	wader.third_person_model = Node3D.new()
+	wader.add_child(wader.third_person_model)
+	wader.global_position = ford_start
+	wader._process(0.25)
+	check(is_equal_approx(wader.third_person_model.position.y, wader.third_person_ground_offset - 0.8)
+		and wader.global_position.is_equal_approx(ford_start), "Remote wader sinks without moving its network origin")
+	wader.global_position.y += 2.0
+	wader._process(0.25)
+	check(is_equal_approx(wader.third_person_model.position.y, wader.third_person_ground_offset),
+		"Remote model is above water on a raised crossing")
 	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	wader.global_position = ford_start
+	wader._process(0.25)
+	check(not wader.is_in_water and is_zero_approx(wader._water_sink), "Remote model stands normally on dry land")
+	wader.free()
+	mgr._move_bot_towards(carlos, ford_goal, 6.2, 0.1, "run")
+	check(float(carlos["_speed"]) > player.walk_speed and carlos_proxy.get_meta("sprinting"),
+		"Bot can sprint on dry land after wading")
 	world.water_depth = 1.0
 
 	# --- 9) Sed: sin botellas va al rio a beber y recupera la sed ---

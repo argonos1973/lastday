@@ -556,7 +556,7 @@ signal prompt_changed(text: String)
 signal notice(text: String)
 signal item_dropped(item_name: String, item_type: String, item_weight: float, item_quantity: int, item_use_value: float, pos: Vector3, color: Color, broken: bool, spoilage: float)
 
-@export var walk_speed := 4.0
+@export var walk_speed := GameConst.CHARACTER_WALK_SPEED
 @export var sprint_speed := 7.0
 @export var crouch_speed := 2.0
 @export var jump_force := 5.0
@@ -1927,6 +1927,8 @@ func _process(delta: float) -> void:
 				_is_firing = false
 				_puppet_current_anim = ""
 		if not is_dead:
+			_sample_wading_depth(delta)
+			_update_water_sink(delta)
 			var remote_moving := _puppet_motion.length_squared() > 0.000001 or _puppet_anim.to_lower().contains("walk") or _puppet_anim.to_lower().contains("run")
 			var transition := _tick_cosmetic_rifle_motion(remote_moving, delta)
 			if not transition.is_empty() and third_person_animation_player != null:
@@ -4420,7 +4422,7 @@ func _physics_process_impl(delta: float) -> void:
 	if CombatProf.enabled: CombatProf.mark("player.water_state", traversal_started)
 	if is_in_water:
 		speed = crouch_speed if is_crouching else walk_speed
-		speed *= lerp(0.72, 0.48, _water_depth)
+		speed *= GameConst.wading_speed_factor(_water_depth)
 		is_sprinting = false
 
 	speed *= stats.get_thermal_speed_multiplier()
@@ -5659,15 +5661,7 @@ func _update_water_state(delta: float) -> void:
 	_dry_inventory_items(delta * stored_dry_rate * 0.4)
 	_water_step_timer = maxf(0.0, _water_step_timer - delta)
 	_water_notice_cooldown = max(0.0, _water_notice_cooldown - delta)
-	_water_query_timer += delta
-	if is_instance_valid(rowing_boat):
-		_water_depth = 0.0
-		is_in_water = false
-	elif _water_query_timer >= 0.25:
-		_water_query_timer = 0.0
-		var river_depth := _query_river_depth()
-		_water_depth = river_depth
-		is_in_water = river_depth > 0.02
+	_sample_wading_depth(delta)
 	if is_in_water:
 		var water_speed := Vector2(velocity.x, velocity.z).length()
 		if _water_step_timer <= 0.0 and water_speed > 0.4 and is_on_floor():
@@ -5823,10 +5817,25 @@ func apply_warmth_drying(amount: float) -> void:
 	if stats != null:
 		stats.wetness = _effective_wetness()
 
+func _sample_wading_depth(delta: float) -> void:
+	_water_query_timer += delta
+	if is_instance_valid(rowing_boat):
+		_water_depth = 0.0
+		is_in_water = false
+		_water_sink = 0.0
+	elif _water_query_timer >= 0.25:
+		_water_query_timer = 0.0
+		_water_depth = _query_river_depth()
+		is_in_water = _water_depth > 0.02
+
+func _update_water_sink(delta: float) -> void:
+	var target := -0.8 * _water_depth if is_in_water else 0.0
+	_water_sink = lerpf(_water_sink, target, minf(1.0, delta * 5.0))
+
 func _query_river_depth() -> float:
 	var scene := get_tree().current_scene
 	if scene != null and scene.has_method("get_river_depth_at"):
-		return float(scene.call("get_river_depth_at", global_position))
+		return GameConst.wading_depth(scene, global_position, float(scene.call("get_river_depth_at", global_position)))
 	return 0.0
 
 func _ambient_temperature() -> float:
@@ -12106,8 +12115,7 @@ func _update_walk_motion(delta: float, movement_amount: float) -> void:
 	var vertical_bob: float = abs(sin(_walk_bob)) * 0.055 * _walk_intensity
 	var side_bob: float = sin(_walk_bob * 0.5) * 0.028 * _walk_intensity
 	var roll: float = sin(_walk_bob) * deg_to_rad(0.75) * _walk_intensity
-	var target_sink := -0.8 * _water_depth if is_in_water else 0.0
-	_water_sink = lerp(_water_sink, target_sink, delta * 5.0)
+	_update_water_sink(delta)
 	var target_position := Vector3(side_bob, base_height + vertical_bob, 0.0)
 	var third_height := (1.55 if is_crouching else THIRD_PERSON_CAMERA_POS.y) + vertical_bob * 0.45
 	var desired_z := THIRD_PERSON_CAMERA_POS.z
