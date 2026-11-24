@@ -469,7 +469,11 @@ function renderHeader(data) {
   callBox.textContent = callActivity.join("\n");
   const extra = document.getElementById("callOlder");
   extra.hidden = recent.length <= visible.length;
-  if (!extra.hidden) {
+  if (extra.hidden) {
+    extra.open = false;
+    extra.firstElementChild.textContent = "";
+    extra.lastElementChild.textContent = "";
+  } else {
     extra.firstElementChild.textContent = `Últimas llamadas — más (${recent.length - visible.length})`;
     extra.lastElementChild.textContent = recent.slice(visible.length).map(c => callLine(c, c.http ? `HTTP ${c.http}` : "Error de red")).join("\n");
   }

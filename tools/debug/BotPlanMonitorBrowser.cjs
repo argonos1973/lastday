@@ -48,6 +48,13 @@ const server = http.createServer((req,res)=>{
       current={...current,timestamp:current.timestamp+1,groq:{...current.groq,recent_calls:recent.slice(1)}};
       await page.waitForFunction(()=>document.querySelector("#callOlder summary").textContent.includes("(1)"));
       assert(await page.locator("#callOlder").evaluate(el=>el.open),"refresh preserves the expanded call history");
+      current={...current,groq:{...current.groq,recent_calls:recent.slice(2)}};
+      await page.waitForFunction(()=>document.querySelector("#callOlder").hidden);
+      assert(!(await page.locator("#callOlder").evaluate(el=>el.open || el.lastElementChild.textContent.length)),
+        "no stale expanded history when only six calls remain");
+      current={...current,groq:{...current.groq,recent_calls:recent}};
+      await page.waitForFunction(()=>!document.querySelector("#callOlder").hidden);
+      assert(!(await page.locator("#callOlder").evaluate(el=>el.open)),"new history starts collapsed");
     }
     assert.deepEqual(errors,[],"no browser JavaScript errors");
     console.log("BotPlanMonitorBrowser errors=0 (both languages, real polling, all 5 states)");

@@ -1002,17 +1002,10 @@ func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 			add_cand.call(target_pt)
 	if cands.is_empty():
 		return Vector3.INF
-	# Untried first; if all failed, retry the least recently blocked access.
-	if desperate:
-		var choice: Dictionary = cands[0]
-		for c in cands:
-			if c.retry_at < choice.retry_at or (c.retry_at == choice.retry_at and c.d < choice.d):
-				choice = c
-		return choice.pos
 	# Si los vetos _bad_water se acumulan en un mismo rumbo, el "siguiente mas
 	# cercano" cae en la misma orilla bloqueada (la muerte de Elena en la
-	# ciudad del sur): preferir el candidato mas cercano con un rumbo a
-	# >=45° de TODOS los puntos vetados vigentes.
+	# ciudad del sur): preferir el candidato no vetado mas cercano con un rumbo
+	# a >=45° de TODOS los puntos vetados vigentes.
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
 	var veto_dirs: Array = []
 	for e in (b.get("_bad_water", []) as Array):
@@ -1024,6 +1017,8 @@ func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 		var best_dir := Vector3.INF
 		var best_dir_d := INF
 		for c in cands:
+			if float(c["retry_at"]) > 0.0:
+				continue
 			var cp: Vector3 = c["pos"]
 			var cd := Vector2(cp.x - from.x, cp.z - from.z).angle()
 			var blocked_dir := false
@@ -1036,13 +1031,12 @@ func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 				best_dir = cp
 		if best_dir != Vector3.INF:
 			return best_dir
-	var best := Vector3.INF
-	var best_d := 650.0
+	# Untried first; if all failed (desperate), retry the least recently blocked access.
+	var choice: Dictionary = cands[0]
 	for c in cands:
-		if float(c["d"]) < best_d:
-			best_d = float(c["d"])
-			best = c["pos"]
-	return best
+		if c.retry_at < choice.retry_at or (c.retry_at == choice.retry_at and c.d < choice.d):
+			choice = c
+	return choice.pos
 
 # Punto dentro de un bloqueador circular (la fuente de la plaza es un bloque
 # solido de radio 2.0): proyecta el destino al brocal del bloqueo, hacia el
@@ -2194,6 +2188,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# distant camp when the current spot is safe for an uninterrupted nap.
 	if vst_med != null and vst_med.sleep < 10.0 and float(b["thirst"]) >= 18.0 \
 			and not _bot_is_freezing(b) and not _bot_night_supply_emergency(b) \
+			and (b.get("_fire_ignition", {}) as Dictionary).is_empty() \
 			and float(b.get("consume_anim_t", 0.0)) <= 0.0 and not _bot_under_immediate_threat(b) \
 			and not _bot_should_wake(b, is_night) \
 			and world != null and (not world.has_method("get_river_depth_at") or world.get_river_depth_at(proxy.global_position) <= 0.05):
@@ -2346,8 +2341,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				if checked_food:
 					b["_act"] = "forage"
 					if _bot_try_forage(b, delta, false):
+						b["drink_walk_t"] = 0.0
+						b["_drink_best_d"] = INF
 						return
 					b["_act"] = "drink"
+				if int(b.get("_drink_walk_tick", -1)) < int(b["_ground_tick"]) - 1:
+					b["drink_walk_t"] = 0.0
+					b["_drink_best_d"] = d_water
+				b["_drink_walk_tick"] = int(b["_ground_tick"])
 				# Mientras el bot siga acercandose al agua, el reloj de atasco
 				# se reinicia: antes los 12 s fijos abortaban cualquier viaje
 				# de >60 m y vetaban rios alcanzables uno tras otro.
@@ -2365,9 +2366,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			else:
 				if b.get("_reported_water") == b["drink_at"]:
 					# A tip gives a destination, not water. Verify it once on arrival.
-					var actual := _nearest_water_pos(proxy.global_position)
-					if not feet_wet and (not actual.is_finite() or Vector2(actual.x - proxy.global_position.x, actual.z - proxy.global_position.z).length() > 4.5) \
-							and not (world.has_method("_is_near_river") and world._is_near_river(proxy.global_position, 3.2)):
+					var actual := _nearest_water_pos(b["drink_at"])
+					var near_proxy := feet_wet or (world != null and world.has_method("_is_near_river") and bool(world._is_near_river(proxy.global_position, 3.2))) \
+						or (actual.is_finite() and Vector2(actual.x - proxy.global_position.x, actual.z - proxy.global_position.z).length() <= 4.5)
+					if not near_proxy:
+						if actual.is_finite() and Vector2(actual.x - b["drink_at"].x, actual.z - b["drink_at"].z).length() <= 9.0:
+							b.erase("_reported_water")
+							b["drink_at"] = actual
+							b["drink_walk_t"] = 0.0
+							b["_drink_best_d"] = INF
+							_move_bot_towards(b, actual, 6.2, delta, "run")
+							return
+						_forget_false_water_report(b, b["drink_at"])
 						_abandon_water_access(b)
 						return
 					b.erase("_reported_water")
@@ -2411,7 +2421,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_act"] = "forage"
 		return
 
-	if is_night and _bot_needs_food_or_water(b) and not _bot_has_item(proxy, "Antorcha"):
+	if is_night and _bot_needs_food_or_water(b) and not has_headlamp and not _bot_has_item(proxy, "Antorcha"):
 		# No accessible supply within the firelight: never fall through to
 		# hunting, following or exploring into darkness. La unica caminata
 		# a oscuras permitida es volver al refugio propio o a una fogata
@@ -2442,7 +2452,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			if can_light_rescue_torch and _bot_try_craft_named(b, delta, ["Antorcha"], false):
 				b["_act"] = "torch"
 				return
-		elif is_night or _is_pre_night():
+		elif not has_headlamp and (is_night or _is_pre_night()):
 			var need_palo_t := _bot_item_count(proxy, "Palo") < 1
 			var need_trapos_t := _bot_item_count(proxy, "Trapos") < 1
 			if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
@@ -3170,8 +3180,10 @@ func _is_goal_blacklisted(b: Dictionary, pos: Vector3, radius := 18.0) -> bool:
 			continue # caducado: se borra del registro, no solo se ignora
 		kept.append(entry)
 		var bp = entry.get("pos")
-		if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < radius:
-			hit = true
+		if bp is Vector3:
+			var flat_d := Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length()
+			if flat_d < radius and not (flat_d < 6.0 and absf(pos.y - (bp as Vector3).y) > 2.2):
+				hit = true
 	if kept.size() != bl.size():
 		b["_unreachable"] = kept
 	return hit
@@ -3360,6 +3372,7 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 		b["_gather"] = {}
 	if not (b.get("_forage", {}) as Dictionary).is_empty():
 		b["_forage"] = {}
+		b["_forage_scan"] = 0.0
 	var cur_aggro: Node3D = b.get("aggro_target")
 	if cur_aggro != null and is_instance_valid(cur_aggro) and Vector2(goal.x - cur_aggro.global_position.x, goal.z - cur_aggro.global_position.z).length() < 6.0:
 		b["aggro_target"] = null
@@ -9490,11 +9503,15 @@ func _chat_teach_apply(b: Dictionary, sender_id: int, sname: String, skey: Strin
 	var grid := func(p: Vector3, cell: float) -> String: return "%d:%d" % [int(p.x / cell), int(p.z / cell)]
 	match kind:
 		"water":
-			observe_location(bid, "water:" + grid.call(pos, 30.0), "water", pos)
-			if float(b.get("thirst", 100.0)) < 45.0:
+			if _is_water_blacklisted(b, pos):
+				return
+			observe_location(bid, "water:" + grid.call(pos, 30.0), "water", pos, "taught")
+			if float(b.get("thirst", 100.0)) < 45.0 and float(b.get("drinking_timer", 0.0)) <= 0.0:
+				if b.get("drink_at", Vector3.INF) != pos:
+					b["drink_walk_t"] = 0.0
+					b["_drink_best_d"] = INF
 				b["drink_at"] = pos
 				b["_reported_water"] = pos
-				b["drinking_timer"] = 0.0
 				b["drink_giveup"] = 0.0
 				b["drink_scan"] = 0.0
 		"loot":
@@ -9537,24 +9554,39 @@ func _bot_drink_destination(b: Dictionary) -> Vector3:
 			return report
 	return actual
 
+func _forget_false_water_report(b: Dictionary, pos: Vector3) -> void:
+	# observe_location stores coordinates at decimetre precision. Retract only
+	# copies of this report, not other water sources inside the navigation veto.
+	var reported := pos.snappedf(0.1)
+	for target_b in [b] + bots.values():
+		if not (target_b is Dictionary):
+			continue
+		var known: Dictionary = target_b.get("_mem", {}).get("known_locations", {})
+		for lid in known.keys():
+			var e = known[lid]
+			if not (e is Dictionary) or (str(lid).get_slice(":", 0) != "water" and str(e.get("kind", "")) != "water"):
+				continue
+			var ep = e.get("pos")
+			if ep is Array and ep.size() >= 3 and reported.is_equal_approx(Vector3(ep[0], ep[1], ep[2])):
+				known.erase(lid)
+
 func _known_water_pos(b: Dictionary) -> Vector3:
 	var mem: Dictionary = b.get("_mem", {})
 	var known: Dictionary = mem.get("known_locations", {})
 	var proxy: Node3D = b["proxy"]
+	var desperate := float(b.get("thirst", 100.0)) < 18.0
 	var best := Vector3.INF
 	var best_d := 420.0
 	for lid in known.keys():
-		if str(lid).get_slice(":", 0) != "water":
-			continue
 		var e = known[lid]
-		if not (e is Dictionary):
+		if not (e is Dictionary) or (str(lid).get_slice(":", 0) != "water" and str(e.get("kind", "")) != "water"):
 			continue
 		var ep = e.get("pos", null)
 		if not (ep is Array) or (ep as Array).size() < 3:
 			continue
 		var p := Vector3(float(ep[0]), float(ep[1]), float(ep[2]))
 		var d := proxy.global_position.distance_to(p)
-		if d < best_d and not _is_water_blacklisted(b, p):
+		if d < best_d and not _is_water_blacklisted(b, p) and (desperate or _bot_supply_goal_allowed(b, p)):
 			best_d = d
 			best = p
 	return best
@@ -13988,8 +14020,8 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 			return true
 	return false
 
-func _bot_needs_awake_care(st: SurvivalStats) -> bool:
-	return st.health < 25.0 and (st.sleep >= 10.0 or st.bleeding > 0.0 or st.sick or st.blood <= 0.0)
+func _bot_needs_awake_care(st: SurvivalStats, waking := false) -> bool:
+	return st.health < 25.0 and (st.sleep >= (22.0 if waking else 10.0) or st.bleeding > 0.0 or st.sick or st.blood <= 0.0)
 
 # Condiciones para tumbarse a dormir en el punto de descanso (llamado desde el
 # bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
@@ -14061,7 +14093,7 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 		var hungry_s := float(b.get("hunger", 100.0)) < 40.0
 		var thirsty_s := float(b.get("thirst", 100.0)) < 35.0
 		if _bot_needs_food_or_water(b) \
-				and (not is_night or (hungry_s and _bot_has_edible_food(proxy)) or (thirsty_s and _bot_has_drink(proxy)) or _bot_has_item(proxy, "Antorcha") \
+				and (not is_night or (hungry_s and _bot_has_edible_food(proxy)) or (thirsty_s and _bot_has_drink(proxy)) or _bot_has_item(proxy, "Antorcha") or _bot_has_headlamp_worn(b) \
 					or float(b.get("hunger", 100.0)) <= 5.0 or float(b.get("thirst", 100.0)) <= 5.0):
 			b["_sleep_veto"] = "needs"
 			return false
@@ -14081,6 +14113,9 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	b["sitting"] = false
 	b["crouching"] = false
 	b["prone"] = false
+	b["is_aiming"] = false
+	b["_speed"] = 0.0
+	b["_mdir"] = Vector3.ZERO
 	b["anim"] = "sleep"
 	# Ya durmio esta noche: la velada cumplio — si despierta de guardia o
 	# por una necesidad puede volver a la cama sin nueva sobremesa.
@@ -14329,9 +14364,12 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 		# Con algo comestible en la mochila vuelven los umbrales normales
 		# y despierta para comer.
 		var proxy_nap: Node3D = b.get("proxy")
+		var hungry_w := float(b.get("hunger", 100.0)) < 40.0
+		var thirsty_w := float(b.get("thirst", 100.0)) < 35.0
 		var lethal_nap := nap != null and proxy_nap != null \
-			and not _bot_has_edible_food(proxy_nap) and not _bot_has_drink(proxy_nap) \
-			and not _bot_has_item(proxy_nap, "Antorcha")
+			and not (hungry_w and _bot_has_edible_food(proxy_nap)) \
+			and not (thirsty_w and _bot_has_drink(proxy_nap)) \
+			and not _bot_has_item(proxy_nap, "Antorcha") and not _bot_has_headlamp_worn(b)
 		if lethal_nap:
 			# Mochila vacia: despertar solo si despierto hay algo que hacer —
 			# la expedicion letal se desbloquea a hambre<14/sed<10 (rio,
@@ -14366,7 +14404,7 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 				return true
 			if _can_bot_build_campfire(proxy_w):
 				return true
-	if _bot_needs_awake_care(st):
+	if _bot_needs_awake_care(st, true):
 		return true
 	if st.sleep >= 99.5 and st.energy >= 95.0:
 		return true # descansado: se sienta de guardia aunque siga de noche
@@ -18913,7 +18951,9 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 			b["_forage"] = {}
 			return false
 		var flat := Vector2(proxy.global_position.x - (apos as Vector3).x, proxy.global_position.z - (apos as Vector3).z).length()
-		if flat > 2.0:
+		var eat_job := str(st.get("kind", "")) == "eat"
+		var out_of_reach := eat_job and flat <= 2.0 and not _bot_can_reach_loot(proxy.global_position, apos)
+		if flat > 2.0 or (out_of_reach and _bot_forage_has_interior_route(proxy.global_position, apos)):
 			b["sitting"] = false
 			b["crouching"] = false
 			_move_bot_towards(b, apos, 4.8 if flat > 9.0 else 3.8, delta, "run" if flat > 9.0 else "walk")
@@ -18923,9 +18963,18 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 		b["crouching"] = true
 		b["sitting"] = false
 		var duration := float(st.get("t_need", 1.2))
-		if str(st.get("kind", "")) == "eat":
-			if not _bot_can_reach_loot(proxy.global_position, apos) or not _claim_bot_ground_pickup(b, str(st.get("id", ""))):
+		if eat_job:
+			if out_of_reach:
+				var unreach: Array = b.get("_unreachable", [])
+				unreach.append({"pos": apos, "until": float(Time.get_ticks_msec()) / 1000.0 + 240.0})
+				b["_unreachable"] = unreach
 				b["_forage"] = {}
+				b["_forage_scan"] = 0.0
+				_cancel_bot_ground_pickup(b)
+				return false
+			if not _claim_bot_ground_pickup(b, str(st.get("id", ""))):
+				b["_forage"] = {}
+				b["_forage_scan"] = 0.0
 				_cancel_bot_ground_pickup(b)
 				return false
 			if float(b.get("flinch_timer", 0.0)) > 0.0 or float(b.get("health", 100.0)) <= 0.0:
@@ -18994,6 +19043,18 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 		b["_night_eat_chain"] = true
 	return _bot_try_forage(b, 0.0)
 
+func _bot_forage_has_interior_route(from: Vector3, pos: Vector3) -> bool:
+	if world == null:
+		return false
+	var has_city := world is Node and (world as Node).get_node_or_null("SouthernCity") != null
+	if _pos_in_house_bounds(from) != _pos_in_house_bounds(pos):
+		return true
+	if has_city and (_is_in_clock_tower(from, 0.25) != _is_in_clock_tower(pos, 0.8) \
+			or _find_city_building_for_pos(from, 0.25) != _find_city_building_for_pos(pos, 0.85)):
+		return true
+	return absf(from.y - pos.y) > 1.8 and ((has_city and (_is_in_clock_tower(pos, 0.8) \
+		or _find_city_building_for_pos(pos, 0.85) >= 0)) or not _bot_tower_at(pos, true).is_empty())
+
 func _find_forage_target(b: Dictionary, radius: float) -> Dictionary:
 	var started := Time.get_ticks_usec()
 	var result := _find_forage_target_impl(b, radius)
@@ -19028,7 +19089,8 @@ func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 		# If already within horizontal pickup range, walking to this point
 		# again cannot collect food through a wall or on another floor.
 		if Vector2(proxy.global_position.x - a.global_position.x, proxy.global_position.z - a.global_position.z).length_squared() <= 4.0 \
-				and not _bot_can_reach_loot(proxy.global_position, a.global_position):
+				and not _bot_can_reach_loot(proxy.global_position, a.global_position) \
+				and not _bot_forage_has_interior_route(proxy.global_position, a.global_position):
 			continue
 		if _bot_is_freezing(b) and float(b.get("hunger", 100.0)) >= 14.0 \
 				and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, a.global_position):
@@ -19037,8 +19099,11 @@ func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 			best_d = d
 			best = {"kind": "eat", "id": str(aid), "pos": a.global_position, "t": 0.0, "t_need": 1.2,
 				"use": float(a.get_meta("item_use_value", 12.0)), "name": str(a.get_meta("item_name", "comida"))}
-	# Frutales: solo si no hay setas al alcance (la fruta cae al suelo y hay que recogerla)
-	if best.is_empty():
+	# Fruit needs an extra three-second harvest. When starving, compare that
+	# time with the run to the nearest ready meal (4.8 m/s).
+	if best.is_empty() or float(b.get("hunger", 100.0)) < 14.0:
+		if not best.is_empty():
+			best_d -= 3.0 * 4.8
 		for aid in _cached_fruit_ids:
 			var a = world.world_actions_by_id.get(aid)
 			if a == null or not is_instance_valid(a):

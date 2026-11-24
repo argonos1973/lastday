@@ -25,6 +25,8 @@ class WaterWorld extends LootWorld:
 	var day_cycle = null
 	func _default_river_segments() -> Array:
 		water_queries += 1
+		if has_meta("custom_segs"):
+			return get_meta("custom_segs")
 		return [{"center":Vector3(6, 0, 0), "size":Vector2(14, 7)},
 			{"center":Vector3(100, 0, 0), "size":Vector2(14, 7)}]
 
@@ -57,6 +59,23 @@ func test_preventive_water(manager: Manager, proxy: Node3D) -> void:
 	check(manager._known_water_pos(bot) == Vector3(30,0,25), "a nearer failed water report does not hide another lead")
 	check(manager._bot_drink_destination(bot) == Vector3(30,0,25),
 		"an untried report wins over repeating a blocked physical access")
+	bot["thirst"] = 25.0
+	manager.denied_supply = Vector3(30, 0, 25)
+	check(manager._known_water_pos(bot) == Vector3.INF,
+		"non-critical thirst skips disallowed water reports so scan cooldown holds")
+	manager.denied_supply = Vector3.INF
+	var seg_a := {"center":Vector3(14, 0, 0), "size":Vector2(8, 6)}
+	var seg_b := {"center":Vector3(32, 0, 0), "size":Vector2(8, 6)}
+	var seg_orth := {"center":Vector3(0, 0, 38), "size":Vector2(8, 6)}
+	var custom_segs := [seg_a, seg_b, seg_orth]
+	world.set_meta("custom_segs", custom_segs)
+	bot["thirst"] = 10.0
+	proxy.global_position = Vector3.ZERO
+	bot["_bad_water"] = [{"pos":Vector3(14, 0, 0), "until":latest}]
+	check(manager._nearest_water_pos(Vector3.ZERO, bot).z > 20.0,
+		"critical thirst avoids another segment along the same blocked bank when an orthogonal source exists")
+	world.remove_meta("custom_segs")
+	proxy.global_position = Vector3(4, 0, 0)
 	bot["thirst"] = 60.0
 	bot["_bad_water"] = []
 	manager._preventive_water_pos(bot)
@@ -127,6 +146,11 @@ func test_forage_search(manager: Manager, proxy: Node3D) -> void:
 	check(manager._find_forage_target(bot, 20.0).get("id") == "0", "near mushrooms retain priority over nearer fruit")
 	check(manager.supply_checks == 1, "two thousand distant foods trigger no supply/lighting evaluations")
 	var ground_food: WorldAction = world.world_actions_by_id["0"]
+	bot.hunger = 2.0
+	ground_food.position = Vector3(95, 0, 0)
+	check(manager._find_forage_target(bot, 100.0).get("id") == "1", "starving bot harvests nearby ripe fruit instead of travelling 95 m for a mushroom")
+	bot.hunger = 20.0
+	ground_food.position = Vector3(4, 0, 0)
 	ground_food.set_meta("item_name", "Pez ensartado")
 	check(manager._find_forage_target(bot, 20.0).get("id") == "1", "uncooked skewer on ground does not divert bot from fruit")
 	manager._bot_forage_complete(bot, {"kind":"eat", "id":"0", "name":"comida"})

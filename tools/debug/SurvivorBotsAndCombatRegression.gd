@@ -1769,6 +1769,15 @@ func run() -> void:
 	mgr._tick_bot(kael, 0.2)
 	check(str(b_nh["_act"]) in ["need_light", "night_supplies"],
 		"sin refugio ni luz si se aparca en el sitio (act=%s)" % str(b_nh["_act"]))
+	var clothes_before: String = b_nh["clothing"]
+	b_nh["clothing"] = GameConst.HEADLAMP_ITEM_NAME
+	b_nh["sleeping"] = false
+	b_nh["_s_loot"] = {"id":"night_can", "name":"Lata de fabada", "type":"food", "pos":p_nh.global_position + Vector3.RIGHT * 6.0}
+	mgr._tick_bot(b_nh, 0.2)
+	check(bool(b_nh.get("flashlight_on", false)) and b_nh["_act"] == "loot",
+		"con frontal y sin antorcha sigue hacia la lata percibida (act=%s)" % b_nh["_act"])
+	mgr._loot_clear(b_nh)
+	b_nh["clothing"] = clothes_before
 	world._lit_campfires = lit_bak
 	world.wildlife_blockers = blk_bak
 	world.world_actions_by_id.erase("cf_nh")
@@ -4106,27 +4115,49 @@ func run() -> void:
 		mgr._tick_bot(fresh_b, 0.1)
 	check(fresh_b.thirst < 3.0 and mgr._is_water_blacklisted(fresh_b, food_origin),
 		"Una indicacion de agua en tierra seca no hidrata ni se sigue reintentando")
+	fresh_b["_bad_water"] = []
+	check(mgr._known_water_pos(fresh_b) == Vector3.INF,
+		"Una indicacion de agua comprobada en seco se borra de known_locations y no reaparece al caducar el veto")
+	var near_ftn_tip := ftn_goal + (food_origin - ftn_goal).normalized() * 3.8
+	fresh_b["proxy"].global_position = food_origin
+	fresh_b["pos"] = food_origin
+	fresh_b["thirst"] = 12.0
+	mgr._chat_teach_apply(fresh_b, 8, "Profe", "player_8", "water", near_ftn_tip)
+	for frame in 140:
+		mgr._tick_bot(fresh_b, 0.1)
+		if float(fresh_b["thirst"]) >= 95.0:
+			break
+	check(float(fresh_b["thirst"]) >= 95.0 and not mgr._is_water_blacklisted(fresh_b, ftn_goal),
+		"Un aviso de agua junto a la fuente real engancha la fuente sin vetarla (sed=%.0f)" % float(fresh_b["thirst"]))
 	fresh_b["proxy"].global_position = food_origin
 	fresh_b["pos"] = food_origin
 	fresh_b["drink_at"] = ftn_goal
+	fresh_b["_drink_best_d"] = 1.0
+	fresh_b["drink_walk_t"] = 11.9
 	fresh_b["hunger"] = 2.0
 	fresh_b["thirst"] = 30.0
 	fresh_b["_forage_scan"] = 0.0
-	for key in ["upstairs_meal", "reachable_meal"]:
+	for key in ["upstairs_meal", "distant_upstairs_meal", "reachable_meal"]:
 		var meal := WorldActionScript.new()
 		meal.setup(key, "eat_food", "Seta", Vector3.ONE, Color.WHITE, false, false)
 		meal.set_meta("item_use_value", 20.0)
 		world.add_child(meal)
-		meal.global_position = food_origin + (Vector3.UP * 3.0 if key == "upstairs_meal" else Vector3.RIGHT * 6.0)
+		meal.global_position = food_origin + (Vector3.UP * 3.0 if key == "upstairs_meal" else (Vector3(10.0, 3.0, 0.0) if key == "distant_upstairs_meal" else Vector3.RIGHT * 13.0))
 		world.world_actions_by_id[key] = meal
-	for frame in 100:
+	for frame in 140:
 		mgr._tick_bot(fresh_b, 0.1)
 		if float(fresh_b["hunger"]) > 15.0:
 			break
 	check(float(fresh_b["hunger"]) > 15.0 and world._depleted_action_ids.has("reachable_meal") \
-		and not world._depleted_action_ids.has("upstairs_meal"),
-		"Hambre critica: come solo la seta accesible (h=%.1f act=%s pos=%s tarea=%s)" % [fresh_b.hunger, fresh_b._act, fresh_b.pos, fresh_b.get("_forage", {})])
-	for key in ["upstairs_meal", "reachable_meal"]:
+		and not world._depleted_action_ids.has("upstairs_meal") \
+		and not world._depleted_action_ids.has("distant_upstairs_meal") \
+		and mgr._is_goal_blacklisted(fresh_b, food_origin + Vector3(10.0, 3.0, 0.0), 3.0) \
+		and not mgr._is_goal_blacklisted(fresh_b, food_origin + Vector3(10.0, 0.0, 0.0), 3.0),
+		"Hambre critica: descarta comida inalcanzable a distancia sin vetar la planta baja y come la accesible (h=%.1f act=%s pos=%s tarea=%s)" % [fresh_b.hunger, fresh_b._act, fresh_b.pos, fresh_b.get("_forage", {})])
+	mgr._tick_bot(fresh_b, 0.1)
+	check(fresh_b["drink_at"] == ftn_goal and not mgr._is_water_blacklisted(fresh_b, ftn_goal),
+		"Reanudar el camino al agua tras comer no veta la fuente por _drink_best_d previo")
+	for key in ["upstairs_meal", "distant_upstairs_meal", "reachable_meal"]:
 		var meal_to_free = world.world_actions_by_id.get(key)
 		world.world_actions_by_id.erase(key)
 		if meal_to_free is Node:
@@ -4209,11 +4240,17 @@ func run() -> void:
 	fresh_b["drink_at"] = fresh_b["proxy"].global_position + Vector3.RIGHT * 100.0
 	fresh_b["sense_t"] = 30.0
 	var slept_before_trip := false
-	for frame in 20:
+	var low_hp_wakes := 0
+	var was_sleeping_low := false
+	for frame in 35:
 		mgr._tick_bot(fresh_b, 0.1)
-		slept_before_trip = slept_before_trip or bool(fresh_b["sleeping"])
-	check(slept_before_trip and vs.sleep > 2.0 and vs.health > 0.0,
-		"Sueno letal: interrumpe el viaje preventivo y recupera sueno (sleep=%.2f hp=%.1f act=%s veto=%s)" % [vs.sleep, vs.health, fresh_b._act, fresh_b.get("_sleep_veto", "")])
+		var sl_now := bool(fresh_b["sleeping"])
+		if was_sleeping_low and not sl_now and vs.health < 25.0:
+			low_hp_wakes += 1
+		was_sleeping_low = sl_now
+		slept_before_trip = slept_before_trip or sl_now
+	check(slept_before_trip and low_hp_wakes == 0 and vs.sleep > 15.0 and vs.health >= 25.0,
+		"Sueno letal: interrumpe el viaje preventivo y recupera sueno y vida sin aletear en sleep=10 (sleep=%.2f hp=%.1f wakes=%d act=%s veto=%s)" % [vs.sleep, vs.health, low_hp_wakes, fresh_b._act, fresh_b.get("_sleep_veto", "")])
 	fresh_b["drink_at"] = Vector3.INF
 	fresh_b["health"] = 100.0
 	vs.health = 100.0

@@ -51,10 +51,21 @@ func run() -> void:
 	# Una segunda fuente válida usa la misma frase de confirmación. El
 	# antispam no debe silenciar una respuesta solicitada por el jugador.
 	teacher.position = Vector3(65, 0, 65)
+	b.drink_walk_t = 11.9
+	b._drink_best_d = 0.5
 	m.on_chat_received(902, 8, "Profe", "aqui hay agua, bebe de esta fuente")
 	check(net.sent.size() == 2, "a second teaching gets a reply even when its wording repeats")
 	check(b.drink_at == teacher.position, "the second teaching changes the water destination")
 	check(b._mem.known_locations.size() == 2, "both separate water sources are retained")
+	check(b.drink_walk_t == 0.0 and b._drink_best_d == INF, "a new destination does not inherit the previous route timeout")
+	var ally := {"proxy":proxy, "_mem":{"known_locations":{
+		"taught:dry":{"kind":"water", "pos":[65,0,65]},
+		"taught:spring":{"kind":"water", "pos":[76,0,65]}}}}
+	m.bots[901] = ally
+	m._forget_false_water_report(b, teacher.position)
+	check(not ally._mem.known_locations.has("taught:dry") and ally._mem.known_locations.has("taught:spring"),
+		"retracting the shared dry tip does not erase another spring")
+	check(m._known_water_pos(ally) == Vector3(76,0,65), "allies can use a shared water hint regardless of its memory key")
 	# Las conversaciones espontáneas conservan su filtro antirrepetición.
 	m._bot_chat_send(b, 8, "Profe", "Buenos días.", "greet")
 	var sent_before := net.sent.size()
