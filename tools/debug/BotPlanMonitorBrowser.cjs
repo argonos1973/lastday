@@ -42,6 +42,12 @@ const server = http.createServer((req,res)=>{
       }
       assert(await page.locator("#mapCanvas").count(),"tactical map preserved");
       assert(await page.locator(".plan-panel").count()===4,"all four NPC cards preserved");
+      const recent = Array.from({length:8}, (_,i)=>({provider:"groq",model:`model-${i}`,http:200,started:1}));
+      current={...current,timestamp:current.timestamp+1,groq:{...current.groq,recent_calls:recent}};
+      await page.locator("#callOlder summary").click();
+      current={...current,timestamp:current.timestamp+1,groq:{...current.groq,recent_calls:recent.slice(1)}};
+      await page.waitForFunction(()=>document.querySelector("#callOlder summary").textContent.includes("(1)"));
+      assert(await page.locator("#callOlder").evaluate(el=>el.open),"refresh preserves the expanded call history");
     }
     assert.deepEqual(errors,[],"no browser JavaScript errors");
     console.log("BotPlanMonitorBrowser errors=0 (both languages, real polling, all 5 states)");

@@ -339,6 +339,10 @@
 <details class="card" open>
   <summary class="card-title">Llamadas IA: decisiones y chat</summary>
   <div id="callActivity" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;padding:0 14px 12px"></div>
+  <details id="callOlder" hidden style="margin:0 14px 12px;font-size:12px">
+    <summary style="cursor:pointer;color:var(--muted)"></summary>
+    <div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:6px"></div>
+  </details>
 </details>
 <div class="top-grid">
   <details class="card" data-sec id="mapCard" open>
@@ -458,10 +462,17 @@ function renderHeader(data) {
     const model = c.served_model || c.model;
     return `${new Date(c.started * 1000).toLocaleTimeString()} · ${state} · #${c.bot} · ${c.channel}/${c.task} · ${c.provider} / ${model} · ${cost}`;
   };
-  document.getElementById("callActivity").textContent = [
-    ...(live.length ? live.map(c => callLine(c, "En curso")) : ["Sin llamadas en curso"]),
-    "Últimas llamadas", ...recent.map(c => callLine(c, c.http ? `HTTP ${c.http}` : "Error de red"))
-  ].join("\n");
+  const callBox = document.getElementById("callActivity");
+  const visible = recent.slice(0, 6);
+  const callActivity = live.length ? live.map(c => callLine(c, "En curso")) : ["Sin llamadas en curso"];
+  if (visible.length) callActivity.push("Últimas llamadas", ...visible.map(c => callLine(c, c.http ? `HTTP ${c.http}` : "Error de red")));
+  callBox.textContent = callActivity.join("\n");
+  const extra = document.getElementById("callOlder");
+  extra.hidden = recent.length <= visible.length;
+  if (!extra.hidden) {
+    extra.firstElementChild.textContent = `Últimas llamadas — más (${recent.length - visible.length})`;
+    extra.lastElementChild.textContent = recent.slice(visible.length).map(c => callLine(c, c.http ? `HTTP ${c.http}` : "Error de red")).join("\n");
+  }
   const st = String(g.status || "idle");
   let cls = "info";
   if (st.includes("online") || st.includes("200")) cls = "ok";

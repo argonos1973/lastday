@@ -4056,9 +4056,9 @@ func run() -> void:
 	world.add_child(ftn_drink)
 	ftn_drink.global_position = fountain_pos + Vector3(0.0, 0.9, 0.0)
 	world.world_actions_by_id["district_fountain_drink"] = ftn_drink
-	fresh_b["proxy"].global_position = fountain_pos + Vector3(18.0, 0.375, 0.0)
+	fresh_b["proxy"].global_position = Vector3(24.8, 0.1, 698.2)
 	fresh_b["pos"] = fresh_b["proxy"].global_position
-	fresh_b["thirst"] = 20.0
+	fresh_b["thirst"] = 0.0
 	fresh_b["hunger"] = 90.0
 	fresh_b["drink_at"] = Vector3.INF
 	fresh_b["drink_scan"] = 0.0
@@ -4079,19 +4079,60 @@ func run() -> void:
 	fresh_b["forced_eat"] = false
 	fresh_b["hide_timer"] = 0.0
 	fresh_b["flinch_timer"] = 0.0
-	world.river_segs = []
+	var failed_bank := Vector3(31, 0, 711)
+	world.river_segs = [{"center":failed_bank}]
+	fresh_b["drink_at"] = failed_bank
+	fresh_b["_act"] = "drink"
+	mgr._abandon_unreachable_goal(fresh_b, failed_bank)
 	mgr._tick_bot(fresh_b, 0.1)
 	var ftn_goal: Vector3 = fresh_b["drink_at"]
 	var ftn_dist := Vector2(ftn_goal.x - fountain_pos.x, ftn_goal.z - fountain_pos.z).length() if ftn_goal != Vector3.INF else -1.0
 	check(ftn_goal != Vector3.INF and ftn_dist > 2.0 and ftn_dist < 3.5 and not world.is_bot_blocked_at(ftn_goal),
 		"SpawnReal 10v1: con sed el bot apunta al brocal de la fuente de la ciudad (goal=%s d=%.2f)" % [str(ftn_goal), ftn_dist])
-	fresh_b["proxy"].global_position = ftn_goal
-	fresh_b["pos"] = ftn_goal
-	for i in range(45):
+	for i in range(140):
 		mgr._tick_bot(fresh_b, 0.1)
+		if float(fresh_b["thirst"]) >= 95.0:
+			break
 	check(float(fresh_b["thirst"]) >= 95.0 and mgr._bot_item_count(fresh_b["proxy"], "Botella de agua llena") == 1,
 		"SpawnReal 10v2: bebe en la fuente de la ciudad y rellena su botella (sed=%.0f)" % float(fresh_b["thirst"]))
+	var food_origin := Vector3(24.8, 0.1, 698.2)
+	fresh_b["proxy"].global_position = food_origin
+	fresh_b["proxy"].set_meta("saved_inventory", [])
+	fresh_b["pos"] = food_origin
+	fresh_b["thirst"] = 2.0
+	world.river_segs = []
+	mgr._chat_teach_apply(fresh_b, 8, "Profe", "player_8", "water", food_origin)
+	for frame in 30:
+		mgr._tick_bot(fresh_b, 0.1)
+	check(fresh_b.thirst < 3.0 and mgr._is_water_blacklisted(fresh_b, food_origin),
+		"Una indicacion de agua en tierra seca no hidrata ni se sigue reintentando")
+	fresh_b["proxy"].global_position = food_origin
+	fresh_b["pos"] = food_origin
+	fresh_b["drink_at"] = ftn_goal
+	fresh_b["hunger"] = 2.0
+	fresh_b["thirst"] = 30.0
+	fresh_b["_forage_scan"] = 0.0
+	for key in ["upstairs_meal", "reachable_meal"]:
+		var meal := WorldActionScript.new()
+		meal.setup(key, "eat_food", "Seta", Vector3.ONE, Color.WHITE, false, false)
+		meal.set_meta("item_use_value", 20.0)
+		world.add_child(meal)
+		meal.global_position = food_origin + (Vector3.UP * 3.0 if key == "upstairs_meal" else Vector3.RIGHT * 6.0)
+		world.world_actions_by_id[key] = meal
+	for frame in 100:
+		mgr._tick_bot(fresh_b, 0.1)
+		if float(fresh_b["hunger"]) > 15.0:
+			break
+	check(float(fresh_b["hunger"]) > 15.0 and world._depleted_action_ids.has("reachable_meal") \
+		and not world._depleted_action_ids.has("upstairs_meal"),
+		"Hambre critica: come solo la seta accesible (h=%.1f act=%s pos=%s tarea=%s)" % [fresh_b.hunger, fresh_b._act, fresh_b.pos, fresh_b.get("_forage", {})])
+	for key in ["upstairs_meal", "reachable_meal"]:
+		var meal_to_free = world.world_actions_by_id.get(key)
+		world.world_actions_by_id.erase(key)
+		if meal_to_free is Node:
+			meal_to_free.queue_free()
 	world.world_actions_by_id.erase("district_fountain_drink")
+	world.river_segs = []
 	ftn_drink.queue_free()
 
 	# 10w: supervivencia de jugador humano en los bots — duermen de noche en su
@@ -4157,6 +4198,26 @@ func run() -> void:
 	mgr._tick_bot(fresh_b, 0.1)
 	check(not bool(fresh_b["sleeping"]),
 		"SpawnReal 10w6: al amanecer se despierta solo")
+	# Moderate hunger, a distant drink and low HP must not keep an exhausted
+	# bot walking when the immediate threat is its sleep debt.
+	vs.sleep = 2.0
+	vs.body_temperature = 36.6
+	fresh_b["health"] = 20.0
+	fresh_b["proxy"].set_meta("proxy_health", 20.0)
+	fresh_b["hunger"] = 25.0
+	fresh_b["thirst"] = 31.0
+	fresh_b["drink_at"] = fresh_b["proxy"].global_position + Vector3.RIGHT * 100.0
+	fresh_b["sense_t"] = 30.0
+	var slept_before_trip := false
+	for frame in 20:
+		mgr._tick_bot(fresh_b, 0.1)
+		slept_before_trip = slept_before_trip or bool(fresh_b["sleeping"])
+	check(slept_before_trip and vs.sleep > 2.0 and vs.health > 0.0,
+		"Sueno letal: interrumpe el viaje preventivo y recupera sueno (sleep=%.2f hp=%.1f act=%s veto=%s)" % [vs.sleep, vs.health, fresh_b._act, fresh_b.get("_sleep_veto", "")])
+	fresh_b["drink_at"] = Vector3.INF
+	fresh_b["health"] = 100.0
+	vs.health = 100.0
+	fresh_b["proxy"].set_meta("proxy_health", 100.0)
 
 	# La siesta diurna usa el mismo umbral de agotamiento que el acampada
 	# (_bot_is_exhausted sube con las lecciones de frio): antes quedaba un

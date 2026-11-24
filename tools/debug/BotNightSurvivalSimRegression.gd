@@ -649,12 +649,13 @@ func run() -> void:
 	b = mgr.bots[901]
 	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"sleep": 55.0, "inventory": [
 		{"name": "Palo", "type": "resource", "weight": 0.3, "quantity": 4, "use_value": 0.0},
-		{"name": "Piedra", "type": "resource", "weight": 0.4, "quantity": 3, "use_value": 0.0},
+		{"name": "Tronco", "type": "resource", "weight": 1.0, "quantity": 2, "use_value": 0.0},
 		{"name": "Carne seca", "type": "food", "weight": 0.25, "quantity": 90, "use_value": 30.0},
 		{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 10, "use_value": 45.0}]})
 	reps = simulate(env, [b])
 	print(_report_line(reps[0], b))
 	check(not (b["vstats"] as SurvivalStats).dead, "S2 sin refugio ni antorcha sobrevive")
+	check(not w._lit_campfires.is_empty(), "S2 construyo y encendio una fogata con sus materiales")
 	check(not str(b.get("_act", "")) == "need_light" or (b["vstats"] as SurvivalStats).sleep > 55.0,
 		"S2 no quedo petrificado en need_light toda la noche")
 
@@ -833,21 +834,23 @@ func run() -> void:
 		"inventory": [
 			{"name": "Botella de agua llena", "type": "water", "weight": 0.5, "quantity": 15, "use_value": 45.0},
 			{"name": "Seta amanita", "type": "food", "weight": 0.1, "quantity": 160, "use_value": 14.0}]})
-	var woke_mid := [false]
-	reps = simulate(env, [b], [{"at": 300, "fn": func():
-		b["aggro_target"] = wolf
-		b["aggro_timer"] = 60.0},
-		{"at": 330, "fn": func():
-		# Despertar medido dentro de la ventana: el estado final no vale, el
-		# bot puede volver a dormir (y debe) cuando la amenaza pasa.
-		woke_mid[0] = not bool(b.get("sleeping", false))},
-		{"at": 360, "fn": func():
-		# La amenaza rompe el contacto: el bot reacciono y sobrevivio.
-		b["aggro_target"] = null
-		b["aggro_timer"] = 0.0}])
+	var reaction := {"injected":false, "observed":false, "awake":false}
+	reps = simulate(env, [b], [{"every": 1, "fn": func():
+		if reaction.observed:
+			return
+		if reaction.injected:
+			reaction.awake = not bool(b.get("sleeping", false))
+			reaction.observed = true
+		elif bool(b.get("sleeping", false)):
+			# Inject while actually asleep; inspect the very next AI tick.
+			b["aggro_target"] = wolf
+			b["aggro_timer"] = 60.0
+			b["_s_foe"] = wolf
+			b["sense_t"] = 2.0
+			reaction.injected = true}])
 	print(_report_line(reps[0], b))
-	check(bool(reps[0]["slept"]), "S8 llego a dormir antes del ataque")
-	check(woke_mid[0], "S8 el aggro lo desperto")
+	check(reaction.injected, "S8 llego a dormir antes del ataque")
+	check(reaction.observed and reaction.awake, "S8 el aggro lo desperto")
 	check(not (b["vstats"] as SurvivalStats).dead, "S8 sobrevive a la amenaza")
 	# Prioridad combate>termostato: con el lobo encima nunca ejecuta
 	# warm_up/cool_off — la regulacion termica cede a la amenaza.

@@ -91,8 +91,19 @@ func run():
  b.erase("_velada_done") # escenario de primera noche: aun no ha dormido
  b.hunger = 80.0
  b.thirst = 80.0
+ stats.health = 20.0
+ stats.sleep = 11.0
+ check(manager._bot_should_wake(b,true) and not manager._bot_try_start_sleep(b,true), "waking at low HP cannot immediately re-enter the same nap")
+ b.sleeping = false
+ stats.sleep = 2.0
+ stats.bleeding = 1.0
+ check(manager._bot_should_wake(b,true) and not manager._bot_try_start_sleep(b,true), "a critical wound still interrupts a collapse nap")
+ stats.bleeding = 0.0
+ stats.health = 100.0
  stats.sleep = 80.0
  stats.energy = 80.0
+ b.sleeping = false
+ b.erase("_velada_done")
  stats.body_temperature = 36.8
  fdc.time_of_day = 20.1 # 12 min tras el inicio de la noche
  check(not manager._bot_try_start_sleep(b,true), "bot descansado con luz aguanta la velada tras el anochecer")

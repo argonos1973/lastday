@@ -49,6 +49,14 @@ func test_preventive_water(manager: Manager, proxy: Node3D) -> void:
 	var urgent := manager._preventive_water_pos(bot)
 	check(world.water_queries == 4 and urgent == manager._nearest_water_pos(proxy.global_position, bot),
 		"critical thirst immediately refreshes using the existing urgent water-selection rules")
+	var latest := Time.get_ticks_msec()/1000.0 + 120.0
+	bot["_bad_water"] = [{"pos":moved, "until":latest}, {"pos":alternate, "until":latest - 20.0}]
+	check(manager._nearest_water_pos(proxy.global_position, bot) == alternate,
+		"when both accesses failed, critical thirst retries the older failure rather than looping on the nearest")
+	bot["_mem"] = {"known_locations":{"water:a":{"pos":[moved.x, 0, moved.z]}, "water:b":{"pos":[30,0,25]}}}
+	check(manager._known_water_pos(bot) == Vector3(30,0,25), "a nearer failed water report does not hide another lead")
+	check(manager._bot_drink_destination(bot) == Vector3(30,0,25),
+		"an untried report wins over repeating a blocked physical access")
 	bot["thirst"] = 60.0
 	bot["_bad_water"] = []
 	manager._preventive_water_pos(bot)
@@ -127,7 +135,14 @@ func test_forage_search(manager: Manager, proxy: Node3D) -> void:
 	world._depleted_action_ids.append("0")
 	check(manager._find_forage_target(bot, 20.0).get("id") == "1", "fruit becomes available after mushroom depletion")
 	world._pickup_claims["1"] = 902
+	world._pickup_claim_until["1"] = Time.get_ticks_msec() + 30000
 	check(manager._find_forage_target(bot, 20.0).is_empty(), "forage respects another actor's reservation")
+	world._pickup_claim_until["1"] = Time.get_ticks_msec() - 1
+	check(manager._find_forage_target(bot, 20.0).get("id") == "1", "expired fruit reservation does not hide a meal")
+	world._depleted_action_ids.clear()
+	world._pickup_claims["0"] = bot.bot_id
+	world._pickup_claim_until["0"] = Time.get_ticks_msec() + 30000
+	check(manager._find_forage_target(bot, 20.0).get("id") == "0", "a bot may eat the food it already reserved for loot")
 	world._pickup_claims.clear()
 	world._depleted_action_ids.clear()
 	manager.denied_supply = Vector3(4, 0, 0)

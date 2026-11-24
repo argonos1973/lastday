@@ -944,9 +944,12 @@ func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 	var cands: Array = []
 	var add_cand := func(target_pt: Vector3) -> void:
 		var d := Vector2(from.x - target_pt.x, from.z - target_pt.z).length()
-		if not b.is_empty() and not desperate and (_is_water_blacklisted(b, target_pt) or not _bot_supply_goal_allowed(b, target_pt)):
+		if d >= 650.0:
 			return
-		cands.append({"pos": target_pt, "d": d})
+		var retry_at := _water_retry_at(b, target_pt)
+		if not b.is_empty() and not desperate and (retry_at > 0.0 or not _bot_supply_goal_allowed(b, target_pt)):
+			return
+		cands.append({"pos":target_pt, "d":d, "retry_at":retry_at})
 	for seg in world._default_river_segments():
 		if not (seg is Dictionary):
 			continue
@@ -999,6 +1002,13 @@ func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 			add_cand.call(target_pt)
 	if cands.is_empty():
 		return Vector3.INF
+	# Untried first; if all failed, retry the least recently blocked access.
+	if desperate:
+		var choice: Dictionary = cands[0]
+		for c in cands:
+			if c.retry_at < choice.retry_at or (c.retry_at == choice.retry_at and c.d < choice.d):
+				choice = c
+		return choice.pos
 	# Si los vetos _bad_water se acumulan en un mismo rumbo, el "siguiente mas
 	# cercano" cae en la misma orilla bloqueada (la muerte de Elena en la
 	# ciudad del sur): preferir el candidato mas cercano con un rumbo a
@@ -2180,6 +2190,19 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		_engage_foe(b, human_foe, delta)
 		return
 
+	# Sleep damage starts below 10. Do not wait for optional jobs or a
+	# distant camp when the current spot is safe for an uninterrupted nap.
+	if vst_med != null and vst_med.sleep < 10.0 and float(b["thirst"]) >= 18.0 \
+			and not _bot_is_freezing(b) and not _bot_night_supply_emergency(b) \
+			and float(b.get("consume_anim_t", 0.0)) <= 0.0 and not _bot_under_immediate_threat(b) \
+			and not _bot_should_wake(b, is_night) \
+			and world != null and (not world.has_method("get_river_depth_at") or world.get_river_depth_at(proxy.global_position) <= 0.05):
+		if _bot_interrupt_indoor_rest(b):
+			return
+		if _bot_try_start_sleep(b, is_night):
+			b["_act"] = "rest"
+			return
+
 	# 3a) Enemigo perdido: buscar donde se le vio/u oyo por ultima vez durante
 	#     la ventana por personalidad, escanear al llegar y abandonar sin
 	#     indicios. Solo lo hace un bot armado y en condiciones de buscar.
@@ -2278,6 +2301,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		_stop_bot_motion(b)
 		b["_act"] = str(b.get("consume_anim","eat"))
 		return
+	var checked_food := false
 	var leader := _sensed_node(b, "_s_leader")
 	b["drink_giveup"] = maxf(0.0, float(b.get("drink_giveup", 0.0)) - delta)
 	var thirst_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
@@ -2286,20 +2310,18 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# a una fuente — con sed moderada y agua a tiro se desvia a beber y a
 	# rellenar la botella antes de que la necesidad apriete.
 	var prevent_drink := false
-	if not _bot_is_freezing(b) and thirst_lessons > 0 and float(b["thirst"]) < 78.0 and not _bot_has_drink(proxy):
+	if not _bot_is_freezing(b) and thirst_lessons > 0 and float(b["thirst"]) >= 18.0 and float(b["thirst"]) < 78.0 and not _bot_has_drink(proxy):
 		var wp_pre := _preventive_water_pos(b)
 		if wp_pre != Vector3.INF and Vector2(proxy.global_position.x - wp_pre.x, proxy.global_position.z - wp_pre.z).length() < 9.0:
 			prevent_drink = true
 			b["drink_at"] = wp_pre
 	if (float(b["thirst"]) < thirsty_line or prevent_drink) and (not _bot_is_freezing(b) or float(b["thirst"]) < 22.0) \
-			and float(b.get("drink_giveup", 0.0)) <= 0.0 and not _bot_has_drink(proxy) and (leader == null or _bot_vital_break(b) or prevent_drink):
+			and (float(b["thirst"]) < 18.0 or float(b.get("drink_giveup", 0.0)) <= 0.0) and not _bot_has_drink(proxy) and (leader == null or _bot_vital_break(b) or prevent_drink):
 		b["_act"] = "drink"
 		if b["drink_at"] == Vector3.INF:
 			b["drink_scan"] = float(b.get("drink_scan", 0.0)) - delta
 			if float(b["drink_scan"]) <= 0.0:
-				b["drink_at"] = _nearest_water_pos(proxy.global_position, b)
-				if b["drink_at"] == Vector3.INF:
-					b["drink_at"] = _known_water_pos(b) # fuente enseñada por chat/voz
+				b["drink_at"] = _bot_drink_destination(b)
 				b["drink_walk_t"] = 0.0
 				b["_drink_best_d"] = INF
 				b["drink_scan"] = 0.0 if b["drink_at"] != Vector3.INF else (4.0 + fmod(float(int(b["bot_id"])) * 0.7, 1.5))
@@ -2318,6 +2340,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				feet_wet = float(world.get_river_depth_at(proxy.global_position)) > 0.05
 			var at_shore: bool = d_water <= 4.5 or feet_wet or (world != null and world.has_method("_is_near_river") and bool(world._is_near_river(proxy.global_position, 3.2)))
 			if not at_shore:
+				b["drinking_timer"] = 0.0
+				# Only a concrete meal outranks a nonurgent *journey* to water.
+				checked_food = float(b["hunger"]) < 14.0 and float(b["thirst"]) >= 22.0
+				if checked_food:
+					b["_act"] = "forage"
+					if _bot_try_forage(b, delta, false):
+						return
+					b["_act"] = "drink"
 				# Mientras el bot siga acercandose al agua, el reloj de atasco
 				# se reinicia: antes los 12 s fijos abortaban cualquier viaje
 				# de >60 m y vetaban rios alcanzables uno tras otro.
@@ -2326,17 +2356,21 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 					b["drink_walk_t"] = 0.0
 				b["drink_walk_t"] = float(b.get("drink_walk_t", 0.0)) + delta
 				if float(b["drink_walk_t"]) > 12.0:
-					var bw: Array = b.get("_bad_water", [])
-					bw.append({"pos": b["drink_at"], "until": float(Time.get_ticks_msec()) / 1000.0 + 120.0})
-					b["_bad_water"] = bw
-					b["drink_at"] = Vector3.INF
-					b["drink_walk_t"] = 0.0
-					b["_drink_best_d"] = INF
-					b["drink_giveup"] = 12.0
+					_abandon_water_access(b)
+					if float(b["thirst"]) < 18.0:
+						return
 				else:
 					_move_bot_towards(b, b["drink_at"], 6.2, delta, "run")
 					return
 			else:
+				if b.get("_reported_water") == b["drink_at"]:
+					# A tip gives a destination, not water. Verify it once on arrival.
+					var actual := _nearest_water_pos(proxy.global_position)
+					if not feet_wet and (not actual.is_finite() or Vector2(actual.x - proxy.global_position.x, actual.z - proxy.global_position.z).length() > 4.5) \
+							and not (world.has_method("_is_near_river") and world._is_near_river(proxy.global_position, 3.2)):
+						_abandon_water_access(b)
+						return
+					b.erase("_reported_water")
 				# En la orilla: se para a beber unos segundos y repone su sed.
 				# consume_anim="drink" (mismo canal que beber de la botella) hace
 				# que el puppet remoto reproduzca la animacion real de beber.
@@ -2373,7 +2407,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# 4b) Hambre sin comida comestible: forrajeo — setas (eat_food) y arboles
 	# frutales (pick_fruit), lo mismo que buscaria un jugador hambriento.
-	if _bot_try_forage(b, delta):
+	if not checked_food and _bot_try_forage(b, delta):
 		b["_act"] = "forage"
 		return
 
@@ -3080,17 +3114,39 @@ func _is_pos_already_visited(b: Dictionary, pos: Vector3) -> bool:
 				return true
 	return false
 
-func _is_water_blacklisted(b: Dictionary, pos: Vector3) -> bool:
+func _abandon_water_access(b: Dictionary) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	var failed: Vector3 = b["drink_at"]
+	var kept := []
+	for e in (b.get("_bad_water", []) as Array):
+		if float(e["until"]) > now and failed.distance_squared_to(e["pos"]) > 1.0:
+			kept.append(e)
+	kept.append({"pos":failed, "until":now + 120.0})
+	b["_bad_water"] = kept
+	b.erase("_reported_water")
+	b.erase("_prevent_water_cache")
+	b["drink_at"] = Vector3.INF
+	b["drink_scan"] = 0.0
+	b["drink_walk_t"] = 0.0
+	b["_drink_best_d"] = INF
+	b["drinking_timer"] = 0.0
+	b["drink_giveup"] = 0.0 if float(b["thirst"]) < 18.0 else 12.0
+
+func _water_retry_at(b: Dictionary, pos: Vector3) -> float:
 	var bl: Array = b.get("_bad_water", [])
 	if bl.is_empty():
-		return false
+		return 0.0
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
+	var latest := 0.0
 	for entry in bl:
 		if entry is Dictionary and float(entry.get("until", 0.0)) > now_s:
 			var bp = entry.get("pos")
 			if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < 12.0:
-				return true
-	return false
+				latest = maxf(latest, float(entry["until"]))
+	return latest
+
+func _is_water_blacklisted(b: Dictionary, pos: Vector3) -> bool:
+	return _water_retry_at(b, pos) > 0.0
 
 # Lista negra temporal de destinos inalcanzables para que un bot que se rinde
 # ante un rio/obstaculo no vuelva a elegir el mismo POI en el frame siguiente.
@@ -3102,7 +3158,7 @@ func _is_water_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 const UNREACHABLE_VETO_MIN_FAILS := 3
 const UNREACHABLE_VETO_TTL := 300.0
 
-func _is_goal_blacklisted(b: Dictionary, pos: Vector3) -> bool:
+func _is_goal_blacklisted(b: Dictionary, pos: Vector3, radius := 18.0) -> bool:
 	var bl: Array = b.get("_unreachable", [])
 	if bl.is_empty():
 		return false
@@ -3114,7 +3170,7 @@ func _is_goal_blacklisted(b: Dictionary, pos: Vector3) -> bool:
 			continue # caducado: se borra del registro, no solo se ignora
 		kept.append(entry)
 		var bp = entry.get("pos")
-		if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < 18.0:
+		if bp is Vector3 and Vector2(pos.x - (bp as Vector3).x, pos.z - (bp as Vector3).z).length() < radius:
 			hit = true
 	if kept.size() != bl.size():
 		b["_unreachable"] = kept
@@ -3296,8 +3352,7 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 		_ai_stat_inc(b, "blocked_recoveries")
 		_ai_enqueue_request(int(b.get("bot_id", 0)), 4, "plan_blocked", true)
 	if str(b.get("_act", "")) == "drink" and b.get("drink_at", Vector3.INF) != Vector3.INF and Vector2(goal.x - b["drink_at"].x, goal.z - b["drink_at"].z).length() < 6.0:
-		b["drink_at"] = Vector3.INF
-		b["drink_giveup"] = 12.0
+		_abandon_water_access(b)
 	var gst: Dictionary = b.get("_gather", {})
 	var gpos = gst.get("pos")
 	if not gst.is_empty() and gpos is Vector3 and Vector2(goal.x - (gpos as Vector3).x, goal.z - (gpos as Vector3).z).length() < 6.0:
@@ -9438,6 +9493,8 @@ func _chat_teach_apply(b: Dictionary, sender_id: int, sname: String, skey: Strin
 			observe_location(bid, "water:" + grid.call(pos, 30.0), "water", pos)
 			if float(b.get("thirst", 100.0)) < 45.0:
 				b["drink_at"] = pos
+				b["_reported_water"] = pos
+				b["drinking_timer"] = 0.0
 				b["drink_giveup"] = 0.0
 				b["drink_scan"] = 0.0
 		"loot":
@@ -9470,6 +9527,16 @@ func _chat_teach_line(b: Dictionary, kind: String) -> String:
 			return "Sí, parece buen sitio para descansar... gracias." if warm else "Vale, buen sitio para acampar."
 	return "Me quedo con el sitio, gracias por avisar." if warm else "Vale, me acuerdo del lugar."
 
+func _bot_drink_destination(b: Dictionary) -> Vector3:
+	b.erase("_reported_water")
+	var actual := _nearest_water_pos((b["proxy"] as Node3D).global_position, b)
+	if actual == Vector3.INF or _is_water_blacklisted(b, actual):
+		var report := _known_water_pos(b)
+		if report.is_finite():
+			b["_reported_water"] = report
+			return report
+	return actual
+
 func _known_water_pos(b: Dictionary) -> Vector3:
 	var mem: Dictionary = b.get("_mem", {})
 	var known: Dictionary = mem.get("known_locations", {})
@@ -9487,7 +9554,7 @@ func _known_water_pos(b: Dictionary) -> Vector3:
 			continue
 		var p := Vector3(float(ep[0]), float(ep[1]), float(ep[2]))
 		var d := proxy.global_position.distance_to(p)
-		if d < best_d:
+		if d < best_d and not _is_water_blacklisted(b, p):
 			best_d = d
 			best = p
 	return best
@@ -13921,6 +13988,9 @@ func _bot_camp_fire_standoff(b: Dictionary, delta: float) -> bool:
 			return true
 	return false
 
+func _bot_needs_awake_care(st: SurvivalStats) -> bool:
+	return st.health < 25.0 and (st.sleep >= 10.0 or st.bleeding > 0.0 or st.sick or st.blood <= 0.0)
+
 # Condiciones para tumbarse a dormir en el punto de descanso (llamado desde el
 # bloque de refugio de _tick_bot; despertar lo gestiona _bot_should_wake).
 func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
@@ -13943,7 +14013,7 @@ func _bot_try_start_sleep(b: Dictionary, is_night: bool) -> bool:
 	var recruited_rest := human_leader and (collapse or _bot_is_exhausted(b))
 	if bool(b.get("sleeping", false)) or (human_leader and not recruited_rest) or (float(b.get("hide_timer", 0.0)) > 0.0 and not collapse) or b.get("aggro_target") != null:
 		return false
-	if st == null or st.dead:
+	if st == null or st.dead or _bot_needs_awake_care(st):
 		return false
 	# Duerme de noche; si esta agotado de verdad cabecea incluso de dia. El
 	# umbral es el mismo que fuerza el acampada (_bot_is_exhausted, sube con
@@ -14296,7 +14366,7 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 				return true
 			if _can_bot_build_campfire(proxy_w):
 				return true
-	if st.health < 25.0:
+	if _bot_needs_awake_care(st):
 		return true
 	if st.sleep >= 99.5 and st.energy >= 95.0:
 		return true # descansado: se sienta de guardia aunque siga de noche
@@ -18811,7 +18881,7 @@ func _bot_has_edible_food(proxy: Node3D) -> bool:
 			return true
 	return false
 
-func _bot_try_forage(b: Dictionary, delta: float) -> bool:
+func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var hunger := float(b["hunger"])
 	var desperate := hunger < 24.0
@@ -18906,7 +18976,7 @@ func _bot_try_forage(b: Dictionary, delta: float) -> bool:
 		# de emergencia (150 m) ya cubre lo alcanzable con luz propia; al
 		# atardecer toca volver al refugio, no empezar una caminata de 200 m;
 		# y un bot aterido debe calentarse antes de buscar comida.
-		if hunger < 40.0 and ["dawn", "day"].has(_world_day_phase()) and not _bot_is_freezing(b):
+		if allow_poi_trip and hunger < 40.0 and ["dawn", "day"].has(_world_day_phase()) and not _bot_is_freezing(b):
 			var fpoi := _ai_pick_poi(b, ["wild", "house", "city"], ["military", "tower"], false)
 			if not fpoi.is_empty():
 				# A >140 m el viaje se trocea en saltos POI a POI navegables —
@@ -18937,7 +19007,8 @@ func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 	var best := {}
 	var best_d := radius
 	var now := Time.get_unix_time_from_system()
-	var claims: Dictionary = world.get("_pickup_claims") if "_pickup_claims" in world else {}
+	# A failed trip vetoes its destination, not every meal on that block.
+	var veto_radius := 3.0 if float(b.get("hunger", 100.0)) < 14.0 else 18.0
 	var depleted: Array = world.get("_depleted_action_ids") if "_depleted_action_ids" in world else []
 	# Setas primero. Reject distant candidates before memory/lighting queries.
 	_ensure_world_action_caches()
@@ -18945,14 +19016,19 @@ func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 		var a = world.world_actions_by_id.get(aid)
 		if a == null or not is_instance_valid(a):
 			continue
-		if str(a.get("action_type")) != "eat_food" or claims.has(aid) or depleted.has(aid):
+		if str(a.get("action_type")) != "eat_food" or depleted.has(aid):
 			continue
 		var d := proxy.global_position.distance_to(a.global_position)
-		if d >= best_d:
+		if d >= best_d or _loot_claimed_by_other(b, str(aid)):
 			continue
 		if not _bot_food_ready(str(a.get_meta("item_name", "comida"))):
 			continue
-		if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
+		if (_is_goal_blacklisted(b, a.global_position, veto_radius) or not _bot_supply_goal_allowed(b, a.global_position)):
+			continue
+		# If already within horizontal pickup range, walking to this point
+		# again cannot collect food through a wall or on another floor.
+		if Vector2(proxy.global_position.x - a.global_position.x, proxy.global_position.z - a.global_position.z).length_squared() <= 4.0 \
+				and not _bot_can_reach_loot(proxy.global_position, a.global_position):
 			continue
 		if _bot_is_freezing(b) and float(b.get("hunger", 100.0)) >= 14.0 \
 				and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, a.global_position):
@@ -18967,14 +19043,14 @@ func _find_forage_target_impl(b: Dictionary, radius: float) -> Dictionary:
 			var a = world.world_actions_by_id.get(aid)
 			if a == null or not is_instance_valid(a):
 				continue
-			if str(a.get("action_type")) != "pick_fruit" or claims.has(aid) or depleted.has(aid):
+			if str(a.get("action_type")) != "pick_fruit" or depleted.has(aid):
 				continue
 			if now < float(a.get_meta("fruit_ready_time", 0.0)):
 				continue
 			var d2 := proxy.global_position.distance_to(a.global_position)
-			if d2 >= best_d:
+			if d2 >= best_d or _loot_claimed_by_other(b, str(aid)):
 				continue
-			if (_is_goal_blacklisted(b, a.global_position) or not _bot_supply_goal_allowed(b, a.global_position)):
+			if (_is_goal_blacklisted(b, a.global_position, veto_radius) or not _bot_supply_goal_allowed(b, a.global_position)):
 				continue
 			if _bot_is_freezing(b) and float(b.get("hunger", 100.0)) >= 14.0 \
 					and not InterruptionManager.dry_recovery_leg(world, proxy.global_position, a.global_position):
