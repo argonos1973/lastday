@@ -4340,6 +4340,11 @@ func _net_player_shot_rifle(shooter_id: int, origin: Vector3, dir: Vector3, wind
 	if CombatProf.enabled: CombatProf.mark("shot.wildlife_flee", _cpt); _cpt = Time.get_ticks_usec()
 	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
 		survivor_bot_mgr.notify_sound_event(shooter_id, origin, "gunshot", 220.0)
+		# El chasquido de la bala al pasar o impactar cerca: una zona de ~14 m
+		# en torno al punto medio del trayecto avisa personalmente al bot —
+		# los fallos del tirador ya no pasan desapercibidos mientras corrige
+		# la punteria tiro a tiro.
+		survivor_bot_mgr.notify_sound_event(shooter_id, mid_impact, "bullet_crack", 14.0)
 	if CombatProf.enabled: CombatProf.mark("shot.notify_bots", _cpt); CombatProf.mark("shot.rpc_total", _cpt_all)
 
 # Chasquido local del tiro que pasa pegado al jugador: direccional (se posiciona

@@ -1926,12 +1926,19 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# reanudar movimiento o ataque, manteniendo la animacion shot/hit visible.
 	if float(b.get("flinch_timer", 0.0)) > 0.0:
 		b["flinch_timer"] = maxf(0.0, float(b["flinch_timer"]) - delta)
-		b["sitting"] = false
-		b["sleeping"] = false
-		b["is_aiming"] = false
-		b["anim"] = str(b.get("flinch_anim", "hit"))
-		b["_act"] = "flinch"
-		return
+		# Bajo fuego de fusil la adrenalina manda: el impacto duele pero no
+		# clava al bot en el sitio — una rafaga de M4 o el cerrojo rapido ya no
+		# pueden inmovilizarlo a base de reiniciar la reaccion. La animacion de
+		# impacto cede el paso a la maniobra defensiva en el mismo tick.
+		var under_fire_now := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 1500 \
+			and str(b.get("_last_hit_weapon", "")) in ["rifle", "m4"]
+		if not under_fire_now:
+			b["sitting"] = false
+			b["sleeping"] = false
+			b["is_aiming"] = false
+			b["anim"] = str(b.get("flinch_anim", "hit"))
+			b["_act"] = "flinch"
+			return
 
 	# Refresco de sentidos a ~5 Hz escalonado entre bots. Un humano reacciona
 	# en ~0.2 s; escanear toda la fauna, jugadores y botin cada frame por bot
@@ -2147,6 +2154,14 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if shooter != null and (under_fire or anticipates_cover) and _bot_seek_ballistic_cover(b, shooter, delta):
 		b["_act"] = "cover"
 		return
+	# Balazo sin tirador a la vista (francotirador oculto, noche, niebla): la
+	# linea de amenaza se estima por la ultima posicion recordada o el sonido
+	# del disparo — el bot se cubre igualmente en vez de seguir paseando.
+	if shooter == null and under_fire:
+		var threat_pos := _bot_threat_direction_pos(b)
+		if threat_pos != Vector3.INF and _bot_seek_cover_from_pos(b, threat_pos, delta):
+			b["_act"] = "cover"
+			return
 
 	# 2b) Emboscada: hostiles (solos o en equipo) acechan agachados a una
 	#     victima con recursos y golpean a la vez. Cede ante depredadores.
@@ -2199,15 +2214,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			# hostiles lo hacen) escaparia a 2 m/s en sneak si no se suelta.
 			b["crouching"] = false
 			proxy.set_meta("crouching", false)
-			var away := proxy.global_position - human_foe.global_position
-			away.y = 0.0
-			var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
-			b["strafe_timer"] = float(b["strafe_timer"]) + delta
-			if float(b["strafe_timer"]) > 1.2:
-				b["strafe_dir"] = -float(b["strafe_dir"])
-				b["strafe_timer"] = 0.0
-			var side := Vector3(-away_dir.z, 0.0, away_dir.x)
-			_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.5).normalized() * 8.0, 6.0, delta, "run")
+			_bot_evade_move(b, human_foe.global_position, 6.0, delta)
 			return
 		# Leccion anti-tirador: si ya murio a tiros y el rival lleva un arma a
 		# distancia, no carga en linea recta — se acerca en zigzag hasta el
@@ -5188,10 +5195,66 @@ func _cover_learning_tick(b: Dictionary, delta: float, protected: bool) -> void:
 		b["_cover_learned_at"] = Time.get_ticks_msec()
 		_learn_practical_skill(b, "cover", "Sobrevivió a disparos protegido: buscará cobertura antes cuando esté herido")
 
-func _find_ballistic_cover(b: Dictionary, foe: Node3D) -> Vector3:
+# Serpentina impredecible: el lado y el momento del proximo quiebro salen de
+# un azar por bot, no del reloj compartido — un tirador ya no aprende el
+# ritmo en tres disparos ni adelanta la mira al cruce. Periodo 0.5-1.3 s con
+# semilla mezclada por bot_id para que dos bots en huida no se sincronicen.
+func _bot_evade_side(b: Dictionary, delta: float) -> float:
+	if not b.has("_evade_side"):
+		b["_evade_side"] = 1.0 if (int(b.get("bot_id", 0)) % 2) == 0 else -1.0
+		b["_evade_flip_in"] = 0.5 + fmod(float(int(b.get("bot_id", 0))) * 0.13, 0.8)
+	b["_evade_flip_in"] = float(b.get("_evade_flip_in", 0.8)) - delta
+	if float(b["_evade_flip_in"]) <= 0.0:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = int(Time.get_ticks_usec()) + int(b.get("bot_id", 0)) * 7919
+		b["_evade_side"] = -float(b.get("_evade_side", 1.0)) if rng.randf() < 0.82 else float(b.get("_evade_side", 1.0))
+		b["_evade_flip_in"] = rng.randf_range(0.5, 1.3)
+		if rng.randf() < 0.22:
+			# Quiebro doble ocasional: vuelve al lado anterior enseguida —
+			# el patron deja de ser una sinusoide predecible.
+			b["_evade_flip_in"] = rng.randf_range(0.14, 0.32)
+		# Rafagas y pausas irregulares: un tramo de sprint a fondo, o una
+		# caida agachada breve — el tirador no puede suponer velocidad fija.
+		b["_evade_speed_mul"] = 1.32 if rng.randf() < 0.26 else 1.0
+		if rng.randf() < 0.16:
+			b["_evade_pause_in"] = rng.randf_range(0.25, 0.55)
+	return float(b.get("_evade_side", 1.0))
+
+# Huida en serpentina alejandose de una amenaza: la amplitud lateral crece
+# con la distancia (a 100 m el cruce de linea es lo unico que salva), con
+# rafagas de sprint y pausas agachadas decididas en cada quiebro. Devuelve
+# false solo si no hay direccion de huida util.
+func _bot_evade_move(b: Dictionary, threat_pos: Vector3, base_speed: float, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var away := proxy.global_position - threat_pos
+	away.y = 0.0
+	if away.length_squared() <= 0.01:
+		return false
+	away = away.normalized()
+	var pause := float(b.get("_evade_pause_in", 0.0))
+	if pause > 0.0:
+		# Caida agachada irregular: perfil minimo un instante, inmovil.
+		b["_evade_pause_in"] = maxf(0.0, pause - delta)
+		b["crouching"] = true
+		proxy.set_meta("crouching", true)
+		_stop_bot_motion(b)
+		return true
+	b["crouching"] = false
+	proxy.set_meta("crouching", false)
+	var dist := proxy.global_position.distance_to(threat_pos)
+	var amp := clampf(dist / 55.0, 0.45, 1.15)
+	var side := Vector3(-away.z, 0.0, away.x) * _bot_evade_side(b, delta)
+	var mul := float(b.get("_evade_speed_mul", 1.0))
+	_move_bot_towards(b, proxy.global_position + (away + side * amp).normalized() * 8.0, base_speed * mul, delta, "run")
+	return true
+
+# Cobertura balistica respecto a una posicion de amenaza estimada — no hace
+# falta ver al tirador: basta la direccion del disparo o la ultima posicion
+# conocida. La logica es identica a la cobertura contra un enemigo visible.
+func _find_ballistic_cover_from_pos(b: Dictionary, threat_pos: Vector3) -> Vector3:
 	var proxy: Node3D = b["proxy"]
 	var origin := proxy.global_position
-	var away := origin - foe.global_position
+	var away := origin - threat_pos
 	away.y = 0.0
 	away = away.normalized() if away.length_squared() > .01 else Vector3.RIGHT
 	for radius in [4.0, 8.0, 12.0]:
@@ -5202,10 +5265,125 @@ func _find_ballistic_cover(b: Dictionary, foe: Node3D) -> Vector3:
 				continue
 			if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(point)) > WADE_DEPTH:
 				continue
-			if _is_step_blocked(origin, point) or _has_clear_shot(foe.global_position, point):
+			if _is_step_blocked(origin, point) or _has_clear_shot(threat_pos, point):
 				continue
 			return point
 	return Vector3.INF
+
+# Direccion de amenaza mas creible bajo fuego: el enemigo visto si existe,
+# luego su ultima posicion recordada, luego el origen del ultimo disparo
+# oido. Devuelve INF si no hay ninguna pista.
+func _bot_threat_direction_pos(b: Dictionary) -> Vector3:
+	var foe := _sensed_node(b, "_s_foe")
+	if foe != null:
+		return foe.global_position
+	var fm: Dictionary = b.get("_foe_mem", {})
+	if not fm.is_empty():
+		var fp = fm.get("pos", Vector3.INF)
+		if fp is Vector3 and fp != Vector3.INF and Time.get_ticks_msec() - int(fm.get("t", 0)) < 30000:
+			return fp
+	if str(b.get("last_heard_kind", "")) in ["gunshot", "bullet_crack"] \
+			and float(b.get("last_heard_until", 0.0)) > Time.get_ticks_msec() / 1000.0:
+		var hp_pos: Vector3 = b.get("last_heard_pos", Vector3.INF)
+		if hp_pos != Vector3.INF:
+			return hp_pos
+	if float(b.get("_shot_alert_t", 0.0)) > 0.0:
+		var so: Vector3 = b.get("_shot_origin", Vector3.INF)
+		if so != Vector3.INF:
+			return so
+	return Vector3.INF
+
+# Cobertura respecto a una posicion estimada: mismo baile que la version con
+# enemigo visible pero sin exigir el nodo. Devuelve true si hay maniobra.
+func _bot_seek_cover_from_pos(b: Dictionary, threat_pos: Vector3, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	b["sitting"] = false
+	b["sleeping"] = false
+	b["is_aiming"] = false
+	b["_cover_scan_t"] = maxf(0.0, float(b.get("_cover_scan_t", 0.0))-delta)
+	var goal: Vector3 = b.get("_cover_pos_goal", Vector3.INF)
+	if float(b["_cover_scan_t"]) <= 0.0:
+		b["_cover_scan_t"] = 1.5
+		if goal == Vector3.INF or _has_clear_shot(threat_pos, goal) or _is_step_blocked(proxy.global_position, goal):
+			goal = _find_ballistic_cover_from_pos(b, threat_pos)
+			b["_cover_pos_goal"] = goal
+	if goal != Vector3.INF:
+		if proxy.global_position.distance_to(goal) > .8:
+			b["crouching"] = false
+			proxy.set_meta("crouching", false)
+			_move_bot_towards(b, goal, 6.4, delta, "run")
+			return true
+		if not _has_clear_shot(threat_pos, proxy.global_position):
+			b["crouching"] = true
+			proxy.set_meta("crouching", true)
+			_stop_bot_motion(b)
+			return true
+		b["_cover_pos_goal"] = Vector3.INF
+	# Sin cobertura solida: serpentina impredecible alejandose del eje de
+	# amenaza — nunca un blanco quieto ni un zigzag de reloj.
+	_bot_evade_move(b, threat_pos, 6.4, delta)
+	return true
+
+func _find_ballistic_cover(b: Dictionary, foe: Node3D) -> Vector3:
+	return _find_ballistic_cover_from_pos(b, foe.global_position)
+
+# Combate con asomos desde una cobertura ya alcanzada: ciclos oculto
+# (1.2-2.4 s) / asomado (0.9-1.5 s). En el asomo el bot se incorpora — se
+# expone de verdad, ese es el precio — y dispara con la misma disciplina de
+# mira del combate normal: adquisicion, alineacion, tolerancia por
+# personalidad y puerta de vision nocturna. Sin omnisciencia: si no ve al
+# enemigo o la geometria no da tiro de pie, permanece oculto. La recarga
+# sigue ocurriendo oculto porque _bot_fire_rifle_at la bloquea en el asomo.
+# Devuelve true cuando gestiona la postura de este tick (asomado o en ciclo).
+func _bot_fire_cover_peek(b: Dictionary, foe: Node3D, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var weapon := _best_weapon_name(proxy)
+	if weapon not in ["Fusil de asalto", "Rifle francotirador"]:
+		return false
+	if foe == null or not is_instance_valid(foe):
+		return false
+	var dist := proxy.global_position.distance_to(foe.global_position)
+	if dist > 130.0 or not _bot_within_aim_sight(b, foe, dist):
+		return false
+	if not b.has("_peek_phase"):
+		b["_peek_phase"] = "hidden"
+		b["_peek_t"] = 0.8 + fmod(float(int(b.get("bot_id", 0))) * 0.37, 1.4)
+	b["_peek_t"] = float(b.get("_peek_t", 1.0)) - delta
+	if float(b["_peek_t"]) <= 0.0:
+		if str(b["_peek_phase"]) == "hidden":
+			b["_peek_phase"] = "peeking"
+			b["_peek_t"] = randf_range(0.9, 1.5)
+		else:
+			b["_peek_phase"] = "hidden"
+			b["_peek_t"] = randf_range(1.2, 2.4)
+	if str(b["_peek_phase"]) == "hidden":
+		b["crouching"] = true
+		proxy.set_meta("crouching", true)
+		_stop_bot_motion(b)
+		return true
+	# Asomado: de pie, encarado, con la pipeline de punteria compartida.
+	b["crouching"] = false
+	proxy.set_meta("crouching", false)
+	_stop_bot_motion(b)
+	var fpos: Vector3 = foe.global_position
+	var toward := fpos - proxy.global_position
+	if Vector2(toward.x, toward.z).length_squared() > 0.01:
+		b["rot"] = atan2(-toward.x, -toward.z)
+		proxy.rotation.y = float(b["rot"])
+	# El tiro del asomo sale del ojo de pie: un parapeto bajo que cubre
+	# agachado no bloquea al incorporarse — y al reves, una pared lo sigue
+	# bloqueando y el bot no gasta balas contra ella.
+	var eye := proxy.global_position + Vector3(0.0, 1.4, 0.0)
+	var clear := _has_clear_shot(eye, fpos + Vector3(0.0, 1.2, 0.0))
+	b["is_aiming"] = clear
+	var aim_err := _bot_aim_tick(b, foe, dist, clear, delta, "m4" if _bot_gun_is_m4(weapon) else "sniper")
+	if float(b.get("shoot_cooldown", 0.0)) <= 0.0 and clear and _bot_has_firing_heading(b, fpos) \
+			and aim_err <= _bot_trigger_tolerance_deg(b, dist) \
+			and float(_bot_aim_st(b)["settle"]) >= _bot_acquire_sec(b):
+		b["shoot_cooldown"] = (1.15 if weapon == "Fusil de asalto" else 1.85) + randf_range(0.0, 0.45)
+		var dmg := 26.0 if weapon == "Fusil de asalto" else 48.0
+		_bot_fire_rifle_at(b, foe, dmg, weapon)
+	return true
 
 func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
@@ -5234,6 +5412,8 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 		# Check the actual position too: arriving near cover is not enough.
 		if not _has_clear_shot(foe.global_position, proxy.global_position):
 			_cover_learning_tick(b, delta, true)
+			if _bot_fire_cover_peek(b, foe, delta):
+				return true
 			b["crouching"] = true
 			proxy.set_meta("crouching", true)
 			_stop_bot_motion(b)
@@ -5246,14 +5426,7 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 		_stop_bot_motion(b)
 		return true
 	# No solid cover nearby: keep moving instead of crouching in the open.
-	b["crouching"] = false
-	proxy.set_meta("crouching", false)
-	var away := proxy.global_position - foe.global_position
-	away.y = 0.0
-	away = away.normalized() if away.length_squared() > .01 else Vector3.RIGHT
-	var side := Vector3(-away.z, 0, away.x)
-	var sign_side := 1.0 if int(Time.get_ticks_msec()/900 + int(b["bot_id"])) % 2 == 0 else -1.0
-	_move_bot_towards(b, proxy.global_position + (away+side*sign_side*.8).normalized()*6.0, 6.4, delta, "run")
+	_bot_evade_move(b, foe.global_position, 6.4, delta)
 	return true
 
 const BOT_CLOSE_THREAT_RANGE := 12.0
@@ -5262,7 +5435,7 @@ func _bot_can_hide_from(spot: Vector3, foe: Node3D) -> bool:
 	return spot != Vector3.INF and (spot.distance_to(foe.global_position) > BOT_CLOSE_THREAT_RANGE \
 		or not _has_clear_shot(spot, foe.global_position))
 
-func _bot_listen_for_shots(b: Dictionary) -> bool:
+func _bot_listen_for_shots(b: Dictionary, delta: float = 0.016) -> bool:
 	if float(b.get("_shot_alert_t", 0.0)) <= 0.0:
 		return false
 	var proxy: Node3D = b["proxy"]
@@ -5270,11 +5443,21 @@ func _bot_listen_for_shots(b: Dictionary) -> bool:
 	if Vector2(toward.x, toward.z).length_squared() > 0.01:
 		b["rot"] = atan2(-toward.x, -toward.z)
 		proxy.rotation.y = float(b["rot"])
-	_stop_bot_motion(b)
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["prone"] = false
 	b["is_aiming"] = false
+	# Un disparo lejano no convierte al bot en una dana quieta: tras la
+	# orientacion breve se mueve a cubierto contra la direccion del tiro.
+	# Solo el aviso muy reciente (<0.6 s) lo clava en el sitio, como el
+	# reflejo humano de agacharse al oir el estampido.
+	var alert_age := 8.0 - float(b.get("_shot_alert_t", 0.0))
+	var shot_dist := proxy.global_position.distance_to(b["_shot_origin"])
+	if alert_age > 0.6 and shot_dist > 35.0:
+		if _bot_seek_cover_from_pos(b, b["_shot_origin"], delta):
+			b["_act"] = "alert"
+			return true
+	_stop_bot_motion(b)
 	b["crouching"] = true
 	proxy.set_meta("crouching", true)
 	b["_act"] = "alert"
@@ -5310,15 +5493,7 @@ func _bot_avoid_nemesis(b: Dictionary, foe: Node3D, nem_name: String, delta: flo
 		b["flee_until"] = 14.0
 		b["crouching"] = false
 		proxy.set_meta("crouching", false)
-		var away := proxy.global_position - foe.global_position
-		away.y = 0.0
-		var away_dir := away.normalized() if away.length_squared() > 0.01 else Vector3.RIGHT
-		b["strafe_timer"] = float(b["strafe_timer"]) + delta
-		if float(b["strafe_timer"]) > 1.2:
-			b["strafe_dir"] = -float(b["strafe_dir"])
-			b["strafe_timer"] = 0.0
-		var side := Vector3(-away_dir.z, 0.0, away_dir.x)
-		_move_bot_towards(b, proxy.global_position + (away_dir + side * float(b["strafe_dir"]) * 0.6).normalized() * 8.0, 6.0, delta, "run")
+		_bot_evade_move(b, foe.global_position, 6.0, delta)
 	if float(b.get("_nemesis_ev_t", 0.0)) <= 0.0:
 		b["_nemesis_ev_t"] = 60.0
 		record_bot_event(int(b["bot_id"]), "evade_nemesis", nem_name, _poi_kind_near(proxy.global_position), proxy.global_position,
@@ -5464,23 +5639,35 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 		var d := proxy.global_position.distance_to(sound_pos)
 		if d > radius:
 			continue
-		b["last_heard_pos"] = sound_pos
-		b["last_heard_kind"] = kind
-		b["last_heard_actor"] = actor_id
+		var keep_gunshot_clue := kind == "bullet_crack" and str(b.get("last_heard_kind", "")) == "gunshot" \
+				and float(b.get("last_heard_until", 0.0)) > now_s
+		if not keep_gunshot_clue:
+			b["last_heard_pos"] = sound_pos
+			b["last_heard_kind"] = kind
+			b["last_heard_actor"] = actor_id
 		b["last_heard_until"] = now_s + (18.0 if kind == "gunshot" else 9.0)
-		b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 14.0 if kind == "gunshot" else 7.0)
+		b["caution_until"] = maxf(float(b.get("caution_until", 0.0)), 14.0 if kind in ["gunshot", "bullet_crack"] else 7.0)
 		# Un ruido real lo despierta: sale del sueño como un jugador humano.
 		var was_asleep := bool(b.get("sleeping", false))
 		if was_asleep:
 			b["sleeping"] = false
 			b["anim"] = "idle"
 		record_bot_event(int(bid), "heard_" + kind, "actor_%d" % actor_id, _poi_kind_near(sound_pos), sound_pos, "%s:%.0fm" % [kind, d])
-		if kind == "gunshot":
+		if kind in ["gunshot", "bullet_crack"]:
 			b["_shot_alert_t"] = 8.0
-			b["_shot_origin"] = sound_pos
-			if was_asleep or (bool(b.get("sitting", false)) and not bool(b.get("is_aiming", false))) \
+			# El chasquido de una bala cercana no revela la direccion del
+			# tirador: se usa el estampido del arma si se oyo, y si no el
+			# impacto mismo — la maniobra de cobertura ya decide con eso.
+			b["_shot_origin"] = sound_pos if kind == "gunshot" or not keep_gunshot_clue else b.get("last_heard_pos", sound_pos)
+			# Una bala que silba cerca es personal: reacciona siempre, no solo
+			# si dormia o estaba sentado — es la diferencia entre ser blanco
+			# potencial y ser blanco actual.
+			if kind == "bullet_crack" or was_asleep or (bool(b.get("sitting", false)) and not bool(b.get("is_aiming", false))) \
 					or str(b.get("_act", "")) == "alert":
 				_bot_listen_for_shots(b)
+			if kind == "bullet_crack":
+				# Y no espera al ciclo de sentidos: la maniobra arranca ya.
+				b["sense_t"] = 0.0
 			var my_faction := str(b.get("faction", "hostile"))
 			var same_team := actor_id > 0 and (actor_id == int(b.get("team_leader_id", 0)) or actor_id in _bot_team_ids(b))
 			if same_team or (actor_id > 0 and actor_id == int(b.get("_truce_peer", 0)) and float(b.get("_truce_t", 0.0)) > 0.0):
@@ -5508,6 +5695,13 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 				elif d <= 95.0:
 					b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 10.0)
 					record_zone_hazard(int(bid), sound_pos, "gunshot", 0.30, true)
+				elif not has_gun:
+					# Desarmado y a distancia de tiro util: ya no hay corte en
+					# 95 m — el fusil mata mucho mas lejos. La huida es mas
+					# corta cuanto mas lejos suena, pero nadie se queda
+					# paseando dentro del radio de audicion del disparo.
+					b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), clampf(10.0 - (d - 95.0) / 15.0, 4.0, 10.0))
+					record_zone_hazard(int(bid), sound_pos, "gunshot", 0.18, true)
 	if CombatProf.enabled: CombatProf.mark("bot.notify_sound", _cpt)
 
 # Zonas con puestos elevados (ciudad con azoteas/Torre del Reloj y bases
