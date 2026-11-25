@@ -336,6 +336,16 @@ const SCORE_DEATH_PENALTY := 200.0
 # pierde una muerte, asi que huye antes, detecta depredadores mas lejos y
 # descuenta mas fuerte los destinos donde ya murio.
 const BOT_STAKE_FULL_SEC := 2700.0
+# Inquietud por sedentarismo: sobrevivir no es quedarse quieto — sin moverse
+# no se explora, no se encuentran recursos nuevos y el botin cercano se
+# agota. Pasado el periodo de gracia dentro del mismo radio, el bot se
+# inquieta y las salidas pesan cada vez mas en la decision local. No es una
+# interrupcion: la faena en curso termina; solo se inclina la siguiente
+# eleccion de plan. De noche, herido grave o con necesidades criticas la
+# supervivencia manda y la inquietud no empuja fuera.
+const ROAM_RADIUS := 35.0
+const ROAM_GRACE_SEC := 480.0
+const ROAM_RAMP_SEC := 420.0
 const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. State scales (0..100 reserves, HIGHER IS BETTER): hp=100 healthy/0 dead, hunger=100 full/0 starving, thirst=100 hydrated/0 dehydrated, sleep=100 rested/0 exhausted (<35 urgent, >75 satisfied — NEVER treat 75+ hunger/thirst as hungry or thirsty). Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Surviving as long as possible is the supreme objective: one minute alive earns 2 points, one death costs 200 — a death erases 100 minutes of progress. Prefer low-risk plans; loot, exploration and allies are means to survive, never worth the NPC's life. stake (0..1) shows how much the current life is worth protecting — at high stake avoid combat, predators and zones with death memories unless hunger, thirst or cold force the risk. Do not invent unsupported actions such as fill_container. There is no combat action: aggression or self-defense is expressed only through movement goals — hunt targets wild game, explore/scavenge/avoid_zone position the bot. Never output attack, ambush, raid, steal, kill, chase or similar verbs. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
@@ -1897,6 +1907,20 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var needs_started := Time.get_ticks_usec()
 	_maintain_bot_needs(b, delta)
 	_pbm("maintain_needs", needs_started)
+
+	# Sedentarismo: re-anchora al salir del radio (una salida reinicia la
+	# inquietud porque ya se movio) y acumula tiempo dentro. Es solo un
+	# contador — la conversion en impulso ocurre en la decision del plan.
+	var roam_anchor: Vector3 = b.get("_roam_anchor", Vector3.INF)
+	if roam_anchor == Vector3.INF or Vector2(proxy.global_position.x - roam_anchor.x, proxy.global_position.z - roam_anchor.z).length() > ROAM_RADIUS:
+		b["_roam_anchor"] = proxy.global_position
+		b["_roam_still_sec"] = 0.0
+	elif not bool(b.get("sleeping", false)):
+		# Dormir de noche no es sedentarismo: es la conducta correcta. Solo
+		# cuenta el tiempo despierto en el mismo sitio — asi la mañana no
+		# empieza con inquietud artificial y quien tiene faena en el campamento
+		# puede hacerla antes de que el impulso de salir vaya creciendo.
+		b["_roam_still_sec"] = float(b.get("_roam_still_sec", 0.0)) + delta
 
 	# Si acaba de recibir un disparo o golpe, acusa el impacto (flinch) antes de
 	# reanudar movimiento o ataque, manteniendo la animacion shot/hit visible.
@@ -16971,6 +16995,20 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 		# otro bot (vinculo previo) lo busca activamente para reagruparse.
 		"seek_ally": (sociability * 0.95 + cooperation * 0.95 - distrust * 0.85 - aggression * 0.50) * (1.15 if threat_present else 0.75 + cooperation * 0.35),
 	}
+	# Inquietud por sedentarismo: llevar demasiado rato en el mismo radio sin
+	# salir inclina la decision hacia el exterior. Explorar, saquear y
+	# forrajear ganan con la personalidad; descansar y fortificar pierden —
+	# el campamento sigue ahi cuando vuelva. No interrumpe nada: solo pesa
+	# en la siguiente eleccion de plan, y las necesidades criticas o la
+	# noche la apagan en origen.
+	var restl := _bot_restlessness(b)
+	if restl > 0.0:
+		benefits["explore"] = float(benefits["explore"]) + restl * (0.40 + curiosity * 0.45)
+		benefits["scavenge"] = float(benefits["scavenge"]) + restl * 0.30
+		benefits["forage"] = float(benefits["forage"]) + restl * 0.30
+		benefits["rest"] = float(benefits["rest"]) * (1.0 - restl * 0.60)
+		benefits["fortify_camp"] = float(benefits["fortify_camp"]) * (1.0 - restl * 0.45)
+		b["_restlessness"] = restl
 	var scores := {}
 	if use_eu:
 		scores = _eu_scores(b, pers, benefits, threat_present)
@@ -17084,13 +17122,18 @@ func _situational_action_spec(act: String, aggression: float, survival: float, b
 func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_present: bool) -> Dictionary:
 	var mem: Dictionary = b.get("_mem", {})
 	var strats: Dictionary = mem.get("strategies", {})
-	var aversion := BotUtilityAI.risk_aversion(pers, _bot_stake(b))
 	var energy := float(b.get("energy", 80.0))
 	# Amenaza estimada con evidencias legítimas: ultima posicion conocida del
 	# enemigo (decae con el tiempo) + antecedentes de la zona (combate y fauna).
 	var zr := _eu_zone_risks(b)
 	var threat_p := BotUtilityAI.threat_posterior(b.get("_foe_mem", {}), Time.get_ticks_msec(),
 		float(zr.get("combat", 0.0)), float(zr.get("env", 0.0)))
+	# La inversion de la vida encarece el riesgo PROPORCIONALMENTE a la
+	# evidencia de peligro: en una zona tranquila (threat_p ~0) un bot maduro
+	# explora igual que uno nuevo — la cautela es respuesta a amenazas reales,
+	# nunca paralisis. Con peligro acreditado (pista de enemigo, antecedentes
+	# de combate) el stake si llega entero.
+	var aversion := BotUtilityAI.risk_aversion(pers, _bot_stake(b) * clampf(threat_p * 2.5, 0.0, 1.0))
 	# Perfil de caza segun el arma REAL utilizable (los secos no cuentan): sin
 	# municion ni arco cazar es casi siempre perdida — baja p, sube riesgo.
 	var hunt_prof := {"p": 0.35, "risk": 0.45}
@@ -19250,6 +19293,23 @@ func _bot_stake(b: Dictionary) -> float:
 
 static func bot_stake_from_life(life_sec: float) -> float:
 	return clampf(life_sec / BOT_STAKE_FULL_SEC, 0.0, 1.0)
+
+# Inquietud por sedentarismo [0..1]: crece tras ROAM_GRACE_SEC dentro del
+# mismo radio hasta saturar ROAM_RAMP_SEC despues. La supervivencia sigue
+# siendo el objetivo maximo: de noche, con amenaza, herido grave o con
+# necesidades criticas nadie sale de paseo — la inquietud espera al dia y
+# a un cuerpo que puede con ello.
+func _bot_restlessness(b: Dictionary) -> float:
+	if bool(b.get("dead", false)) or str(b.get("anim", "")).begins_with("dead"):
+		return 0.0
+	if _is_world_night() or _is_pre_night():
+		return 0.0
+	if _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
+		return 0.0
+	if float(b.get("health", 100.0)) < 50.0 or minf(float(b.get("hunger", 90.0)), float(b.get("thirst", 90.0))) < 25.0:
+		return 0.0
+	var still := float(b.get("_roam_still_sec", 0.0))
+	return clampf((still - ROAM_GRACE_SEC) / ROAM_RAMP_SEC, 0.0, 1.0)
 
 # Marcador de supervivencia compartido por el monitor, el asesor y las
 # regresiones: el tiempo vivo domina y cada muerte resta SCORE_DEATH_PENALTY.

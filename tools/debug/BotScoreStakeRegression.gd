@@ -8,10 +8,17 @@ extends SceneTree
 
 class Manager extends "res://scripts/SurvivorBotManager.gd":
 	var stake_override := -1.0
+	var night := false
+	var pre_night := false
 	func _bot_stake(b: Dictionary) -> float:
 		if stake_override >= 0.0:
 			return stake_override
 		return super._bot_stake(b)
+	func _is_world_night() -> bool: return night
+	func _is_pre_night() -> bool: return pre_night
+	func _sensed_node(_b: Dictionary, _key: String) -> Node3D: return null
+	func _pick_fight_weapon(_b: Dictionary, _d: float) -> Dictionary:
+		return {"kind": "melee", "name": "Arma"}
 
 var errors := 0
 func check(ok: bool, label: String):
@@ -78,6 +85,69 @@ func run():
 	manager.stake_override = -1.0
 	check(f_inv < f_fresh - 0.05, "an invested bot discounts remembered-risk destinations deeper (%.2f vs %.2f)" % [f_inv, f_fresh])
 	check(f_inv >= 0.2, "the discount never erases a destination completely")
+
+	# Cautela proporcional a la evidencia: en zona tranquila un bot maduro
+	# explora igual que uno nuevo; con pista de enemigo real si se encarece.
+	var dpers := {"bravery": 0.5, "aggression": 0.3, "curiosity": 0.6, "sociability": 0.6,
+		"distrust": 0.35, "cooperation": 0.65, "survival_instinct": 0.75}
+	var calm := {"proxy": Node3D.new(), "bot_id": 901, "health": 100.0, "hunger": 80.0, "thirst": 80.0,
+		"energy": 80.0, "anim": "idle", "dead": false, "spawned_at_msec": now,
+		"_mem": {"personality": dpers, "strategies": {}, "known_locations": {}, "failed_goals": {}}}
+	root.add_child(calm["proxy"])
+	(calm["proxy"] as Node3D).set_meta("saved_inventory", [])
+	manager.stake_override = 0.0
+	manager.decide_situational_action(calm, {})
+	var u_calm_new: float = float((calm.get("_utility_last", {}).get("explore", {}) as Dictionary).get("u", 0.0))
+	manager.stake_override = 1.0
+	manager.decide_situational_action(calm, {})
+	var u_calm_old: float = float((calm.get("_utility_last", {}).get("explore", {}) as Dictionary).get("u", 0.0))
+	check(absf(u_calm_old - u_calm_new) < 0.05,
+		"in a calm zone a mature bot explores like a fresh one (%.2f vs %.2f)" % [u_calm_old, u_calm_new])
+	# La misma vida madura, pero con pista reciente de enemigo: si se encarece.
+	calm["_foe_mem"] = {"t": Time.get_ticks_msec(), "conf": 0.9}
+	manager.decide_situational_action(calm, {})
+	var u_danger_old: float = float((calm.get("_utility_last", {}).get("explore", {}) as Dictionary).get("u", 0.0))
+	check(u_danger_old < u_calm_old - 0.05,
+		"with real enemy evidence the mature bot does pay for risk (%.2f vs %.2f)" % [u_danger_old, u_calm_old])
+	calm.erase("_foe_mem")
+	manager.stake_override = -1.0
+
+	# Inquietud por sedentarismo: crece con el tiempo quieto, la apagan la
+	# noche, el peligro vital y las necesidades criticas.
+	var settler := {"dead": false, "anim": "idle", "health": 100.0, "hunger": 80.0, "thirst": 80.0, "_roam_still_sec": 0.0}
+	check(manager._bot_restlessness(settler) == 0.0, "a bot that just moved feels no restlessness")
+	settler["_roam_still_sec"] = 480.0 + 210.0
+	check(absf(manager._bot_restlessness(settler) - 0.5) < 0.02, "halfway through the ramp the urge is half")
+	settler["_roam_still_sec"] = 480.0 + 420.0
+	check(manager._bot_restlessness(settler) == 1.0, "a long-sedentary bot is fully restless")
+	manager.night = true
+	check(manager._bot_restlessness(settler) == 0.0, "night suppresses restlessness — nobody strolls in the dark")
+	manager.night = false
+	settler["health"] = 40.0
+	check(manager._bot_restlessness(settler) == 0.0, "a badly wounded bot stays put regardless")
+	settler["health"] = 100.0
+	# Efecto en la decision: la inquietud empuja fuera y desinfla el descanso.
+	settler["proxy"] = Node3D.new()
+	root.add_child(settler["proxy"])
+	(settler["proxy"] as Node3D).set_meta("saved_inventory", [])
+	settler["bot_id"] = 901
+	settler["energy"] = 80.0
+	settler["spawned_at_msec"] = now
+	settler["_mem"] = {"personality": dpers, "strategies": {}, "known_locations": {}, "failed_goals": {}}
+	settler["shelter_pos"] = Vector3(5, 0, 5)
+	settler["shelter_id"] = "test_shelter"
+	settler["_roam_still_sec"] = 0.0
+	manager.decide_situational_action(settler, {})
+	var rest_calm: float = float((settler.get("_utility_last", {}).get("rest", {}) as Dictionary).get("b", 0.0))
+	var exp_calm: float = float((settler.get("_utility_last", {}).get("explore", {}) as Dictionary).get("b", 0.0))
+	settler["_roam_still_sec"] = 480.0 + 420.0
+	manager.decide_situational_action(settler, {})
+	var rest_still: float = float((settler.get("_utility_last", {}).get("rest", {}) as Dictionary).get("b", 0.0))
+	var exp_still: float = float((settler.get("_utility_last", {}).get("explore", {}) as Dictionary).get("b", 0.0))
+	check(exp_still > exp_calm + 0.3, "restlessness boosts exploration (%.2f vs %.2f)" % [exp_still, exp_calm])
+	check(rest_still < rest_calm * 0.45, "restlessness deflates home rest (%.2f vs %.2f)" % [rest_still, rest_calm])
+	(calm["proxy"] as Node3D).free()
+	(settler["proxy"] as Node3D).free()
 
 	# Motor de utilidad: la inversion encarece todo riesgo medio punto.
 	var UtilAI = load("res://scripts/BotUtilityAI.gd")
