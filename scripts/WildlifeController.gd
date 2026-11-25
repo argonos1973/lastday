@@ -125,7 +125,6 @@ var _puppet_desired_anim := "walk"
 var _defer_locomotion_animation := false
 var _requested_locomotion := ""
 var _puppet_attack_timer := 0.0
-var _puppet_bite_cooldown := 0.0
 var _puppet_combat_timer := 0.0
 var _puppet_combat_active := false
 var _puppet_combat_target: Node3D = null
@@ -278,7 +277,7 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 	_network_motion.push(self, pos, rot_y)
 	if not dead:
 		_puppet_desired_anim = anim.to_lower()
-		if _puppet_attack_timer > 0.0 or (_puppet_combat_active and _puppet_desired_anim in ["idle", "walk", "trot", "sit", "lie"]):
+		if _puppet_attack_timer > 0.0 or (_puppet_combat_active and _puppet_desired_anim == "idle"):
 			return
 		if _uses_measured_locomotion() and _network_motion.samples.size() > 1 and _puppet_desired_anim in ["walk", "trot", "run", "gallop"]:
 			# The interpolated body can still be slowing down or wading. Let
@@ -291,24 +290,6 @@ func notify_puppet_damaged() -> void:
 		return
 	_hit_flash_timer = 0.28
 	_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
-	if get_tree() == null:
-		return
-	for node in get_tree().get_nodes_in_group("wildlife"):
-		if node == self or not is_instance_valid(node) or not (node is WildlifeController):
-			continue
-		var w := node as WildlifeController
-		if w._is_dead or (w.animal_type != "wolf" and w.animal_type != "bear"):
-			continue
-		if w.animal_type == "bear":
-			# Bears use their own authoritative attack/sound events, not a
-			# synthetic strike whenever any nearby animal receives damage.
-			continue
-		if w.global_position.distance_to(global_position) <= 4.2:
-			w._puppet_combat_timer = maxf(w._puppet_combat_timer, 3.0)
-			if w._puppet_attack_timer <= 0.0:
-				w._puppet_attack_timer = 1.55
-				w._puppet_bite_cooldown = 1.55
-				w._play_animation_by_name("attack")
 
 func notify_puppet_order(mode: String, target: Node = null) -> void:
 	if mode == "attack" and target is Node3D and is_instance_valid(target):
@@ -614,15 +595,15 @@ func _process_body(delta: float) -> void:
 				_animation_player.play()
 				_animation_paused_for_distance = false
 			_update_water_depth(delta)
-			_update_puppet_combat(delta)
+			var displacement := global_position - prev_puppet_pos
+			var vis_spd := Vector2(displacement.x, displacement.z).length() / maxf(delta, 0.0001)
+			_update_puppet_combat(delta, vis_spd)
 			_wildlife_cache_timer += delta
 			if _wildlife_cache_timer >= 1.0:
 				_wildlife_cache_timer = 0.0
 				_cached_wildlife = get_tree().get_nodes_in_group("wildlife")
 			_update_tamed_visuals()
 			if not _puppet_combat_active and delta > 0.0001 and _network_motion.samples.size() > 1:
-				var puppet_moved_xz := Vector2(global_position.x - prev_puppet_pos.x, global_position.z - prev_puppet_pos.z).length()
-				var vis_spd := puppet_moved_xz / delta
 				if vis_spd > 0.65 and _puppet_attack_timer <= 0.0:
 					var loco_clip := _puppet_locomotion_gait(vis_spd)
 					_play_animation_by_name(loco_clip)
@@ -1426,7 +1407,6 @@ func _wolf_ai(delta: float) -> Dictionary:
 				else:
 					away_dir = away_dir.normalized()
 				if animal_type == "wolf":
-					_face_towards(_player.global_position, delta * 7.0)
 					var flank_tangent := Vector3(-away_dir.z, 0.0, away_dir.x) * _get_flank_sign()
 					target = _player.global_position + (away_dir * 2.4 + flank_tangent * 1.6)
 					if not _is_position_allowed(target):
@@ -1439,6 +1419,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 						else:
 							target = _player.global_position
 					if _bite_anim_timer > 0.0 and flat_dist <= 2.9:
+						_face_towards(_player.global_position, delta * 7.0)
 						speed = move_speed * 0.25 if flat_dist > 2.2 else (move_speed * 0.9 if flat_dist < 1.35 else 0.0)
 						_play_animation_by_name("attack")
 					else:
@@ -3736,54 +3717,32 @@ func _find_puppet_melee_foe() -> Node3D:
 		else:
 			if other.animal_type == "wolf" and not other.tamed_to.is_empty():
 				valid_foe = true
-			elif other.animal_type in ["wolf", "bear"] and (aggro_active or other._puppet_combat_timer > 0.0 or other._puppet_attack_timer > 0.0):
+			elif other.animal_type == "bear" and (aggro_active or other._puppet_combat_timer > 0.0 or other._puppet_attack_timer > 0.0):
 				valid_foe = true
 		if valid_foe and d < best_d:
 			best_d = d
 			best = other
 	return best
 
-func _update_puppet_combat(delta: float) -> void:
+func _update_puppet_combat(delta: float, travel_speed: float) -> void:
 	if _is_dead or (animal_type != "wolf" and animal_type != "bear"):
 		_puppet_combat_active = false
 		_puppet_attack_timer = 0.0
 		return
 	_puppet_attack_timer = maxf(0.0, _puppet_attack_timer - delta)
-	_puppet_bite_cooldown = maxf(0.0, _puppet_bite_cooldown - delta)
 	_puppet_combat_timer = maxf(0.0, _puppet_combat_timer - delta)
-	if animal_type == "bear":
-		# The server now sends the complete authored strike. Proximity-based
-		# client attacks invented extra hits during recovery (or while eating).
-		_puppet_combat_active = _puppet_attack_timer > 0.0
-		if _puppet_combat_active:
-			_play_animation_by_name("attack")
-		return
-	var foe := _find_puppet_melee_foe()
-	if foe != null:
-		if not _puppet_combat_active and _puppet_bite_cooldown <= 0.0 and _puppet_attack_timer <= 0.0:
-			# Stagger the two combatants slightly so both wolves don't lunge on the exact same frame
-			if (get_instance_id() & 1) == 1 and foe is WildlifeController and (foe as WildlifeController)._puppet_attack_timer > 0.4:
-				_puppet_bite_cooldown = 0.35
-		_puppet_combat_active = true
-		_face_towards(foe.global_position, minf(delta * 8.5, 1.0))
-		if _puppet_attack_timer <= 0.0 and _puppet_bite_cooldown <= 0.0:
-			# El timer de animación iguala el cooldown del mordisco: el clip de
-			# ataque sigue en bucle durante todo el intercambio en vez de
-			# alternar attack/threaten y reiniciar la pose cada medio segundo.
-			_puppet_attack_timer = 1.65
-			_puppet_bite_cooldown = 1.65
-		if _puppet_attack_timer > 0.0:
-			_play_animation_by_name("attack")
-		else:
-			_play_animation_by_name("threaten")
-		if _animation_player != null:
-			_animation_player.speed_scale = 1.0
-		return
-	_puppet_combat_active = false
-	if _puppet_attack_timer > 0.0:
+	_puppet_combat_active = _puppet_attack_timer > 0.0 or _puppet_desired_anim == "attack"
+	if _puppet_combat_active:
 		_play_animation_by_name("attack")
-		if _animation_player != null:
-			_animation_player.speed_scale = 1.0
+		return
+	# Only infer a stationary wolf standoff from idle. Never turn a travelling
+	# replica toward a neighbour or carry a speculative bite into the next run.
+	if animal_type == "wolf" and _puppet_desired_anim == "idle" and travel_speed <= 0.12:
+		var foe := _find_puppet_melee_foe()
+		if foe != null:
+			_puppet_combat_active = true
+			_face_towards(foe.global_position, minf(delta * 8.5, 1.0))
+			_play_animation_by_name("attack")
 
 func _ensure_tamed_visual_nodes() -> void:
 	if _tamed_collar_node == null or not is_instance_valid(_tamed_collar_node):
@@ -4142,7 +4101,7 @@ func _play_animation_by_name(keyword: String) -> void:
 		_animation_player.play(best, 0.65 if lower_keyword in ["sit", "lie"] else 0.2)
 
 func _uses_measured_locomotion() -> bool:
-	return animal_type in ["bear", "deer"] or (animal_type == "wolf" and not tamed_to.is_empty())
+	return animal_type in ["bear", "deer", "wolf"]
 
 func _puppet_locomotion_gait(speed: float, preferred_gait := "") -> String:
 	# Hysteresis prevents snapshot interpolation noise from blending between
@@ -4265,7 +4224,6 @@ func _play_wolf_sound(sound_type: String) -> void:
 		var start_strike := _puppet_attack_timer <= 0.0
 		if start_strike:
 			_puppet_attack_timer = _predator_attack_duration()
-		_puppet_bite_cooldown = 1.65
 		_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
 		_play_animation_by_name("attack")
 		if _animation_player != null:
