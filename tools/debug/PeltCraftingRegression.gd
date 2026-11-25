@@ -370,5 +370,44 @@ func test_bot_pelts() -> void:
 	manager._bot_try_craft(bot, 3.0)
 	check(str(bot.clothing).contains("Tocado de piel animal") and manager._bot_pelt_count(bot.proxy) == 1, "full-pack headdress equips and consumes three of four hides")
 	check(manager._bot_inv_stored_count(bot.proxy.get_meta("saved_inventory", [])) <= int(capacity.slots), "directly worn craft does not overfill inventory")
+	# Frío: la piel cosida es equipo de supervivencia — con el cuerpo frío o
+	# de noche el abrigo gana a las faenas rutinarias, y sin filo la lasca
+	# de piedra es el paso que falta para poder coserla.
+	reset_bot(bot, "Camiseta,Pantalones,Zapatillas", materials_for("lobo", 13))
+	bot.vstats.body_temperature = 35.9
+	check(manager._bot_feels_cold(bot), "cuerpo frío se lee como frío")
+	check(manager._bot_recipe_score(bot, recipes["Chaqueta de piel"]) >= 6.9,
+		"un bot helado cose la chaqueta por encima de las faenas rutinarias")
+	bot.vstats.body_temperature = 37.2
+	check(manager._bot_recipe_score(bot, recipes["Chaqueta de piel"]) < 5.0,
+		"el mismo abrigo vuelve a ser faena ordinaria con el cuerpo templado")
+	check(not manager._bot_feels_cold(bot), "un día cálido no es frío")
+	world.day_cycle.time_of_day = 17.0
+	check(manager._bot_feels_cold(bot), "el ocaso frío se anticipa aunque el cuerpo siga templado")
+	world.day_cycle.time_of_day = 14.0
+	# Pieles sin filo: primero la lasca que habilita el cosido, luego el abrigo.
+	reset_bot(bot, "Camiseta,Pantalones,Zapatillas",
+		[{"name": "Piel de lobo", "type": "resource", "weight": .65, "quantity": 4},
+			{"name": "Piedra", "type": "resource", "weight": .45, "quantity": 2}])
+	bot.vstats.body_temperature = 35.9
+	var flake_recipe := {}
+	for candidate in Crafting.RECIPES:
+		if str(candidate.output.name) == "Piedra afilada":
+			flake_recipe = candidate
+	check(manager._bot_recipe_score(bot, flake_recipe) > 6.0, "pieles sin filo y frío potencian la lasca")
+	check(manager._bot_try_craft(bot, 0.5), "el bot frío empieza a tallar la lasca")
+	manager._bot_try_craft(bot, 3.0)
+	check(manager._bot_has_can_opener(bot.proxy), "la lasca da el filo que faltaba")
+	check(manager._bot_try_craft(bot, 0.5), "con filo empieza a coser la chaqueta")
+	manager._bot_try_craft(bot, 3.0)
+	check("Chaqueta de piel" in str(bot.clothing).split(","), "las pieles frías terminan vestidas")
+	# Helado pero vivo: una piel a los pies se recoge aunque no sea comida.
+	reset_bot(bot, "Camiseta,Pantalones,Zapatillas", materials_for("lobo", 5))
+	bot.vstats.body_temperature = 35.5
+	var pelt_drop := {"name": "Piel de ciervo", "type": "resource",
+		"pos": [bot.proxy.global_position.x, bot.proxy.global_position.y, bot.proxy.global_position.z + 3.0]}
+	check(manager._bot_loot_allowed_while_freezing(bot, pelt_drop, false),
+		"un bot que se congela recoge la piel que tiene a los pies")
+	bot.vstats.body_temperature = 37.2
 	world.free()
 	print("BOT_PELT_CRAFT failures=", failures)

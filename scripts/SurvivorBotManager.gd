@@ -11085,6 +11085,9 @@ func _bot_loot_allowed_while_freezing(b: Dictionary, entry: Dictionary, desperat
 		return true
 	if nm in BUSH_TOOLS or nm in ["Piedra", "Cuerda", "Trapos", "Antorcha", "Cerillas"]:
 		return true
+	# Unas pieles a los pies valen el desvio: con filo se vuelven abrigo.
+	if CraftingSystem._is_pelt_name(nm) and _bot_wants_pelts(b, proxy):
+		return true
 	return tp == "food" and desperate_food
 
 # Sube o baja una ruta de peldaños (torre militar, pisos): movimiento directo
@@ -13989,6 +13992,15 @@ func _bot_is_exhausted(b: Dictionary) -> bool:
 	var thresh := 14.0 + minf(9.0, float(cold_lessons) * 3.0)
 	return st != null and not st.dead and st.sleep < thresh
 
+# Frío corporal real o la noche fría que se avecina (el aire nocturno ronda
+# los 6 °C): para el bot la piel cosida pasa de capricho a equipo de
+# supervivencia — la misma respuesta que la fogata y el techo seco.
+func _bot_feels_cold(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	if st != null and not st.dead and st.body_temperature < 36.7:
+		return true
+	return _is_world_night() or _is_pre_night()
+
 # Hora de acostarse del bot (horas despues de NIGHT_START). Una persona no
 # se mete en el saco al caer el sol: hace vida junto al fuego — come,
 # craftea, charla — hasta una hora personal. La valentia y la curiosidad
@@ -15761,6 +15773,11 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 		var hide_cost := int(recipe.get("inputs", {}).get("ANY_PELT", 0))
 		if _bot_pelt_count(proxy) < hide_cost:
 			return 1.5
+		# Frío o noche fría: la piel cosida es respuesta termica — se cose
+		# antes que palos, cuerdas y la venda rutinaria. La antorcha sigue
+		# por delante de noche (6.95): primero luz para ver, luego abrigo.
+		if _bot_feels_cold(b) and float(PlayerController.CLOTHING_WARMTH.get(oname, 0.0)) >= 0.4:
+			return 6.94
 		# Prefer a real headdress over a cap when both are feasible.
 		return 4.6 + 0.05 * improvement
 	# Flechas: solo si tiene arco — y con tope para no fundir en flechas todos
@@ -15836,6 +15853,10 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	if oname == "Piedra afilada":
 		if _bot_item_count(proxy, "Piedra afilada") > 0 or _bot_has_can_opener(proxy):
 			return -1.0
+		# Con pieles pero sin filo no puede coser abrigo: la lasca es el
+		# paso que falta para convertirlas en ropa contra el frio.
+		if _bot_feels_cold(b) and _bot_pelt_count(proxy) >= 1 and _bot_wants_pelts(b, proxy):
+			return 6.93
 		return 4.3
 	if oname == "Antorcha":
 		if _bot_item_count(proxy, "Antorcha") > 0:
