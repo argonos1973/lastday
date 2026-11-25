@@ -15254,17 +15254,15 @@ func _initialize_rifle_ammo() -> void:
 			return
 		_m4_ammo_initialized = true
 		_m4_magazine = M4_MAG_SIZE
-		if _m4_reserve_ammo <= 0:
-			_m4_reserve_ammo = M4_MAG_SIZE * GameConst.GUN_START_RESERVE_MAGS
 		return
 	if _rifle_ammo_initialized:
 		return
 	_rifle_ammo_initialized = true
 	_rifle_magazine = RIFLE_MAG_SIZE
+	# La reserva no se regala: sin chaleco ni cargadores fisicos no hay
+	# cargadores — la unica dotacion es la del propio chaleco del mundo.
 	if _equipped_slots.get("chaleco", "") == "Chaleco táctico":
 		_rifle_reserve_ammo = maxi(_rifle_reserve_ammo, RIFLE_MAG_SIZE * 5)
-	elif _rifle_reserve_ammo <= 0:
-		_rifle_reserve_ammo = RIFLE_MAG_SIZE * GameConst.GUN_START_RESERVE_MAGS
 
 func get_vest_magazines_count() -> int:
 	var mag_size := _rifle_mag_size()
@@ -15281,6 +15279,24 @@ func _reload_rifle() -> void:
 	if needed <= 0:
 		notice.emit("Cargador lleno (%d/%d). Reserva: %d cargadores (%d balas)." % [_loaded_rounds(), mag_size, get_vest_magazines_count(), _reserve_rounds()])
 		return
+	# La recarga vuelca los cargadores fisicos del inventario cuando la
+	# reserva no cubre el cargador — igual que la recarga de los bots.
+	var is_m4_caliber := _held_is_m4()
+	var poured := false
+	while _reserve_rounds() < needed:
+		var ammo_idx := _first_ammo_item_index(is_m4_caliber)
+		if ammo_idx < 0:
+			break
+		var ammo_item = inventory.items[ammo_idx]
+		_set_reserve_rounds(_reserve_rounds() + ammo_item_rounds(str(ammo_item.item_name), float(ammo_item.use_value)))
+		inventory.remove_index(ammo_idx, 1)
+		poured = true
+	if poured:
+		var main_early := get_tree().current_scene
+		if main_early != null and main_early.get("hud") != null and main_early.hud.has_method("_update_inventory"):
+			main_early.hud._update_inventory()
+		if main_early != null and main_early.has_method("_sync_local_player_inventory"):
+			main_early.call_deferred("_sync_local_player_inventory")
 	if _reserve_rounds() <= 0:
 		notice.emit("Sin cargadores ni munición de reserva.")
 		return
@@ -15329,6 +15345,19 @@ static func ammo_item_rounds(item_name: String, use_value: float) -> int:
 	if use_value > 0.0:
 		return int(use_value)
 	return M4_MAG_SIZE if ammo_item_is_m4(item_name) else RIFLE_MAG_SIZE
+
+# Primer item de municion del inventario cuyo calibre sirve al fusil en
+# manos (5.56/M4 vs el resto), o -1 — el mismo reparto que _load_ammo_item.
+func _first_ammo_item_index(is_m4_caliber: bool) -> int:
+	if inventory == null:
+		return -1
+	for i in range(inventory.items.size()):
+		var it = inventory.items[i]
+		if it == null or str(it.item_type) != "ammo" or int(it.quantity) <= 0:
+			continue
+		if ammo_item_is_m4(str(it.item_name)) == is_m4_caliber:
+			return i
+	return -1
 
 func _load_ammo_item(item, index := -1) -> void:
 	if item == null or inventory == null or str(item.item_type) != "ammo":

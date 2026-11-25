@@ -143,5 +143,61 @@ func _initialize() -> void:
 		"M4 reload never touches the 7.62 pools")
 	player3.free()
 
+	# Sin chaleco ni cargadores fisicos no hay reserva: el fusil trae su
+	# cargador, pero ningun cargador fantasma de repuesto.
+	var player4 := TestPlayer.new()
+	root.add_child(player4)
+	player4.set_process(false)
+	player4.set_physics_process(false)
+	player4._held_item_reference = ItemScript.create("Fusil de asalto", "weapon_rifle", 3.1, 1, 0.0)
+	player4._held_item_external = true
+	player4._initialize_rifle_ammo()
+	check(player4._m4_magazine == player4.M4_MAG_SIZE and player4._m4_reserve_ammo == 0,
+		"picking up an M4 without vest/magazines grants no ghost reserve")
+	var player5 := TestPlayer.new()
+	root.add_child(player5)
+	player5.set_process(false)
+	player5.set_physics_process(false)
+	player5._held_item_reference = ItemScript.create("Rifle francotirador", "weapon_rifle", 3.4, 1, 0.0)
+	player5._held_item_external = true
+	player5._initialize_rifle_ammo()
+	check(player5._rifle_magazine == player5.RIFLE_MAG_SIZE and player5._rifle_reserve_ammo == 0,
+		"sniper without vest starts with its magazine only, no ghost reserve")
+	player5.free()
+
+	# La recarga vuelca los cargadores fisicos del inventario cuando la
+	# reserva no basta: M4 con reserva vacia y un cargador de 30 en la mochila.
+	player4._m4_magazine = 0
+	player4._m4_reserve_ammo = 0
+	var magm4 = ItemScript.create("Cargador de M4", "ammo", 0.45, 1, 30.0)
+	player4.inventory.add_item(magm4)
+	player4._reload_rifle()
+	await create_timer(2.5).timeout
+	check(player4._m4_magazine == 30 and player4._m4_reserve_ammo == 0,
+		"M4 reload pours the physical magazine into the gun")
+	check(_find_item(player4, "Cargador de M4") < 0, "reload consumes the physical magazine")
+
+	# Solo se vuelca lo necesario: un cargador de 5 basta para el francotirador
+	# y el segundo queda intacto en la mochila.
+	var player6 := TestPlayer.new()
+	root.add_child(player6)
+	player6.set_process(false)
+	player6.set_physics_process(false)
+	player6._held_item_reference = ItemScript.create("Rifle francotirador", "weapon_rifle", 3.4, 1, 0.0)
+	player6._held_item_external = true
+	player6._rifle_ammo_initialized = true
+	player6._rifle_magazine = 0
+	player6._rifle_reserve_ammo = 0
+	player6.inventory.add_item(ItemScript.create("Cargador de fusil", "ammo", 0.3, 1, 5.0))
+	player6.inventory.add_item(ItemScript.create("Cargador de fusil", "ammo", 0.3, 1, 5.0))
+	player6._reload_rifle()
+	await create_timer(2.5).timeout
+	check(player6._rifle_magazine == 5 and player6._rifle_reserve_ammo == 0,
+		"sniper reload fills its magazine from one physical magazine")
+	check(_find_item(player6, "Cargador de fusil") >= 0,
+		"the spare physical magazine stays untouched")
+	player4.free()
+	player6.free()
+
 	print("RIFLE_AMMO_LOOT failures=", failures)
 	quit(1 if failures else 0)

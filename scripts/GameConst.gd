@@ -35,7 +35,6 @@ const RIFLE_MAG_SIZE := 5
 const M4_MAG_SIZE := 30
 const M4_BURST_ROUNDS := 3
 const GUN_RELOAD_TIME := 2.2
-const GUN_START_RESERVE_MAGS := 3
 
 # -- Hand-thrown weapons (same flight for players and bots) ----------------
 const SPEAR_THROW_SPEED := 25.0

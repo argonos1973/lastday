@@ -317,7 +317,11 @@ func test_bot_pelts() -> void:
 	check(not str(bot.clothing).contains("Tocado") and manager._bot_pelt_count(bot.proxy) == 2 \
 		and float(remaining[1].durability) == 80.0, "lost input during interruption aborts without consuming/creating items")
 	reset_bot(bot, headless_outfit + ",Casco militar", materials_for("lobo", 3))
-	check(manager._bot_recipe_score(bot, recipes["Tocado de piel animal"]) <= 0.0, "headdress does not displace equally valued military helmet")
+	check(manager._bot_recipe_score(bot, recipes["Tocado de piel animal"]) > 0.0, "animal trophy outranks the military helmet")
+	check(manager._bot_try_craft(bot, 0.5), "trophy craft starts over the helmet")
+	manager._bot_try_craft(bot, 3.0)
+	check(str(bot.clothing).contains("Tocado de piel animal") and not str(bot.clothing).contains("Casco militar"),
+		"the sewn trophy actually replaces the helmet on the head")
 	# A bird cap must not burn three hides on another downgraded cap.
 	reset_bot(bot, headless_outfit + ",Gorro de piel", materials_for("ave", 3))
 	check(not manager._bot_try_craft(bot, .1), "bird skins cannot repeatedly downgrade the headdress recipe")

@@ -190,7 +190,7 @@ const CLOTHING_PRIORITY := {
 	"Zapatillas": 1, "Botas survival": 3, "Botas de montaña": 4, "Botas militares": 5, "Botas de piel": 6,
 	"Guantes de trabajo": 2, "Guantes survival": 3, "Guantes militares": 4, "Guantes de piel": 5,
 	"Gorra militar": 2, "Gorro de otoño": 2, "Sombrero de pescador": 3, "Gorro de piel": 4,
-	"Casco militar": 5, "Tocado de piel animal": 5,
+	"Casco militar": 5, "Tocado de piel animal": 6,
 	"Linterna frontal": 5,
 	"Chaleco táctico": 6,
 }
@@ -14957,10 +14957,10 @@ func _bot_gun_ammo(proxy: Node3D) -> Dictionary:
 		ammo[flag] = true
 		ammo[_bot_gun_loaded_key(weapon)] = _bot_gun_mag_size(weapon)
 		var reserve := _bot_gun_reserve(ammo, weapon)
+		# Como el jugador: el fusil trae su cargador, pero la reserva no se
+		# regala — solo la dotan los cargadores fisicos o el chaleco del mundo.
 		if not is_m4 and "Chaleco táctico" in str(proxy.get_meta("saved_clothing", "")).split(","):
 			reserve = maxi(reserve, BOT_SNIPER_MAG_SIZE * 5)
-		elif reserve <= 0:
-			reserve = _bot_gun_mag_size(weapon) * GameConst.GUN_START_RESERVE_MAGS
 		ammo[_bot_gun_reserve_key(weapon)] = reserve
 		changed = true
 	if changed:
@@ -15621,10 +15621,13 @@ func _bot_recipe_pelt_sources(recipe: Dictionary, inv: Array) -> Array:
 	for it in inv:
 		if not (it is Dictionary) or not CraftingSystem._is_pelt_name(str(it.get("name", ""))) or int(it.get("quantity", 1)) <= 0:
 			continue
-		if trophy and not GameConst.PELT_HEADDRESS.has(CraftingSystem.pelt_species_of(str(it.name))):
-			other.append(it)
-		else:
+		var trophy_hide := GameConst.PELT_HEADDRESS.has(CraftingSystem.pelt_species_of(str(it.name)))
+		# El tocado reserva las pieles con trofeo; el resto de prendas las
+		# gasta al reves para no dejar al tocado solo con pieles de ave.
+		if trophy_hide == trophy:
 			usable.append(it)
+		else:
+			other.append(it)
 	return usable + other
 
 func _bot_recipe_output(recipe: Dictionary, inv: Array) -> Dictionary:
