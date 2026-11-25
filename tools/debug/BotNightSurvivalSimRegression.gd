@@ -694,6 +694,47 @@ func _s23() -> void:
 	check(str((b.get("_gather", {}) as Dictionary).get("id", "")) == "s23_stone" or not (b.get("_gather", {}) as Dictionary).is_empty(),
 		"S23 recoge material real para la cadena, sin regalos (gather=%s inv=%s)" % [str(b.get("_gather", {})), str(_inv_totals(b))])
 
+func _s24() -> void:
+	print("S24: hipotermia humeda con ropa basica — la ropa se convierte en cuerda/hacha/fuego")
+	var env := _new_world(8.0)
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[901]
+	var roof := Vector3(230.0, 0.4, 300.0)
+	world.house_pts = [roof]
+	world.wildlife_blockers = [{"house_bounds": Rect2(roof.x - 4.0, roof.z - 4.0, 8.0, 8.0)}]
+	_place_bot(b, roof, {"body_temperature": 35.25, "wetness": 0.65, "hunger": 88.0, "thirst": 88.0, "sleep": 88.0,
+		"inventory": [
+			{"name":"Piedra afilada","type":"tool","quantity":1,"durability":80.0,"weight":0.3},
+			{"name":"Piedra","type":"resource","quantity":1,"weight":0.45},
+			{"name":"Palo","type":"resource","quantity":2,"weight":0.3},
+			{"name":"Cerillas","type":"tool","quantity":1,"durability":5.0,"weight":0.05}]})
+	b["spawned_at_msec"] = Time.get_ticks_msec() - int((SurvivorBotManagerScript.BOT_NIGHT_FIRE_BOOTSTRAP_SEC + 60.0) * 1000.0)
+	_spawn_mat_action(world, "s24_tree", "fell_tree", roof + Vector3(8.0, 0.0, 0.0))
+	var saw_sacrificed := false
+	var saw_rope := false
+	var saw_axe := false
+	var initial_clothing := str(b.get("clothing", ""))
+	for i in 420:
+		mgr._tick_bot(b, 0.1)
+		var totals := _inv_totals(b)
+		if str(b.get("clothing", "")) != initial_clothing:
+			saw_sacrificed = true
+		if totals.get("Cuerda", 0.0) >= 1.0:
+			saw_rope = true
+		if totals.get("Hacha de piedra", 0.0) >= 1.0 or totals.get("Hacha", 0.0) >= 1.0:
+			saw_axe = true
+		if not world._lit_campfires.is_empty():
+			break
+		if bool((b.get("vstats") as SurvivalStats).dead):
+			break
+	var st: SurvivalStats = b["vstats"]
+	check(saw_sacrificed, "S24 se desprende de ropa basica para hacer trapos (cloth=%s)" % str(b.get("clothing", "")))
+	check(saw_rope, "S24 los trapos se convierten en Cuerda (inv=%s)" % str(_inv_totals(b)))
+	check(saw_axe, "S24 la cadena produce un hacha real (inv=%s)" % str(_inv_totals(b)))
+	check(world._depleted_action_ids.has("s24_tree"), "S24 tala el arbol cercano para los troncos (act=%s pos=%s)" % [str(b.get("_act", "")), str((b["proxy"] as Node3D).global_position)])
+	check(not world._lit_campfires.is_empty() and not st.dead, "S24 termina en fogata encendida y bot vivo (fires=%d hp=%.1f temp=%.2f wet=%.2f)" % [world._lit_campfires.size(), st.health, st.body_temperature, st.wetness])
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
@@ -707,6 +748,10 @@ func run() -> void:
 		return
 	if "--only-s23" in OS.get_cmdline_user_args():
 		_s23()
+		quit(1 if failures else 0)
+		return
+	if "--only-s24" in OS.get_cmdline_user_args():
+		_s24()
 		quit(1 if failures else 0)
 		return
 	if "--only-s19" in OS.get_cmdline_user_args():
