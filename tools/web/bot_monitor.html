@@ -1044,6 +1044,7 @@ function renderBots(data) {
           <div style="font-size:10px;color:var(--muted);margin-top:3px">PUNTUACIÓN</div>
           <div style="font-size:11px;margin-top:6px">Vivo: <b>${fmtDur(b.alive_seconds)}</b> · ⌀ vida: <b>${fmtDur(b.avg_life_seconds)}</b></div>
           <div style="font-size:10px;color:var(--muted)">Total acumulado: ${fmtDur(b.alive_total_seconds)} · ${b.deaths || 0} muertes</div>
+          <div style="font-size:9px;color:var(--muted);margin-top:2px">+${Math.round((b.alive_total_seconds||0)/60*2)} supervivir · +${(b.known_locations_count||0)*10} lugares · +${((b.stats||{}).kills_bot||0)*50+((b.stats||{}).kills_player||0)*75} bajas · −${(b.deaths||0)*200} muertes</div>
           <span class="badge info" style="margin-top:5px">${esc(b.anim || "idle")} · ${esc(b.act || "?")}</span>
           <br/><button class="fold-btn" title="Plegar / desplegar la tarjeta">▾</button>
         </div>

@@ -31,15 +31,19 @@ static func zone_yield_prob(zk: Dictionary) -> float:
 	var n := int(zk.get("n", 0))
 	return clampf(float(int(zk.get("good", 0)) + 1) / float(n + 2), 0.05, P_CEIL)
 
-# Coeficiente de aversión al riesgo [0.15..1.8]: instinto de supervivencia y
-# desconfianza encarecen el riesgo; valentía y agresividad lo abaratan.
-static func risk_aversion(pers: Dictionary) -> float:
+# Coeficiente de aversión al riesgo [0.15..2.3]: instinto de supervivencia y
+# desconfianza encarecen el riesgo; valentía y agresividad lo abaratan. El
+# stake (0..1) es lo que el bot tiene en juego en su vida actual — una muerte
+# cuesta 100 minutos de supervivencia, así que una vida madura encarece todo
+# riesgo medio punto extra.
+static func risk_aversion(pers: Dictionary, stake: float = 0.0) -> float:
 	var a := 0.45 \
 		+ float(pers.get("survival_instinct", 0.7)) * 0.85 \
 		+ float(pers.get("distrust", 0.35)) * 0.45 \
 		- float(pers.get("bravery", 0.5)) * 0.70 \
-		- float(pers.get("aggression", 0.3)) * 0.35
-	return clampf(a, 0.15, 1.8)
+		- float(pers.get("aggression", 0.3)) * 0.35 \
+		+ clampf(stake, 0.0, 1.0) * 0.5
+	return clampf(a, 0.15, 2.3)
 
 static func expected_utility(benefit: float, p_success: float, cost: float, risk: float, aversion: float) -> float:
 	return p_success * benefit - cost - aversion * risk

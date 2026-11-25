@@ -321,7 +321,22 @@ const BOT_TRIP_WATER_MIN_SEC := 18.0
 const BOT_TRIP_WATER_TIMEOUT_MSEC := 45000
 const BOT_TRIP_WATER_ARRIVE_M := 2.4
 const AI_MEMORY_SAVE_SEC := 90.0
-const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. State scales (0..100 reserves, HIGHER IS BETTER): hp=100 healthy/0 dead, hunger=100 full/0 starving, thirst=100 hydrated/0 dehydrated, sleep=100 rested/0 exhausted (<35 urgent, >75 satisfied — NEVER treat 75+ hunger/thirst as hungry or thirsty). Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Do not invent unsupported actions such as fill_container. There is no combat action: aggression or self-defense is expressed only through movement goals — hunt targets wild game, explore/scavenge/avoid_zone position the bot. Never output attack, ambush, raid, steal, kill, chase or similar verbs. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
+# Marcador de supervivencia: vivir es el objetivo maximo del bot. Cada minuto
+# vivo suma SCORE_SURVIVAL_PER_MIN y cada muerte resta SCORE_DEATH_PENALTY —
+# una muerte borra 100 minutos de progreso, asi que ninguna presa, botin o
+# exploracion compensa arriesgar la vida. Las localizaciones y bajas suman
+# mucho menos que el tiempo sobrevivido.
+const SCORE_SURVIVAL_PER_MIN := 2.0
+const SCORE_LOCATION_PTS := 10.0
+const SCORE_KILL_BOT_PTS := 50.0
+const SCORE_KILL_PLAYER_PTS := 75.0
+const SCORE_DEATH_PENALTY := 200.0
+# Lo que esta en juego (stake): la vida actual madura linealmente hasta
+# saturar en BOT_STAKE_FULL_SEC. Cuanto mas lleva vivo el bot, mas puntos
+# pierde una muerte, asi que huye antes, detecta depredadores mas lejos y
+# descuenta mas fuerte los destinos donde ya murio.
+const BOT_STAKE_FULL_SEC := 2700.0
+const AI_SYSTEM_PROMPT := "You are the cognitive engine for a survival-game NPC in Last Day. Output ONLY strict JSON, no prose: {\"goal\":\"...\",\"action\":\"...\",\"target\":\"...\",\"priority\":3,\"reason\":\"...\"}. State scales (0..100 reserves, HIGHER IS BETTER): hp=100 healthy/0 dead, hunger=100 full/0 starving, thirst=100 hydrated/0 dehydrated, sleep=100 rested/0 exhausted (<35 urgent, >75 satisfied — NEVER treat 75+ hunger/thirst as hungry or thirsty). Allowed actions: explore, scavenge, hunt, forage, return_home, rest, avoid_zone, fortify_camp, seek_ally. target: one of house, military, city, wild, tower, camp, ally, or a known_locations id from the prompt (NEVER invent unknown coordinates). priority: integer 1..5. Weigh personality traits, survival needs, relationships, and memories. reason: max 8 words. You may instead return {\"steps\":[decision,decision]} with 1 to 4 ordered decisions using the same schema. Each step must be independently achievable; only use return_home/rest/fortify_camp if a camp or shelter exists. Survival emergencies override plans. Surviving as long as possible is the supreme objective: one minute alive earns 2 points, one death costs 200 — a death erases 100 minutes of progress. Prefer low-risk plans; loot, exploration and allies are means to survive, never worth the NPC's life. stake (0..1) shows how much the current life is worth protecting — at high stake avoid combat, predators and zones with death memories unless hunger, thirst or cold force the risk. Do not invent unsupported actions such as fill_container. There is no combat action: aggression or self-defense is expressed only through movement goals — hunt targets wild game, explore/scavenge/avoid_zone position the bot. Never output attack, ambush, raid, steal, kill, chase or similar verbs. recent_failures lists goals that recently failed with their cause and zone, and unreachable lists destinations with no known route for left_min minutes — prefer alternative places/actions over retrying them. observed_players lists spots a seen human used (sleep/fish/campfire/house) with age_min — treat them as human-vetted candidate locations."
 var _ai_http: HTTPRequest = null
 var _ai_pending_bot := 0
 var _ai_next_at: Dictionary = {} # bot_id -> msec epoch del proximo intento
@@ -1901,9 +1916,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if float(b["sense_t"]) <= 0.0 and (not _sense_budget_active or int(b["bot_id"]) == _sense_owner):
 		b["sense_t"] = 0.21 + fmod(float(b["bot_id"]) * 0.037, 0.08)
 		var sense_started := Time.get_ticks_usec()
-		var pred_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("predator", 0))
-		var pred_bonus := minf(12.0, float(pred_lessons) * 4.0)
-		b["_s_predator"] = _find_threatening_predator(b, (30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0) + pred_bonus)
+		b["_s_predator"] = _find_threatening_predator(b, _bot_predator_sense_radius(b))
 		b["_s_foe"] = _find_combat_foe(b)
 		if b["_s_foe"] != null:
 			_ai_note_foe_scan(b, b["_s_foe"] as Node3D)
@@ -2127,9 +2140,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# escapa en zigzag hasta perder la amenaza o conseguir un arma.
 		var fleeing: bool = float(b["flee_until"]) > 0.0
 		var unarmed: bool = _best_weapon_name(proxy).is_empty()
-		var combat_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("combat", 0))
 		var ranged_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("ranged", 0))
-		var retreat_hp := 30.0 + minf(15.0, float(combat_lessons) * 5.0) + minf(10.0, float(ranged_lessons) * 4.0)
+		var retreat_hp := _bot_retreat_hp(b)
 		# Nemesis: quien ya le mato suma miedo persistente. Si no tiene ventaja
 		# clara, aprende a no repetir la muerte y se retira en vez de pelear.
 		b["_nemesis_ev_t"] = maxf(0.0, float(b.get("_nemesis_ev_t", 0.0)) - delta)
@@ -2137,7 +2149,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if not nem.is_empty() and not _has_combat_edge(b, human_foe):
 			var fear_n := float(get_bot_relationship(int(b["bot_id"]), str(nem.get("key", ""))).get("fear", 0.0))
 			var pers_n := _get_bot_personality(b)
-			if int(nem.get("count", 1)) >= 2 or fear_n > 0.6 or unarmed or float(pers_n.get("bravery", 0.5)) < 0.42:
+			if int(nem.get("count", 1)) >= 2 or fear_n > 0.6 - _bot_stake(b) * 0.2 or unarmed or float(pers_n.get("bravery", 0.5)) < 0.42:
 				_bot_avoid_nemesis(b, human_foe, str(nem.get("name", "")), delta)
 				return
 		# Superado en potencia de fuego: el rival lleva un arma a distancia y
@@ -2145,7 +2157,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# y asi no hay pelea razonable — se retira antes del umbral normal;
 		# el valiente aguanta algo mas, el prudente se va antes.
 		var outgunned := _actor_holds_ranged(human_foe) and not _bot_has_ranged_weapon(proxy) \
-			and float(b["health"]) < 42.0 + float(_get_bot_personality(b).get("survival_instinct", 0.7)) * 22.0 - float(_get_bot_personality(b).get("bravery", 0.5)) * 14.0
+			and float(b["health"]) < 42.0 + float(_get_bot_personality(b).get("survival_instinct", 0.7)) * 22.0 - float(_get_bot_personality(b).get("bravery", 0.5)) * 14.0 + _bot_stake(b) * 8.0
 		var advised_retreat := int(b.get("_avoid_foe_until", 0)) > Time.get_ticks_msec() \
 			and int(b.get("_avoid_foe_id", 0)) == human_foe.get_instance_id()
 		if _bot_critical_blood_loss(b) or advised_retreat or ((float(b["health"]) < retreat_hp or fleeing or unarmed or outgunned) and not _has_combat_edge(b, human_foe)):
@@ -16977,7 +16989,7 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 		scores["rest"] = float(scores["rest"]) + 0.9
 	if not risky_zone.is_empty():
 		if use_eu:
-			var aversion := BotUtilityAI.risk_aversion(pers)
+			var aversion := BotUtilityAI.risk_aversion(pers, _bot_stake(b))
 			scores["avoid_zone"] = BotUtilityAI.expected_utility(
 				survival * 1.1 + distrust * 0.5 + need_heal * 0.6,
 				BotUtilityAI.strat_prob(strats.get("avoid_zone", {})), 0.30, 0.05, aversion)
@@ -17072,7 +17084,7 @@ func _situational_action_spec(act: String, aggression: float, survival: float, b
 func _eu_scores(b: Dictionary, pers: Dictionary, benefits: Dictionary, threat_present: bool) -> Dictionary:
 	var mem: Dictionary = b.get("_mem", {})
 	var strats: Dictionary = mem.get("strategies", {})
-	var aversion := BotUtilityAI.risk_aversion(pers)
+	var aversion := BotUtilityAI.risk_aversion(pers, _bot_stake(b))
 	var energy := float(b.get("energy", 80.0))
 	# Amenaza estimada con evidencias legítimas: ultima posicion conocida del
 	# enemigo (decae con el tiempo) + antecedentes de la zona (combate y fauna).
@@ -17862,6 +17874,9 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"pos": [int(pos.x), int(pos.z)],
 		"visited_pois": visited.size(),
 		"deaths": int(mem.get("deaths", 0)),
+		"alive_min": int(maxf(0.0, float(Time.get_ticks_msec() - int(b.get("spawned_at_msec", Time.get_ticks_msec()))) / 60000.0)),
+		"stake": snappedf(_bot_stake(b), 0.01),
+		"score": bot_score_value(mem, float((mem.get("stats", {}) as Dictionary).get("alive_total_sec", 0.0)) + maxf(0.0, float(Time.get_ticks_msec() - int(b.get("alive_flush_msec", Time.get_ticks_msec()))) / 1000.0), known_dict.size()),
 		"items": (proxy.get_meta("saved_inventory", []) as Array).size(),
 		"sticks": _bot_palo_supply(proxy),
 		"has_shelter": not str(b.get("shelter_id", "")).is_empty(),
@@ -19031,7 +19046,7 @@ func _ai_poi_memory_factor(b: Dictionary, pos: Vector3, kind: String) -> float:
 		var risk := float((known[pid] as Dictionary).get("risk", 0.0))
 		if risk > 0.0:
 			var surv := float(_get_bot_personality(b).get("survival_instinct", 0.7))
-			factor *= clampf(1.0 - risk * (0.28 + surv * 0.25), 0.22, 1.0)
+			factor *= clampf(1.0 - risk * (0.28 + surv * 0.25 + _bot_stake(b) * 0.2), 0.22, 1.0)
 	var strats: Dictionary = mem.get("strategies", {})
 	var st_key := "explore_" + kind
 	if strats.has(st_key) and strats[st_key] is Dictionary:
@@ -19058,7 +19073,7 @@ func _ai_poi_state_factor(b: Dictionary, pid: String, dist: float) -> float:
 	var loc: Dictionary = (mem.get("known_locations", {}) as Dictionary).get(pid, {})
 	var cr := float(loc.get("combat_risk", 0.0)) if loc is Dictionary else 0.0
 	if cr > 0.0:
-		var aversion := BotUtilityAI.risk_aversion(_get_bot_personality(b))
+		var aversion := BotUtilityAI.risk_aversion(_get_bot_personality(b), _bot_stake(b))
 		f -= minf(cr / 3.0, 1.0) * aversion * 0.30
 	return clampf(f, 0.35, 1.15)
 
@@ -19219,6 +19234,49 @@ func get_ai_debug_report() -> String:
 					f_parts.append("%s×%d" % [str(fk), int(fe[fk])])
 			lines.append("  Dieta: %s (última: %s)" % [", ".join(f_parts), str(fe.get("last", snap.get("last_meal", "-")))])
 	return "\n".join(lines)
+
+# Lo que el bot tiene en juego en esta vida: crece linealmente desde el
+# respawn hasta saturar en BOT_STAKE_FULL_SEC. Una muerte cuesta
+# SCORE_DEATH_PENALTY puntos = 100 minutos de supervivencia, asi que cuanto
+# mas madura la vida, mas vale protegerla — modula cautela, no valentia
+# gratuita: un bot acorralado o con ventaja clara sigue peleando.
+func _bot_stake(b: Dictionary) -> float:
+	if bool(b.get("dead", false)) or str(b.get("anim", "")).begins_with("dead"):
+		return 0.0
+	var spawned := int(b.get("spawned_at_msec", 0))
+	if spawned <= 0:
+		return 0.0
+	return bot_stake_from_life(maxf(0.0, float(Time.get_ticks_msec() - spawned) / 1000.0))
+
+static func bot_stake_from_life(life_sec: float) -> float:
+	return clampf(life_sec / BOT_STAKE_FULL_SEC, 0.0, 1.0)
+
+# Marcador de supervivencia compartido por el monitor, el asesor y las
+# regresiones: el tiempo vivo domina y cada muerte resta SCORE_DEATH_PENALTY.
+static func bot_score_value(mem: Dictionary, alive_total_sec: float, known_locations_count: int) -> int:
+	var st: Dictionary = mem.get("stats", {})
+	return int(round(
+		alive_total_sec / 60.0 * SCORE_SURVIVAL_PER_MIN
+		+ float(known_locations_count) * SCORE_LOCATION_PTS
+		+ float(st.get("kills_bot", 0)) * SCORE_KILL_BOT_PTS
+		+ float(st.get("kills_player", 0)) * SCORE_KILL_PLAYER_PTS
+		- float(mem.get("deaths", 0)) * SCORE_DEATH_PENALTY
+	))
+
+# Radio de deteccion de depredadores: la cautela por muertes recientes, las
+# lecciones de depredador y la inversion de la vida actual lo amplian.
+func _bot_predator_sense_radius(b: Dictionary) -> float:
+	var pred_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("predator", 0))
+	var base := 30.0 if float(b.get("caution_until", 0.0)) > 0.0 else 22.0
+	return base + minf(12.0, float(pred_lessons) * 4.0) + _bot_stake(b) * 6.0
+
+# Umbral de repliegue tactico: mas lecciones de combate y mas inversion en la
+# vida actual hacen que el bot se retire con mas vida restante.
+func _bot_retreat_hp(b: Dictionary) -> float:
+	var lessons: Dictionary = b.get("_mem", {}).get("death_lessons", {})
+	var combat_lessons := int(lessons.get("combat", 0))
+	var ranged_lessons := int(lessons.get("ranged", 0))
+	return 30.0 + minf(15.0, float(combat_lessons) * 5.0) + minf(10.0, float(ranged_lessons) * 4.0) + _bot_stake(b) * 12.0
 
 func get_full_web_status() -> Dictionary:
 	var tod := 14.0
@@ -19407,13 +19465,7 @@ func get_full_web_status() -> Dictionary:
 		var life_sec := maxf(0.0, (now_ms - int(b.get("spawned_at_msec", now_ms))) / 1000.0)
 		var unflushed := 0.0 if is_dead else maxf(0.0, (now_ms - int(b.get("alive_flush_msec", now_ms))) / 1000.0)
 		var alive_total := float(st.get("alive_total_sec", 0.0)) + unflushed
-		var score := int(round(
-			alive_total / 60.0 * 2.0
-			+ float(snap.get("known_locations_count", 0)) * 10.0
-			+ float(st.get("kills_bot", 0)) * 50.0
-			+ float(st.get("kills_player", 0)) * 75.0
-			- float(mem.get("deaths", 0)) * 75.0
-		))
+		var score := bot_score_value(mem, alive_total, int(snap.get("known_locations_count", 0)))
 		# Chat del bot: ultimo mensaje emitido + su hilo completo (como emisor
 		# y como destinatario) para la seccion de conversaciones de la tarjeta.
 		var own_chat: Array = []
