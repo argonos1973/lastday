@@ -23073,6 +23073,12 @@ func shelter_placement_error(pos: Vector3, yaw: float, actor) -> String:
 	return ""
 
 func _net_primitive_shot(shooter_id: int, origin: Vector3, direction: Vector3, item_name: String, speed: float, wind: Vector3 = Vector3.ZERO) -> void:
+	if survivor_bot_mgr != null and survivor_bot_mgr.has_method("notify_sound_event"):
+		# Las armas primitivas son sigilosas: no hay estampido que oir a
+		# distancia — pero el silbido de la flecha/lanza/boleadora al pasar
+		# cerca avisa personalmente igual que el chasquido de una bala.
+		var pmid := origin + direction.normalized() * minf(25.0, speed * 0.8)
+		survivor_bot_mgr.notify_sound_event(shooter_id, pmid, "bullet_crack", 10.0)
 	if CombatProf.enabled: CombatProf.event("rpc.primitive_shot")
 	# Alert server-authoritative wildlife near the archer/thrower and along the
 	# arrow/spear trajectory even on dedicated server (where remote_players has no mesh).

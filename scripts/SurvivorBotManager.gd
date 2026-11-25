@@ -1931,7 +1931,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# pueden inmovilizarlo a base de reiniciar la reaccion. La animacion de
 		# impacto cede el paso a la maniobra defensiva en el mismo tick.
 		var under_fire_now := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 1500 \
-			and str(b.get("_last_hit_weapon", "")) in ["rifle", "m4"]
+			and is_ranged_threat_weapon(str(b.get("_last_hit_weapon", "")))
 		if not under_fire_now:
 			b["sitting"] = false
 			b["sleeping"] = false
@@ -2148,7 +2148,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# Incoming fire takes priority over an ambush pose or domestic chores.
 	var shooter := _sensed_node(b, "_s_foe")
-	var under_fire := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 5000 and str(b.get("_last_hit_weapon", "")) in ["rifle", "m4"]
+	var under_fire := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 5000 and is_ranged_threat_weapon(str(b.get("_last_hit_weapon", "")))
 	var cover_experience := int(b.get("_mem", {}).get("experience", {}).get("cover", 0))
 	var anticipates_cover := shooter != null and cover_experience > 0 and _actor_holds_ranged(shooter) and float(b["health"]) < 45.0 + 5.0*cover_experience
 	if shooter != null and (under_fire or anticipates_cover) and _bot_seek_ballistic_cover(b, shooter, delta):
@@ -5323,6 +5323,12 @@ func _bot_seek_cover_from_pos(b: Dictionary, threat_pos: Vector3, delta: float) 
 	# amenaza — nunca un blanco quieto ni un zigzag de reloj.
 	_bot_evade_move(b, threat_pos, 6.4, delta)
 	return true
+
+# Armas a distancia que activan la respuesta bajo fuego: de fuego y
+# primitivas — una flecha o una lanza clavandose al lado asusta igual que
+# una bala, solo que sin estampido.
+static func is_ranged_threat_weapon(weapon: String) -> bool:
+	return weapon in ["rifle", "m4", "arco", "arco_madera", "arco_head", "arrow", "flecha", "lanza", "spear", "bola", "bolas"]
 
 func _find_ballistic_cover(b: Dictionary, foe: Node3D) -> Vector3:
 	return _find_ballistic_cover_from_pos(b, foe.global_position)
