@@ -14306,10 +14306,10 @@ func _bot_cold_water_guard(b: Dictionary) -> bool:
 	return st != null and not st.dead and st.wetness > 0.12 and st.body_temperature < 36.3
 
 func _bot_cold_water_limit(b: Dictionary, depth_cur: float) -> float:
-	if _bot_is_freezing(b):
-		return maxf(0.5, depth_cur)
-	if _bot_cold_water_guard(b):
-		return maxf(0.25, depth_cur)
+	if _bot_is_freezing(b) or _bot_cold_water_guard(b):
+		# Incluso un vado al tobillo empapa la ropa. En seco no se entra; ya
+		# mojado solo se permite salir sin internarse mas.
+		return 0.05 if depth_cur <= 0.05 else depth_cur + 0.02
 	return -1.0
 
 func _bot_is_freezing(b: Dictionary) -> bool:
