@@ -2074,18 +2074,21 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# decision. Va ANTES del termostato: un helado dentro del rio no puede
 	# "acercarse a la lumbre" — calentarse empieza por no ahogarse (y el
 	# agua fria drena temp mas rapido que el fuego la sube).
-	if world != null and world.has_method("get_river_depth_at") and float(world.get_river_depth_at(proxy.global_position)) > FORD_MAX_DEPTH:
-		b["drink_at"] = Vector3.INF
-		b["drinking_timer"] = 0.0
-		b["crouching"] = false
-		b["sitting"] = false
-		var esc := _bot_shoreward_goal(proxy.global_position)
-		if esc != Vector3.INF:
-			b["_act"] = "water_escape"
-			_move_bot_towards(b, esc, 6.5, delta, "run")
-		else:
-			b["anim"] = "idle"
-		return
+	if world != null and world.has_method("get_river_depth_at"):
+		var cur_depth := float(world.get_river_depth_at(proxy.global_position))
+		var cold_water := cur_depth > 0.05 and _bot_cold_water_guard(b)
+		if cur_depth > FORD_MAX_DEPTH or cold_water:
+			b["drink_at"] = Vector3.INF
+			b["drinking_timer"] = 0.0
+			b["crouching"] = false
+			b["sitting"] = false
+			var esc := _bot_shoreward_goal(proxy.global_position, 0.05 if cold_water else WADE_DEPTH)
+			if esc != Vector3.INF:
+				b["_act"] = "water_escape"
+				_move_bot_towards(b, esc, 6.5, delta, "run")
+			else:
+				b["anim"] = "idle"
+			return
 
 	# 0b) Termostato de lumbre: pegado a las brasas te cocinas (la misma curva
 	# de calor que al jugador) y en el borde frio te hielas — cualquier tarea
@@ -12959,7 +12962,7 @@ const FORD_MAX_DEPTH := 2.55
 # Punto cercano con agua vadeable o seca para salir de una zona profunda donde
 # _is_pos_blocked no dejaria dar ni un paso. Sondea en anillos y devuelve la
 # primera orilla alcanzable o la posicion menos profunda hallada.
-func _bot_shoreward_goal(pos: Vector3) -> Vector3:
+func _bot_shoreward_goal(pos: Vector3, max_shore_depth: float = WADE_DEPTH) -> Vector3:
 	if world == null or not world.has_method("get_river_depth_at"):
 		return Vector3.INF
 	var depth0 := float(world.get_river_depth_at(pos))
@@ -12970,7 +12973,7 @@ func _bot_shoreward_goal(pos: Vector3) -> Vector3:
 			var dir := Vector3.RIGHT.rotated(Vector3.UP, TAU * float(i) / 16.0)
 			var cand: Vector3 = pos + dir * r
 			var dc := float(world.get_river_depth_at(cand))
-			if dc <= WADE_DEPTH and not _is_pos_blocked(cand):
+			if dc <= max_shore_depth and not _is_pos_blocked(cand):
 				return cand
 			if dc < best_depth - 0.02:
 				best_depth = dc
