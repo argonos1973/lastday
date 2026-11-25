@@ -22,6 +22,7 @@ const BOT_M4_MAG_SIZE := GameConst.M4_MAG_SIZE
 const BOT_SNIPER_MAG_SIZE := GameConst.RIFLE_MAG_SIZE
 const BOT_M4_BURST_ROUNDS := GameConst.M4_BURST_ROUNDS
 const BOT_GUN_RELOAD_TIME := GameConst.GUN_RELOAD_TIME
+const COLD_ROOF_RADIUS := 40.0
 
 const BOT_CONFIGS := [
 	{
@@ -4335,7 +4336,7 @@ func _is_bot_wolf_protected(b: Dictionary) -> bool:
 
 # Refugio seguro más cercano (propio refugio, fogata encendida o casa real)
 # cuya dirección no obligue a correr hacia la amenaza.
-func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = Vector3.INF) -> Vector3:
+func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = Vector3.INF, dry_roof_only := false) -> Vector3:
 	var proxy: Node3D = b["proxy"]
 	var cur := proxy.global_position
 	var to_threat := Vector3.ZERO
@@ -4343,14 +4344,20 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 	if has_threat:
 		to_threat = threat_pos - cur
 		to_threat.y = 0.0
+	elif b.get("_cold_alert", false) and b.get("_cold_roof_recovery", false) and _is_goal_blacklisted(b, cur) and _bot_is_sheltered(b, cur):
+		# A failed route to the centre of a building doesn't invalidate the
+		# dry floor we have already reached. Do not clear the navigation veto.
+		return cur
 	var candidates: Array = []
+	var failed_roof: Vector3 = b.get("_cold_roof_pos", Vector3.INF) if dry_roof_only and Time.get_ticks_msec() < int(b.get("_cold_roof_until", 0)) else Vector3.INF
 	# Solo un refugio de verdad da cobijo: el solar reclamado sin edificio
 	# (demolido o aun sin levantar) no es refugio — ahi no se acampa.
 	if not str(b.get("shelter_id", "")).is_empty():
 		var sh_pos: Vector3 = b.get("shelter_pos", Vector3.INF)
-		if sh_pos != Vector3.INF:
+		if sh_pos != Vector3.INF and (not dry_roof_only or not _find_shelter_dict(str(b["shelter_id"])).is_empty()) \
+				and (not failed_roof.is_finite() or sh_pos.distance_to(failed_roof) > 3.4):
 			candidates.append(sh_pos)
-	if world != null and "_lit_campfires" in world:
+	if not dry_roof_only and world != null and "_lit_campfires" in world:
 		for lc in world._lit_campfires:
 			if _campfire_entry_alive(lc):
 				var fpos := _campfire_entry_pos(lc)
@@ -4372,7 +4379,11 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 		for blk in world.wildlife_blockers:
 			if blk is Dictionary and (blk as Dictionary).has("house_bounds"):
 				var hb: Rect2 = (blk as Dictionary)["house_bounds"]
+				if failed_roof.is_finite() and hb.has_point(Vector2(failed_roof.x, failed_roof.z)):
+					continue
 				var hc := hb.get_center()
+				if hc.distance_squared_to(Vector2(cur.x, cur.z)) > max_dist * max_dist:
+					continue
 				candidates.append(Vector3(hc.x, _ground_y(hc.x, hc.y), hc.y))
 	var freezing_now := _bot_is_freezing(b)
 	var best := Vector3.INF
@@ -4388,7 +4399,9 @@ func _nearest_safe_refuge(b: Dictionary, max_dist: float, threat_pos: Vector3 = 
 			if to_c.length_squared() > 0.01 and to_c.normalized().dot(to_threat.normalized()) > 0.25:
 				continue
 		var score := d
-		if freezing_now and not has_threat and not InterruptionManager.dry_recovery_leg(world, cur, cpos):
+		if (dry_roof_only or (freezing_now and not has_threat)) and not InterruptionManager.dry_recovery_leg(world, cur, cpos):
+			if dry_roof_only:
+				continue
 			score += 65.0
 		if score < best_score:
 			best_score = score
@@ -14155,7 +14168,15 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var sun := 1.0 - (float(dc.get("weather_darkness")) if dc != null else 0.0)
 	var wind := float(obs.get("wind_speed", 0.0))
 	var resting := bool(b.get("sitting", false)) or str(b.get("_act", "")) == "rest"
+	var temp_before := st.body_temperature
+	var hp_before := st.health
 	st.tick(delta, sprinting, ambient_temp, sheltered, shelter_warmth, is_night, moving, sleeping, carry_ratio, false, false, sun, wind, resting)
+	# Do not leave a roof for fuel while it is already warming us fast enough.
+	# If the roof alone cannot keep us alive, gathering fuel remains an option.
+	var temp_gain := st.body_temperature - temp_before
+	var hp_lost := maxf(0.0, hp_before - st.health)
+	b["_cold_roof_recovery"] = sheltered and st.body_temperature < GameConst.BOT_HEAT_RECOVERY_TEMP and \
+		(st.body_temperature >= 35.4 or temp_gain * st.health > (35.4 - st.body_temperature) * hp_lost)
 	st.wetness = clampf(effective_wet, 0.0, 1.0)
 	# Recuperacion de energia al caminar o descansar despierto (misma curva que
 	# PlayerController._physics_process: sin esto st.energy caia a 0 para siempre
@@ -14811,6 +14832,8 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 			if _nearest_lit_campfire_pos(proxy_w.global_position, 30.0, b) != Vector3.INF:
 				return true
 			if _can_bot_build_campfire(proxy_w):
+				return true
+			if not _bot_is_sheltered(b, proxy_w.global_position) and _nearest_safe_refuge(b, COLD_ROOF_RADIUS, Vector3.INF, true).is_finite():
 				return true
 	if _bot_needs_awake_care(st, true):
 		return true
@@ -20318,6 +20341,29 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 		if depth <= 0.05 and _bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9)):
 			b["_act"] = "fire_rescue"
 			return true
+	# A dry building a few seconds away is a better first stop than a
+	# 120 m trip for just one ingredient of a fire we cannot yet light.
+	var st: SurvivalStats = b["vstats"]
+	var recovering := bool(b.get("_cold_roof_recovery", false))
+	# Running to get fuel briefly raises body temperature even in a roof
+	# that was too cold at rest. Finish that short trip instead of reversing.
+	var left_cold_roof := Time.get_ticks_msec() < int(b.get("_cold_roof_until", 0))
+	if left_cold_roof and b.get("_gather", {}).get("fire_rescue", false):
+		recovering = false
+	var roof := Vector3.INF
+	if not recovering and st.body_temperature < 35.45 and not _bot_is_sheltered(b, proxy.global_position):
+		roof = _nearest_safe_refuge(b, COLD_ROOF_RADIUS, Vector3.INF, true)
+	if recovering or roof.is_finite():
+		var gather: Dictionary = b.get("_gather", {})
+		if gather.get("fire_rescue", false):
+			_bot_release_gather_claim(b, gather)
+			b["_gather"] = {}
+		if not roof.is_finite() or proxy.global_position.distance_to(roof) < 1.25:
+			return false # normal sheltered rest, food and sleep
+		b["crouching"] = false
+		b["_act"] = "rest"
+		_move_bot_towards(b, roof, 5.8, delta, "run")
+		return true
 	if _bot_axe_tool(proxy).is_empty() and _bot_item_count(proxy, "Tronco") < 2 \
 			and _bot_try_craft_named(b, delta, ["Hacha de piedra"], false):
 		b["_act"] = "fire_rescue"
@@ -20325,6 +20371,9 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 	# Sin material: recoger los troncos y el palo del fuego ES el rescate —
 	# el veto a recoger helandose queda para expediciones, no para salvarse.
 	if _bot_try_gather_mats(b, delta, true):
+		if not left_cold_roof and st.body_temperature < 35.4 and _bot_is_sheltered(b, proxy.global_position):
+			b["_cold_roof_pos"] = proxy.global_position
+			b["_cold_roof_until"] = Time.get_ticks_msec() + 30000
 		b["_act"] = "fire_rescue"
 		return true
 	return false

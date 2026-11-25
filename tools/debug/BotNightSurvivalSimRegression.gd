@@ -528,9 +528,71 @@ func _s19() -> void:
 		"S19 avanza fisicamente hacia su mision, no hacia la fogata recordada (act=%s, %.1f -> %.1f m)" %
 		[b.get("_act", ""), distance_before, b["proxy"].global_position.distance_to(destination)])
 
+func _s20() -> void:
+	for asleep in [true, false]:
+		var env := _new_world(8.0, {"temperature":8.0,"wind_speed":18.0})
+		var world: SimWorld = env.world
+		var mgr: SurvivorBotManager = env.mgr
+		var b: Dictionary = mgr.bots[904]
+		var start := Vector3(230,.4,300)
+		var roof := start + Vector3(0,0,16)
+		world.house_pts = [roof]
+		world.wildlife_blockers = [{"house_bounds":Rect2(roof.x-4,roof.z-4,8,8)}]
+		var initial_hp := 45.0 if asleep else 18.0
+		_place_bot(b,start,{"health":initial_hp,"body_temperature":34.95,"sleep":50.0 if asleep else 75.0,
+			"inventory":[] if asleep else [{"name":"Hacha","type":"tool_axe","quantity":1,"durability":80.0}]})
+		var st: SurvivalStats = b.vstats
+		b.proxy.set_meta("proxy_health",st.health)
+		b.sleeping = asleep
+		_spawn_mat_action(world,"cold_tree","fell_tree",start - Vector3(0,0,85))
+		if asleep:
+			world.water_rect = Rect2(start.x-3,start.z+7,6,2)
+			check(not mgr._bot_should_wake(b,true),"S20 an exposed sleeper does not cross water for a roof")
+			world.water_rect = Rect2()
+			check(mgr._bot_should_wake(b,true),"S20 an exposed cold sleeper recognises a nearby dry roof without a fire kit")
+		var ticks_to_roof := -1
+		var lowest := st.health
+		for i in 500:
+			mgr._tick_bot(b,.1)
+			lowest = minf(lowest,st.health)
+			if st.dead: break
+			if ticks_to_roof < 0 and world._is_player_in_house(b.proxy.global_position):
+				ticks_to_roof = i + 1
+				# Navigation can reject the centre while the actor is already
+				# under the roof. The next nearest building is across the field.
+				b["_unreachable"] = [{"pos":roof,"until":Time.get_ticks_msec()/1000.0 + 60.0}]
+				var far := start + Vector3(75,0,0)
+				world.house_pts.append(far)
+				world.wildlife_blockers.append({"house_bounds":Rect2(far.x-4,far.z-4,8,8)})
+			elif ticks_to_roof > 0 and not world._is_player_in_house(b.proxy.global_position) and st.body_temperature < 35.4:
+				check(false,"S20 does not abandon a warming roof because its centre was vetoed")
+				break
+		check(ticks_to_roof > 0 and ticks_to_roof <= 80 and not st.dead and lowest < initial_hp and st.health > lowest and st.body_temperature >= 35.4,
+			"S20 %s takes nearby shelter before a distant logging trip, warms up and survives (roof=%.1fs min_hp=%.1f hp=%.1f temp=%.2f)" %
+			["sleeper" if asleep else "awake",ticks_to_roof*.1,lowest,st.health,st.body_temperature])
+	# A roof that is still cooling the body must not suppress local fire work.
+	var env := _new_world(-25.0)
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManager = env.mgr
+	var b: Dictionary = mgr.bots[902]
+	var roof := Vector3(230,.4,300)
+	world.house_pts = [roof]
+	world.wildlife_blockers = [{"house_bounds":Rect2(roof.x-4,roof.z-4,8,8)}]
+	_place_bot(b,roof,{"body_temperature":35.3,"inventory":[{"name":"Hacha","type":"tool_axe","quantity":1,"durability":80.0},
+		{"name":"Palo","quantity":1},{"name":"Cerillas","quantity":1,"durability":5.0}]})
+	_spawn_mat_action(world,"cold_local_tree","fell_tree",roof + Vector3(12,0,0))
+	for i in 200:
+		mgr._tick_bot(b,.1)
+		if world._depleted_action_ids.has("cold_local_tree"): break
+	check(world._depleted_action_ids.has("cold_local_tree"),"S20 a roof that cannot warm the bot does not prevent obtaining firewood (act=%s pos=%s temp=%.2f)" % [b.get("_act"),b.pos,b.vstats.body_temperature])
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
+	if "--only-s20" in OS.get_cmdline_user_args():
+		_s20()
+		quit(1 if failures else 0)
+		return
 	if "--only-s19" in OS.get_cmdline_user_args():
 		_s19()
 		print("BotNightSurvivalSimRegression S19 errors=%d" % failures)
@@ -1126,6 +1188,7 @@ func run() -> void:
 	_s17()
 	_s18()
 	_s19()
+	_s20()
 
 	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures else 0)
