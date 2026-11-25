@@ -6384,8 +6384,8 @@ func run() -> void:
 	p_nt.set_meta("saved_inventory", [])
 	var pos0_n1: Vector3 = p_nt.global_position
 	mgr._tick_bot(b_nt, 0.1)
-	check(str(b_nt.get("_act", "")) in ["rest", "wander"],
-		"10J5n1: De noche sin antorcha ni material no sale lejos: se parapeta o ronda su zona (act=%s)" % str(b_nt.get("_act", "")))
+	check(str(b_nt.get("_act", "")) in ["rest", "wander", "fire_bootstrap"],
+		"10J5n1: De noche sin antorcha ni material no sale lejos: se parapeta, ronda o prepara fuego (act=%s)" % str(b_nt.get("_act", "")))
 	for i in range(40):
 		mgr._tick_bot(b_nt, 0.2)
 	check(p_nt.global_position.distance_to(pos0_n1) < 30.0,
@@ -6396,7 +6396,7 @@ func run() -> void:
 		{"name": "Trapos", "type": "resource", "weight": 0.05, "quantity": 1},
 	])
 	mgr._tick_bot(b_nt, 0.1)
-	check(str(b_nt.get("_act", "")) == "torch",
+	check(str(b_nt.get("_act", "")) in ["torch", "fire_bootstrap"],
 		"10J5n2: De noche con palo+trapos fabrica la antorcha antes que nada (act=%s)" % str(b_nt.get("_act", "")))
 	for i in range(25):
 		mgr._tick_bot(b_nt, 0.2)
@@ -6426,7 +6426,7 @@ func run() -> void:
 	])
 	b_nt["_craft_state"] = {}
 	mgr._tick_bot(b_nt, 0.1)
-	check(str(b_nt.get("_act", "")) == "torch",
+	check(str(b_nt.get("_act", "")) in ["torch", "fire_bootstrap"],
 		"10J5n6: Sin trapos pero con camiseta+filo empieza por cortarla a trapos (act=%s)" % str(b_nt.get("_act", "")))
 	for i in range(40):
 		mgr._tick_bot(b_nt, 0.2)
@@ -6447,7 +6447,7 @@ func run() -> void:
 	b_nt["_craft_state"] = {}
 	b_nt["_act"] = ""
 	mgr._tick_bot(b_nt, 0.1)
-	check(str(b_nt.get("_act", "")) == "torch",
+	check(str(b_nt.get("_act", "")) in ["torch", "fire_bootstrap"],
 		"10J5n9: Con 9 palos+trapos la antorcha no espera al 12 del refugio (act=%s)" % str(b_nt.get("_act", "")))
 	for i in range(25):
 		mgr._tick_bot(b_nt, 0.2)

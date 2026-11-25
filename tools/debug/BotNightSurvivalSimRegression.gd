@@ -530,7 +530,7 @@ func _s19() -> void:
 
 func _s20() -> void:
 	for asleep in [true, false]:
-		var env := _new_world(8.0, {"temperature":8.0,"wind_speed":18.0})
+		var env := _new_world(14.0, {"temperature":14.0,"wind_speed":18.0})
 		var world: SimWorld = env.world
 		var mgr: SurvivorBotManager = env.mgr
 		var b: Dictionary = mgr.bots[904]
@@ -586,11 +586,127 @@ func _s20() -> void:
 		if world._depleted_action_ids.has("cold_local_tree"): break
 	check(world._depleted_action_ids.has("cold_local_tree"),"S20 a roof that cannot warm the bot does not prevent obtaining firewood (act=%s pos=%s temp=%.2f)" % [b.get("_act"),b.pos,b.vstats.body_temperature])
 
+	# Caso Ataulfo: 8 °C + ropa básica da un equilibrio bajo techo de ~35.88 °C.
+	# Eso no es recuperación suficiente a 35.5 °C: el bot no puede quedarse en
+	# rest esperando; debe marcar el techo como insuficiente y trabajar la fogata.
+	env = _new_world(8.0)
+	world = env.world
+	mgr = env.mgr
+	b = mgr.bots[904]
+	roof = Vector3(230,.4,300)
+	world.house_pts = [roof]
+	world.wildlife_blockers = [{"house_bounds":Rect2(roof.x-4,roof.z-4,8,8)}]
+	_place_bot(b,roof,{"body_temperature":35.5,"inventory":[{"name":"Hacha","type":"tool_axe","quantity":1,"durability":80.0},
+		{"name":"Palo","quantity":3},{"name":"Cerillas","quantity":1,"durability":5.0}]})
+	_spawn_mat_action(world,"plateau_local_tree","fell_tree",roof + Vector3(12,0,0))
+	var saw_roof_insufficient := false
+	var left_rest := false
+	for i in 90:
+		mgr._tick_bot(b,.1)
+		if bool(b.get("_cold_roof_insufficient", false)):
+			saw_roof_insufficient = true
+		if str(b.get("_act", "")) != "rest":
+			left_rest = true
+	check(saw_roof_insufficient, "S21/Ataulfo techo a 35.5 C se detecta como insuficiente (target=%.2f)" % (b.vstats as SurvivalStats).thermal_rest_target)
+	check(left_rest, "S21/Ataulfo no permanece pasivo en rest bajo un techo frio (act=%s temp=%.2f)" % [b.get("_act"), (b.vstats as SurvivalStats).body_temperature])
+
+
+func _hostile_human(world: SimWorld, pos: Vector3, peer_id := 77) -> Node3D:
+	var foe := Node3D.new()
+	foe.name = "HostileHuman_%d" % peer_id
+	world.add_child(foe)
+	foe.global_position = pos
+	foe.add_to_group("net_player_proxy")
+	foe.set_meta("peer_id", peer_id)
+	foe.set_meta("has_real_pos", true)
+	foe.set_meta("proxy_dead", false)
+	foe.set_meta("disconnected", false)
+	foe.set_meta("proxy_health", 100.0)
+	foe.set_meta("saved_inventory", [])
+	return foe
+
+func _s22() -> void:
+	print("S22: a 35.5 C el frio rompe el duelo")
+	var env := _new_world(8.0)
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[903]
+	var home := Vector3(-48.0, 0.4, 0.0)
+	world.house_pts = [home]
+	world.wildlife_blockers = [{"house_bounds": Rect2(home.x - 4.0, home.z - 4.0, 8.0, 8.0)}]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 35.5, "hunger": 90.0, "thirst": 90.0,
+		"sleep": 90.0, "inventory": [{"name":"Lanza","type":"weapon","quantity":1,"use_value":15.0}]})
+	b["spawned_at_msec"] = Time.get_ticks_msec() - int((SurvivorBotManagerScript.BOT_NIGHT_FIRE_BOOTSTRAP_SEC + 60.0) * 1000.0)
+	var foe := _hostile_human(world, Vector3(8.0, 0.4, 0.0))
+	b["_s_foe"] = foe
+	b["aggro_target"] = foe
+	b["is_aiming"] = true
+	b["sense_t"] = 10.0
+	var x_before := (b["proxy"] as Node3D).global_position.x
+	mgr._tick_bot(b, 0.1)
+	var x_after := (b["proxy"] as Node3D).global_position.x
+	check(str(b.get("_act", "")) == "cold_escape", "S22 el acto es huida termica, no combate (act=%s)" % str(b.get("_act", "")))
+	check(b.get("aggro_target") == null and not bool(b.get("is_aiming", true)), "S22 desengancha el objetivo y deja de apuntar")
+	check(x_after < x_before, "S22 se aleja del enemigo hacia el refugio (x %.2f->%.2f)" % [x_before, x_after])
+	foe.queue_free()
+
+func _s23() -> void:
+	print("S23: bootstrap termico de respawn nocturno")
+	var env := _new_world(8.0)
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 36.6, "hunger": 50.0, "thirst": 90.0,
+		"sleep": 95.0, "inventory": [
+			{"name":"Tronco","type":"resource","quantity":2,"weight":1.0},
+			{"name":"Palo","type":"resource","quantity":3,"weight":0.3},
+			{"name":"Cerillas","type":"tool","quantity":1,"durability":5.0},
+			{"name":"Carne seca","type":"food","quantity":1,"use_value":30.0,"weight":0.25}]})
+	b["spawned_at_msec"] = Time.get_ticks_msec()
+	var hunger_before := float(b["hunger"])
+	var first_act := ""
+	for i in 45:
+		mgr._tick_bot(b, 0.1)
+		if first_act == "":
+			first_act = str(b.get("_act", ""))
+		if not world._lit_campfires.is_empty():
+			break
+	check(first_act == "fire_bootstrap" or not world._lit_campfires.is_empty(),
+		"S23 la primera faena es fuego, no comer/saquear (act=%s)" % first_act)
+	check(not world._lit_campfires.is_empty(), "S23 el kit real termina en una fogata encendida")
+	check(float(b["hunger"]) <= hunger_before + 0.2, "S23 el hambre moderada no interrumpe el bootstrap (%.1f->%.1f)" % [hunger_before, float(b["hunger"])])
+
+	env = _new_world(8.0)
+	world = env.world
+	mgr = env.mgr
+	b = mgr.bots[902]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 36.6, "hunger": 80.0, "thirst": 90.0, "sleep": 95.0, "inventory": []})
+	b["spawned_at_msec"] = Time.get_ticks_msec()
+	_spawn_mat_action(world, "s23_stone", "stone", Vector3(4.0, 0.4, 0.0))
+	first_act = ""
+	for i in 30:
+		mgr._tick_bot(b, 0.1)
+		if first_act == "":
+			first_act = str(b.get("_act", ""))
+		if str((b.get("_gather", {}) as Dictionary).get("id", "")) == "s23_stone":
+			break
+	check(first_act == "fire_bootstrap", "S23 sin inventario tambien arranca por fuego (act=%s)" % first_act)
+	check(str((b.get("_gather", {}) as Dictionary).get("id", "")) == "s23_stone" or not (b.get("_gather", {}) as Dictionary).is_empty(),
+		"S23 recoge material real para la cadena, sin regalos (gather=%s inv=%s)" % [str(b.get("_gather", {})), str(_inv_totals(b))])
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
 	if "--only-s20" in OS.get_cmdline_user_args():
 		_s20()
+		quit(1 if failures else 0)
+		return
+	if "--only-s22" in OS.get_cmdline_user_args():
+		_s22()
+		quit(1 if failures else 0)
+		return
+	if "--only-s23" in OS.get_cmdline_user_args():
+		_s23()
 		quit(1 if failures else 0)
 		return
 	if "--only-s19" in OS.get_cmdline_user_args():

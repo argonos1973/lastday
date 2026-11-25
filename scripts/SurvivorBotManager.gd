@@ -23,6 +23,9 @@ const BOT_SNIPER_MAG_SIZE := GameConst.RIFLE_MAG_SIZE
 const BOT_M4_BURST_ROUNDS := GameConst.M4_BURST_ROUNDS
 const BOT_GUN_RELOAD_TIME := GameConst.GUN_RELOAD_TIME
 const COLD_ROOF_RADIUS := 40.0
+const BOT_COLD_DISENGAGE_TEMP := 35.5
+const BOT_NIGHT_FIRE_BOOTSTRAP_SEC := 600.0
+const BOT_ROOF_MIN_REST_TARGET := 36.0
 
 const BOT_CONFIGS := [
 	{
@@ -2113,6 +2116,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# huidas urgentes correrian tapadas a 2 m/s en _move_bot_towards.
 	b["crouching"] = false
 
+	# Hipotermia cercana al daño: rompe combate/persecución y busca calor o
+	# refugio. Va antes de depredadores y enemigos humanos porque seguir el
+	# duelo a <=35.5 °C convierte una pelea ganable en una muerte por frío.
+	if _bot_try_cold_disengage(b, delta):
+		return
+
 	# 1) Doma de lobos: va ANTES que predator para que _s_predator (radio 22..34 m)
 	# no secuestre al lobo salvaje que el bot pretende domesticar (radio 20 m)
 	# ni haga que el bot le dispare o huya mientras el lobo se come el cebo.
@@ -2171,7 +2180,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# 2b) Emboscada: hostiles (solos o en equipo) acechan agachados a una
 	#     victima con recursos y golpean a la vez. Cede ante depredadores.
-	if _bot_try_ambush(b, delta):
+	if not _bot_night_fire_bootstrap_active(b) and _bot_try_ambush(b, delta):
 		b["_act"] = "ambush_height" if b.get("_ambush", {}).has("post") else "ambush"
 		return
 
@@ -2205,6 +2214,31 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			and float(b["health"]) < 42.0 + float(_get_bot_personality(b).get("survival_instinct", 0.7)) * 22.0 - float(_get_bot_personality(b).get("bravery", 0.5)) * 14.0 + _bot_stake(b) * 8.0
 		var advised_retreat := int(b.get("_avoid_foe_until", 0)) > Time.get_ticks_msec() \
 			and int(b.get("_avoid_foe_id", 0)) == human_foe.get_instance_id()
+		# En una vida nocturna recién empezada el fuego básico manda sobre el
+		# duelo: no regala golpes de ventaja, pero tampoco se queda intercambiando
+		# mientras la noche fría consume la vida entera.
+		if _bot_night_fire_bootstrap_active(b):
+			# Romper el duelo no significa quedar paralizado mientras el rival
+			# siga visible a distancia: si no esta encima, el paso de fuego sigue
+			# corriendo; si presiona (o ya no hay trabajo posible), evade/oculta.
+			b["aggro_target"] = null
+			b["is_aiming"] = false
+			var foe_dist := proxy.global_position.distance_to(human_foe.global_position)
+			var foe_pressing := foe_dist < 13.0 or fleeing \
+				or Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 2500
+			if not foe_pressing and _bot_tick_night_fire_bootstrap(b, delta):
+				b["_act"] = "fire_bootstrap"
+				return
+			if _bot_can_hide_from(sh_pos, human_foe):
+				b["hide_timer"] = 14.0
+				_move_bot_towards(b, sh_pos, 6.2, delta, "run")
+				return
+			if not fleeing:
+				b["flee_until"] = 10.0
+			b["crouching"] = false
+			proxy.set_meta("crouching", false)
+			_bot_evade_move(b, human_foe.global_position, 6.2, delta)
+			return
 		if _bot_critical_blood_loss(b) or advised_retreat or ((float(b["health"]) < retreat_hp or fleeing or unarmed or outgunned) and not _has_combat_edge(b, human_foe)):
 			if _bot_can_hide_from(sh_pos, human_foe):
 				b["hide_timer"] = 20.0
@@ -2340,6 +2374,13 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["gut_target"] = null
 				_bot_harvest_dead_animal(b, gut)
 			return
+
+	# Bootstrap térmico de respawn nocturno: los primeros minutos de una vida
+	# nocturna se dedican a resolver una fogata real antes que saqueo, caza,
+	# planes y casi cualquier hambre no inmediatamente letal. No inventa nada:
+	# reusa la cadena piedra/filo/arbusto/hacha/troncos/fuego ya existente.
+	if _bot_night_fire_bootstrap_active(b) and _bot_tick_night_fire_bootstrap(b, delta):
+		return
 
 	if not is_night or not _bot_night_supply_emergency(b):
 		b.erase("_night_emergency_origin")
@@ -3686,6 +3727,13 @@ func _maintain_bot_needs(b: Dictionary, delta: float) -> void:
 	if pressed and hunger_now >= 20.0:
 		eat_to_heal = false
 	var eat_hungry := hunger_now < hunger_line and not (pressed and hunger_now >= 20.0)
+	# En el bootstrap de una vida nocturna recien empezada, una comida no
+	# critica espera a que exista la llama. Comer sigue mandando si la vida ya
+	# esta en zona de inanicion o si la herida es grave.
+	var fire_bootstrap_meal_block := _bot_night_fire_bootstrap_active(b) and hp_now >= 50.0
+	if fire_bootstrap_meal_block:
+		eat_hungry = false
+		eat_to_heal = false
 	# Con crudos encima y sin Palo afilado, el superviviente se afana en
 	# afilar un palo para ensartar y cocinar en vez de intoxicarse: el craft
 	# corre aqui cada tick, tambien durante el cooldown de comida.
@@ -5510,6 +5558,54 @@ func _bot_avoid_nemesis(b: Dictionary, foe: Node3D, nem_name: String, delta: flo
 		b["_nemesis_ev_t"] = 60.0
 		record_bot_event(int(b["bot_id"]), "evade_nemesis", nem_name, _poi_kind_near(proxy.global_position), proxy.global_position,
 			"evita a %s, que ya le mato" % nem_name)
+
+# Frío letal en combate: nadie sigue un duelo mientras se congela. No es
+# cobardía gratuita — el bot rompe el enfrentamiento y corre hacia calor o
+# refugio real; si no hay ninguno alcanzable, conserva la serpentina de huida.
+func _bot_cold_disengage_temp_reached(b: Dictionary) -> bool:
+	var st: SurvivalStats = b.get("vstats")
+	return st != null and not st.dead and st.body_temperature <= BOT_COLD_DISENGAGE_TEMP
+
+func _bot_try_cold_disengage(b: Dictionary, delta: float) -> bool:
+	if not _bot_cold_disengage_temp_reached(b) or bool(b.get("sleeping", false)):
+		return false
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return false
+	var threat_pos := Vector3.INF
+	var predator := _sensed_node(b, "_s_predator")
+	var foe := _sensed_node(b, "_s_foe")
+	var aggro = b.get("aggro_target")
+	if predator != null and is_instance_valid(predator):
+		threat_pos = predator.global_position
+	elif foe != null and is_instance_valid(foe):
+		threat_pos = foe.global_position
+	elif aggro != null and is_instance_valid(aggro) and aggro is Node3D:
+		threat_pos = (aggro as Node3D).global_position
+	elif Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 5000:
+		threat_pos = _bot_threat_direction_pos(b)
+	if threat_pos == Vector3.INF:
+		return false
+	# Desenganche real: deja de apuntar/perseguir y declara la huida para que
+	# otras ramas no lo devuelvan al intercambio en el mismo tramo crítico.
+	b["aggro_target"] = null
+	b["is_aiming"] = false
+	b["sitting"] = false
+	b["crouching"] = false
+	proxy.set_meta("crouching", false)
+	b["flee_until"] = maxf(float(b.get("flee_until", 0.0)), 10.0)
+	b["_act"] = "cold_escape"
+	var refuge := _nearest_safe_refuge(b, 220.0, threat_pos)
+	if refuge != Vector3.INF:
+		var d := Vector2(proxy.global_position.x - refuge.x, proxy.global_position.z - refuge.z).length()
+		if d > 1.6:
+			_move_bot_towards(b, refuge, 6.5, delta, "run")
+		else:
+			_stop_bot_motion(b)
+			b["sitting"] = true
+			b["anim"] = "sit"
+		return true
+	return _bot_evade_move(b, threat_pos, 6.5, delta)
 
 func _perform_wolf_taming_step(b: Dictionary, wolf: Node3D, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
@@ -14436,7 +14532,16 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	# If the roof alone cannot keep us alive, gathering fuel remains an option.
 	var temp_gain := st.body_temperature - temp_before
 	var hp_lost := maxf(0.0, hp_before - st.health)
-	b["_cold_roof_recovery"] = sheltered and st.body_temperature < GameConst.BOT_HEAT_RECOVERY_TEMP and \
+	# Un techo frío que apenas equilibra el cuerpo por debajo de 36 °C no es
+	# recuperación suficiente: debe combinarse con fogata/leña en vez de dejar al
+	# bot sentado en 35.5-35.8 °C toda la noche. thermal_rest_target descuenta el
+	# calor transitorio de moverse, así mide el techo real en reposo.
+	var fire_heat_here := _nearest_lit_campfire_pos(pos, 4.3, b) != Vector3.INF
+	var roof_alert_temp := 36.15 if (_is_world_night() or _is_pre_night()) else 35.95
+	var cold_roof_insufficient := sheltered and st.body_temperature < roof_alert_temp \
+		and st.thermal_rest_target < BOT_ROOF_MIN_REST_TARGET and not fire_heat_here
+	b["_cold_roof_insufficient"] = cold_roof_insufficient
+	b["_cold_roof_recovery"] = sheltered and not cold_roof_insufficient and st.body_temperature < GameConst.BOT_HEAT_RECOVERY_TEMP and \
 		(st.body_temperature >= 35.4 or temp_gain * st.health > (35.4 - st.body_temperature) * hp_lost)
 	st.wetness = clampf(effective_wet, 0.0, 1.0)
 	# Recuperacion de energia al caminar o descansar despierto (misma curva que
@@ -20784,7 +20889,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 			and not _is_near_any_lit_campfire(proxy.global_position, 8.0)
 	if night_no_light:
 		palo_need = 1 + fire_sticks
-		piedra_need = 0
+		piedra_need = 0 if not fire_rescue and not _bot_night_fire_bootstrap_active(b) else piedra_need
 		seeds_need = false
 	# Rescate por frio: el helado SOLO sale por lo que falta para la fogata
 	# de emergencia — ni los 11 palos del refugio ni el huerto. Recoger la
@@ -20886,7 +20991,7 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 		return false
 	b["_gather_scan"] = 1.4 + fmod(float(int(b["bot_id"])) * 0.29, 0.6)
 	var scan_radius := 24.0 if night_no_light else 80.0
-	if freezing_rescue:
+	if freezing_rescue or _bot_night_fire_bootstrap_active(b):
 		scan_radius = 120.0
 	var target := _find_mat_target(b, scan_radius, tool, palo_short, piedra_short, seeds_need, tronco_short)
 	if target.is_empty():
@@ -21099,6 +21204,92 @@ func _bot_node_collect_complete(b: Dictionary, st: Dictionary) -> void:
 			if pid != net.get_my_id() and not is_bot_peer_id(pid) and not net.players[pid].get("offline", false) and net.peer_alive(pid):
 				net.world_action_completed.rpc_id(pid, aid, [], "", pos)
 
+# Minutos iniciales de una vida: el reloj compartido con stake/score. El
+# bootstrap usa tiempo real de vida, no horas aceleradas de prueba.
+func _bot_life_seconds(b: Dictionary) -> float:
+	if bool(b.get("dead", false)) or str(b.get("anim", "")).begins_with("dead"):
+		return INF
+	var spawned := int(b.get("spawned_at_msec", 0))
+	if spawned <= 0:
+		return INF
+	return maxf(0.0, float(Time.get_ticks_msec() - spawned) / 1000.0)
+
+# La primera supervivencia de una noche no es saquear ni pelear: es tener una
+# fogata real al alcance antes de que el frío acumulado cierre la vida.
+func _bot_night_fire_bootstrap_active(b: Dictionary) -> bool:
+	if not _is_world_night() or bool(b.get("sleeping", false)):
+		return false
+	# "Casi" todo lo demás: inanición/deshidratación ya críticas conservan su
+	# prioridad; el fuego manda sobre hambre moderada, saqueo, planes y combate.
+	if float(b.get("hunger", 100.0)) < 26.0 or float(b.get("thirst", 100.0)) < 22.0:
+		return false
+	# Es bootstrap preventivo, no rescate: una hipotermia ya instalada sigue la
+	# cascada de emergencia (fuego/refugio/marcha) en vez de quedar atrapada aquí.
+	if _bot_is_freezing(b):
+		return false
+	if _bot_life_seconds(b) > BOT_NIGHT_FIRE_BOOTSTRAP_SEC:
+		return false
+	var st: SurvivalStats = b.get("vstats")
+	if st == null or st.dead:
+		return false
+	# Una llama real al alcance resuelve el bootstrap. Una fogata propia lejos
+	# NO lo resuelve: hay que volver a ella o levantar una aquí.
+	return _bot_local_fire(b, true).is_empty()
+
+# Ejecuta el siguiente paso real del bootstrap. La secuencia no regala troncos
+# ni herramientas: piedra para lascar, arbustos/palos, cuerda/hacha si puede,
+# recogida dirigida de materiales reales y por fin construcción+ignición.
+func _bot_tick_night_fire_bootstrap(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not (b.get("_fire_ignition", {}) as Dictionary).is_empty() and _ensure_bot_campfire_lit(b, delta):
+		return true
+	if _bot_try_relight_campfire(b, delta):
+		b["_act"] = "fire_bootstrap"
+		return true
+	if not _bot_has_nearby_campfire(b) and _can_bot_build_campfire(proxy):
+		var spot := _find_nearby_campfire_spot(b, proxy.global_position)
+		if spot == Vector3.INF:
+			spot = proxy.global_position + Vector3(0.9, 0.0, 0.9)
+		if proxy.global_position.distance_to(spot) > GameConst.CAMPFIRE_REACH:
+			_move_bot_towards(b, spot, 4.8, delta, "run")
+		elif _bot_build_and_light_campfire(b, spot):
+			b["_act"] = "fire_bootstrap"
+		else:
+			return false
+		return true
+	# Cadena de herramientas cuando el inventario ya la permite. Los pasos que
+	# aún no tienen insumos caen a la recogida/recolección dirigida de abajo.
+	if _bot_bush_tool(proxy).is_empty() and _bot_try_craft_named(b, delta, ["Piedra afilada"], false):
+		b["_act"] = "fire_bootstrap"
+		return true
+	# La antorcha no sustituye la fogata, pero es parte del bootstrap: da luz
+	# para recolectar, algo de calor y defensa contra lobos mientras se completa
+	# la cadena hacha/troncos. Respeta los palos reservados para la fogata.
+	if _bot_item_count(proxy, "Antorcha") < 1:
+		var need_palo_boot := _bot_item_count(proxy, "Palo") < 1
+		var need_trapos_boot := _bot_item_count(proxy, "Trapos") < 1
+		if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
+				or (need_trapos_boot and _bot_try_craft_named(b, delta, ["Trapos"], false)) \
+				or (need_palo_boot and not need_trapos_boot and _bot_item_count(proxy, "Tronco") > 2 and _bot_try_craft_named(b, delta, ["Palo"], false)):
+			b["_act"] = "fire_bootstrap"
+			return true
+	if not _bot_bush_tool(proxy).is_empty() and _bot_axe_tool(proxy).is_empty():
+		if _bot_try_craft_named(b, delta, ["Hacha de piedra"], false) \
+				or (_bot_item_count(proxy, "Cuerda") < 1 and _bot_try_craft_named(b, delta, ["Cuerda"], false)) \
+				or (_bot_item_count(proxy, "Trapos") < 2 and _bot_try_craft_named(b, delta, ["Trapos"], false)):
+			b["_act"] = "fire_bootstrap"
+			return true
+	# Botín de fuego real: troncos/palos/cerillas y, en bootstrap, también
+	# antorcha/trapos/ropa cortable. Nada de esto concede objetos; solo prioriza
+	# lo que ya existe en el mundo.
+	if _bot_try_fire_material_pickup(b, delta, 95.0, false):
+		b["_act"] = "fire_bootstrap"
+		return true
+	if _bot_try_gather_mats(b, delta, true):
+		b["_act"] = "fire_bootstrap"
+		return true
+	return false
+
 # ¿Tiene la noche resuelta? Antorcha propia o fabricable al momento (palo +
 # trapos), una fogata ya levantada o — con refugio propio — los troncos/palo con los
 # que la monta al volver a casa.
@@ -21124,9 +21315,11 @@ func _bot_palo_supply(proxy: Node3D, tool: String = "", reserved_logs := 0) -> i
 
 # El rescate por frio corre antes del saqueo normal. Comparte su gesto,
 # reserva y adquisicion verificada; no exige hacha para recoger un tronco.
-func _bot_try_fire_material_pickup(b: Dictionary, delta: float, radius: float) -> bool:
+func _bot_try_fire_material_pickup(b: Dictionary, delta: float, radius: float, materials_only := true) -> bool:
 	var entry: Dictionary = b.get("_s_loot", {})
-	if str(entry.get("name", "")) not in ["Tronco", "Palo", "Cerillas"]:
+	var nm0 := str(entry.get("name", ""))
+	var acceptable0 := nm0 in ["Tronco", "Palo", "Cerillas"] or (not materials_only and (nm0 in ["Antorcha", "Trapos"] or _bot_cuts_into_trapos(nm0)))
+	if not acceptable0:
 		entry = {}
 	if not entry.is_empty() and "_depleted_action_ids" in world and world._depleted_action_ids.has(str(entry.get("id", ""))):
 		_loot_clear(b)
@@ -21136,8 +21329,10 @@ func _bot_try_fire_material_pickup(b: Dictionary, delta: float, radius: float) -
 		if float(b["_fire_loot_scan"]) > 0.0:
 			return false
 		b["_fire_loot_scan"] = 1.4
-		entry = _find_fire_prep_loot(b, radius, true)
-	if entry.is_empty() or str(entry.get("name", "")) not in ["Tronco", "Palo", "Cerillas"]:
+		entry = _find_fire_prep_loot(b, radius, materials_only)
+	var nm := str(entry.get("name", ""))
+	var acceptable := nm in ["Tronco", "Palo", "Cerillas"] or (not materials_only and (nm in ["Antorcha", "Trapos"] or _bot_cuts_into_trapos(nm)))
+	if entry.is_empty() or not acceptable:
 		return false
 	b["_s_loot"] = entry
 	_loot_commit_claim(b)

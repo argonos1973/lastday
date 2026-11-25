@@ -23,6 +23,11 @@ var warmth_bonus := 0.0
 var heat_protection_bonus := 0.0
 var heat_retention_bonus := 0.0
 var wetness := 0.0
+# Diagnostics for the last tick: thermal_target includes activity and hot food;
+# thermal_rest_target is the same environment at rest, used by bots to judge
+# whether a roof alone can really recover them or must be combined with fire.
+var thermal_target := 36.6
+var thermal_rest_target := 36.6
 var sick := false
 var sick_timer := 0.0
 var dead := false
@@ -126,7 +131,10 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	# Wind increases heat loss in cool air, especially with wet clothing.
 	if not sheltered and ambient_temperature < 18.0:
 		target_temperature -= minf(maxf(wind_speed, 0.0), 20.0) * 0.05 * (1.0 + wetness) / (1.0 + protection)
-	# Physical activity raises body temperature
+	# Physical activity raises body temperature. Keep the rest equilibrium
+	# separately: a roof that only looks warm because the actor just finished
+	# running must not be mistaken for a roof that warms someone sitting still.
+	var base_target_temperature := target_temperature
 	if not sleeping:
 		if moving:
 			target_temperature += 0.4
@@ -148,8 +156,11 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 			target_temperature = lerp(target_temperature, 36.6, 0.5)
 		else:
 			target_temperature = lerp(target_temperature, 36.6, 0.2)
+		thermal_rest_target = lerp(base_target_temperature, 36.6, 0.5 if base_target_temperature < 36.6 else 0.2)
 		# Dry off faster when sheltered (no rain)
 		wetness = maxf(0.0, wetness - delta * 0.05)
+	else:
+		thermal_rest_target = base_target_temperature
 	# Hot food bonus: increases body temp, decays over time
 	if hot_food_charges > 0:
 		target_temperature += hot_food_temp_bonus
@@ -160,6 +171,7 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	# change in ambient conditions. Cooling runs at half the warming rate:
 	# hypothermia takes minutes to develop (time to dress, seek shelter or
 	# light a fire) while a fire still warms you at the old readable pace.
+	thermal_target = target_temperature
 	var exchange_rate := 0.05 if target_temperature >= body_temperature else 0.025
 	body_temperature = lerpf(body_temperature, clampf(target_temperature, 30.0, 43.0), 1.0 - exp(-delta * exchange_rate))
 
