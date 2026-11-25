@@ -2464,6 +2464,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# el acto si lleva palo+trapos, corta ropa a trapos si solo le falta la
 	# tela, o raja un tronco a palos si solo le falta la madera — antes de
 	# cazar, seguir al lider o saquear: ninguna tarea vale quedarse a oscuras.
+	# Sin refugio que le guarde la noche la monta tambien a pleno dia, en
+	# cuanto el material lo permite: la primera antorcha no espera al ocaso.
 	# Sin materiales para hacerla se resguarda en wants_camp mas abajo.
 	# Oculto, dormido, agotado o helandose: primero eso.
 	if not _bot_has_item(proxy, "Antorcha") and float(b.get("hide_timer", 0.0)) <= 0.0 \
@@ -2473,7 +2475,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			if can_light_rescue_torch and _bot_try_craft_named(b, delta, ["Antorcha"], false):
 				b["_act"] = "torch"
 				return
-		elif not has_headlamp and (is_night or _is_pre_night()):
+		elif not has_headlamp and (is_night or _is_pre_night() or str(b.get("shelter_id", "")).is_empty()):
 			var need_palo_t := _bot_item_count(proxy, "Palo") < 1
 			var need_trapos_t := _bot_item_count(proxy, "Trapos") < 1
 			if _bot_try_craft_named(b, delta, ["Antorcha"], true) \
@@ -2748,7 +2750,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# que ni la inanicion ni la sed vetan el refugio — comer sigue pasando por
 	# la ruta de comida/botin, pero el cuerpo camina al calor.
 	var fatal_cold: bool = _bot_is_freezing(b) and vst != null and not vst.dead and vst.body_temperature <= 35.3
-	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or (is_night and not has_night_light) \
+	# Sin luz ni refugio propio, el ocaso ya es hora de irse bajo un techo
+	# ajeno: quien espera a la oscuridad total llega al refugio ya helado.
+	var pre_night_refuge := _is_pre_night() and not has_night_light and not has_built_sh and not desperate_needs and not starving_or_parched
+	var wants_camp: bool = float(b["hide_timer"]) > 0.0 or pre_night_home or pre_night_refuge or (is_night and not has_night_light) \
 		or fatal_cold \
 		or (_bot_is_freezing(b) and not starving_or_parched) \
 		or (vst != null and not vst.dead and vst.sleep <= 4.0) \
@@ -2758,6 +2763,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	var refuge_radius := 85.0
 	if _bot_is_freezing(b) or _bot_is_exhausted(b):
 		refuge_radius = 220.0
+	elif pre_night_refuge:
+		refuge_radius = 160.0
 	# "Estar en la base" exige refugio levantado: el solar reclamado sin
 	# edificio no sirve para acampar — ahi se va a construir, no a dormir.
 	var rest_pos: Vector3 = sh_pos if has_built_sh and not _bot_is_freezing(b) else _nearest_safe_refuge(b, refuge_radius)
