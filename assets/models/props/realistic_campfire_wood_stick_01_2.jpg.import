@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dtgmr01bcjbt6"
-path="res://.godot/imported/realistic_campfire_wood_stick_01_2.jpg-908b7ed98fd70721bec60ac83c20dba9.ctex"
+path.s3tc="res://.godot/imported/realistic_campfire_wood_stick_01_2.jpg-908b7ed98fd70721bec60ac83c20dba9.s3tc.ctex"
+path.etc2="res://.godot/imported/realistic_campfire_wood_stick_01_2.jpg-908b7ed98fd70721bec60ac83c20dba9.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "51749fe2c7187ae008e34c58909fe2a9"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/models/props/realistic_campfire_wood_stick_01_2.jpg"
-dest_files=["res://.godot/imported/realistic_campfire_wood_stick_01_2.jpg-908b7ed98fd70721bec60ac83c20dba9.ctex"]
+dest_files=["res://.godot/imported/realistic_campfire_wood_stick_01_2.jpg-908b7ed98fd70721bec60ac83c20dba9.s3tc.ctex", "res://.godot/imported/realistic_campfire_wood_stick_01_2.jpg-908b7ed98fd70721bec60ac83c20dba9.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

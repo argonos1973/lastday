@@ -1,5 +1,7 @@
 # Project verification
 
+- Fire rendering: keep the extracted campfire bark/stone maps VRAM-compressed with mipmaps, as for village/lake assets. Run `--script tools/debug/FireApproachRegression.gd` graphically: it measures first load/draw and the texture memory added by one campfire and a moving torch, then repeated close approaches. The texture budgets are assertions; wall times are diagnostic, not a network test.
+
 - Wild wolf chase presentation: use measured travel for the gait and face the flank path between bites. On replicas a neighbour losing HP is not evidence of a bite; preserve the attacker's own strike event and network heading. `WildWolfChaseMotionRegression.gd` checks an actual player pursuit, the imported head/paw poses and two travelling packmates after an HP update.
 
 - Squad rendezvous: `reagrupate` calls one recruit; `reagrupaos` calls the leader's recruits within `BOT_VOICE_RANGE`. Navigate to the communicated position, not a moving actor. An autonomous bot leader can wait for nearby available followers after stopping its own bleeding. Orders expire; urgent needs, actual injury and lost leadership override them. A recall cancels unfinished actions but never refunds an in-flight projectile. `BotConvinceRegression` covers authority, range and actual arrival, and `BotAimRecoilRegression` covers the four weapon cancellations.
