@@ -1830,8 +1830,14 @@ func _emit_bot_condition_audio(b: Dictionary, condition: String) -> void:
 func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["_ground_tick"] = int(b.get("_ground_tick", 0)) + 1
 	var ignition: Dictionary = b.get("_fire_ignition", {})
-	if not ignition.is_empty() and (int(ignition.get("tick", -1)) < int(b["_ground_tick"]) - 1 \
-			or bool(b.get("sleeping", false)) or float(b.get("flinch_timer", 0.0)) > 0.0):
+	# La ignicion se pausa — no se pierde — cuando una necesidad o un impacto
+	# adelanta al tick del fuego un momento. Borrar el progreso de 1.5-8 s por
+	# un unico tick de hueco era la espiral de muerte por hipotermia: frio ->
+	# encender -> hambre interrumpe -> progreso perdido -> mas frio. Solo el
+	# sueño o el abandono largo la cancelan; la revalidacion de
+	# distancia/combustible del propio encendido sigue protegiendo el resto.
+	if not ignition.is_empty() and (int(ignition.get("tick", -1)) < int(b["_ground_tick"]) - 30 \
+			or bool(b.get("sleeping", false))):
 		b.erase("_fire_ignition")
 	if b.has("_ground_claim") and int(b.get("_ground_last_tick", -1)) < int(b["_ground_tick"]) - 1:
 		_cancel_bot_ground_pickup(b)
@@ -20661,8 +20667,25 @@ func _bot_try_farm(b: Dictionary, delta: float) -> bool:
 # manda la marcha al calor/refugio mas cercano del mapa.
 func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
-	if not _bot_is_freezing(b) or bool(b.get("sleeping", false)):
+	if bool(b.get("sleeping", false)):
 		return false
+	# Precalentar: sobrevivir al frio empieza ANTES de tiritar. Un bot sano
+	# que entra en zona de riesgo (noche/ocaso o frio ya profundo en el
+	# cuerpo) prepara el calor con las ramas baratas del rescate — el fuego
+	# propio encendido a tiempo es lo que impide llegar a la espiral. Las
+	# ramas caras (techo lejano, recolectar, talar) quedan para la
+	# emergencia real, no para la prevencion.
+	var freezing := _bot_is_freezing(b)
+	var preheat := false
+	if not freezing:
+		var st_pre: SurvivalStats = b.get("vstats")
+		if st_pre != null and not bool(b.get("aggro_target", null) != null) \
+				and int(b.get("_last_attacker_msec", -999999)) < Time.get_ticks_msec() - 8000:
+			var temp_now := float(st_pre.body_temperature)
+			if temp_now <= 35.95 or (temp_now <= 36.15 and (_is_world_night() or _is_pre_night())):
+				preheat = true
+		if not preheat:
+			return false
 	# Calor real al alcance: correr al anillo caliente, no inventar otro fuego.
 	var lit_pos: Vector3 = _bot_local_fire(b, true).get("pos", Vector3.INF)
 	if lit_pos != Vector3.INF:
@@ -20684,6 +20707,8 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 		if depth <= 0.05 and _bot_build_and_light_campfire(b, proxy.global_position + Vector3(0.9, 0.0, 0.9)):
 			b["_act"] = "fire_rescue"
 			return true
+	if preheat:
+		return false
 	# A dry building a few seconds away is a better first stop than a
 	# 120 m trip for just one ingredient of a fire we cannot yet light.
 	var st: SurvivalStats = b["vstats"]
