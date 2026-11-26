@@ -122,10 +122,14 @@ func run() -> void:
 		{"action": "return_home", "target": "camp"},
 		{"action": "rest", "target": "camp"},
 	]}
+	b["explore_target"] = Vector3(-80.0, 0.4, -60.0)
+	b["explore_dwell"] = 4.0
 	check(m._ai_apply_decision(902, JSON.stringify(trip)), "Qwen multi-step plan accepted")
 	var d: Dictionary = b["ai_directive"]
 	check(d.get("state") == "RUNNING" and int(d.get("total_steps", 0)) == 3, "RUNNING with three steps")
 	check(d.get("_dest_pos") == Vector3(300, 0.4, 200), "Gear mission targets a known military location")
+	check(b.get("explore_target") == Vector3(300, 0.4, 200) and float(b.get("explore_dwell", 0.0)) <= 0.0,
+		"Adopting a gear mission retargets actual movement to the military destination")
 	# A travel timeout is budget exhaustion, not proof that a military tent is
 	# empty or unreachable. It must not make the next raid jump to a far base.
 	m._ai_note_failed_goal(b, d, "timeout")

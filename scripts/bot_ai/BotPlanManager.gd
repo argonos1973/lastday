@@ -279,6 +279,13 @@ static func apply(m, bot_id: int, content: String, source: String = "qwen", prev
 	d["evidence"] = Validator.result(m, b, d)
 	b["ai_directive"] = d
 	b["current_goal"] = str(d.get("goal", d.get("action", "survive")))
+	# El plan y la navegacion deben ser la misma decision. Una mision nueva
+	# no puede heredar el explore_target/dwell del paseo anterior: en vivo eso
+	# dejaba gear_up_at_military_base RUNNING mientras el bot caminaba a otro POI.
+	if str(d.get("mode", "")) == "poi":
+		b["explore_target"] = d.get("_dest_pos", Vector3.INF)
+		b["explore_dwell"] = 0.0
+		b["path_timer"] = 0.0
 	m._ensure_bot_memory(bot_id, b.get("cfg", {}))["pending_goals"] = steps.duplicate(true)
 	if str(d.get("goal", "")) == "gear_up_at_military_base":
 		b["equip_mission"] = true
