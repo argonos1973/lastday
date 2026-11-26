@@ -979,7 +979,7 @@ func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 		if d >= 650.0:
 			return
 		var retry_at := _water_retry_at(b, target_pt)
-		if not b.is_empty() and (retry_at > 0.0 or (not desperate and not _bot_supply_goal_allowed(b, target_pt))):
+		if not b.is_empty() and not desperate and (retry_at > 0.0 or not _bot_supply_goal_allowed(b, target_pt)):
 			return
 		cands.append({"pos":target_pt, "d":d, "retry_at":retry_at})
 	for seg in world._default_river_segments():
