@@ -14412,9 +14412,21 @@ func _bot_vital_break(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	if _bot_is_freezing(b) or _bot_is_exhausted(b):
 		return true
-	if float(b["thirst"]) < _bot_thirst_vital_break_line(b) and not _bot_has_drink(proxy):
-		return true
-	if float(b["hunger"]) < _bot_hunger_vital_break_line(b) and not _bot_has_edible_food(proxy):
+	var hunger_line := _bot_hunger_vital_break_line(b)
+	var thirst_line := _bot_thirst_vital_break_line(b)
+	var needs: Dictionary = b.get("_vital_break_needs", {})
+	if float(b["thirst"]) < thirst_line and not _bot_has_drink(proxy):
+		needs["water"] = true
+	elif bool(needs.get("water", false)) and (float(b["thirst"]) >= minf(75.0, thirst_line + 15.0) or _bot_has_drink(proxy)):
+		needs.erase("water")
+	if float(b["hunger"]) < hunger_line and not _bot_has_edible_food(proxy):
+		needs["food"] = true
+	elif bool(needs.get("food", false)) and (float(b["hunger"]) >= minf(85.0, hunger_line + 15.0) or _bot_has_edible_food(proxy)):
+		needs.erase("food")
+	if needs.is_empty():
+		b.erase("_vital_break_needs")
+	else:
+		b["_vital_break_needs"] = needs
 		return true
 	if float(b["health"]) < 45.0:
 		return true

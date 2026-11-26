@@ -808,6 +808,12 @@ func _s27() -> void:
 		"S27 la capa de planes suspende por hambre en la linea aprendida")
 	check(InterruptionsScript.hunger_interrupt_line(b) >= 60.0 and InterruptionsScript.hunger_interrupt_line({"_mem": {"death_lessons": {}, "experience": {}}}) == 35.0,
 		"S27 la capa de planes conserva la base 35 y suma el curriculum")
+	var hunger_vital_line := mgr._bot_hunger_vital_break_line(b)
+	b["hunger"] = hunger_vital_line + 5.0
+	check(mgr._bot_vital_break(b), "S27 la ruptura por hambre tiene histeresis y no reengancha a +5")
+	b["hunger"] = hunger_vital_line + 15.0
+	check(not mgr._bot_vital_break(b), "S27 la ruptura por hambre se libera tras recuperacion real")
+	b["hunger"] = 58.0
 	b["_mem"]["death_lessons"] = {}
 	b["_mem"]["experience"] = {}
 	b["_forage"] = {}
@@ -866,6 +872,15 @@ func _s28() -> void:
 	b["thirst"] = 50.0
 	check(InterruptionsScript.thirst_interrupt_line(b) >= 48.0 and InterruptionsScript.thirst_interrupt_line({"_mem": {"death_lessons": {}}}) == 30.0,
 		"S28 la capa de planes conserva la base 30 y suma el curriculum")
+	var vital_line := mgr._bot_thirst_vital_break_line(b)
+	b["thirst"] = vital_line - 1.0
+	check(mgr._bot_vital_break(b), "S28 la sed bajo la linea aprendida activa la ruptura reactiva")
+	b["thirst"] = vital_line + 5.0
+	check(mgr._bot_vital_break(b), "S28 la ruptura por sed tiene histeresis y no reengancha a +5")
+	b["thirst"] = vital_line + 15.0
+	check(not mgr._bot_vital_break(b), "S28 la ruptura por sed se libera tras recuperacion real")
+	b["thirst"] = 50.0
+	b.erase("_vital_break_needs")
 	var b2: Dictionary = mgr.bots[901]
 	_place_bot(b2, Vector3(0.0, 0.4, 0.0), {"hunger": 88.0, "thirst": 50.0, "sleep": 88.0, "body_temperature": 36.6, "inventory": []})
 	mgr._ensure_bot_memory(901)
