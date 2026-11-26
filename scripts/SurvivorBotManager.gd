@@ -14403,21 +14403,10 @@ func _bot_wants_day_rest(b: Dictionary) -> bool:
 # comer y beber del inventario ya ocurren en _maintain_bot_needs antes que
 # todo; esto cubre lo que exige moverse: rio, forrajeo, refugio, descanso.
 func _bot_hunger_vital_break_line(b: Dictionary) -> float:
-	var mem: Dictionary = b.get("_mem", {})
-	var lessons := float((mem.get("death_lessons", {}) as Dictionary).get("starved", 0))
-	var experience := mini(3, int((mem.get("experience", {}) as Dictionary).get("forage", 0)))
-	var line := 40.0 + minf(15.0, lessons * 2.0) + 4.0 * float(experience)
-	if bool(mem.get("scarcity", false)):
-		line += 6.0
-	return minf(65.0, line)
+	return InterruptionManager.hunger_vital_line(b)
 
 func _bot_thirst_vital_break_line(b: Dictionary) -> float:
-	var mem: Dictionary = b.get("_mem", {})
-	var lessons := float((mem.get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
-	var line := 35.0 + minf(18.0, lessons * 6.0)
-	if bool(mem.get("scarcity", false)):
-		line += 6.0
-	return minf(55.0, line)
+	return InterruptionManager.thirst_vital_line(b)
 
 func _bot_vital_break(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]

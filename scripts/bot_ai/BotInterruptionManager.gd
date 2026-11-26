@@ -11,6 +11,37 @@ static func priority(reasons_list: Array) -> int:
 		value = maxi(value, int(PRIORITY.get(reason, 0)))
 	return value
 
+# Umbrales vitales aprendidos, compartidos con SurvivorBotManager. La capa de
+# planes y la capa reactiva deben mirar la misma linea: si el curriculum dice
+# que este bot muere por inanicion/deshidratacion, suspender el plan al limite
+# base deja demasiado poco tiempo para completar el viaje que acaba de ordenar.
+static func hunger_vital_line(b: Dictionary) -> float:
+	var mem: Dictionary = b.get("_mem", {})
+	var lessons := float((mem.get("death_lessons", {}) as Dictionary).get("starved", 0))
+	var experience := mini(3, int((mem.get("experience", {}) as Dictionary).get("forage", 0)))
+	var line := 40.0 + minf(15.0, lessons * 2.0) + 4.0 * float(experience)
+	if bool(mem.get("scarcity", false)):
+		line += 6.0
+	return minf(65.0, line)
+
+static func thirst_vital_line(b: Dictionary) -> float:
+	var mem: Dictionary = b.get("_mem", {})
+	var lessons := float((mem.get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
+	var line := 35.0 + minf(18.0, lessons * 6.0)
+	if bool(mem.get("scarcity", false)):
+		line += 6.0
+	return minf(55.0, line)
+
+# La capa de planes historicamente entra mas tarde que la ruptura reactiva
+# (hambre 35/sed 30 frente a 40/35): eso sigue valiendo para un bot nuevo.
+# Lo que aprende el curriculum es el INCREMENTO sobre esa base, no reescribir
+# tambien el contrato base de los planes estrategicos.
+static func hunger_interrupt_line(b: Dictionary) -> float:
+	return 35.0 + (hunger_vital_line(b) - 40.0)
+
+static func thirst_interrupt_line(b: Dictionary) -> float:
+	return 30.0 + (thirst_vital_line(b) - 35.0)
+
 static func dry_recovery_leg(world, from_pos: Vector3, to_pos: Vector3) -> bool:
 	# Check the whole short warming leg, not just its endpoint. Normal travel
 	# may ford water; a hypothermia recovery must not repeatedly soak the bot.
@@ -48,9 +79,13 @@ static func reasons(b: Dictionary, d: Dictionary, night: bool = false) -> Array:
 			out.append("bleeding")
 		if action != "rest" and float(st.sleep) < (35.0 if old.has("exhaustion") else 15.0):
 			out.append("exhaustion")
-	if (action != "forage" or str(d.get("purpose", "")) == "water") and float(b.get("hunger", 100.0)) < (50.0 if old.has("hunger") else 35.0):
+	var hunger_line := hunger_interrupt_line(b)
+	var hunger_exit := minf(85.0, hunger_line + 15.0)
+	if (action != "forage" or str(d.get("purpose", "")) == "water") and float(b.get("hunger", 100.0)) < (hunger_exit if old.has("hunger") else hunger_line):
 		out.append("hunger")
-	if str(d.get("purpose", "")) != "water" and float(b.get("thirst", 100.0)) < (50.0 if old.has("thirst") else 30.0):
+	var thirst_line := thirst_interrupt_line(b)
+	var thirst_exit := minf(75.0, thirst_line + 15.0)
+	if str(d.get("purpose", "")) != "water" and float(b.get("thirst", 100.0)) < (thirst_exit if old.has("thirst") else thirst_line):
 		out.append("thirst")
 	if bool(b.get("sleeping", false)) and action != "rest":
 		out.append("sleep")

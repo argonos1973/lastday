@@ -16,6 +16,7 @@ extends SceneTree
 
 const SurvivorBotManagerScript = preload("res://scripts/SurvivorBotManager.gd")
 const WorldActionScript = preload("res://scripts/WorldAction.gd")
+const InterruptionsScript = preload("res://scripts/bot_ai/BotInterruptionManager.gd")
 
 var failures := 0
 
@@ -802,12 +803,20 @@ func _s27() -> void:
 	check(mgr._bot_hunger_vital_break_line(b) >= 65.0 and mgr._bot_vital_break(b),
 		"S27 las lecciones elevan la ruptura vital por hambre (line=%.1f)" % mgr._bot_hunger_vital_break_line(b))
 	check(mgr._bot_try_forage(b, 0.1), "S27 el seguidor hambriento sale a por comida pese al lider")
+	var hunger_plan := {"action": "scavenge", "interruptions": []}
+	check(InterruptionsScript.reasons(b, hunger_plan).has("hunger"),
+		"S27 la capa de planes suspende por hambre en la linea aprendida")
+	check(InterruptionsScript.hunger_interrupt_line(b) >= 60.0 and InterruptionsScript.hunger_interrupt_line({"_mem": {"death_lessons": {}, "experience": {}}}) == 35.0,
+		"S27 la capa de planes conserva la base 35 y suma el curriculum")
 	b["_mem"]["death_lessons"] = {}
 	b["_mem"]["experience"] = {}
 	b["_forage"] = {}
 	b["_forage_scan"] = 0.0
 	check(not mgr._bot_vital_break(b) and not mgr._bot_try_forage(b, 0.1),
 		"S27 sin aprendizaje el hambre 58 aun no rompe la formacion")
+	var fresh_hunger_plan := {"action": "scavenge", "interruptions": []}
+	check(not InterruptionsScript.reasons(b, fresh_hunger_plan).has("hunger"),
+		"S27 sin curriculum la capa de planes no suspende a 58")
 	b["_mem"]["death_lessons"] = {"starved": 20.0}
 	b["_mem"]["experience"] = {"forage": 3}
 	b["_forage"] = {}
@@ -850,6 +859,13 @@ func _s28() -> void:
 	mgr._tick_bot(b, 0.1)
 	check(str(b.get("_act", "")) == "drink" and (b.get("drink_at") as Vector3) != Vector3.INF,
 		"S28 el seguidor con sed aprendida rompe hacia el agua (act=%s goal=%s)" % [str(b.get("_act", "")), str(b.get("drink_at"))])
+	b["thirst"] = 45.0
+	var thirst_plan := {"action": "scavenge", "interruptions": []}
+	check(InterruptionsScript.reasons(b, thirst_plan).has("thirst"),
+		"S28 la capa de planes suspende por sed en la linea aprendida")
+	b["thirst"] = 50.0
+	check(InterruptionsScript.thirst_interrupt_line(b) >= 48.0 and InterruptionsScript.thirst_interrupt_line({"_mem": {"death_lessons": {}}}) == 30.0,
+		"S28 la capa de planes conserva la base 30 y suma el curriculum")
 	var b2: Dictionary = mgr.bots[901]
 	_place_bot(b2, Vector3(0.0, 0.4, 0.0), {"hunger": 88.0, "thirst": 50.0, "sleep": 88.0, "body_temperature": 36.6, "inventory": []})
 	mgr._ensure_bot_memory(901)
@@ -860,6 +876,9 @@ func _s28() -> void:
 	mgr._tick_bot(b2, 0.1)
 	check(not mgr._bot_vital_break(b2) and str(b2.get("_act", "")) != "drink",
 		"S28 sin aprendizaje la sed 50 aun no rompe la formacion (act=%s)" % str(b2.get("_act", "")))
+	var fresh_thirst_plan := {"action": "scavenge", "interruptions": []}
+	check(not InterruptionsScript.reasons(b2, fresh_thirst_plan).has("thirst"),
+		"S28 sin curriculum la capa de planes no suspende a 50")
 	leader.queue_free()
 
 func run() -> void:
