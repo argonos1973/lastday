@@ -228,6 +228,8 @@ func run() -> void:
 	b["proxy"].set_meta("saved_inventory", [{"name": "Cuchillo", "type": "weapon", "quantity": 1, "durability": 100.0}])
 	var generic_military := {"action": "scavenge", "target": "military", "goal": "dominate_high_tier_loot"}
 	check(Goals.purpose(generic_military) == "gear", "Generic military scavenge is strict gear purpose")
+	generic_military["target"] = "military:202:435"
+	check(Goals.purpose(generic_military) == "gear", "Known military location scavenge is strict gear purpose")
 	check(m._ai_advance_plan(902, b, d), "Equipment success advances to return leg")
 	d = b["ai_directive"]
 	check(d["plan_id"] == id and d["step_index"] == 1 and d["action"] == "return_home",
