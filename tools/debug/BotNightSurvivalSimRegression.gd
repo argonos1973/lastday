@@ -694,6 +694,23 @@ func _s23() -> void:
 	check(first_act == "fire_bootstrap", "S23 sin inventario tambien arranca por fuego (act=%s)" % first_act)
 	check(str((b.get("_gather", {}) as Dictionary).get("id", "")) == "s23_stone" or not (b.get("_gather", {}) as Dictionary).is_empty(),
 		"S23 recoge material real para la cadena, sin regalos (gather=%s inv=%s)" % [str(b.get("_gather", {})), str(_inv_totals(b))])
+	env = _new_world(8.0)
+	world = env.world
+	mgr = env.mgr
+	b = mgr.bots[903]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 35.65, "wetness": 0.0,
+		"hunger": 85.0, "thirst": 85.0, "sleep": 95.0, "inventory": []})
+	b["_mem"]["death_lessons"] = {"cold":12}
+	b["_cold_alert"] = true
+	b["spawned_at_msec"] = Time.get_ticks_msec()
+	_spawn_mat_action(world, "s23_cold_stone", "stone", Vector3(4.0, 0.4, 0.0))
+	var cold_started := false
+	for i in 30:
+		mgr._tick_bot(b, 0.1)
+		if str(b.get("_gather", {}).get("id", "")) == "s23_cold_stone" or _inv_totals(b).get("Piedra", 0) > 0:
+			cold_started = true
+			break
+	check(cold_started, "S23 frío leve seco sin filo también empieza por la piedra cercana")
 
 func _s24() -> void:
 	print("S24: hipotermia humeda con ropa basica — la ropa se convierte en cuerda/hacha/fuego")

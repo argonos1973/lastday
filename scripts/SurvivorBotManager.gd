@@ -21344,13 +21344,13 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	var freezing_rescue := fire_rescue and _bot_is_freezing(b)
 	var can_fell_tree := _bot_can_fell_tree_for_fire(b, proxy)
 	var cold_stats: SurvivalStats = b.get("vstats")
-	var prepare_axe := freezing_rescue and not tool.is_empty() and _bot_fire_needs_axe(b, proxy) \
+	var prepare_axe := freezing_rescue and _bot_fire_needs_axe(b, proxy) \
 		and cold_stats != null and cold_stats.body_temperature >= 35.5 and cold_stats.wetness <= 0.35 \
 		and float(b.get("health", 100.0)) >= 50.0
 	if freezing_rescue:
 		tronco_need = 2 if needs_fire else 0
 		palo_need = fire_sticks
-		piedra_need = 1 if prepare_axe else 0
+		piedra_need = (2 if tool.is_empty() else 1) if prepare_axe else 0
 		seeds_need = false
 	var tronco_short := _bot_item_count(proxy, "Tronco") < tronco_need
 	if (needs_fire or fire_sticks > 0) and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
@@ -21707,8 +21707,13 @@ func _bot_try_unequip_rag_source(b: Dictionary) -> bool:
 		return false
 	var itm: Dictionary = (worn_items.get(best_nm, {"name": best_nm, "type": "clothing", "weight": 0.3 if best_nm == "Camiseta" else 0.5, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0}) as Dictionary).duplicate(true)
 	itm["quantity"] = 1
-	var weight := float(itm.get("weight", 0.3 if best_nm == "Camiseta" else 0.5))
-	if not _bot_would_fit(b, inv, {"name": best_nm, "type": "clothing", "weight": weight, "quantity": 1}):
+	var without_piece := b.duplicate()
+	var remaining_worn := worn.duplicate()
+	remaining_worn.erase(best_nm)
+	without_piece["clothing"] = ",".join(remaining_worn)
+	# Los bolsillos de la prenda que va a cortar ya no son capacidad útil.
+	# No quedar desnudo intercambiando los mismos ingredientes en el suelo.
+	if not _bot_would_fit(without_piece, inv, itm):
 		return false
 	worn.erase(best_nm)
 	b["clothing"] = ",".join(worn)
@@ -21728,7 +21733,11 @@ func _bot_try_fire_chain_craft(b: Dictionary, delta: float, include_torch := tru
 	var need_axe := _bot_fire_needs_axe(b, proxy)
 	var need_rope := need_axe and _bot_item_count(proxy, "Cuerda") < 1
 	var rags_required := _bot_fire_rags_required(b, proxy, include_torch)
-	if rags_required > _bot_item_count(proxy, "Trapos") and _bot_try_unequip_rag_source(b):
+	# No sacrificar abrigo mientras aún busca el mango: la ropa sólo se
+	# aparta cuando la cuerda/hacha o la antorcha podrán usarse enseguida.
+	var can_use_rags := (need_rope and _bot_item_count(proxy, "Palo") >= 1 and _bot_item_count(proxy, "Piedra") >= 1) \
+		or (include_torch and _bot_item_count(proxy, "Palo") >= 1 + _bot_fire_stick_reserve(b))
+	if can_use_rags and rags_required > _bot_item_count(proxy, "Trapos") and _bot_try_unequip_rag_source(b):
 		return true
 	if include_torch and _bot_item_count(proxy, "Antorcha") < 1:
 		var need_palo := _bot_item_count(proxy, "Palo") < 1

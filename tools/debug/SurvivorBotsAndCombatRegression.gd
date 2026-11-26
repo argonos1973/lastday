@@ -8345,18 +8345,25 @@ func run() -> void:
 	var rag_hour := float(world.day_cycle.time_of_day)
 	var rag_clothes := str(b_hyp["clothing"])
 	world.day_cycle.time_of_day = 23.0
-	b_hyp["clothing"] = "Pantalones,Zapatillas"
+	b_hyp["clothing"] = "Camiseta,Pantalones,Zapatillas"
 	p_hyp.set_meta("saved_inventory", [
 		{"name":"Piedra afilada","type":"resource","quantity":1,"durability":40.0},
 		{"name":"Piedra","type":"resource","quantity":1,"weight":0.45},
 		{"name":"Cuerda","type":"resource","quantity":1,"weight":0.1}])
 	b_hyp["_craft_state"] = {}
 	for i in 40:
-		# La vida real autoequipa entre decisiones: no debe volver a vestir
-		# cada tick los pantalones que acaba de apartar para cortar trapos.
 		mgr._auto_equip_best_gear(b_hyp)
 		mgr._bot_try_fire_chain_craft(b_hyp, 0.1, true)
-	# Al quitarse los pantalones pierde bolsillos. El resultado puede caer
+	check(str(b_hyp["clothing"]) == "Camiseta,Pantalones,Zapatillas",
+		"10Z4e: sin palos conserva el abrigo mientras busca material")
+	var rag_inventory: Array = p_hyp.get_meta("saved_inventory")
+	rag_inventory.append({"name":"Palo","type":"resource","quantity":4,"weight":0.3})
+	for i in 40:
+		# La vida real autoequipa entre decisiones: no debe volver a vestir
+		# cada tick la camiseta que acaba de apartar para cortar trapos.
+		mgr._auto_equip_best_gear(b_hyp)
+		mgr._bot_try_fire_chain_craft(b_hyp, 0.1, true)
+	# Al quitarse una prenda pierde bolsillos. El resultado puede caer
 	# al suelo: la recogida real hace hueco con el intercambio de material
 	# nocturno existente, en vez de inventar capacidad adicional.
 	for i in 30:
@@ -8366,7 +8373,10 @@ func run() -> void:
 	check(mgr._bot_item_count(p_hyp, "Trapos") >= 1 and mgr._bot_item_count(p_hyp, "Cuerda") == 1,
 		"10Z4e: con cuerda terminada corta ropa y recoge trapos para la antorcha sin bucle de autoequipado")
 	check(mgr._bot_inv_stored_count(p_hyp.get_meta("saved_inventory")) <= int(mgr._bot_carry_capacity(b_hyp).slots),
-		"10Z4e: la recogida de trapos respeta la capacidad tras quitarse los pantalones")
+		"10Z4e: la recogida de trapos respeta la capacidad después de apartar ropa")
+	check(str(b_hyp["clothing"]).contains("Pantalones") and not mgr._bot_try_unequip_rag_source(b_hyp),
+		"10Z4e: no sacrifica los últimos bolsillos dejando más objetos de los que puede cargar")
+	b_hyp["_craft_state"] = {}
 	world.day_cycle.time_of_day = rag_hour
 	b_hyp["clothing"] = rag_clothes
 	world._lit_campfires.assign(bootstrap_lights)
