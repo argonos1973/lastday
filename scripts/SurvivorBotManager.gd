@@ -968,11 +968,10 @@ func _nearest_water_pos(from: Vector3, b: Dictionary = {}) -> Vector3:
 func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 	if world == null or not world.has_method("_default_river_segments"):
 		return Vector3.INF
-	# Sed critica (<18): la muerte por deshidratacion no se negocia — se salta
-	# la puerta de oscuridad nocturna Y la lista negra de puntos vetados: la
-	# unica fuente alcanzable se reintenta aunque antes fallara la ruta (la
-	# fuente de la plaza de Elena). Ojo: solo la urgencia lo pasa — beber de
-	# noche sin urgencia abria caminatas a oscuras condenadas al veto.
+	# Los vetos tambien cuentan con sed critica: ignorarlos reelegia el mismo
+	# brocal inalcanzable cada 12 s hasta morir. Se conservan como candidatos
+	# para el fallback de ultimo recurso, pero la seleccion prefiere siempre
+	# un acceso no vetado aunque este mas lejos.
 	var desperate := not b.is_empty() and float(b.get("thirst", 100.0)) < 18.0
 	var cands: Array = []
 	var add_cand := func(target_pt: Vector3) -> void:
@@ -980,7 +979,7 @@ func _nearest_water_pos_impl(from: Vector3, b: Dictionary) -> Vector3:
 		if d >= 650.0:
 			return
 		var retry_at := _water_retry_at(b, target_pt)
-		if not b.is_empty() and not desperate and (retry_at > 0.0 or not _bot_supply_goal_allowed(b, target_pt)):
+		if not b.is_empty() and (retry_at > 0.0 or (not desperate and not _bot_supply_goal_allowed(b, target_pt))):
 			return
 		cands.append({"pos":target_pt, "d":d, "retry_at":retry_at})
 	for seg in world._default_river_segments():
@@ -2478,6 +2477,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 					b["drink_walk_t"] = 0.0
 				b["drink_walk_t"] = float(b.get("drink_walk_t", 0.0)) + delta
 				if float(b["drink_walk_t"]) > 12.0:
+					if _bot_water_failure_is_building_exit(b):
+						# La fuente no esta fallando: falla la salida de la casa.
+						# Repath sin veto para que plantas superiores y umbrales no
+						# consuman uno a uno todos los accesos de agua del mapa.
+						b["drink_walk_t"] = 0.0
+						b["_drink_best_d"] = INF
+						b["path"] = []
+						b["path_timer"] = 0.0
+						_move_bot_towards(b, b["drink_at"], 6.2, delta, "run")
+						return
 					_abandon_water_access(b)
 					if float(b["thirst"]) < 18.0:
 						return
@@ -3458,6 +3467,22 @@ func _is_poi_unreachable(b: Dictionary, poi_id: String) -> bool:
 	# Un solo nav_blocked no prueba que el destino sea inalcanzable — lo
 	# habitual es que el ATASCADO sea el bot (origen), no el lugar.
 	return int((e as Dictionary).get("n", 1)) >= UNREACHABLE_VETO_MIN_FAILS
+
+func _bot_water_failure_is_building_exit(b: Dictionary) -> bool:
+	# Un atasco dentro de una casa no demuestra que la fuente exterior sea mala:
+	# demuestra que la salida del edificio ha fallado. Tratarlo como agua
+	# inaccesible vetaba uno a uno todos los accesos mientras el bot seguia
+	# atrapado en la planta hasta morir de sed.
+	if str(b.get("_act", "")) != "drink":
+		return false
+	var target: Vector3 = b.get("drink_at", Vector3.INF)
+	if target == Vector3.INF:
+		return false
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return false
+	var pos: Vector3 = proxy.global_position
+	return _is_in_any_building_3d(pos) and not _is_in_any_building_3d(target)
 
 func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 	var now_s := float(Time.get_ticks_msec()) / 1000.0

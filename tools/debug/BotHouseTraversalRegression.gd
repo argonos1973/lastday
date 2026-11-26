@@ -43,6 +43,98 @@ func travel(goal: Vector3, label: String) -> void:
 	check(actor.position.distance_to(goal)<.4,"%s reaches goal: %s -> %s waypoint=%s" % [label,actor.position,goal,b.get("_interior_last_waypoint")])
 	check(not crossed,label+" crosses no walls")
 
+func city_drink_escape(city: Node3D) -> void:
+	# Live regression: Carlos and Ataulfo died dehydrated on the ground floor of
+	# city_10 while nominally walking to the plaza fountain. The full decision
+	# tick —not only the movement primitive— must leave the front-facing house,
+	# route around its shell and reach water behind/north of the building.
+	if world.day_cycle == null:
+		world.day_cycle = DayNightCycle.new()
+		world.day_cycle.process_mode = Node.PROCESS_MODE_DISABLED
+		world.day_cycle.time_of_day = 14.0
+		world.add_child(world.day_cycle)
+	var fountain_pos := Vector3(41.0, 0.0, 728.0)
+	var drink = world._create_world_action("city10_escape_drink", "drink_water", "Fuente de la plaza", fountain_pos + Vector3(0, .9, 0), Vector3(4.6, 1.7, 4.6), Color.TRANSPARENT, true, false)
+	if drink != null:
+		drink.set_meta("drink_source", "de la fuente")
+		drink.set_meta("water_reach", 2.8)
+	manager._spawn_bot(manager.BOT_CONFIGS[0])
+	var b: Dictionary = manager.bots[901]
+	var city10: Node3D = city.buildings[9]
+	var inside := city10.to_global(Vector3(0, .12, -1.0))
+	b.proxy.global_position = inside
+	b.proxy.set_meta("saved_pos", inside)
+	b["pos"] = inside
+	b["thirst"] = 8.0
+	b["hunger"] = 90.0
+	b["health"] = 100.0
+	b["energy"] = 100.0
+	b["sleep"] = 100.0
+	b["drink_scan"] = 0.0
+	b["drink_at"] = Vector3.INF
+	b["drink_walk_t"] = 0.0
+	b["_bad_water"] = []
+	b["_s_leader"] = null
+	b["_s_foe"] = null
+	b["_s_predator"] = null
+	b["_s_loot"] = {}
+	b["_s_prey"] = null
+	var st: SurvivalStats = b.get("vstats")
+	if st != null:
+		st.body_temperature = 36.6
+		st.wetness = 0.0
+		st.energy = 100.0
+		st.sleep = 100.0
+	var escaped := false
+	var hydrated := false
+	var min_dist := INF
+	for tick in 500:
+		manager._tick_bot(b, .1)
+		var pos: Vector3 = b.proxy.global_position
+		min_dist = minf(min_dist, Vector2(pos.x - fountain_pos.x, pos.z - fountain_pos.z).length())
+		if not world._is_player_in_house(pos):
+			escaped = true
+		if float(b["thirst"]) >= 95.0:
+			hydrated = true
+			break
+		if tick % 5 == 0:
+			await physics_frame
+	print("city10 drink escape: pos=%s act=%s drink_at=%s escaped=%s min_dist=%.2f thirst=%.1f" % [b.proxy.global_position, b.get("_act"), b.get("drink_at"), escaped, min_dist, float(b["thirst"])])
+	check(escaped, "city_10 ground floor: critical thirst leaves the building")
+	check(hydrated or min_dist < 4.0, "city_10 ground floor: critical thirst reaches the plaza fountain (min_d=%.2f thirst=%.1f)" % [min_dist, float(b["thirst"])])
+	# The same full decision tick must descend an upper city floor. This is the
+	# exact live death pocket in city_06: sofa side, y=3.92, critical thirst,
+	# destination outside at the plaza fountain.
+	var city06: Node3D = city.buildings[5]
+	var upstairs := city06.to_global(Vector3(-1.5, 3.92, -0.3))
+	b.proxy.global_position = upstairs
+	b.proxy.set_meta("saved_pos", upstairs)
+	b["pos"] = upstairs
+	b["thirst"] = 8.0
+	b["drink_scan"] = 0.0
+	b["drink_at"] = Vector3.INF
+	b["drink_walk_t"] = 0.0
+	b["_bad_water"] = []
+	var descended := false
+	var upstairs_min_dist := INF
+	for tick in 650:
+		manager._tick_bot(b, .1)
+		var upos: Vector3 = b.proxy.global_position
+		upstairs_min_dist = minf(upstairs_min_dist, Vector2(upos.x - fountain_pos.x, upos.z - fountain_pos.z).length())
+		if upos.y < 1.0:
+			descended = true
+		if float(b["thirst"]) >= 95.0:
+			break
+		if tick % 5 == 0:
+			await physics_frame
+	print("city06 upstairs drink escape: pos=%s act=%s descended=%s min_dist=%.2f thirst=%.1f" % [b.proxy.global_position, b.get("_act"), descended, upstairs_min_dist, float(b["thirst"])])
+	check(descended, "city_06 upper floor: critical thirst descends the stairs")
+	check(float(b["thirst"]) >= 95.0 or upstairs_min_dist < 4.0,
+		"city_06 upper floor: critical thirst reaches the fountain after descending (min_d=%.2f thirst=%.1f)" % [upstairs_min_dist, float(b["thirst"])])
+	if drink != null:
+		world.world_actions_by_id.erase("city10_escape_drink")
+		drink.queue_free()
+
 func hot_house_escape() -> void:
 	var fire := Vector3(-20,0,30)
 	var pit := WorldAction.new()
@@ -166,11 +258,18 @@ func run() -> void:
 		actor.position = building.to_global(Vector3(0,.12,-11))
 		await travel(building.to_global(Vector3(.15,.12,4.6)),building.name+" enter from rear")
 		await travel(building.to_global(Vector3(11,.12,0)),building.name+" exit to side")
+	# Regression from the live dehydration death: Elena was pinned upstairs in
+	# city_06 beside the upper sofa at local (-1.5,3.92,-0.3). From that exact
+	# pocket the bot must still reach the landing, descend and leave the house.
+	var city06: Node3D = city.buildings[5]
+	actor.position = city06.to_global(Vector3(-1.5,3.92,-0.3))
+	await travel(city06.to_global(Vector3(11,.12,0)),"city_06 upper floor sofa pocket exits")
 	for origin in [Vector3(45,0,120),Vector3(-340,0,280)]:
 		for side in [-1,1]:
 			actor.position = origin+Vector3(9,0,side*6)
 			await travel(origin,"barn %s enter %s" % [origin,side])
 			await travel(origin+Vector3(-9,0,side*6),"barn %s exit %s" % [origin,side])
+	await city_drink_escape(city)
 	await hot_house_escape()
 	print("BotHouseTraversal: checks=%d errors=%d" % [checks,errors])
 	actor.free(); manager.free(); world.free()
