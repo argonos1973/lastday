@@ -8484,6 +8484,85 @@ func run() -> void:
 	st_hyp.body_temperature = 36.6
 	st_hyp.wetness = 0.0
 
+	# 10Z6: hemorragia activa — la reserva médica aprendida manda sobre la
+	# antorcha/cuerda y un lobo pasivo de compañía no impide fabricar la venda.
+	mgr._respawn_bot(mgr.bots[904])
+	var b_zmed: Dictionary = mgr.bots[904]
+	var p_zmed: Node3D = b_zmed["proxy"]
+	var st_zmed: SurvivalStats = b_zmed["vstats"]
+	(b_zmed["_mem"] as Dictionary)["death_lessons"] = {"medical": 3}
+	st_zmed.body_temperature = 36.6
+	st_zmed.wetness = 0.0
+	var torch_rec10z := {}
+	var rope_rec10z := {}
+	var bandage_rec10z := {}
+	for rr in CraftingSystem.RECIPES:
+		var rn := str((rr.get("output", {}) as Dictionary).get("name", ""))
+		if rn == "Antorcha": torch_rec10z = rr
+		elif rn == "Cuerda" and (rr.get("inputs", {}) as Dictionary).has("Trapos"): rope_rec10z = rr
+		elif rn == "Venda": bandage_rec10z = rr
+	p_zmed.set_meta("saved_inventory", [
+		{"name":"Palo","type":"resource","quantity":4,"weight":0.3},
+		{"name":"Trapos","type":"resource","quantity":3,"weight":0.05}])
+	check(mgr._bot_craft_preserves_fire(b_zmed, torch_rec10z),
+		"10Z6a: la antorcha sigue permitida porque también previene mordeduras")
+	check(not mgr._bot_craft_preserves_fire(b_zmed, rope_rec10z),
+		"10Z6a: con solo 3 trapos la reserva médica no deja deshacerlos en cuerda")
+	check(mgr._bot_craft_preserves_fire(b_zmed, bandage_rec10z),
+		"10Z6a: esos mismos 3 trapos sí pueden convertirse en venda")
+	p_zmed.set_meta("saved_inventory", [
+		{"name":"Palo","type":"resource","quantity":4,"weight":0.3},
+		{"name":"Trapos","type":"resource","quantity":5,"weight":0.05}])
+	check(mgr._bot_craft_preserves_fire(b_zmed, torch_rec10z) and mgr._bot_craft_preserves_fire(b_zmed, rope_rec10z),
+		"10Z6a: con excedente real sí conviven reserva médica y cadena de fuego")
+
+	# El caso de Ataulfo: mochila llena, ropa básica aún puesta y un lobo pasivo
+	# al lado. La hemorragia debe abrir hueco soltando lastre, cortar camiseta y
+	# pantalones, fabricar la venda y usarla sin que la presencia pasiva la veto.
+	p_zmed.global_position = Vector3(430.0, 0.4, 430.0)
+	b_zmed["pos"] = p_zmed.global_position
+	b_zmed["sense_t"] = 10000.0
+	b_zmed["aggro_target"] = null
+	b_zmed["_s_foe"] = null
+	b_zmed["flee_until"] = 0.0
+	b_zmed["hide_timer"] = 0.0
+	b_zmed["clothing"] = "Camiseta,Pantalones,Zapatillas"
+	p_zmed.set_meta("saved_extra", {})
+	p_zmed.set_meta("saved_inventory", [
+		{"name":"Piedra afilada","type":"resource","quantity":1,"weight":0.25,"durability":40.0,"max_durability":45.0},
+		{"name":"Hacha de piedra","type":"tool_axe","quantity":1,"weight":1.1,"durability":55.0,"max_durability":65.0},
+		{"name":"Palo","type":"resource","quantity":5,"weight":0.3},
+		{"name":"Carne cruda de lobo","type":"food","quantity":1,"weight":0.3,"use_value":15.0},
+		{"name":"Piedra","type":"resource","quantity":6,"weight":0.45}])
+	st_zmed.bleeding = 1.0
+	st_zmed.blood = 72.0
+	b_zmed["health"] = 75.0
+	var zmed_wolf := WildlifeControllerScript.new()
+	zmed_wolf.name = "Wildlife_wolf_passive_med"
+	world.add_child(zmed_wolf)
+	zmed_wolf.setup("wolf", [p_zmed.global_position + Vector3(2.0, 0.0, 0.0)])
+	zmed_wolf.global_position = p_zmed.global_position + Vector3(2.0, 0.0, 0.0)
+	zmed_wolf.set("_state", "follow")
+	b_zmed["_s_predator"] = zmed_wolf
+	b_zmed["_craft_state"] = {"recipe": torch_rec10z, "t": 1.8, "at": Time.get_ticks_msec()}
+	mgr._tick_bot(b_zmed, 0.1)
+	var zmed_first_recipe := str((((b_zmed.get("_craft_state", {}) as Dictionary).get("recipe", {}) as Dictionary).get("output", {}) as Dictionary).get("name", ""))
+	check(zmed_first_recipe != "Antorcha",
+		"10Z6b: la hemorragia abandona la antorcha a medio hacer antes de que consuma material")
+	var zmed_ticks := 1
+	for imed in range(179):
+		zmed_ticks += 1
+		mgr._tick_bot(b_zmed, 0.1)
+		if st_zmed.bleeding <= 0.0:
+			break
+	check(st_zmed.bleeding <= 0.0,
+		"10Z6b: hemorragia con lobo pasivo corta ropa, fabrica y usa la venda (bleed=%.1f ticks=%d)" % [st_zmed.bleeding, zmed_ticks])
+	check(not str(b_zmed["clothing"]).contains("Camiseta") and not str(b_zmed["clothing"]).contains("Pantalones"),
+		"10Z6b: la emergencia sacrifica las prendas bajas reales, no inventa trapos")
+	check(mgr._bot_item_count(p_zmed, "Hacha de piedra") == 1,
+		"10Z6b: abrir hueco para la venda no suelta la herramienta de corte")
+	zmed_wolf.queue_free()
+
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
 	mgr._tts_jobs.clear()

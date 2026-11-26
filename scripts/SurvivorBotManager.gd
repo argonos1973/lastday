@@ -2116,13 +2116,9 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# Check current senses and physical interruptions before settling to
 	# make a bandage. Starting this before the scan starved the scan itself.
-	var vst_med: SurvivalStats = b.get("vstats")
-	if vst_med != null and vst_med.bleeding > 0.0 and _sensed_node(b, "aggro_target") == null \
-			and _sensed_node(b, "_s_predator") == null and _sensed_node(b, "_s_foe") == null and float(b["flee_until"]) <= 0.0 \
-			and _bot_item_count(proxy, "Venda") + _bot_item_count(proxy, "Vendaje") == 0:
-		if _bot_try_craft_named(b, delta, ["Venda", "Trapos"], false):
-			b["_act"] = "firstaid"
-			return
+	if _bot_try_bleeding_firstaid(b, delta):
+		b["_act"] = "firstaid"
+		return
 
 	if b.has("_regroup") and _bot_tick_regroup(b, delta):
 		return
@@ -2303,6 +2299,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# Sleep damage starts below 10. Do not wait for optional jobs or a
 	# distant camp when the current spot is safe for an uninterrupted nap.
+	var vst_med: SurvivalStats = b.get("vstats")
 	if vst_med != null and vst_med.sleep < 10.0 and float(b["thirst"]) >= 18.0 \
 			and not _bot_is_freezing(b) and not _bot_night_supply_emergency(b) \
 			and (b.get("_fire_ignition", {}) as Dictionary).is_empty() \
@@ -3982,6 +3979,40 @@ func _bot_treatment_pressed(b: Dictionary) -> bool:
 func _bot_critical_blood_loss(b: Dictionary) -> bool:
 	var st: SurvivalStats = b.get("vstats")
 	return st != null and st.blood <= st.max_stat * 0.15
+
+# Primera respuesta de campo ante una hemorragia. Un lobo/oso que solo esta
+# presente no es combate: la misma clasificacion de amenaza del sistema decide
+# si hay que zafarse primero. En cambio, con la sangre casi agotada intentar
+# la venda es la ultima maniobra aunque el enemigo siga cerca.
+func _bot_try_bleeding_firstaid(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var vst: SurvivalStats = b.get("vstats")
+	if vst == null or vst.bleeding <= 0.0:
+		return false
+	if _bot_item_count(proxy, "Venda") + _bot_item_count(proxy, "Vendaje") > 0:
+		return false
+	var predator := _sensed_node(b, "_s_predator")
+	var active_predator := predator != null and InterruptionManager.predator_demands_response(b, predator)
+	var pressed := _sensed_node(b, "aggro_target") != null or active_predator \
+		or _sensed_node(b, "_s_foe") != null or float(b.get("flee_until", 0.0)) > 0.0
+	if pressed and not _bot_critical_blood_loss(b):
+		return false
+	# Los ingredientes no se consumen hasta completar el gesto: ante una
+	# hemorragia se abandona sin coste una antorcha/cuerda a medio hacer.
+	var cs_med: Dictionary = b.get("_craft_state", {})
+	if not cs_med.is_empty():
+		var cur_med := str(((cs_med.get("recipe", {}) as Dictionary).get("output", {}) as Dictionary).get("name", ""))
+		if not ["Venda", "Trapos"].has(cur_med):
+			b["_craft_state"] = {}
+	if _bot_item_count(proxy, "Trapos") < 3:
+		var has_source := false
+		for it in proxy.get_meta("saved_inventory", []):
+			if it is Dictionary and _bot_cuts_into_trapos(str(it.get("name", ""))) and float(it.get("durability", 100.0)) > 0.0:
+				has_source = true
+				break
+		if not has_source:
+			_bot_try_unequip_rag_source(b, true)
+	return _bot_try_craft_named(b, delta, ["Venda", "Trapos"], false)
 
 func _garment_insulation(nm: String, wet: float) -> float:
 	var retain := PlayerController.WET_WARMTH_RETAIN_PELT if PlayerController.CLOTHING_WATER_RESIST.has(nm) else PlayerController.WET_WARMTH_RETAIN
@@ -11952,8 +11983,16 @@ func _bot_craft_preserves_fire(b: Dictionary, recipe: Dictionary) -> bool:
 	var inputs: Dictionary = recipe.get("inputs", {})
 	var proxy: Node3D = b["proxy"]
 	var st_fire: SurvivalStats = b.get("vstats")
+	var out_name := str((recipe.get("output", {}) as Dictionary).get("name", ""))
+	# La reserva médica aprendida no se come la antorcha/cuerda/boleadoras:
+	# solo puede cruzarla la propia Venda. Con hemorragia activa esa excepción
+	# es exactamente la prioridad vital: una antorcha no vale más que desangrarse.
+	var medical_reserve := _bot_medical_rag_reserve(b, proxy)
+	if inputs.has("Trapos") and not ["Venda", "Antorcha"].has(out_name) and medical_reserve > 0:
+		if _bot_item_count(proxy, "Trapos") - int(inputs.get("Trapos", 0)) < medical_reserve:
+			return false
 	var cold_rope_emergency := _bot_is_freezing(b) or (st_fire != null and not st_fire.dead and st_fire.body_temperature <= 35.95)
-	if inputs.has("Trapos") and str((recipe.get("output", {}) as Dictionary).get("name", "")) != "Cuerda" \
+	if inputs.has("Trapos") and out_name != "Cuerda" \
 			and cold_rope_emergency and _bot_fire_needs_axe(b, proxy) and _bot_item_count(proxy, "Cuerda") < 1:
 		if _bot_item_count(proxy, "Trapos") - int(inputs.get("Trapos", 0)) < 2:
 			return false
@@ -21685,14 +21724,66 @@ func _bot_life_seconds(b: Dictionary) -> float:
 func _bot_fire_needs_axe(b: Dictionary, proxy: Node3D) -> bool:
 	return _bot_needs_campfire(b) and _bot_item_count(proxy, "Tronco") < 2 and _bot_axe_tool(proxy).is_empty()
 
-func _bot_fire_rags_required(b: Dictionary, proxy: Node3D, include_torch := true) -> int:
-	if include_torch and _bot_item_count(proxy, "Antorcha") < 1:
-		return 1
-	if _bot_fire_needs_axe(b, proxy) and _bot_item_count(proxy, "Cuerda") < 1:
-		return 2
+# Quien ya se desangró aprende a no convertir todos sus trapos en fuego:
+# guarda los 3 de una venda mientras no haya una emergencia térmica. Con la
+# hemorragia activa la reserva es absoluta; el fuego puede esperar, la sangre no.
+func _bot_medical_rag_reserve(b: Dictionary, proxy: Node3D) -> int:
+	if _bot_item_count(proxy, "Venda") + _bot_item_count(proxy, "Vendaje") > 0:
+		return 0
+	var st: SurvivalStats = b.get("vstats")
+	if st != null and st.bleeding > 0.0:
+		return 3
+	if _bot_is_freezing(b) or (st != null and not st.dead and st.body_temperature <= 35.95):
+		return 0
+	var mem: Dictionary = b.get("_mem", {})
+	var lessons: Dictionary = mem.get("death_lessons", {})
+	if int(lessons.get("medical", 0)) > 0 or float(b.get("health", 100.0)) < 80.0:
+		return 3
 	return 0
 
-func _bot_try_unequip_rag_source(b: Dictionary) -> bool:
+func _bot_fire_rags_required(b: Dictionary, proxy: Node3D, include_torch := true) -> int:
+	# Es la necesidad de la etapa actual, no la suma de toda la campaña: la
+	# antorcha se fabrica antes que la cuerda y solo entonces la cuerda pasa
+	# a ser el cuello de botella. Sumar ambas volvería imposible empezar con
+	# una sola prenda de dos trapos.
+	var needed := 0
+	if include_torch and _bot_item_count(proxy, "Antorcha") < 1:
+		needed = 1
+	elif _bot_fire_needs_axe(b, proxy) and _bot_item_count(proxy, "Cuerda") < 1:
+		needed = 2
+	return needed
+
+# Sacrificio de última instancia para abrir hueco y cortar ropa durante una
+# hemorragia: conserva al menos un filo, la medicina y la propia ropa cortable;
+# el resto cae a los pies y puede recogerse cuando la herida este cerrada.
+func _bot_least_medical_sacrifice_index(b: Dictionary, inv: Array) -> int:
+	var best_i := -1
+	var best_score := INF
+	var cutters := 0
+	for it_count in inv:
+		if it_count is Dictionary and str(it_count.get("name", "")) in BUSH_TOOLS:
+			cutters += 1
+	for i in range(inv.size()):
+		var it = inv[i]
+		if not (it is Dictionary):
+			continue
+		var nm := str(it.get("name", ""))
+		var tp := str(it.get("type", ""))
+		if tp == "backpack" or tp == "medical" or nm == "Trapos" or _bot_cuts_into_trapos(nm):
+			continue
+		if nm in BUSH_TOOLS and cutters <= 1:
+			continue
+		var sc := _loot_priority(b, nm, tp) - float(it.get("weight", 0.0)) * int(it.get("quantity", 1)) * 0.001
+		if nm in ["Tronco", "Palo", "Cuerda", "Antorcha", "Cerillas"]:
+			sc += 1.2
+		elif tp in ["food", "water"]:
+			sc += 0.6
+		if sc < best_score:
+			best_score = sc
+			best_i = i
+	return best_i
+
+func _bot_try_unequip_rag_source(b: Dictionary, medical_emergency := false) -> bool:
 	var proxy: Node3D = b.get("proxy")
 	if proxy == null or _bot_bush_tool(proxy).is_empty():
 		return false
@@ -21729,7 +21820,27 @@ func _bot_try_unequip_rag_source(b: Dictionary) -> bool:
 	# Los bolsillos de la prenda que va a cortar ya no son capacidad útil.
 	# No quedar desnudo intercambiando los mismos ingredientes en el suelo.
 	if not _bot_would_fit(without_piece, inv, itm):
-		return false
+		if not medical_emergency:
+			return false
+		# Con una hemorragia abierta sí vale soltar lastre a los pies: las
+		# piedras/palos siguen ahí para recogerlos cuando la venda este puesta.
+		# Primero se simula sobre una copia superficial para no soltar nada si
+		# aun así no cabe la prenda que se va a cortar.
+		var sim_inv := inv.duplicate()
+		var sacrifices: Array = []
+		var guard := 0
+		while not _bot_would_fit(without_piece, sim_inv, itm) and guard < 12:
+			guard += 1
+			var sacrifice_i := _bot_least_medical_sacrifice_index(b, sim_inv)
+			if sacrifice_i < 0:
+				break
+			sacrifices.append(sim_inv[sacrifice_i])
+			sim_inv.remove_at(sacrifice_i)
+		if not _bot_would_fit(without_piece, sim_inv, itm):
+			return false
+		for junk in sacrifices:
+			inv.erase(junk)
+			_bot_drop_to_ground(b, junk)
 	worn.erase(best_nm)
 	b["clothing"] = ",".join(worn)
 	worn_items.erase(best_nm)
