@@ -1986,7 +1986,20 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		b["_s_corpse"] = _find_guttable_corpse(b, 22.0) if b.get("gut_target") == null else null
 		_pbm("sense_supplies", sense_started)
 		var loot_started := Time.get_ticks_usec()
-		b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
+		# La búsqueda general no sustituye una recogida de fuego ya elegida
+		# entre dos fases del gesto. Caduca tras una interrupción prolongada
+		# y las recogidas, vetos y reservas ajenas la invalidan normalmente.
+		var fire_loot_id := str(b.get("_fire_loot_id", ""))
+		var keep_fire_loot: bool = not fire_loot_id.is_empty() \
+			and str(b.get("_s_loot", {}).get("id", "")) == fire_loot_id \
+			and int(b.get("_ground_tick", 0)) - int(b.get("_fire_loot_tick", -100)) <= 30 \
+			and not _loot_claimed_by_other(b, fire_loot_id) \
+			and not _is_goal_blacklisted(b, _loot_entry_pos(b["_s_loot"])) \
+			and not ("_depleted_action_ids" in world and world._depleted_action_ids.has(fire_loot_id))
+		if not keep_fire_loot:
+			if not fire_loot_id.is_empty():
+				_loot_clear(b)
+			b["_s_loot"] = _find_nearby_valuable_loot(b, 28.0)
 		_pbm("sense_loot", loot_started)
 		# Preparacion nocturna: al caer la tarde, quien no tiene el fuego ni la
 		# luz resueltos sale a por lo que le falta (trapos, palos, troncos) mas
@@ -11673,6 +11686,8 @@ func _loot_commit_claim(b: Dictionary) -> void:
 			world._pickup_claim_until[id] = Time.get_ticks_msec() + 30000
 
 func _loot_clear(b: Dictionary) -> void:
+	b.erase("_fire_loot_id")
+	b.erase("_fire_loot_tick")
 	var prev := str(b.get("_loot_claim", ""))
 	if not prev.is_empty() and world != null and "_pickup_claims" in world:
 		if int((world._pickup_claims as Dictionary).get(prev, -1)) == int(b["bot_id"]):
@@ -21801,8 +21816,11 @@ func _bot_tick_night_fire_bootstrap(b: Dictionary, delta: float) -> bool:
 		return true
 	# Botín de fuego real: troncos/palos/cerillas y, en bootstrap, también
 	# antorcha/trapos/ropa cortable. Nada de esto concede objetos; solo prioriza
-	# lo que ya existe en el mundo.
-	if _bot_try_fire_material_pickup(b, delta, 95.0, false):
+	# lo que ya existe en el mundo. De noche sin luz el radio es el corto del
+	# monte a oscuras: perseguir un drop lejano desmantela el campamento.
+	var boot_night_no_light := _is_world_night() and not _bot_has_headlamp_worn(b) \
+			and _bot_item_count(proxy, "Antorcha") == 0 and not _is_near_any_lit_campfire(proxy.global_position, 8.0)
+	if _bot_try_fire_material_pickup(b, delta, 24.0 if boot_night_no_light else 95.0, false):
 		b["_act"] = "fire_bootstrap"
 		return true
 	if _bot_try_gather_mats(b, delta, true):
@@ -21861,6 +21879,8 @@ func _bot_try_fire_material_pickup(b: Dictionary, delta: float, radius: float, m
 	_loot_commit_claim(b)
 	if (b.get("_s_loot", {}) as Dictionary).is_empty():
 		return false
+	b["_fire_loot_id"] = str(entry.get("id", ""))
+	b["_fire_loot_tick"] = int(b.get("_ground_tick", 0))
 	var proxy: Node3D = b["proxy"]
 	var pos := _loot_entry_pos(entry)
 	if _bot_can_reach_loot(proxy.global_position, pos):

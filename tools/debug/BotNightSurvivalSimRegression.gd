@@ -711,6 +711,26 @@ func _s23() -> void:
 			cold_started = true
 			break
 	check(cold_started, "S23 frío leve seco sin filo también empieza por la piedra cercana")
+	# Un botín atractivo no debe reemplazar entre escaneos la piedra que ya
+	# está recogiendo para preparar fuego. Ambos objetos existen en el suelo.
+	env = _new_world(20.0)
+	world = env.world
+	mgr = env.mgr
+	b = mgr.bots[902]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"body_temperature": 36.6,
+		"hunger": 85.0, "thirst": 85.0, "sleep": 95.0, "inventory": []})
+	b["spawned_at_msec"] = Time.get_ticks_msec()
+	world._dropped_items.append({"id":"s23_pick_stone","name":"Piedra","type":"resource",
+		"weight":0.45,"qty":3,"pos":Vector3(2.0,0.4,0.0)})
+	world._dropped_items.append({"id":"s23_pick_gloves","name":"Guantes survival","type":"clothing",
+		"weight":0.3,"qty":1,"pos":Vector3(0.8,0.4,0.0)})
+	for i in 120:
+		mgr._tick_bot(b, 0.1)
+		if world._depleted_action_ids.has("s23_pick_stone"):
+			break
+	check(world._depleted_action_ids.has("s23_pick_stone") and _inv_totals(b).get("Piedra", 0) == 3,
+		"S23 termina una recogida real de piedra aunque los escaneos vean guantes cerca (inv=%s act=%s)" \
+		% [_inv_totals(b), b.get("_act", "")])
 
 func _s24() -> void:
 	print("S24: hipotermia humeda con ropa basica — la ropa se convierte en cuerda/hacha/fuego")
