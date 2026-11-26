@@ -14402,13 +14402,22 @@ func _bot_wants_day_rest(b: Dictionary) -> bool:
 # loot de camino > recado de la IA > comportamiento independiente. Vendar,
 # comer y beber del inventario ya ocurren en _maintain_bot_needs antes que
 # todo; esto cubre lo que exige moverse: rio, forrajeo, refugio, descanso.
+func _bot_hunger_vital_break_line(b: Dictionary) -> float:
+	var mem: Dictionary = b.get("_mem", {})
+	var lessons := float((mem.get("death_lessons", {}) as Dictionary).get("starved", 0))
+	var experience := mini(3, int((mem.get("experience", {}) as Dictionary).get("forage", 0)))
+	var line := 40.0 + minf(15.0, lessons * 2.0) + 4.0 * float(experience)
+	if bool(mem.get("scarcity", false)):
+		line += 6.0
+	return minf(65.0, line)
+
 func _bot_vital_break(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	if _bot_is_freezing(b) or _bot_is_exhausted(b):
 		return true
 	if float(b["thirst"]) < 35.0 and not _bot_has_drink(proxy):
 		return true
-	if float(b["hunger"]) < 40.0 and not _bot_has_edible_food(proxy):
+	if float(b["hunger"]) < _bot_hunger_vital_break_line(b) and not _bot_has_edible_food(proxy):
 		return true
 	if float(b["health"]) < 45.0:
 		return true

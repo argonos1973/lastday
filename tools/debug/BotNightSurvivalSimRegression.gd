@@ -756,6 +756,60 @@ func _s25() -> void:
 	st.sleep = 60.0
 	check(mgr._bot_should_wake(b, true), "S25 ya descansado despierta para completar calor/fogata (sleep=%.1f)" % st.sleep)
 
+func _s26() -> void:
+	print("S26: bootstrap en agua somera — sale a tierra seca antes de seguir la cadena")
+	var env := _new_world(8.0)
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[902]
+	world.river_segs = [{"center": Vector3(60.0, 0.0, 260.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
+	_place_bot(b, Vector3(60.0, 0.4, 264.5), {"body_temperature": 35.9, "sleep": 92.0, "hunger": 88.0, "thirst": 88.0, "inventory": []})
+	check(world.get_river_depth_at((b["proxy"] as Node3D).global_position) > 0.05, "S26 el bot empieza realmente en agua somera (depth=%.2f)" % world.get_river_depth_at((b["proxy"] as Node3D).global_position))
+	var saw_escape := false
+	for i in 80:
+		mgr._tick_bot(b, 0.1)
+		if str(b.get("_act", "")) == "water_escape":
+			saw_escape = true
+		if world.get_river_depth_at((b["proxy"] as Node3D).global_position) <= 0.05:
+			break
+	var depth_end := world.get_river_depth_at((b["proxy"] as Node3D).global_position)
+	check(saw_escape, "S26 aparece water_escape antes que el bootstrap (act=%s)" % str(b.get("_act", "")))
+	check(depth_end <= 0.05, "S26 termina en tierra seca (depth=%.2f pos=%s)" % [depth_end, str((b["proxy"] as Node3D).global_position)])
+
+func _s27() -> void:
+	print("S27: hambre aprendida rompe la formacion antes del borde letal")
+	var env := _new_world(15.0)
+	env.dc.time_of_day = 14.0
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[903]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 58.0, "thirst": 88.0, "sleep": 88.0, "body_temperature": 36.6, "inventory": []})
+	mgr._ensure_bot_memory(903)
+	b["_mem"]["death_lessons"] = {"starved": 62.0}
+	b["_mem"]["experience"] = {"forage": 3}
+	var leader := Node3D.new()
+	world.add_child(leader)
+	leader.global_position = Vector3(2.0, 0.4, 0.0)
+	b["_s_leader"] = leader
+	var food := WorldActionScript.new()
+	food.setup("s27_food", "eat_food", "Seta", Vector3(0.7, 0.7, 0.7), Color(0.7, 0.2, 0.2), false, false)
+	world.add_child(food)
+	food.global_position = Vector3(8.0, 0.4, 0.0)
+	food.set_meta("item_name", "Seta")
+	food.set_meta("item_use_value", 12.0)
+	world.world_actions_by_id["s27_food"] = food
+	b["_forage_scan"] = 0.0
+	check(mgr._bot_hunger_vital_break_line(b) >= 65.0 and mgr._bot_vital_break(b),
+		"S27 las lecciones elevan la ruptura vital por hambre (line=%.1f)" % mgr._bot_hunger_vital_break_line(b))
+	check(mgr._bot_try_forage(b, 0.1), "S27 el seguidor hambriento sale a por comida pese al lider")
+	b["_mem"]["death_lessons"] = {}
+	b["_mem"]["experience"] = {}
+	b["_forage"] = {}
+	b["_forage_scan"] = 0.0
+	check(not mgr._bot_vital_break(b) and not mgr._bot_try_forage(b, 0.1),
+		"S27 sin aprendizaje el hambre 58 aun no rompe la formacion")
+	leader.queue_free()
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
@@ -777,6 +831,14 @@ func run() -> void:
 		return
 	if "--only-s25" in OS.get_cmdline_user_args():
 		_s25()
+		quit(1 if failures else 0)
+		return
+	if "--only-s26" in OS.get_cmdline_user_args():
+		_s26()
+		quit(1 if failures else 0)
+		return
+	if "--only-s27" in OS.get_cmdline_user_args():
+		_s27()
 		quit(1 if failures else 0)
 		return
 	if "--only-s19" in OS.get_cmdline_user_args():
