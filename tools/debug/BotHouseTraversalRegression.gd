@@ -131,6 +131,35 @@ func city_drink_escape(city: Node3D) -> void:
 	check(descended, "city_06 upper floor: critical thirst descends the stairs")
 	check(float(b["thirst"]) >= 95.0 or upstairs_min_dist < 4.0,
 		"city_06 upper floor: critical thirst reaches the fountain after descending (min_d=%.2f thirst=%.1f)" % [upstairs_min_dist, float(b["thirst"])])
+	# Ataulfo died dehydrated in the same rotated flat-roof pocket of city_03
+	# (local ~=(-1.3,3.92,-0.3)). The full thirst decision —not only the
+	# movement primitive— must abandon loot/material work, descend and leave.
+	var city03: Node3D = city.buildings[2]
+	var c3up := city03.to_global(Vector3(-1.3, 3.92, -0.3))
+	b.proxy.global_position = c3up
+	b.proxy.set_meta("saved_pos", c3up)
+	b["pos"] = c3up
+	b["thirst"] = 42.0
+	b["drink_scan"] = 0.0
+	b["drink_at"] = Vector3.INF
+	b["drink_walk_t"] = 0.0
+	b["_bad_water"] = []
+	var c3_descended := false
+	var c3_min_dist := INF
+	for tick in 650:
+		manager._tick_bot(b, .1)
+		var c3pos: Vector3 = b.proxy.global_position
+		c3_min_dist = minf(c3_min_dist, Vector2(c3pos.x - fountain_pos.x, c3pos.z - fountain_pos.z).length())
+		if c3pos.y < 1.0:
+			c3_descended = true
+		if float(b["thirst"]) >= 95.0:
+			break
+		if tick % 5 == 0:
+			await physics_frame
+	print("city03 upstairs drink escape: pos=%s act=%s descended=%s min_dist=%.2f thirst=%.1f" % [b.proxy.global_position, b.get("_act"), c3_descended, c3_min_dist, float(b["thirst"])])
+	check(c3_descended, "city_03 upper floor: critical thirst descends the stairs")
+	check(float(b["thirst"]) >= 95.0 or c3_min_dist < 4.0,
+		"city_03 upper floor: critical thirst reaches the fountain after descending (min_d=%.2f thirst=%.1f)" % [c3_min_dist, float(b["thirst"])])
 	if drink != null:
 		world.world_actions_by_id.erase("city10_escape_drink")
 		drink.queue_free()

@@ -2412,6 +2412,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	b["drink_giveup"] = maxf(0.0, float(b.get("drink_giveup", 0.0)) - delta)
 	var thirst_lessons := int((b.get("_mem", {}).get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
 	var thirsty_line := 35.0 + (13.0 if bool(b.get("_mem", {}).get("scarcity", false)) else 0.0) + minf(18.0, float(thirst_lessons) * 6.0)
+	# En una planta superior la sed moderada ya es urgente operativa: aunque
+	# bajar sea posible, quedan escaleras/puerta/calle antes de la fuente.
+	# Empezar al 35 como en campo abierto consumia toda la reserva dentro del edificio.
+	if proxy.global_position.y > 1.8 and _find_city_building_for_pos(proxy.global_position, 0.35) >= 0:
+		thirsty_line = maxf(thirsty_line, 52.0)
 	# Sed preventiva: quien ya se deshidrato una vez no pasa de largo junto
 	# a una fuente — con sed moderada y agua a tiro se desvia a beber y a
 	# rellenar la botella antes de que la necesidad apriete.

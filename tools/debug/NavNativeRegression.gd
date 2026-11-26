@@ -188,6 +188,51 @@ func _init() -> void:
 			river_cell_blocked = false
 	_check(not river_cell_blocked, "ford strip through the river is open in LastDayNav")
 
+	# 6b) Coste numerico: el agua profunda no queda prohibida, pero el A* paga
+	# por ella y prefiere el rodeo seco cuando el atajo acuatico es caro. Sin
+	# coste (bool true legacy) el mismo trayecto cruza en linea casi recta.
+	var deep_river := [{"center": Vector3(0, 0, 0), "size": Vector2(40, 10), "yaw": 0.0}]
+	var deep_cost := func(world_pos: Vector3) -> float:
+		return 12.0 if absf(world_pos.z) < 8.0 else 1.0
+	var nav_weight_c = ClassDB.instantiate("LastDayNav")
+	var nav_weight_gd = NavPathfindingScript.new()
+	var nav_flat_c = ClassDB.instantiate("LastDayNav")
+	nav_weight_c.build_with_ford([], deep_river, deep_cost)
+	nav_weight_gd.build([], deep_river, deep_cost)
+	nav_flat_c.build_with_ford([], deep_river, func(_p): return true)
+	for nav_weight in [nav_weight_c, nav_weight_gd]:
+		var weighted: Array = nav_weight.find_path(Vector3(0, 0, -24), Vector3(0, 0, 24))
+		var max_side := 0.0
+		var deep_hits := 0
+		for wp in weighted:
+			max_side = maxf(max_side, absf((wp as Vector3).x))
+			if absf((wp as Vector3).x) < 12.0 and absf((wp as Vector3).z) < 7.0:
+				deep_hits += 1
+		_check(not weighted.is_empty() and max_side > 17.0 and deep_hits == 0,
+			"weighted water prefers the dry detour (%s side=%.1f hits=%d)" % ["native" if nav_weight == nav_weight_c else "gdscript", max_side, deep_hits])
+	var flat: Array = nav_flat_c.find_path(Vector3(0, 0, -24), Vector3(0, 0, 24))
+	var flat_side := 0.0
+	for wp2 in flat:
+		flat_side = maxf(flat_side, absf((wp2 as Vector3).x))
+	_check(not flat.is_empty() and flat_side < 8.0, "legacy boolean ford still allows the direct water crossing")
+
+	var ford_cost := func(world_pos: Vector3) -> float:
+		if absf(world_pos.x + 50.0) < 3.0:
+			return 1.0
+		return 12.0 if absf(world_pos.z) < 8.0 else 1.0
+	for nav_pair in [[ClassDB.instantiate("LastDayNav"), "native"], [NavPathfindingScript.new(), "gdscript"]]:
+		var nav_ford = nav_pair[0]
+		if nav_ford.has_method("build_with_ford"):
+			nav_ford.build_with_ford([], deep_river, ford_cost)
+		else:
+			nav_ford.build([], deep_river, ford_cost)
+		var ford_path: Array = nav_ford.find_path(Vector3(-50, 0, -24), Vector3(-50, 0, 24))
+		var ford_deviation := 0.0
+		for wp3 in ford_path:
+			ford_deviation = maxf(ford_deviation, absf((wp3 as Vector3).x + 50.0))
+		_check(not ford_path.is_empty() and ford_deviation < 8.0,
+			"cheap ford stays usable beside deep water (%s deviation=%.1f)" % [nav_pair[1], ford_deviation])
+
 	# 7) Bot nav: la corona exterior de una casa cerrada es alcanzable para poder
 	#    abrir la puerta; el interior solo se libera cuando house_ok lo permite.
 	var closed_house := [{"pos": Vector3(20, 0, -21), "radius": 1.8, "house_bounds": Rect2(12, -30, 16, 18), "door_open": false}]

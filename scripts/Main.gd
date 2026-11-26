@@ -8356,8 +8356,8 @@ func _create_map() -> void:
 		wolf_nav.build(wildlife_blockers, river_segments_data)
 		# Nav exclusiva de los bots: LastDayNav (C) vía build_with_ford cuando
 		# la extensión está cargada; si no, NavPathfinding GDScript — ambos con
-		# vados de carretera y el rio entero (<=2.55 m) abierto para que los
-		# bots crucen como los ciervos, sin atascarse.
+		# vados de carretera baratos y agua profunda cara pero transitable:
+		# los bots prefieren el vado sin quedar prohibidos de cruzar.
 		bot_nav = _new_nav_pathfinding()
 		var ford_test := Callable(self, "_is_bot_river_ford")
 		if bot_nav.has_method("build_with_ford"):
@@ -15810,12 +15810,19 @@ func _ford_depth_cap(pos: Vector3, depth: float) -> float:
 		return FORD_DEPTH
 	return depth
 
-func _is_bot_river_ford(pos: Vector3) -> bool:
-	# Celdas de agua transitables para la nav de los bots: carretera siempre
-	# (vado) o rio entero — el bot lo cruza sumergido como el ciervo (canal
-	# max 2.5 m); solo el corazon del lago queda fuera del grafo
-	# (SurvivorBotManager.FORD_MAX_DEPTH = 2.55: misma regla que el escape).
-	return _is_on_road(pos) or get_river_depth_at(pos) <= 2.55
+func _is_bot_river_ford(pos: Vector3) -> float:
+	# Coste de agua para la nav de los bots, no una puerta binaria: la
+	# carretera/vado y la ribera seca cuestan 1; el agua profunda sigue siendo
+	# transitable cuando no hay alternativa, pero el A* paga por entrar en ella.
+	# Solo el corazon del lago (>2.55 m) queda fuera del grafo.
+	if _is_on_road(pos):
+		return 1.0
+	var depth := get_river_depth_at(pos)
+	if depth <= 0.05:
+		return 1.0
+	if depth > 2.55:
+		return 0.0
+	return 1.0 + depth * 8.0
 
 func get_river_surface_y_at(world_pos: Vector3) -> float:
 	# El agua se construye en la altura Y del segmento; exponerla evita que los

@@ -63,6 +63,7 @@ typedef struct { float px, py, sx, sy; } R2;
 /* ---------------- NavGrid ---------------- */
 typedef struct {
 	uint8_t *blocked;    /* GRID_N: static solids (blockers + water) */
+	float *cost;         /* GRID_N: traversal multiplier; water is costly, not impossible */
 	uint8_t *door_open;  /* GRID_N: cells freed by an open door */
 	int32_t *regions;    /* GRID_N: flood-filled region id, -1 blocked, 0 unvisited */
 	int32_t *door_group; /* GRID_N: union group for door-open cells, -1 = none */
@@ -519,6 +520,9 @@ static int path_clear(NavGrid *g, V3 a, V3 b) {
 		V2i cell = world_to_grid((V3){ a.x + ux * t, 0.0f, a.z + uz * t });
 		if (cell_blocked(g, cell))
 			return 0;
+		if (cell.x >= 0 && cell.x < GRID_W && cell.y >= 0 && cell.y < GRID_H
+				&& g->cost[cell_idx(cell.x, cell.y)] > 1.05f)
+			return 0;
 		if (cell.x != prev.x && cell.y != prev.y) {
 			V2i c1 = { cell.x, prev.y }, c2 = { prev.x, cell.y };
 			if (cell_blocked(g, c1) || cell_blocked(g, c2))
@@ -639,7 +643,7 @@ static int astar(NavGrid *g, V2i start, V2i goal, int32_t *out_cells, int max_ou
 				touch_cell(g, nidx, gen);
 				if (g->closed[nidx])
 					continue;
-				float ng = g->g_cost[top] + step;
+				float ng = g->g_cost[top] + step * g->cost[nidx];
 				if (ng < g->g_cost[nidx]) {
 					g->g_cost[nidx] = ng;
 					g->came_from[nidx] = top;
@@ -721,20 +725,31 @@ static void push_v3(GDExtensionVariantPtr arr_var, V3 v) {
 	fn_variant_destroy(&elem);
 }
 
-/* Calls a one-argument Variant Callable (a "road test" ford predicate like
- * Main._is_bot_river_ford) and returns nonzero when it answers true. */
-static int call_pred1_v3(GDExtensionVariantPtr fn_var, V3 world_pos) {
+/* Calls a one-argument Variant Callable (Main._is_bot_river_ford). The
+ * legacy bool maps to 0/1; numeric answers are traversal cost multipliers. */
+static float call_pred1_v3(GDExtensionVariantPtr fn_var, V3 world_pos) {
 	VarSlot a0, ret;
 	GDExtensionCallError err;
 	fn_variant_new_nil(&ret);
 	var_from_vec3(&a0, &world_pos);
 	const GDExtensionConstVariantPtr argv[1] = { (GDExtensionConstVariantPtr)&a0 };
 	fn_variant_call(fn_var, &sn_call, argv, 1, &ret, &err);
-	int res = 0;
-	if (err.error == GDEXTENSION_CALL_OK && fn_variant_get_type(&ret) == GDEXTENSION_VARIANT_TYPE_BOOL) {
-		GDExtensionBool b = 0;
-		var_to_bool(&b, &ret);
-		res = b ? 1 : 0;
+	float res = 0.0f;
+	if (err.error == GDEXTENSION_CALL_OK) {
+		GDExtensionVariantType t = fn_variant_get_type(&ret);
+		if (t == GDEXTENSION_VARIANT_TYPE_BOOL) {
+			GDExtensionBool b = 0;
+			var_to_bool(&b, &ret);
+			res = b ? 1.0f : 0.0f;
+		} else if (t == GDEXTENSION_VARIANT_TYPE_INT) {
+			int64_t n = 0;
+			var_to_int(&n, &ret);
+			res = (float)n;
+		} else if (t == GDEXTENSION_VARIANT_TYPE_FLOAT) {
+			double d = 0.0;
+			var_to_float(&d, &ret);
+			res = (float)d;
+		}
 	}
 	fn_variant_destroy(&ret);
 	fn_variant_destroy(&a0);
@@ -780,13 +795,23 @@ static void block_river_cells(NavGrid *g, GDExtensionVariantPtr rivers_var, GDEx
 				V2i c = world_to_grid((V3){ wx, 0.0f, wz });
 				if (c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H) {
 					if (road_test) {
-						/* Evaluar road_test sobre el centro de la celda para
-						 * que una sub-muestra en la esquina fuera de la
-						 * calzada no re-bloquee una celda cuyo centro si
-						 * pisa el vado. */
-						if (call_pred1_v3(road_test, (V3){ wx, 0.0f, wz }) ||
-						    call_pred1_v3(road_test, grid_to_world(c)))
+						/* La celda queda abierta si cualquiera de las dos
+						 * muestras es transitable; el coste usado es el mejor
+						 * de esas muestras, para que un vado de carretera no
+						 * herede el precio del canal profundo vecino. */
+						float c0 = call_pred1_v3(road_test, (V3){ wx, 0.0f, wz });
+						float c1 = call_pred1_v3(road_test, grid_to_world(c));
+						float cost = 0.0f;
+						if (c0 > 0.0f)
+							cost = c0;
+						if (c1 > 0.0f && (cost <= 0.0f || c1 < cost))
+							cost = c1;
+						if (cost > 0.0f) {
+							int idx = cell_idx(c.x, c.y);
+							if (g->cost[idx] <= 0.0f || cost < g->cost[idx])
+								g->cost[idx] = cost;
 							continue;
+						}
 					}
 					g->blocked[cell_idx(c.x, c.y)] = 1;
 				}
@@ -821,8 +846,11 @@ static NavGrid *nav_alloc(void) {
 	NavGrid *g = (NavGrid *)fn_mem_alloc(sizeof(NavGrid));
 	memset(g, 0, sizeof(*g));
 	g->blocked = (uint8_t *)fn_mem_alloc(GRID_N);
+	g->cost = (float *)fn_mem_alloc(sizeof(float) * GRID_N);
 	g->door_open = (uint8_t *)fn_mem_alloc(GRID_N);
 	memset(g->blocked, 0, GRID_N);
+	for (int i = 0; i < GRID_N; i++)
+		g->cost[i] = 0.0f;
 	memset(g->door_open, 0, GRID_N);
 	g->queue = (int32_t *)fn_mem_alloc(sizeof(int32_t) * GRID_N);
 	g->g_cost = (float *)fn_mem_alloc(sizeof(float) * GRID_N);
@@ -842,6 +870,7 @@ static void nav_dispose(NavGrid *g) {
 	if (!g)
 		return;
 	if (g->blocked) fn_mem_free(g->blocked);
+	if (g->cost) fn_mem_free(g->cost);
 	if (g->door_open) fn_mem_free(g->door_open);
 	if (g->queue) fn_mem_free(g->queue);
 	if (g->g_cost) fn_mem_free(g->g_cost);
@@ -859,6 +888,8 @@ static void nav_dispose(NavGrid *g) {
 
 static void nav_build_impl(NavGrid *g, GDExtensionVariantPtr blockers_var, GDExtensionVariantPtr rivers_var, GDExtensionVariantPtr road_test) {
 	memset(g->blocked, 0, GRID_N);
+	for (int i = 0; i < GRID_N; i++)
+		g->cost[i] = 0.0f;
 	memset(g->door_open, 0, GRID_N);
 	nav_free_regions(g);
 
@@ -899,6 +930,9 @@ static void nav_build_impl(NavGrid *g, GDExtensionVariantPtr blockers_var, GDExt
 	}
 	dtor_arr(&arr_h);
 	block_river_cells(g, rivers_var, road_test);
+	for (int i = 0; i < GRID_N; i++)
+		if (g->cost[i] <= 0.0f)
+			g->cost[i] = 1.0f;
 	build_regions(g);
 	g->built = 1;
 }

@@ -2,6 +2,7 @@ class_name NavPathfinding
 extends RefCounted
 
 var _grid: Dictionary = {}
+var _weights: Dictionary = {}
 var _grid_size := 484 # X span: the wildlife world limits (-480 to +480 m).
 var _grid_size_z := 700 # Z span: -500..+900 m — includes the southern extension.
 var _z_offset := 250 # world z = -500 maps to grid row 0.
@@ -22,6 +23,7 @@ func grid_to_world(cell: Vector2i) -> Vector3:
 
 func build(blockers: Array, river_segments: Array, road_test: Callable = Callable()) -> void:
 	_grid.clear()
+	_weights.clear()
 	_door_open_cache.clear()
 	for blocker in blockers:
 		var blocker_pos: Vector3 = blocker.get("pos", Vector3.ZERO)
@@ -58,6 +60,7 @@ func build(blockers: Array, river_segments: Array, road_test: Callable = Callabl
 			var cell := Vector2i(x, z)
 			var blocked := is_cell_blocked(cell)
 			_search.set_point_solid(cell, blocked)
+			_search.set_point_weight_scale(cell, float(_weights.get(cell, 1.0)))
 			_regions[z * _grid_size + x] = -1 if blocked else 0
 	_build_regions()
 	_built = true
@@ -155,6 +158,13 @@ func _reachable_goal(start: Vector2i, goal: Vector2i) -> Vector2i:
 				distance = candidate_distance
 	return nearest
 
+func _nav_cost_value(v) -> float:
+	if v is bool:
+		return 1.0 if v else 0.0
+	if v is int or v is float:
+		return float(v)
+	return 0.0
+
 func _block_river_cells(river_segments: Array, road_test: Callable = Callable()) -> void:
 	for segment in river_segments:
 		var size: Vector2 = segment["size"]
@@ -180,9 +190,21 @@ func _block_river_cells(river_segments: Array, road_test: Callable = Callable())
 					continue
 				# Evaluar road_test sobre el centro de la celda para que una
 				# sub-muestra en la esquina fuera de la calzada no re-bloquee
-				# una celda cuyo centro si pisa el vado.
-				if road_test.is_valid() and (bool(road_test.call(world_pos)) or bool(road_test.call(grid_to_world(cell)))):
-					continue
+				# una celda cuyo centro si pisa el vado. La callable puede ser bool
+				# (contrato antiguo) o devolver un coste numerico: 0 bloquea, 1 es
+				# vado/tierra y valores mayores hacen el agua preferiblemente evitable.
+				if road_test.is_valid():
+					var c0 := _nav_cost_value(road_test.call(world_pos))
+					var c1 := _nav_cost_value(road_test.call(grid_to_world(cell)))
+					var cost := 0.0
+					if c0 > 0.0:
+						cost = c0
+					if c1 > 0.0 and (cost <= 0.0 or c1 < cost):
+						cost = c1
+					if cost > 0.0:
+						if not _weights.has(cell) or cost < float(_weights[cell]):
+							_weights[cell] = cost
+						continue
 				_grid[cell] = true
 
 func is_cell_blocked(cell: Vector2i) -> bool:
@@ -293,7 +315,7 @@ func _is_path_clear(a: Vector3, b: Vector3) -> bool:
 	for i in range(steps + 1):
 		var pos := a + dir * (dist * float(i) / float(steps))
 		var cell := world_to_grid(pos)
-		if is_cell_blocked(cell):
+		if is_cell_blocked(cell) or float(_weights.get(cell, 1.0)) > 1.05:
 			return false
 		if cell.x != previous.x and cell.y != previous.y:
 			if is_cell_blocked(Vector2i(cell.x, previous.y)) or is_cell_blocked(Vector2i(previous.x, cell.y)):
