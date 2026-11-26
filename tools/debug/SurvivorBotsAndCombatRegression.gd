@@ -1860,6 +1860,19 @@ func run() -> void:
 	var gear: Dictionary = mgr._find_nearby_valuable_loot(elena, 28.0)
 	check(str(gear.get("id", "")) == "eq_rifle",
 		"Orden 'equip' prioriza el arma del suelo e ignora la comida (%s)" % str(gear.get("id", "")))
+	var equip_loot := world._dropped_items.duplicate()
+	var equip_hunger := float(elena["hunger"])
+	elena["hunger"] = 10.0
+	world._dropped_items = [{"id": "raid_meal", "name": "Carne asada", "type": "food",
+		"pos": elena_proxy.global_position + Vector3(1, 0, 0), "qty": 1, "weight": 0.4, "use": 35.0}]
+	check(mgr._find_nearby_valuable_loot(elena, 28.0).get("id") == "raid_meal",
+		"Incursion militar permite recoger comida cercana antes de morir de hambre")
+	world._dropped_items = [{"id": "raid_matches", "name": "Cerillas", "type": "tool_matches",
+		"pos": elena_proxy.global_position + Vector3(1, 0, 0), "qty": 1, "weight": 0.1}]
+	check(mgr._find_nearby_valuable_loot(elena, 28.0).get("id") == "raid_matches",
+		"Incursion militar permite recoger cerillas para encender calor y luz")
+	elena["hunger"] = equip_hunger
+	world._dropped_items = equip_loot
 	elena["equip_mission"] = false
 	# Recogerla de verdad por la via normal de saqueo la mete en su inventario
 	mgr._collect_loot_entry(elena, gear)

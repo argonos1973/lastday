@@ -23,9 +23,13 @@ pieles realmente consumidas determina la prenda.
 
 La recogida de pieles considera las prendas que faltan y su coste real. Un
 conjunto de cinco piezas con tocado cuesta 13 pieles; el gorro y el tocado ocupan
-la misma posición. Un casco militar y un tocado tienen la misma prioridad:
-el bot conserva el casco que ya lleva. Los guantes se fabrican con una sola
-piel; no requieren el antiguo mínimo genérico de dos.
+la misma posición. El tocado supera la prioridad del casco militar. El bot
+reserva primero las pieles para mejorar chaqueta, pantalones y cabeza, en ese
+orden; después completa botas y guantes. Una prenda que ya iguala o supera la
+mejora prevista cubre ese hueco sin gastar pieles. Así, recibirlas una a una de
+las cacerías permite reunir las tres o cuatro necesarias para prendas grandes.
+Con aves, la reserva de cabeza considera el gorro que realmente saldrá.
+Los guantes siguen costando una sola piel.
 
 Los materiales se comprueban otra vez al terminar el trabajo. Si durante una
 interrupción desaparece un ingrediente o deja de servir la herramienta, no se

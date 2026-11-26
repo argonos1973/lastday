@@ -1991,7 +1991,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# Preparacion nocturna: al caer la tarde, quien no tiene el fuego ni la
 		# luz resueltos sale a por lo que le falta (trapos, palos, troncos) mas
 		# alla del radio de saqueo oportunista — antes de que se haga de noche.
-		if (b["_s_loot"] as Dictionary).is_empty() and not bool(b.get("equip_mission", false)) \
+		if (b["_s_loot"] as Dictionary).is_empty() \
 				and (_is_pre_night() or _is_world_night()) and not _bot_night_fire_ready(b, proxy):
 			b["_s_loot"] = _find_fire_prep_loot(b, 60.0)
 		b["_s_raid_shelter"] = _find_nearby_raidable_shelter(b, 38.0)
@@ -11270,6 +11270,7 @@ func _sensed_node(b: Dictionary, key: String) -> Node3D:
 	return n as Node3D
 
 func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
+	b["_firearm_scan"] = []
 	if world == null or not ("_dropped_items" in world):
 		return {}
 	var proxy: Node3D = b["proxy"]
@@ -11297,12 +11298,20 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 		if offset.length_squared() > r_sq and not (dy_loot > 2.4 and flat_sq <= 18.0 * 18.0):
 			continue
 		var id := str(entry.get("id", ""))
+		var firearm_probe := {}
+		if str(entry.get("name", "")) in GoalValidator.MILITARY_FIREARMS and b["_firearm_scan"].size() < 6:
+			firearm_probe = {"id": id, "distance": snappedf(offset.length(), 0.1), "reason": "available"}
+			b["_firearm_scan"].append(firearm_probe)
 		if id.is_empty() or depleted.has(id):
+			if not firearm_probe.is_empty():
+				firearm_probe["reason"] = "depleted"
 			continue
 		# Pieza fichada por un compañero: elegir otra en vez de amontonarse
 		# todos sobre el mismo drop.
 		var cowner := int(claims.get(id, 0))
 		if cowner != 0 and cowner != int(b["bot_id"]) and int(claims_until.get(id, 0)) > now_ms:
+			if not firearm_probe.is_empty():
+				firearm_probe["reason"] = "claimed"
 			continue
 		# No robar la carne que alguien acaba de tirar como cebo para un lobo
 		if id.begins_with("bot_tame_meat_"):
@@ -11310,6 +11319,8 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 		if "world_actions_by_id" in world and world.world_actions_by_id.has(id):
 			var wa = world.world_actions_by_id[id]
 			if wa != null and is_instance_valid(wa) and wa.has_meta("dropped_by"):
+				if not firearm_probe.is_empty():
+					firearm_probe["reason"] = "actor_drop"
 				continue
 		var nm := str(entry.get("name", ""))
 		var tp := str(entry.get("type", ""))
@@ -11317,14 +11328,25 @@ func _find_nearby_valuable_loot(b: Dictionary, radius: float) -> Dictionary:
 		if dry_upgrade and _bot_is_freezing(b) and not _bot_loot_allowed_while_freezing(b, entry, false):
 			continue
 		if not dry_upgrade and not _is_loot_desirable(b, nm, tp, entry):
+			if not firearm_probe.is_empty():
+				firearm_probe["reason"] = "not_desirable"
 			continue
 		# No le cabe en la mochila (slots/peso del modelo humano): ni lo mira
 		if not _bot_would_fit(b, proxy.get_meta("saved_inventory", []), _loot_entry_item_dict(entry)):
+			if not firearm_probe.is_empty():
+				firearm_probe["reason"] = "carry_capacity"
 			continue
-		# Orden "equip": solo armas, ropa y mochilas — comida y materiales no
-		if bool(b.get("equip_mission", false)) and not _is_gear_item(nm, tp):
+		# Una incursión no veta provisiones ni luz. La deseabilidad anterior
+		# ya limita las reservas; bloquear comida con hambre convertía equip
+		# en inanición junto al botín. De noche/frío también necesita combustible.
+		if bool(b.get("equip_mission", false)) and not _is_gear_item(nm, tp) \
+				and tp not in ["food", "water", "tool_torch", "tool_matches"] \
+				and nm != "Botella de plastico" \
+				and not (_is_pre_night() or _is_world_night() or _bot_is_freezing(b)):
 			continue
 		if _is_goal_blacklisted(b, pos):
+			if not firearm_probe.is_empty():
+				firearm_probe["reason"] = "nav_veto"
 			continue
 		# Un superviviente prioriza: arma/medicina > comida > equipo > materiales
 		# > reserva de agua. La distancia y el cambio de planta desempatan.
@@ -16379,6 +16401,33 @@ func _bot_apply_craft(b: Dictionary, recipe: Dictionary) -> void:
 	record_strategy_outcome(int(b["bot_id"]), "forage" if str(entry.get("type", "")) in ["food", "tool_hoe"] else "explore", true, 0.06)
 	_publish_bot_to_net_players(b)
 
+# Reserva gradual: primero las mejoras de torso, piernas y cabeza. Si cada
+# piel recién cazada se gasta en guantes/botas nunca se reúnen las 3–4 mayores.
+# Una prenda militar igual o mejor también cubre su hueco, sin fabricar basura.
+func _bot_next_pelt_garment(b: Dictionary) -> String:
+	var owned := {}
+	for nm in str(b.get("clothing", "")).split(",", false):
+		owned[str(PlayerController.CLOTHING_SLOTS.get(nm, ""))] = int(CLOTHING_PRIORITY.get(nm, 0))
+	var inv: Array = b["proxy"].get_meta("saved_inventory", [])
+	for it in inv:
+		if not it is Dictionary or int(it.get("quantity", 1)) <= 0 or float(it.get("durability", 100.0)) <= 0:
+			continue
+		var nm := str(it.get("name", ""))
+		var slot := str(PlayerController.CLOTHING_SLOTS.get(nm, ""))
+		if not slot.is_empty():
+			owned[slot] = maxi(int(owned.get(slot, 0)), int(CLOTHING_PRIORITY.get(nm, 0)))
+	for wanted in ["Chaqueta de piel", "Pantalones de piel", "Tocado de piel animal"]:
+		for recipe in CraftingSystem.RECIPES:
+			if str(recipe.output.name) != wanted:
+				continue
+			# Las aves dan gorro: una cabeza ya cubierta por uno no debe
+			# bloquear eternamente guantes/botas esperando un tocado imposible.
+			var nm := str(_bot_recipe_output(recipe, inv).get("name", ""))
+			var slot := str(PlayerController.CLOTHING_SLOTS.get(nm, ""))
+			if int(CLOTHING_PRIORITY.get(nm, 0)) > int(owned.get(slot, 0)):
+				return wanted
+	return ""
+
 # Prioridad de cada receta para el bot: -1 = no le interesa / no puede usarla.
 func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	var proxy: Node3D = b["proxy"]
@@ -16415,6 +16464,10 @@ func _bot_recipe_score(b: Dictionary, recipe: Dictionary) -> float:
 	if otype in gear_types and _bot_item_count(proxy, oname) > 0:
 		return -1.0
 	if otype == "clothing":
+		if recipe.get("inputs", {}).has("ANY_PELT"):
+			var next_garment := _bot_next_pelt_garment(b)
+			if not next_garment.is_empty() and oname != next_garment:
+				return -1.0
 		out = _bot_recipe_output(recipe, proxy.get_meta("saved_inventory", []))
 		oname = str(out.get("name", ""))
 		if oname in str(b.get("clothing", "")).split(","):
@@ -20107,6 +20160,16 @@ func get_full_web_status() -> Dictionary:
 		snap["camp_spot"] = [snappedf(camp.x, 0.1), snappedf(camp.y, 0.1), snappedf(camp.z, 0.1)] if camp != Vector3.INF else []
 		snap["shelter_pos"] = [snappedf(sh.x, 0.1), snappedf(sh.y, 0.1), snappedf(sh.z, 0.1)] if sh != Vector3.INF else []
 		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
+		# Diagnóstico sobre las observaciones ya hechas: sin otro escaneo del
+		# mapa ni inicializar munición al consultar el monitor.
+		snap["equipment_progress"] = {
+			"nearby_firearms": b.get("_firearm_scan", []),
+			"selected_loot": str(b.get("_s_loot", {}).get("id", "")),
+			"equip_mission": bool(b.get("equip_mission", false)),
+			"cold_roof_insufficient": bool(b.get("_cold_roof_insufficient", false)),
+			"cold_roof_recovery": bool(b.get("_cold_roof_recovery", false)),
+			"rifle_ammo": proxy.get_meta("bot_gun_ammo", proxy.get_meta("saved_extra", {}).get("rifle_ammo", {})) if is_instance_valid(proxy) else {},
+		}
 		snap["inventory"] = (proxy.get_meta("saved_inventory", []) as Array) if proxy != null and is_instance_valid(proxy) else []
 		snap["shelter_stash"] = _get_shelter_contents(str(b.get("shelter_id", "")))
 		var own_sh_d := _find_shelter_dict(str(b.get("shelter_id", "")))

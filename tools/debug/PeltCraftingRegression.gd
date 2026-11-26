@@ -256,6 +256,28 @@ func test_bot_pelts() -> void:
 	for recipe in Crafting.RECIPES:
 		if recipe.inputs.has("ANY_PELT"):
 			recipes[str(recipe.output.name)] = recipe
+	# Real hunts deliver hides gradually, not thirteen at once. Exercise
+	# selection, timed consumption and wearing after every single pickup.
+	for bid in [901, 902, 903, 904]:
+		var gradual: Dictionary = manager.bots[bid]
+		reset_bot(gradual, "Camiseta,Pantalones,Zapatillas", materials_for("lobo", 0))
+		for hide in range(1, 14):
+			var carried: Array = gradual.proxy.get_meta("saved_inventory", [])
+			manager._bot_add_inventory_item(carried, {"name": "Piel de lobo", "type": "resource", "quantity": 1, "weight": .65})
+			gradual.proxy.set_meta("saved_inventory", carried)
+			for tick in 8:
+				manager._bot_try_craft(gradual, 3.0)
+			if hide < 4:
+				check(manager._bot_pelt_count(gradual.proxy) == hide,
+					"%s reserves the first %d hides for a jacket" % [gradual.name, hide])
+			if hide == 4:
+				check(str(gradual.clothing).contains("Chaqueta de piel"), "%s sews the jacket on the fourth hide" % gradual.name)
+			if hide == 7:
+				check(str(gradual.clothing).contains("Pantalones de piel"), "%s sews trousers before accessories" % gradual.name)
+			if hide == 10:
+				check(str(gradual.clothing).contains("Tocado de piel animal"), "%s saves three hides for the headdress" % gradual.name)
+		for garment in outfit + ["Tocado de piel animal"]:
+			check(str(gradual.clothing).contains(garment), "%s finishes gradual outfit: %s" % [gradual.name, garment])
 	var species_list := ["lobo", "lobo negro", "ciervo", "zorro", "oso", "ave"]
 	for i in species_list.size():
 		var species: String = species_list[i]
