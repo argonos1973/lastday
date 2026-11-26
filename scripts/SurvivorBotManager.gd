@@ -11370,6 +11370,10 @@ func _is_loot_desirable(b: Dictionary, nm: String, tp: String, entry: Dictionary
 			return false
 		return true
 	if tp == "weapon_rifle":
+		# Las armas de fuego son el recurso escaso del equipo: quien ya tiene
+		# una utilizable deja la siguiente en el suelo para otro superviviente.
+		if not _bot_usable_gun(b["proxy"]).is_empty():
+			return false
 		return _bot_item_count(b["proxy"], nm) < 1
 	if tp == "ammo_arrow":
 		return _bot_arrow_count(b["proxy"]) < 20

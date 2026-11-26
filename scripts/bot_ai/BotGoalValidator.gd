@@ -86,6 +86,9 @@ static func military_gear_count(proxy: Node3D) -> int:
 			var nm := str(it.get("name", ""))
 			if nm in MILITARY_GEAR_NAMES:
 				seen[nm] = true
+	var bp := str(proxy.get_meta("saved_backpack", ""))
+	if bp in MILITARY_GEAR_NAMES:
+		seen[bp] = true
 	var extra: Dictionary = proxy.get_meta("saved_extra", {})
 	var worn: Dictionary = extra.get("worn_clothing", {})
 	for nm in worn.keys():

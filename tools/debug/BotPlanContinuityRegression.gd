@@ -138,6 +138,16 @@ func run() -> void:
 	check(not Goals.bind_gear_target(m, b, blocked_retry),
 		"Gear nav_blocked still vetoes the unreachable military base")
 	b["_mem"]["failed_goals"] = {}
+	b["proxy"].set_meta("saved_backpack", "Mochila militar")
+	check(Goals.military_gear_count(b["proxy"]) == 1, "Equipped military backpack counts as military gear")
+	b["proxy"].set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "quantity": 1, "durability": 100.0},
+		{"name": "Cargador de M4", "type": "ammo", "quantity": 1},
+	])
+	check(not m._is_loot_desirable(b, "Rifle francotirador", "weapon_rifle"),
+		"A bot with a usable firearm leaves another rifle for unarmed allies")
+	b["proxy"].set_meta("saved_inventory", [])
+	b["proxy"].set_meta("saved_backpack", "")
 	var id: String = d["plan_id"]
 	var start := Time.get_ticks_msec()
 	d["_clock_ms"] = start
