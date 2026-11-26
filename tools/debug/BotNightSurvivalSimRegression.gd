@@ -843,6 +843,44 @@ func _s27() -> void:
 		"S27 sin curriculum el hambre 58 aun no inicia el viaje largo")
 	leader.queue_free()
 
+func _s29() -> void:
+	print("S29: escape de agua en tramos solapados — no redecide la orilla")
+	var env := _new_world(15.0, {}, true)
+	env.dc.time_of_day = 14.0
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var main_ref = load("res://scripts/Main.gd").new()
+	world.river_segs = main_ref._default_river_segments()
+	main_ref.free()
+	var b: Dictionary = mgr.bots[902]
+	_place_bot(b, Vector3(302.9, 0.4, 8.8), {"body_temperature": 34.9, "wetness": 1.0, "sleep": 55.0, "hunger": 58.0, "thirst": 65.0, "inventory": []})
+	var p0: Vector3 = (b["proxy"] as Node3D).global_position
+	var legacy0 := mgr._bot_shoreward_goal(p0, 0.05)
+	check(legacy0 != Vector3.INF, "S29 el vado real tiene una orilla candidata")
+	var legacy_step: Vector3 = (legacy0 - p0).normalized() * 0.27
+	var p1 := p0 + legacy_step
+	var legacy1 := mgr._bot_shoreward_goal(p1, 0.05)
+	var reversal := Vector2(legacy1.x - p1.x, legacy1.z - p1.z).dot(Vector2(legacy0.x - p0.x, legacy0.z - p0.z))
+	check(reversal < 0.0, "S29 el perfil solapado reproduce la redecision norte/sur del fallo (dot=%.2f)" % reversal)
+	b.erase("_water_escape")
+	var committed0 := mgr._bot_committed_shore_goal(b, p0, 0.05, 0.1)
+	var committed_step: Vector3 = (committed0 - p0).normalized() * 0.27
+	var p2 := p0 + committed_step
+	var committed1 := mgr._bot_committed_shore_goal(b, p2, 0.05, 0.1)
+	var committed_dot := Vector2(committed1.x - p2.x, committed1.z - p2.z).dot(Vector2(committed0.x - p0.x, committed0.z - p0.z))
+	check(committed_dot > 0.0, "S29 la direccion comprometida no se invierte al avanzar (dot=%.2f)" % committed_dot)
+	_place_bot(b, Vector3(302.9, 0.4, 8.8), {"body_temperature": 34.9, "wetness": 1.0, "sleep": 55.0, "hunger": 58.0, "thirst": 65.0, "inventory": []})
+	b.erase("_water_escape")
+	var escaped := false
+	for i in 100:
+		mgr._tick_bot(b, 0.1)
+		if world.get_river_depth_at((b["proxy"] as Node3D).global_position) <= 0.05:
+			escaped = true
+			break
+	check(escaped, "S29 el bot sale de verdad a tierra seca (pos=%s depth=%.2f)" % [str((b["proxy"] as Node3D).global_position), world.get_river_depth_at((b["proxy"] as Node3D).global_position)])
+	mgr._tick_bot(b, 0.1)
+	check(not b.has("_water_escape"), "S29 el compromiso de escape se limpia en seco")
+
 func _s28() -> void:
 	print("S28: sed aprendida rompe la formacion antes del borde letal")
 	var env := _new_world(15.0)
@@ -929,6 +967,10 @@ func run() -> void:
 		return
 	if "--only-s28" in OS.get_cmdline_user_args():
 		_s28()
+		quit(1 if failures else 0)
+		return
+	if "--only-s29" in OS.get_cmdline_user_args():
+		_s29()
 		quit(1 if failures else 0)
 		return
 	if "--only-s19" in OS.get_cmdline_user_args():
@@ -1527,6 +1569,7 @@ func run() -> void:
 	_s18()
 	_s19()
 	_s20()
+	_s29()
 
 	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures else 0)

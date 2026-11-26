@@ -2082,13 +2082,15 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 			b["drinking_timer"] = 0.0
 			b["crouching"] = false
 			b["sitting"] = false
-			var esc := _bot_shoreward_goal(proxy.global_position, 0.05 if cold_water else WADE_DEPTH)
+			var esc := _bot_committed_shore_goal(b, proxy.global_position, 0.05 if cold_water else WADE_DEPTH, delta)
 			if esc != Vector3.INF:
 				b["_act"] = "water_escape"
 				_move_bot_towards(b, esc, 6.5, delta, "run")
 			else:
 				b["anim"] = "idle"
 			return
+		elif b.has("_water_escape"):
+			b.erase("_water_escape")
 
 	# 0b) Termostato de lumbre: pegado a las brasas te cocinas (la misma curva
 	# de calor que al jugador) y en el borde frio te hielas — cualquier tarea
@@ -12978,6 +12980,64 @@ func _bot_shoreward_goal(pos: Vector3, max_shore_depth: float = WADE_DEPTH) -> V
 			if dc < best_depth - 0.02:
 				best_depth = dc
 				best = cand
+	return best
+
+# Escape de agua con compromiso direccional. Los tramos de rio se solapan y la
+# profundidad no es un gradiente limpio: redecidir la orilla cada tick podia
+# alternar norte/sur en el mismo metro hasta morir de frio. Se fija una banda,
+# se permite corregir el angulo dentro de ese rumbo y solo se abandona si no
+# hay movimiento real durante unos segundos.
+func _bot_committed_shore_goal(b: Dictionary, pos: Vector3, max_shore_depth: float, delta: float) -> Vector3:
+	var depth0 := float(world.get_river_depth_at(pos)) if world != null and world.has_method("get_river_depth_at") else 0.0
+	var st: Dictionary = b.get("_water_escape", {})
+	if st.is_empty():
+		var first := _bot_shoreward_goal(pos, max_shore_depth)
+		if first == Vector3.INF:
+			return first
+		var flat := Vector3(first.x - pos.x, 0.0, first.z - pos.z)
+		if flat.length_squared() < 0.01:
+			return first
+		b["_water_escape"] = {"dir": flat.normalized(), "ref": pos, "t": 0.0, "depth": depth0}
+		return first
+	var base_dir: Vector3 = st.get("dir", Vector3.RIGHT)
+	var ref: Vector3 = st.get("ref", pos)
+	var along_progress := Vector3(pos.x - ref.x, 0.0, pos.z - ref.z).dot(base_dir)
+	if along_progress > 0.7 or depth0 < float(st.get("depth", depth0)) - 0.03:
+		st["ref"] = pos
+		st["depth"] = depth0
+		st["t"] = 0.0
+	else:
+		st["t"] = float(st.get("t", 0.0)) + delta
+	if float(st.get("t", 0.0)) > 6.0:
+		b.erase("_water_escape")
+		return _bot_committed_shore_goal(b, pos, max_shore_depth, 0.0)
+	b["_water_escape"] = st
+	var best := Vector3.INF
+	var best_depth := depth0
+	for r in [1.8, 3.6, 6.0, 9.0]:
+		for deg in [0.0, -22.5, 22.5, -45.0, 45.0]:
+			var dir := base_dir.rotated(Vector3.UP, deg_to_rad(deg))
+			var cand: Vector3 = pos + dir * r
+			var dc := float(world.get_river_depth_at(cand))
+			if dc <= max_shore_depth and not _is_pos_blocked(cand):
+				var dry_flat := Vector3(cand.x - pos.x, 0.0, cand.z - pos.z)
+				if dry_flat.length_squared() > 0.01:
+					st["dir"] = dry_flat.normalized()
+					b["_water_escape"] = st
+				return cand
+			if dc < best_depth - 0.02 and not _is_pos_blocked(cand):
+				best_depth = dc
+				best = cand
+	if best == Vector3.INF:
+		# La banda elegida no ofrece ni siquiera un tramo menos profundo:
+		# soltarla permite una unica reevaluacion completa en vez de quedarse
+		# en idle dentro del agua.
+		b.erase("_water_escape")
+		return _bot_shoreward_goal(pos, max_shore_depth)
+	var best_flat := Vector3(best.x - pos.x, 0.0, best.z - pos.z)
+	if best_flat.length_squared() > 0.01:
+		st["dir"] = best_flat.normalized()
+		b["_water_escape"] = st
 	return best
 
 func _is_pos_blocked(pos: Vector3, margin: float = 0.45, allow_deep: bool = false) -> bool:
