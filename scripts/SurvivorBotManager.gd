@@ -4034,8 +4034,11 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 			var cur := _worn_in_slot(worn, slot)
 			var st_eq: SurvivalStats = b.get("vstats")
 			var cold_rope_need := _bot_is_freezing(b) or (st_eq != null and not st_eq.dead and st_eq.body_temperature <= 35.95)
+			var light_rags := _is_world_night() or _is_pre_night()
+			# Apartar ropa para la antorcha debe sobrevivir al autoequipado
+			# del siguiente tick igual que la reserva para fabricar cuerda.
 			var reserved_for_rags := _bot_cuts_into_trapos(nm) and float(PlayerController.CLOTHING_WARMTH.get(nm, 0.0)) <= 0.12 \
-					and cold_rope_need and _bot_fire_needs_axe(b, proxy) and _bot_item_count(proxy, "Cuerda") < 1 and _bot_item_count(proxy, "Trapos") < 2
+					and (cold_rope_need or light_rags) and _bot_item_count(proxy, "Trapos") < _bot_fire_rags_required(b, proxy, light_rags)
 			if not reserved_for_rags and _prefer_garment(cur, worn_items.get(cur, {}), nm, it):
 				var new_piece: Dictionary = it.duplicate(true)
 				new_piece["quantity"] = 1
@@ -11940,6 +11943,10 @@ func _bot_craft_preserves_fire(b: Dictionary, recipe: Dictionary) -> bool:
 		if _bot_item_count(proxy, "Trapos") - int(inputs.get("Trapos", 0)) < 2:
 			return false
 	if not inputs.has("Tronco") and not inputs.has("Palo"):
+		return true
+	# El mango del hacha habilita los troncos de la fogata: reservarlo para
+	# un fuego todavía imposible bloqueaba toda la cadena de supervivencia.
+	if str(recipe.get("output", {}).get("type", "")) == "tool_axe" and _bot_fire_needs_axe(b, proxy):
 		return true
 	var building := _bot_needs_campfire(b)
 	var sticks := _bot_fire_stick_reserve(b)
@@ -21336,10 +21343,14 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	# lena del fuego que le salva la vida ES el rescate, no una expedicion.
 	var freezing_rescue := fire_rescue and _bot_is_freezing(b)
 	var can_fell_tree := _bot_can_fell_tree_for_fire(b, proxy)
+	var cold_stats: SurvivalStats = b.get("vstats")
+	var prepare_axe := freezing_rescue and not tool.is_empty() and _bot_fire_needs_axe(b, proxy) \
+		and cold_stats != null and cold_stats.body_temperature >= 35.5 and cold_stats.wetness <= 0.35 \
+		and float(b.get("health", 100.0)) >= 50.0
 	if freezing_rescue:
 		tronco_need = 2 if needs_fire else 0
 		palo_need = fire_sticks
-		piedra_need = 0
+		piedra_need = 1 if prepare_axe else 0
 		seeds_need = false
 	var tronco_short := _bot_item_count(proxy, "Tronco") < tronco_need
 	if (needs_fire or fire_sticks > 0) and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
@@ -21347,9 +21358,9 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 		if _bot_try_fire_material_pickup(b, delta, 120.0 if freezing_rescue else (24.0 if night_no_light else 80.0)):
 			return true
 	if freezing_rescue and tronco_short and not can_fell_tree:
-		# Sin hacha ni troncos en el suelo no puede levantar una fogata: no
-		# entretenerse cortando arbustos bajo la lluvia en vez de ir a refugio.
-		palo_need = 0
+		# El frío leve y seco permite obtener el mango cerca y fabricar el
+		# hacha. Mojado o con hipotermia grave sigue buscando calor directo.
+		palo_need = 1 if prepare_axe else 0
 	var palo_short := _bot_palo_supply(proxy, tool, tronco_need) < palo_need
 	var piedra_short := _bot_item_count(proxy, "Piedra") < piedra_need
 	# Escondido, agotado, helandose o reclutado no sale a recoger: descansar,
@@ -21433,6 +21444,8 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 	var scan_radius := 24.0 if night_no_light else 80.0
 	if freezing_rescue or _bot_night_fire_bootstrap_active(b):
 		scan_radius = 120.0
+	if prepare_axe:
+		scan_radius = 24.0
 	var target := _find_mat_target(b, scan_radius, tool, palo_short, piedra_short, seeds_need, tronco_short)
 	if target.is_empty():
 		return false

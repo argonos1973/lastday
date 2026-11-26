@@ -8283,6 +8283,99 @@ func run() -> void:
 	boot_stone.queue_free()
 	mgr._cached_wa_size = -1
 
+	# El rescate necesita poder construir su propia hacha. Vetar todos los
+	# arbustos por no tener hacha, o reservar el mango para una fogata cuyos
+	# troncos aún no puede talar, deja una dependencia circular.
+	var bootstrap_lights := world._lit_campfires.duplicate()
+	var bootstrap_drops := world._dropped_items.duplicate()
+	world._lit_campfires.clear()
+	world._dropped_items.clear()
+	b_hyp["campfire_id"] = ""
+	b_hyp["campfire_pos"] = Vector3.INF
+	b_hyp["shelter_id"] = ""
+	b_hyp["hide_timer"] = 0.0
+	b_hyp.erase("_cold_departure")
+	b_hyp["_cold_alert"] = true
+	st_hyp.body_temperature = 35.65
+	st_hyp.wetness = 0.0
+	st_hyp.sleep = 80.0
+	p_hyp.set_meta("saved_inventory", [
+		{"name":"Piedra afilada","type":"resource","quantity":1,"durability":40.0},
+		{"name":"Piedra","type":"resource","quantity":1,"weight":0.45},
+		{"name":"Cuerda","type":"resource","quantity":1,"weight":0.1}])
+	var bootstrap_bush := WorldActionScript.new()
+	bootstrap_bush.setup("cold_axe_bush", "fell_bush", "Arbusto", Vector3.ONE, Color.GREEN, false, false)
+	world.add_child(bootstrap_bush)
+	bootstrap_bush.global_position = p_hyp.global_position + Vector3(3, 0, 0)
+	world.world_actions_by_id["cold_axe_bush"] = bootstrap_bush
+	mgr._cached_wa_size = -1
+	b_hyp["_gather_scan"] = 0.0
+	st_hyp.body_temperature = 35.2
+	check(not mgr._bot_try_gather_mats(b_hyp, 0.1, true),
+		"10Z4c: hipotermia grave no emprende la cadena larga del hacha")
+	st_hyp.body_temperature = 35.65
+	st_hyp.wetness = 0.6
+	check(not mgr._bot_try_gather_mats(b_hyp, 0.1, true),
+		"10Z4c: mojado no sale por ingredientes de hacha antes de secarse")
+	st_hyp.wetness = 0.0
+	check(mgr._bot_try_gather_mats(b_hyp, 0.1, true) and b_hyp.get("_gather", {}).get("id") == "cold_axe_bush",
+		"10Z4c: rescate frio seco permite recoger el mango de su primera hacha")
+	for i in 100:
+		mgr._bot_try_gather_mats(b_hyp, 0.1, true)
+		if world._depleted_action_ids.has("cold_axe_bush"):
+			break
+	var bootstrap_sticks := 0
+	for drop in world.last_action_completed.get("spawns", []):
+		if str(drop.get("name", "")) == "Palo":
+			bootstrap_sticks += int(drop.get("qty", 1))
+	check(world._depleted_action_ids.has("cold_axe_bush") and bootstrap_sticks == 3 \
+			and mgr._bot_item_count(p_hyp, "Palo") == 0,
+		"10Z4c: el arbusto termina y deja tres palos reales en el suelo, sin regalarlos al inventario")
+	# También prueba el gasto con sólo la reserva exacta de encendido: fabricar
+	# el hacha desbloquea los troncos y debe poder consumir un mango.
+	p_hyp.set_meta("saved_inventory", [
+		{"name":"Palo","type":"resource","quantity":3,"weight":0.3},
+		{"name":"Piedra","type":"resource","quantity":1,"weight":0.45},
+		{"name":"Cuerda","type":"resource","quantity":1,"weight":0.1}])
+	b_hyp["_craft_state"] = {}
+	for i in 30:
+		mgr._bot_try_fire_chain_craft(b_hyp, 0.1, false)
+	check(mgr._bot_item_count(p_hyp, "Hacha de piedra") == 1 and mgr._bot_item_count(p_hyp, "Palo") == 2,
+		"10Z4d: la reserva de fuego permite invertir un palo en el hacha que obtiene los troncos")
+	var rag_hour := float(world.day_cycle.time_of_day)
+	var rag_clothes := str(b_hyp["clothing"])
+	world.day_cycle.time_of_day = 23.0
+	b_hyp["clothing"] = "Pantalones,Zapatillas"
+	p_hyp.set_meta("saved_inventory", [
+		{"name":"Piedra afilada","type":"resource","quantity":1,"durability":40.0},
+		{"name":"Piedra","type":"resource","quantity":1,"weight":0.45},
+		{"name":"Cuerda","type":"resource","quantity":1,"weight":0.1}])
+	b_hyp["_craft_state"] = {}
+	for i in 40:
+		# La vida real autoequipa entre decisiones: no debe volver a vestir
+		# cada tick los pantalones que acaba de apartar para cortar trapos.
+		mgr._auto_equip_best_gear(b_hyp)
+		mgr._bot_try_fire_chain_craft(b_hyp, 0.1, true)
+	# Al quitarse los pantalones pierde bolsillos. El resultado puede caer
+	# al suelo: la recogida real hace hueco con el intercambio de material
+	# nocturno existente, en vez de inventar capacidad adicional.
+	for i in 30:
+		if mgr._bot_item_count(p_hyp, "Trapos") >= 1:
+			break
+		mgr._bot_try_fire_material_pickup(b_hyp, 0.1, 24.0, false)
+	check(mgr._bot_item_count(p_hyp, "Trapos") >= 1 and mgr._bot_item_count(p_hyp, "Cuerda") == 1,
+		"10Z4e: con cuerda terminada corta ropa y recoge trapos para la antorcha sin bucle de autoequipado")
+	check(mgr._bot_inv_stored_count(p_hyp.get_meta("saved_inventory")) <= int(mgr._bot_carry_capacity(b_hyp).slots),
+		"10Z4e: la recogida de trapos respeta la capacidad tras quitarse los pantalones")
+	world.day_cycle.time_of_day = rag_hour
+	b_hyp["clothing"] = rag_clothes
+	world._lit_campfires.assign(bootstrap_lights)
+	world._dropped_items.assign(bootstrap_drops)
+	world.world_actions_by_id.erase("cold_axe_bush")
+	bootstrap_bush.queue_free()
+	b_hyp["_gather"] = {}
+	mgr._cached_wa_size = -1
+
 	# 10Z5a: la inanicion (hambre<26 sin comida) NO veta el refugio cuando la
 	# hipotermia ya es inminente (<=35.3 C): el calor manda sobre el hambre.
 	var wa_bak5a: Dictionary = world.world_actions_by_id.duplicate()
