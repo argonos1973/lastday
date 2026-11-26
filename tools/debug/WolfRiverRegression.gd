@@ -120,9 +120,9 @@ func run() -> void:
 	world.nav.build(blockers, [])
 	var center := world.nav.world_to_grid(Vector3.ZERO)
 	check(world.nav._search.is_point_solid(center), "Closed building blocks path search")
-	world.nav.update_door_cache(blockers, func(_p, _b): return false, func(_p, _b): return true)
+	world.nav.update_door_cache(blockers, func(_p, _b): return false, func(_p, _b): return true, Callable())
 	check(not world.nav._search.is_point_solid(center), "Open doorway updates path search")
-	world.nav.update_door_cache([], func(_p, _b): return false, func(_p, _b): return false)
+	world.nav.update_door_cache([], func(_p, _b): return false, func(_p, _b): return false, Callable())
 	check(world.nav._search.is_point_solid(center), "Closed doorway restores path obstacle")
 	world.nav.build([], [])
 	wolf.position = Vector3.ZERO

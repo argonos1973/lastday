@@ -4,10 +4,9 @@
  * Native port of scripts/NavPathfinding.gd (grid A* for wildlife). Exposes a
  * RefCounted class "LastDayNav" with the same duck-typed surface used by
  * Main.gd: build(blockers, rivers), find_path(start, goal) -> Array[Vector3],
- * is_cell_blocked(cell) -> bool, update_door_cache(blockers, f1, f2),
- * is_built() -> bool. The two Callable args of update_door_cache are accepted
- * and ignored: the doorway geometry is replicated natively so no callbacks
- * into GDScript are needed.
+ * is_cell_blocked(cell) -> bool, update_door_cache(blockers, f1, f2, f3),
+ * is_built() -> bool. Doorway/barn geometry is replicated natively; the fourth
+ * Callable, when present, is the bot-specific house navigability predicate.
  *
  * Data layout per instance: dense uint8/int32 arrays over a 484x700 grid
  * (world x -484..484, z -500..900 at 2 m cells) instead of Dictionary-of-
@@ -132,7 +131,7 @@ static GDExtensionPtrDestructor dtor_arr;
 static TypeSlot sn_class, sn_parent, sn_empty;
 static TypeSlot sn_m_build, sn_m_build_with_ford, sn_m_find_path, sn_m_is_blocked, sn_m_update_door_cache, sn_m_is_built;
 static TypeSlot sn_m_world_to_grid, sn_m_grid_to_world, sn_m_is_path_clear;
-static TypeSlot sn_size, sn_push_back, sn_call;
+static TypeSlot sn_size, sn_push_back, sn_call, sn_is_valid;
 static TypeSlot s_hint; /* empty String for PropertyInfo.hint_string */
 
 static void sname_make(TypeSlot *slot, const char *s) {
@@ -904,6 +903,23 @@ static void nav_build_impl(NavGrid *g, GDExtensionVariantPtr blockers_var, GDExt
 	g->built = 1;
 }
 
+static int callable_valid(GDExtensionVariantPtr fn_var) {
+	if (!fn_var || fn_variant_get_type(fn_var) != GDEXTENSION_VARIANT_TYPE_CALLABLE)
+		return 0;
+	VarSlot ret;
+	GDExtensionCallError err;
+	fn_variant_new_nil(&ret);
+	fn_variant_call(fn_var, &sn_is_valid, NULL, 0, &ret, &err);
+	int res = 0;
+	if (err.error == GDEXTENSION_CALL_OK && fn_variant_get_type(&ret) == GDEXTENSION_VARIANT_TYPE_BOOL) {
+		GDExtensionBool b = 0;
+		var_to_bool(&b, &ret);
+		res = b ? 1 : 0;
+	}
+	fn_variant_destroy(&ret);
+	return res;
+}
+
 static int call_door_pred_v3(GDExtensionVariantPtr fn_var, V3 world_pos, V3 origin) {
 	VarSlot a0, a1, ret;
 	GDExtensionCallError err;
@@ -943,15 +959,16 @@ static int call_barn_pred(GDExtensionVariantPtr fn_var, V3 world_pos, GDExtensio
 }
 
 static void nav_update_door_cache_impl(NavGrid *g, GDExtensionVariantPtr blockers_var,
-		GDExtensionVariantPtr fn_doorway, GDExtensionVariantPtr fn_barn_doorway) {
+		GDExtensionVariantPtr fn_doorway, GDExtensionVariantPtr fn_barn_doorway, GDExtensionVariantPtr fn_house_ok) {
 	TypeSlot arr_h;
 	array_handle(blockers_var, &arr_h);
 	int64_t n = array_len(blockers_var);
 	uint8_t *prev = (uint8_t *)fn_mem_alloc(GRID_N);
 	memcpy(prev, g->door_open, GRID_N);
 	memset(g->door_open, 0, GRID_N);
-	int has_door_fn = fn_doorway && fn_variant_get_type(fn_doorway) == GDEXTENSION_VARIANT_TYPE_CALLABLE;
-	int has_barn_fn = fn_barn_doorway && fn_variant_get_type(fn_barn_doorway) == GDEXTENSION_VARIANT_TYPE_CALLABLE;
+	int has_door_fn = callable_valid(fn_doorway);
+	int has_barn_fn = callable_valid(fn_barn_doorway);
+	int has_house_fn = callable_valid(fn_house_ok);
 
 	for (int64_t i = 0; i < n; i++) {
 		GDExtensionVariantPtr blocker = fn_array_index(arr_h.b, (GDExtensionInt)i);
@@ -967,7 +984,7 @@ static void nav_update_door_cache_impl(NavGrid *g, GDExtensionVariantPtr blocker
 				fn_variant_destroy(&door_var);
 			}
 		}
-		if (!door_open)
+		if (!door_open && !has_house_fn)
 			continue;
 		V3 pos = { 0, 0, 0 };
 		dict_vec3(blocker, "pos", &pos);
@@ -993,7 +1010,12 @@ static void nav_update_door_cache_impl(NavGrid *g, GDExtensionVariantPtr blocker
 					if (barn_open) {
 						int ok = has_barn_fn ? call_barn_pred(fn_barn_doorway, w, blocker)
 						                     : in_barn_doorway_passage(w, pos, front_x, front_w, back_x, back_w, half_d);
+						if (!ok && has_house_fn)
+							ok = call_barn_pred(fn_house_ok, w, blocker);
 						if (ok)
+							g->door_open[idx] = 1;
+					} else if (has_house_fn) {
+						if (call_barn_pred(fn_house_ok, w, blocker))
 							g->door_open[idx] = 1;
 					} else {
 						int ok = has_door_fn ? call_door_pred_v3(fn_doorway, w, pos)
@@ -1072,9 +1094,9 @@ static void mcall_update_door_cache(void *ud, GDExtensionClassInstancePtr inst,
 		const GDExtensionConstVariantPtr *args, GDExtensionInt argc,
 		GDExtensionVariantPtr ret, GDExtensionCallError *err) {
 	(void)ud; (void)ret;
-	if (argc < 1) {
+	if (argc < 4) {
 		err->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
-		err->expected = 1;
+		err->expected = 4;
 		return;
 	}
 	if (fn_variant_get_type(args[0]) != GDEXTENSION_VARIANT_TYPE_ARRAY) {
@@ -1084,7 +1106,8 @@ static void mcall_update_door_cache(void *ud, GDExtensionClassInstancePtr inst,
 	}
 	GDExtensionVariantPtr fn1 = argc >= 2 ? (GDExtensionVariantPtr)args[1] : NULL;
 	GDExtensionVariantPtr fn2 = argc >= 3 ? (GDExtensionVariantPtr)args[2] : NULL;
-	nav_update_door_cache_impl((NavGrid *)inst, (GDExtensionVariantPtr)args[0], fn1, fn2);
+	GDExtensionVariantPtr fn3 = argc >= 4 ? (GDExtensionVariantPtr)args[3] : NULL;
+	nav_update_door_cache_impl((NavGrid *)inst, (GDExtensionVariantPtr)args[0], fn1, fn2, fn3);
 }
 
 static void mcall_world_to_grid(void *ud, GDExtensionClassInstancePtr inst,
@@ -1303,11 +1326,12 @@ static void nav_initialize(void *ud, GDExtensionInitializationLevel level) {
 	cell_args[0] = arg_info(GDEXTENSION_VARIANT_TYPE_VECTOR2I);
 	register_method(&sn_m_is_blocked, mcall_is_cell_blocked, 1, GDEXTENSION_VARIANT_TYPE_BOOL, 1, cell_args);
 
-	GDExtensionPropertyInfo door_args[3];
+	GDExtensionPropertyInfo door_args[4];
 	door_args[0] = arg_info(GDEXTENSION_VARIANT_TYPE_ARRAY);
 	door_args[1] = arg_info(GDEXTENSION_VARIANT_TYPE_CALLABLE);
 	door_args[2] = arg_info(GDEXTENSION_VARIANT_TYPE_CALLABLE);
-	register_method(&sn_m_update_door_cache, mcall_update_door_cache, 0, GDEXTENSION_VARIANT_TYPE_NIL, 3, door_args);
+	door_args[3] = arg_info(GDEXTENSION_VARIANT_TYPE_CALLABLE);
+	register_method(&sn_m_update_door_cache, mcall_update_door_cache, 0, GDEXTENSION_VARIANT_TYPE_NIL, 4, door_args);
 
 	register_method(&sn_m_is_built, mcall_is_built, 1, GDEXTENSION_VARIANT_TYPE_BOOL, 0, NULL);
 
@@ -1337,6 +1361,7 @@ static void nav_deinitialize(void *ud, GDExtensionInitializationLevel level) {
 	sname_free(&sn_size);
 	sname_free(&sn_push_back);
 	sname_free(&sn_call);
+	sname_free(&sn_is_valid);
 	dtor_string(&s_hint);
 }
 
@@ -1404,6 +1429,7 @@ GDExtensionBool GDE_EXPORT lastday_nav_library_init(
 	sname_make(&sn_size, "size");
 	sname_make(&sn_push_back, "push_back");
 	sname_make(&sn_call, "call");
+	sname_make(&sn_is_valid, "is_valid");
 	fn_string_new(&s_hint, "");
 
 	r_initialization->userdata = NULL;

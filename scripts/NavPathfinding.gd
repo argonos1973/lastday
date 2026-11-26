@@ -301,7 +301,7 @@ func _is_path_clear(a: Vector3, b: Vector3) -> bool:
 		previous = cell
 	return true
 
-func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_doorway: Callable, house_ok: Callable = Callable()) -> void:
+func update_door_cache(blockers: Array, is_in_doorway: Callable, is_in_barn_doorway: Callable, house_ok: Callable) -> void:
 	var previous := _door_open_cache.duplicate()
 	_door_open_cache.clear()
 	for blocker in blockers:

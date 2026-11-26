@@ -18639,9 +18639,9 @@ func _refresh_nav_door_caches(force: bool = false) -> void:
 			changed = true
 	if not changed:
 		return
-	nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
+	nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage, Callable())
 	if wolf_nav != null:
-		wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage)
+		wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage, Callable())
 	if bot_nav != null:
 		bot_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage, Callable(self, "_is_in_bot_house_nav"))
 

@@ -132,8 +132,8 @@ func _init() -> void:
 		if abs(world_pos.x - front_x) <= front_w * 0.5 + 0.5 and world_pos.z <= bpos.z + 1.0 and world_pos.z >= bpos.z - half_d - 2.0:
 			return true
 		return abs(world_pos.x - back_x) <= back_w * 0.5 + 0.5 and world_pos.z >= bpos.z - 1.0 and world_pos.z <= bpos.z + half_d + 2.0
-	nav_c.update_door_cache(blockers, door_passage, barn_passage)
-	nav_gd.update_door_cache(blockers, door_passage, barn_passage)
+	nav_c.update_door_cache(blockers, door_passage, barn_passage, Callable())
+	nav_gd.update_door_cache(blockers, door_passage, barn_passage, Callable())
 	var door_mismatch := 0
 	var shown := 0
 	for gx in range(180, 300):
@@ -156,10 +156,10 @@ func _init() -> void:
 	nav_part.build(partitions, [])
 	var p_closed: Array = nav_part.find_path(Vector3(-40, 0, 0), Vector3(40, 0, 0))
 	_check(not p_closed.is_empty() and p_closed.back().x < -22.0, "closed wall separates regions in LastDayNav (end_x=%.1f)" % (p_closed.back().x if not p_closed.is_empty() else 999.0))
-	nav_part.update_door_cache(partitions, func(_p, _b): return false, func(p, _b): return absf(p.z) < 3.0)
+	nav_part.update_door_cache(partitions, func(_p, _b): return false, func(p, _b): return absf(p.z) < 3.0, Callable())
 	var p_open: Array = nav_part.find_path(Vector3(-40, 0, 0), Vector3(40, 0, 0))
 	_check(not p_open.is_empty() and p_open.back().distance_to(Vector3(40, 0, 0)) < 3.0, "two doors join three regions transitively in LastDayNav")
-	nav_part.update_door_cache([partitions[0]], func(_p, _b): return false, func(p, _b): return absf(p.z) < 3.0)
+	nav_part.update_door_cache([partitions[0]], func(_p, _b): return false, func(p, _b): return absf(p.z) < 3.0, Callable())
 	var p_half: Array = nav_part.find_path(Vector3(-40, 0, 0), Vector3(40, 0, 0))
 	_check(not p_half.is_empty() and p_half.back().x > -18.0 and p_half.back().x < 18.0, "closing one door removes only that connection (end_x=%.1f)" % (p_half.back().x if not p_half.is_empty() else 999.0))
 	# Rebuild clears stale open doors and reuses heap cleanly.
@@ -188,6 +188,33 @@ func _init() -> void:
 			river_cell_blocked = false
 	_check(not river_cell_blocked, "ford strip through the river is open in LastDayNav")
 
+	# 7) Bot nav: la corona exterior de una casa cerrada es alcanzable para poder
+	#    abrir la puerta; el interior solo se libera cuando house_ok lo permite.
+	var closed_house := [{"pos": Vector3(20, 0, -21), "radius": 1.8, "house_bounds": Rect2(12, -30, 16, 18), "door_open": false}]
+	var house_ok := func(world_pos: Vector3, blocker: Dictionary) -> bool:
+		var hb: Rect2 = blocker.get("house_bounds", Rect2())
+		var p2 := Vector2(world_pos.x, world_pos.z)
+		if not hb.grow(1.8).has_point(p2):
+			return true
+		if not bool(blocker.get("door_open", false)):
+			return false
+		return hb.grow(-0.5).has_point(p2)
+	var nav_bh_c = ClassDB.instantiate("LastDayNav")
+	var nav_bh_gd = NavPathfindingScript.new()
+	nav_bh_c.build_with_ford(closed_house, [], func(_p): return false)
+	nav_bh_gd.build(closed_house, [], Callable())
+	var outside_cell: Vector2i = nav_bh_c.world_to_grid(Vector3(32, 0, -20))
+	var inside_cell: Vector2i = nav_bh_c.world_to_grid(Vector3(20, 0, -20))
+	_check(nav_bh_c.is_cell_blocked(outside_cell), "bot house exterior ring starts blocked before door cache")
+	nav_bh_c.update_door_cache(closed_house, door_passage, barn_passage, house_ok)
+	nav_bh_gd.update_door_cache(closed_house, door_passage, barn_passage, house_ok)
+	_check(not nav_bh_c.is_cell_blocked(outside_cell) and not nav_bh_gd.is_cell_blocked(outside_cell), "closed house exterior ring is walkable through bot house_ok")
+	_check(nav_bh_c.is_cell_blocked(inside_cell) and nav_bh_gd.is_cell_blocked(inside_cell), "closed house interior remains blocked")
+	closed_house[0]["door_open"] = true
+	nav_bh_c.update_door_cache(closed_house, door_passage, barn_passage, house_ok)
+	nav_bh_gd.update_door_cache(closed_house, door_passage, barn_passage, house_ok)
+	_check(not nav_bh_c.is_cell_blocked(inside_cell) and not nav_bh_gd.is_cell_blocked(inside_cell), "open house interior is walkable through bot house_ok")
+
 	# 7) Paridad de metodos auxiliares (world_to_grid, grid_to_world, _is_path_clear).
 	var sample_pos := Vector3(37.4, 0.0, -83.1)
 	var cg: Vector2i = nav_c.world_to_grid(sample_pos)
@@ -195,7 +222,7 @@ func _init() -> void:
 	_check(cg == gg and nav_c.grid_to_world(cg) == nav_gd.grid_to_world(gg), "world_to_grid / grid_to_world parity")
 	_check(nav_c._is_path_clear(Vector3(0, 0, 0), Vector3(10, 0, 10)) == nav_gd._is_path_clear(Vector3(0, 0, 0), Vector3(10, 0, 10)), "_is_path_clear parity on blocked line")
 
-	# 7) Benchmark find_path.
+	# 8) Benchmark find_path.
 	t0 = Time.get_ticks_usec()
 	for i in range(2000):
 		for p in pairs.slice(0, 20):
