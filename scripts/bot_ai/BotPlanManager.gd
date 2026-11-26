@@ -371,7 +371,7 @@ static func stalled(m, b: Dictionary, d: Dictionary, now: int) -> String:
 			# Rest is execution of this objective. Real recovery renews its
 			# budget, instead of granting an unconditional sleep exemption.
 			d["_step_deadline_ms"] = now + m._ai_step_budget_msec(b, d)
-	elif (dist != INF or ev != INF) and now - int(d.get("_prog_ref_ms", now)) > 90000:
+	elif (dist != INF or ev != INF) and now - int(d.get("_prog_ref_ms", now)) > (150000 if Validator.purpose(d) == "gear" else 90000):
 		if dist != INF and dist <= 12.0 and ev == INF:
 			pass
 		elif m._ai_step_busy(b) and int(d.get("_busy_ext", 0)) < 4:

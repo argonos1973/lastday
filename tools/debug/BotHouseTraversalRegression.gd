@@ -264,6 +264,13 @@ func run() -> void:
 	var city06: Node3D = city.buildings[5]
 	actor.position = city06.to_global(Vector3(-1.5,3.92,-0.3))
 	await travel(city06.to_global(Vector3(11,.12,0)),"city_06 upper floor sofa pocket exits")
+	# Live regression: Kael remained running in city_03 (rotated PI, flat roof)
+	# around local (-1.1,3.92,-0.1). Both mirrored flat-roof variants must
+	# descend from that pocket instead of oscillating on the landing.
+	for idx in [2,3]:
+		var cb: Node3D = city.buildings[idx]
+		actor.position = cb.to_global(Vector3(-1.1,3.92,-0.1))
+		await travel(cb.to_global(Vector3(11,.12,0)),"city_%02d rotated upper pocket exits" % (idx+1))
 	for origin in [Vector3(45,0,120),Vector3(-340,0,280)]:
 		for side in [-1,1]:
 			actor.position = origin+Vector3(9,0,side*6)

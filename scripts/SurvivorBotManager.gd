@@ -2719,8 +2719,12 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 
 	# 5b) Materiales de campamento: si faltan palos para el refugio/fogata y no
 	# hay drops a mano, el bot tala arbustos (fell_bush) igual que un jugador —
-	# filo en mano, 5 s de corte, 3 palos y semillas al suelo.
-	if _bot_try_gather_mats(b, delta):
+	# filo en mano, 5 s de corte, 3 palos y semillas al suelo. Durante una
+	# incursion militar diurna esto es distraccion, no supervivencia: la
+	# conversion a fusil/equipo manda; de noche o con frio las ramas de
+	# rescate/preparacion anteriores siguen pudiendo pedir material.
+	var gear_focused := bool(b.get("equip_mission", false)) and not _is_pre_night() and not _is_world_night() and not _bot_is_freezing(b)
+	if not gear_focused and _bot_try_gather_mats(b, delta):
 		b["_act"] = "mats"
 		return
 
@@ -18229,7 +18233,12 @@ func _ai_step_stalled(b: Dictionary, d: Dictionary, now_ms: int) -> String:
 # de seguridad. INF = accion sin metrica propia (viaje, visita).
 func _ai_step_evidence(b: Dictionary, d: Dictionary) -> float:
 	var purpose := GoalValidator.purpose(d)
-	if purpose == "gear" or purpose == "weapons":
+	if purpose == "gear":
+		var proxy_g = b.get("proxy")
+		if proxy_g == null or not is_instance_valid(proxy_g):
+			return 0.0
+		return float(GoalValidator.military_gear_count(proxy_g)) + (2.0 if not GoalValidator.military_firearm(self, proxy_g).is_empty() else 0.0)
+	if purpose == "weapons":
 		return 1.0 if not GoalValidator.decent_weapon(self, b.get("proxy")).is_empty() else 0.0
 	if purpose != "general" and str(d.get("action", "")) in ["scavenge", "forage", "hunt"]:
 		return float(b.get("_plan_loot", {}).get(purpose, 0))
