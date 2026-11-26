@@ -121,7 +121,7 @@ static func bind_gear_target(m, b: Dictionary, d: Dictionary) -> bool:
 			continue
 		var candidate := d.duplicate()
 		candidate["_dest_pos"] = pos
-		if m._ai_goal_recently_failed(b, candidate):
+		if m._ai_goal_recently_failed(b, candidate, ["timeout"]):
 			continue
 		var dist: float = b["proxy"].global_position.distance_to(pos)
 		if dist < best:

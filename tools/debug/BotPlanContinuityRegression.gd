@@ -126,6 +126,18 @@ func run() -> void:
 	var d: Dictionary = b["ai_directive"]
 	check(d.get("state") == "RUNNING" and int(d.get("total_steps", 0)) == 3, "RUNNING with three steps")
 	check(d.get("_dest_pos") == Vector3(300, 0.4, 200), "Gear mission targets a known military location")
+	# A travel timeout is budget exhaustion, not proof that a military tent is
+	# empty or unreachable. It must not make the next raid jump to a far base.
+	m._ai_note_failed_goal(b, d, "timeout")
+	var retry := {"action": "scavenge", "target": "military", "goal": "gear_up_at_military_base"}
+	check(Goals.bind_gear_target(m, b, retry) and retry.get("_dest_pos") == Vector3(300, 0.4, 200),
+		"Gear timeout does not veto retrying the same nearby military base")
+	b["_mem"]["failed_goals"] = {}
+	m._ai_note_failed_goal(b, d, "nav_blocked")
+	var blocked_retry := {"action": "scavenge", "target": "military", "goal": "gear_up_at_military_base"}
+	check(not Goals.bind_gear_target(m, b, blocked_retry),
+		"Gear nav_blocked still vetoes the unreachable military base")
+	b["_mem"]["failed_goals"] = {}
 	var id: String = d["plan_id"]
 	var start := Time.get_ticks_msec()
 	d["_clock_ms"] = start

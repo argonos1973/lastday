@@ -14152,7 +14152,11 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 	# los vados de carretera (~0.45 m); internarse mas hondo es suicida.
 	var freeze_wet_limit := -1.0
 	if not in_building_3d and world != null and world.has_method("get_river_depth_at"):
-		freeze_wet_limit = _bot_cold_water_limit(b, depth_cur)
+		# El escape comprometido ya elige una salida mas somera; si el fondo
+		# sube unos centimetros antes de la orilla, el veto termico no debe
+		# convertir ese unico paso en una trampa mortal dentro del cauce.
+		if str(b.get("_act", "")) != "water_escape" and not b.has("_water_escape"):
+			freeze_wet_limit = _bot_cold_water_limit(b, depth_cur)
 	var front_blocked := false if on_stair_segment else _is_step_blocked(cur, new_pos, deep_now)
 	if not front_blocked and freeze_wet_limit >= 0.0 and float(world.get_river_depth_at(new_pos)) > freeze_wet_limit:
 		front_blocked = true
@@ -18975,7 +18979,7 @@ func _ai_note_failed_goal(b: Dictionary, d: Dictionary, cause: String) -> void:
 		fg.erase(oldest)
 	mem["failed_goals"] = fg
 
-func _ai_goal_recently_failed(b: Dictionary, d: Dictionary) -> bool:
+func _ai_goal_recently_failed(b: Dictionary, d: Dictionary, ignored_causes: Array = []) -> bool:
 	var fg: Dictionary = b.get("_mem", {}).get("failed_goals", {})
 	if fg.is_empty():
 		return false
@@ -18986,7 +18990,8 @@ func _ai_goal_recently_failed(b: Dictionary, d: Dictionary) -> bool:
 	# fresco — si el paso se ha parseado es que el mundo ya lo permite (el
 	# refugio existe, el aliado reaparecio). El registro queda a modo de
 	# aprendizaje/diagnostico.
-	if str((e as Dictionary).get("cause", "")) == "precondition":
+	var cause := str((e as Dictionary).get("cause", ""))
+	if cause == "precondition" or ignored_causes.has(cause):
 		return false
 	var age := Time.get_unix_time_from_system() - float((e as Dictionary).get("t", 0.0))
 	return age < _ai_fail_entry_ttl(e)
