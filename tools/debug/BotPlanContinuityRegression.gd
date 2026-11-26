@@ -223,6 +223,11 @@ func run() -> void:
 	])
 	m._ai_note_loot(b, "Fusil de asalto", "weapon")
 	check(m._ai_directive_completed(b, d), "Functional rifle, ammunition and military clothing complete equipment")
+	# A generic military-loot step inherits the same strict gear purpose: one
+	# trivial item must not close the expedition before the real loadout.
+	b["proxy"].set_meta("saved_inventory", [{"name": "Cuchillo", "type": "weapon", "quantity": 1, "durability": 100.0}])
+	var generic_military := {"action": "scavenge", "target": "military", "goal": "dominate_high_tier_loot"}
+	check(Goals.purpose(generic_military) == "gear", "Generic military scavenge is strict gear purpose")
 	check(m._ai_advance_plan(902, b, d), "Equipment success advances to return leg")
 	d = b["ai_directive"]
 	check(d["plan_id"] == id and d["step_index"] == 1 and d["action"] == "return_home",

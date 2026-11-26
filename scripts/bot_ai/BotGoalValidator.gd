@@ -24,6 +24,10 @@ static func purpose(d: Dictionary) -> String:
 		return "gear"
 	if d.has("purpose"):
 		return str(d["purpose"])
+	# Un paso de saqueo militar sin proposito explicito no se satisface con el
+	# primer objeto recogido: su finalidad es completar el equipo militar real.
+	if str(d.get("action", "")) == "scavenge" and str(d.get("target", "")) == "military":
+		return "gear"
 	var goal := str(d.get("goal", "")).to_lower()
 	for pair in [["ammo", "ammo"], ["munition", "ammo"], ["clothing", "clothing"], ["tool", "tools"], ["weapon", "weapons"], ["water", "water"], ["meat", "meat"], ["food", "food"]]:
 		if pair[0] in goal:
