@@ -735,6 +735,27 @@ func _s24() -> void:
 	check(world._depleted_action_ids.has("s24_tree"), "S24 tala el arbol cercano para los troncos (act=%s pos=%s)" % [str(b.get("_act", "")), str((b["proxy"] as Node3D).global_position)])
 	check(not world._lit_campfires.is_empty() and not st.dead, "S24 termina en fogata encendida y bot vivo (fires=%d hp=%.1f temp=%.2f wet=%.2f)" % [world._lit_campfires.size(), st.health, st.body_temperature, st.wetness])
 
+func _s25() -> void:
+	print("S25: techo frio — la siesta de colapso recupera antes de volver a la leña")
+	var env := _new_world(8.0)
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[901]
+	var roof := Vector3(230.0, 0.4, 300.0)
+	world.house_pts = [roof]
+	world.wildlife_blockers = [{"house_bounds": Rect2(roof.x - 4.0, roof.z - 4.0, 8.0, 8.0)}]
+	_place_bot(b, roof, {"body_temperature": 35.5, "sleep": 3.0, "energy": 8.0, "hunger": 82.0, "thirst": 82.0, "inventory": []})
+	var st: SurvivalStats = b["vstats"]
+	mgr._tick_bot(b, 0.1)
+	check(bool(b.get("_cold_roof_insufficient", false)), "S25 el techo frio queda marcado como insuficiente (target=%.2f)" % st.thermal_rest_target)
+	check((bool(b.get("sleeping", false)) or mgr._bot_try_start_sleep(b, true)) and bool(b.get("sleeping", false)), "S25 el colapso puede empezar la siesta bajo el techo frio")
+	for i in 30:
+		mgr._tick_bot(b, 0.1)
+	check(bool(b.get("sleeping", false)) and st.sleep > 4.0,
+		"S25 la siesta no se interrumpe al cruzar sleep=4 (sleeping=%s sleep=%.1f)" % [str(b.get("sleeping", false)), st.sleep])
+	st.sleep = 60.0
+	check(mgr._bot_should_wake(b, true), "S25 ya descansado despierta para completar calor/fogata (sleep=%.1f)" % st.sleep)
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
@@ -752,6 +773,10 @@ func run() -> void:
 		return
 	if "--only-s24" in OS.get_cmdline_user_args():
 		_s24()
+		quit(1 if failures else 0)
+		return
+	if "--only-s25" in OS.get_cmdline_user_args():
+		_s25()
 		quit(1 if failures else 0)
 		return
 	if "--only-s19" in OS.get_cmdline_user_args():

@@ -15214,7 +15214,7 @@ func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
 	# sangrando hp en la banda ciega 34.8-35.4 sin despertar jamas.
 	if st.body_temperature > GameConst.BOT_HEAT_ALERT_TEMP:
 		return true
-	if bool(b.get("_cold_roof_insufficient", false)) and st.sleep > 4.0:
+	if bool(b.get("_cold_roof_insufficient", false)) and st.sleep > 55.0:
 		return true
 	if st.body_temperature < 35.45:
 		if st.body_temperature <= 34.5:
