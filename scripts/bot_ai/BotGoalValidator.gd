@@ -131,8 +131,12 @@ static func bind_gear_target(m, b: Dictionary, d: Dictionary) -> bool:
 		# solo aplica a las tiendas clásicas con rifle+M4 en el mismo punto.
 		var taken_n := (entry.get("firearm_ids_taken", []) as Array).size()
 		var pos_sig := "%d:%d" % [int(pos.x), int(pos.z)]
-		var paired_tent := pos_sig in ["460:0", "202:435"]
-		if taken_n >= (2 if paired_tent else 1):
+		var capacity := 2
+		if pos_sig in ["159:680", "171:675", "39:750", "-43:-48"]:
+			capacity = 1
+		elif pos.x < -200.0 and pos.z < -200.0:
+			capacity = 99
+		if taken_n >= capacity:
 			continue
 		var dist: float = b["proxy"].global_position.distance_to(pos)
 		var score := dist + gear_route_water_penalty(m, b["proxy"].global_position, pos)
