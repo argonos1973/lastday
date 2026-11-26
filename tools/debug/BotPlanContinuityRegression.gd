@@ -130,6 +130,10 @@ func run() -> void:
 	check(d.get("_dest_pos") == Vector3(300, 0.4, 200), "Gear mission targets a known military location")
 	check(b.get("explore_target") == Vector3(300, 0.4, 200) and float(b.get("explore_dwell", 0.0)) <= 0.0,
 		"Adopting a gear mission retargets actual movement to the military destination")
+	b["explore_target"] = Vector3(20.0, 0.4, -15.0)
+	b["explore_dwell"] = 3.0
+	check(m._ai_active_directive(b).get("_dest_pos") == Vector3(300, 0.4, 200),
+		"Active gear mission retains its pinned destination while local work uses explore_target")
 	# A travel timeout is budget exhaustion, not proof that a military tent is
 	# empty or unreachable. It must not make the next raid jump to a far base.
 	m._ai_note_failed_goal(b, d, "timeout")

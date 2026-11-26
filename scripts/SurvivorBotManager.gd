@@ -3074,6 +3074,19 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if (b.get("climb_route", []) as Array).size() >= 2:
 		_tick_bot_climb(b, delta)
 		return
+	# Una mision POI activa manda sobre el ultimo objetivo local que haya
+	# tocado explore_target (forrajeo, encuentro o seguimiento de equipo). Las
+	# urgencias ya se han resuelto antes; si el flujo llega a explorar, el plan
+	# debe volver a poseer la navegacion en vez de heredar ese desvio.
+	var active_dir := _ai_active_directive(b)
+	if str(active_dir.get("mode", "")) == "poi":
+		var forced_pin = active_dir.get("_dest_pos")
+		if forced_pin is Vector3 and (forced_pin as Vector3) != Vector3.INF and not _is_goal_blacklisted(b, forced_pin):
+			var old_target: Vector3 = b.get("explore_target", Vector3.INF)
+			if old_target == Vector3.INF or Vector2(old_target.x - (forced_pin as Vector3).x, old_target.z - (forced_pin as Vector3).z).length() > 2.0:
+				b["explore_target"] = forced_pin
+				b["explore_dwell"] = 0.0
+				b["path_timer"] = 0.0
 	var cur_target: Vector3 = b.get("explore_target", Vector3.INF)
 	var flat_t := 9999.0
 	var dy_t := 0.0
