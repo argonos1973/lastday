@@ -2925,8 +2925,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		rest_pos = _nearest_safe_refuge(b, GameConst.BOT_EMERGENCY_REFUGE_RADIUS)
 	# Ni refugio en todo el mapa ni fuego posible: la marcha corta es lo
 	# ultimo — moverse genera calor corporal y seca la ropa; quedarse de
-	# pie o sentado mojado es congelarse seguro.
-	if rest_pos == Vector3.INF and _bot_is_freezing(b) and (vst == null or vst.sleep > 8.0):
+	# pie o sentado mojado es congelarse seguro. Un techo frio insuficiente
+	# tampoco es refugio termico: sin fuego/cadena de leña posible, el bot
+	# debe moverse aunque este bajo una casa.
+	if _bot_is_freezing(b) and (vst == null or vst.sleep > 8.0) \
+			and (rest_pos == Vector3.INF or bool(b.get("_cold_roof_insufficient", false))):
 		if _bot_freeze_march(b, delta):
 			return
 	if rest_pos != Vector3.INF and wants_camp:
@@ -21978,9 +21981,10 @@ func _bot_freeze_march(b: Dictionary, delta: float) -> bool:
 		# Avanzar tambien si fallan los seis sondeos: el proximo intento debe
 		# probar otras direcciones, sin repetir para siempre la misma muestra.
 		fm["n"] = int(fm.get("n", 0)) + 1
+		var indoor_march := _pos_in_house_bounds(proxy.global_position)
 		for i in range(6):
 			var ang := rng.randf() * TAU
-			var rr := rng.randf_range(7.0, 13.0)
+			var rr := rng.randf_range(2.2, 5.0) if indoor_march else rng.randf_range(7.0, 13.0)
 			var cand := anchor + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
 			cand.y = proxy.global_position.y
 			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
