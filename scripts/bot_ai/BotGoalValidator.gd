@@ -126,12 +126,38 @@ static func bind_gear_target(m, b: Dictionary, d: Dictionary) -> bool:
 		candidate["_dest_pos"] = pos
 		if m._ai_goal_recently_failed(b, candidate, ["timeout"]):
 			continue
+		if (entry.get("firearm_ids_taken", []) as Array).size() >= 2:
+			continue
 		var dist: float = b["proxy"].global_position.distance_to(pos)
-		if dist < best:
-			best = dist
+		var score := dist + gear_route_water_penalty(m, b["proxy"].global_position, pos)
+		if score < best:
+			best = score
 			d["_dest_pos"] = pos
 			d["_dest_id"] = str(id)
 	return best != INF
+
+# Distancia sola no basta para elegir una base militar: cruzar el rio exterior
+# fuera de un vado convierte una incursion corta en una emergencia hipotermica.
+# Los vados de carretera ya quedan someros en get_river_depth_at, asi que solo
+# penalizamos agua profunda realmente atravesada por la linea de aproximacion.
+static func gear_route_water_penalty(m, from_pos: Vector3, to_pos: Vector3) -> float:
+	if m == null or m.world == null or not m.world.has_method("get_river_depth_at"):
+		return 0.0
+	var length := Vector2(to_pos.x - from_pos.x, to_pos.z - from_pos.z).length()
+	if length < 8.0:
+		return 0.0
+	var samples := mini(48, maxi(2, int(ceil(length / 6.0))))
+	var deep_samples := 0
+	var max_depth := 0.0
+	for i in range(1, samples):
+		var probe: Vector3 = from_pos.lerp(to_pos, float(i) / float(samples))
+		var depth := float(m.world.get_river_depth_at(probe))
+		max_depth = maxf(max_depth, depth)
+		if depth >= 0.8:
+			deep_samples += 1
+	if deep_samples == 0:
+		return 0.0
+	return minf(180.0, float(deep_samples) * 24.0 + max_depth * 25.0)
 
 static func ally_valid(m, b: Dictionary, id: int) -> bool:
 	if id == int(b.get("bot_id", 0)) or not m.bots.has(id):

@@ -96,15 +96,21 @@ func run() -> void:
 		rel.trust = 0.8
 		rel.hostility = 0.0
 	c._mem.killers = {"bot_901": {"count": 2, "helped_at_death": 0}}
-	mem.known_locations = {"secret:20:20": {"pos": [20, 0, 20], "kind": "camp"}}
+	mem.known_locations = {
+		"secret:20:20": {"pos": [20, 0, 20], "kind": "camp"},
+		"military:202:435": {"pos": [202.9, 0, 435.0], "kind": "military", "firearm_ids_taken": ["remote_tent_loot_m4"]},
+	}
 	c._mem.known_locations = {}
 	check(m.share_bot_knowledge(901, 902) == 0 and c._mem.known_locations.is_empty(), "killer and victim cannot trade private knowledge")
+	check(not c._mem.known_locations.has("military:202:435"), "military depletion memory never leaks to a distrustful non-teammate")
 	check(m._nearest_friendly_bot_pos(901) == d.proxy.global_position, "seek_ally respects victim distrust")
 	check(m._nearest_friendly_bot_pos(902) != b.proxy.global_position, "victim never seeks killer as ally")
 	c._mem.killers = {}
 	b["_share_cd_902"] = 0.0
 	c["_share_cd_901"] = 0.0
 	check(m.share_bot_knowledge(901, 902) > 0 and c._mem.known_locations.has("secret:20:20"), "trusted pair still exchanges knowledge")
+	check((c._mem.known_locations.get("military:202:435", {}).get("firearm_ids_taken", []) as Array).has("remote_tent_loot_m4"),
+		"trusted teammates share military firearm depletion")
 	var from_mem := {"killers": {"bot_901": {"count": 1}, "bot_902": {"count": 2}, "bot_903": {"count": 3}}, "relationships": {}}
 	var to_mem := {"killers": {}, "relationships": {}}
 	m._share_enemy_knowledge(from_mem, to_mem, "bot_902", "bot_901")

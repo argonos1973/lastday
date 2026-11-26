@@ -2480,7 +2480,15 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 					if _bot_water_failure_is_building_exit(b):
 						# La fuente no esta fallando: falla la salida de la casa.
 						# Repath sin veto para que plantas superiores y umbrales no
-						# consuman uno a uno todos los accesos de agua del mapa.
+						# consuman uno a uno todos los accesos de agua del mapa. Pero
+						# una salida urbana tampoco puede reiniciarse eternamente: tras
+						# tres intentos duros se abandona este acceso y se busca otro.
+						var exit_retries := int(b.get("_drink_exit_retries", 0)) + 1
+						b["_drink_exit_retries"] = exit_retries
+						if exit_retries >= 3:
+							b.erase("_drink_exit_retries")
+							_abandon_water_access(b)
+							return
 						b["drink_walk_t"] = 0.0
 						b["_drink_best_d"] = INF
 						b["path"] = []
@@ -2524,6 +2532,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 				b["consume_anim_t"] = 0.5
 				if float(b["drinking_timer"]) >= 2.6:
 					b["drinking_timer"] = 0.0
+					b.erase("_drink_exit_retries")
 					b["drink_at"] = Vector3.INF
 					b["thirst"] = 100.0
 					proxy.set_meta("saved_thirst", 100.0)
@@ -3296,6 +3305,7 @@ func _abandon_water_access(b: Dictionary) -> void:
 	b["drink_walk_t"] = 0.0
 	b["_drink_best_d"] = INF
 	b["drinking_timer"] = 0.0
+	b.erase("_drink_exit_retries")
 	b["drink_giveup"] = 0.0 if float(b["thirst"]) < 18.0 else 12.0
 
 func _water_retry_at(b: Dictionary, pos: Vector3) -> float:
@@ -11665,6 +11675,42 @@ func _tick_loot_pickup(b: Dictionary, entry: Dictionary, delta: float) -> void:
 		_collect_loot_entry(b, entry)
 		_cancel_bot_ground_pickup(b)
 
+# Las tiendas militares tienen dos armas fijas por zona. Registrar los ids
+# reales recogidos evita dos errores de equipo: contar dos veces el mismo arma
+# si cambia de manos y enviar a los aliados desarmados a una base ya vacia.
+func _note_military_firearm_pickup(b: Dictionary, entry: Dictionary) -> void:
+	var id := str(entry.get("id", ""))
+	if not (id.ends_with("loot_rifle") or id.ends_with("loot_m4")):
+		return
+	var pos := _loot_entry_pos(entry)
+	var mem: Dictionary = b.get("_mem", {})
+	if mem.is_empty():
+		return
+	var known: Dictionary = mem.get("known_locations", {})
+	var best_id := ""
+	var best_d := 70.0
+	for loc_id in known.keys():
+		var loc: Dictionary = known[loc_id]
+		if str(loc.get("kind", "")) != "military":
+			continue
+		var a = loc.get("pos", null)
+		if not (a is Array) or (a as Array).size() < 3:
+			continue
+		var lp := Vector3(float(a[0]), float(a[1]), float(a[2]))
+		var dist := Vector2(pos.x - lp.x, pos.z - lp.z).length()
+		if dist < best_d:
+			best_d = dist
+			best_id = str(loc_id)
+	if best_id.is_empty():
+		return
+	var loc2: Dictionary = known[best_id]
+	var taken: Array = loc2.get("firearm_ids_taken", [])
+	if not taken.has(id):
+		taken.append(id)
+	loc2["firearm_ids_taken"] = taken
+	known[best_id] = loc2
+	mem["known_locations"] = known
+
 func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	var id := str(entry.get("id", ""))
 	if id.is_empty() or world == null:
@@ -11715,6 +11761,7 @@ func _collect_loot_entry(b: Dictionary, entry: Dictionary) -> void:
 	# no le cabe cae al suelo como drop real — nada desaparece con la accion.
 	_bot_unpack_entry_contents(b, inv, entry)
 	_ai_note_loot(b, enm, etp)
+	_note_military_firearm_pickup(b, entry)
 	if enm == "Chaleco táctico" and world.has_method("_grant_vest_magazines") and "world_actions_by_id" in world:
 		var vest_action = world.world_actions_by_id.get(id)
 		if is_instance_valid(vest_action):
@@ -17082,15 +17129,24 @@ func _bot_pos_v(bot_id: int) -> Vector3:
 		return (proxy as Node3D).global_position
 	return b.get("pos", Vector3.INF)
 
+func _merge_shared_location_progress(dst: Dictionary, src: Dictionary) -> void:
+	dst["risk"] = maxf(float(dst.get("risk", 0.0)), float(src.get("risk", 0.0)))
+	dst["combat_risk"] = maxf(float(dst.get("combat_risk", 0.0)), float(src.get("combat_risk", 0.0)))
+	dst["visits"] = maxf(float(dst.get("visits", 0)), float(src.get("visits", 0)))
+	var taken: Array = dst.get("firearm_ids_taken", [])
+	for id in src.get("firearm_ids_taken", []):
+		if not taken.has(id):
+			taken.append(id)
+	if not taken.is_empty():
+		dst["firearm_ids_taken"] = taken
+
 func _share_refine_intersection(ka: Dictionary, kb: Dictionary) -> int:
 	var n := 0
 	for loc_id in ka.keys():
 		if not kb.has(loc_id):
 			continue
 		var entry: Dictionary = ka[loc_id]
-		kb[loc_id]["risk"] = maxf(float(kb[loc_id].get("risk", 0.0)), float(entry.get("risk", 0.0)))
-		kb[loc_id]["combat_risk"] = maxf(float(kb[loc_id].get("combat_risk", 0.0)), float(entry.get("combat_risk", 0.0)))
-		kb[loc_id]["visits"] = maxf(float(kb[loc_id].get("visits", 0)), float(entry.get("visits", 0)))
+		_merge_shared_location_progress(kb[loc_id], entry)
 		n += 1
 	return n
 
@@ -17125,9 +17181,7 @@ func _share_new_locations(ka: Dictionary, kb: Dictionary, recv_pos: Vector3) -> 
 			kb[loc_id] = copy
 			moved += 1
 		elif not merged_id.is_empty():
-			kb[merged_id]["risk"] = maxf(float(kb[merged_id].get("risk", 0.0)), float(entry.get("risk", 0.0)))
-			kb[merged_id]["combat_risk"] = maxf(float(kb[merged_id].get("combat_risk", 0.0)), float(entry.get("combat_risk", 0.0)))
-			kb[merged_id]["visits"] = maxf(float(kb[merged_id].get("visits", 0)), float(entry.get("visits", 0)))
+			_merge_shared_location_progress(kb[merged_id], entry)
 			moved += 1
 	return moved
 

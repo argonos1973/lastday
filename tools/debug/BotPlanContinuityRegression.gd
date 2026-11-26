@@ -138,6 +138,31 @@ func run() -> void:
 	check(not Goals.bind_gear_target(m, b, blocked_retry),
 		"Gear nav_blocked still vetoes the unreachable military base")
 	b["_mem"]["failed_goals"] = {}
+	# El equipo comparte qué armas fijas salieron de cada zona militar: con las
+	# dos recogidas, la siguiente incursión debe ir a otra base en vez de repetir
+	# un viaje largo a tiendas ya vacías.
+	b["_mem"]["known_locations"]["military:202:435"] = {"id": "military:202:435", "kind": "military", "pos": [202.9, 0.4, 435.0]}
+	b["_mem"]["known_locations"]["military:300:200"]["firearm_ids_taken"] = ["tent_loot_rifle", "tent_loot_m4"]
+	var depleted_retry := {"action": "scavenge", "target": "military", "goal": "gear_up_at_military_base"}
+	check(Goals.bind_gear_target(m, b, depleted_retry) and depleted_retry.get("_dest_pos") == Vector3(202.9, 0.4, 435.0),
+		"A base with both fixed firearms taken is skipped for the next gear raid")
+	b["_mem"]["known_locations"]["military:300:200"]["firearm_ids_taken"] = []
+	m._note_military_firearm_pickup(b, {"id": "tent_loot_m4", "name": "Fusil de asalto", "pos": Vector3(300.0, 0.4, 200.0)})
+	check((b["_mem"]["known_locations"]["military:300:200"].get("firearm_ids_taken", []) as Array).has("tent_loot_m4"),
+		"Picking a fixed military firearm records that base depletion")
+	var shared_dst := {"firearm_ids_taken": ["tent_loot_m4"]}
+	m._merge_shared_location_progress(shared_dst, {"firearm_ids_taken": ["tent_loot_m4", "city_tent_loot_rifle"]})
+	check((shared_dst["firearm_ids_taken"] as Array).size() == 2,
+		"Allied knowledge shares firearm depletion without duplicates")
+	world.water_rect = Rect2(100.0, -5.0, 20.0, 10.0)
+	world.water_depth = 1.2
+	check(Goals.gear_route_water_penalty(m, Vector3(90, 0.4, 0), Vector3(130, 0.4, 0)) > 0.0,
+		"Deep water on the approach penalizes a military target")
+	world.water_depth = 0.45
+	check(Goals.gear_route_water_penalty(m, Vector3(90, 0.4, 0), Vector3(130, 0.4, 0)) == 0.0,
+		"A shallow road ford does not penalize a military target")
+	world.water_rect = Rect2(100000.0, 100000.0, 4.0, 4.0)
+	world.water_depth = 1.0
 	b["proxy"].set_meta("saved_backpack", "Mochila militar")
 	check(Goals.military_gear_count(b["proxy"]) == 1, "Equipped military backpack counts as military gear")
 	var far_gear := d.duplicate()
