@@ -2076,7 +2076,10 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# agua fria drena temp mas rapido que el fuego la sube).
 	if world != null and world.has_method("get_river_depth_at"):
 		var cur_depth := float(world.get_river_depth_at(proxy.global_position))
-		var cold_water := cur_depth > 0.05 and _bot_cold_water_guard(b)
+		# Ya mojado, un vado al tobillo no es una emergencia distinta de la
+		# orilla seca: tratarlo como escape absoluto oscilaba contra el objetivo
+		# que cruzaba ese mismo vado y dejaba al bot corriendo en el sitio.
+		var cold_water := cur_depth > WADE_DEPTH and _bot_cold_water_guard(b)
 		if cur_depth > FORD_MAX_DEPTH or cold_water:
 			b["drink_at"] = Vector3.INF
 			b["drinking_timer"] = 0.0
