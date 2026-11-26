@@ -2871,6 +2871,11 @@ func run() -> void:
 	var tent_local := (tent_wp - tent_pos).rotated(Vector3.UP, -tent_yaw)
 	check(tent_wp != tent_pos and tent_local.z > 6.0 and absf(tent_local.x) < 0.2,
 		"Tienda: desde atras el waypoint es la aproximacion exterior al vano")
+	world._server_door_states["Casa abandonada 3 Door"] = true
+	var threshold_wp: Vector3 = mgr._resolve_door_approach_goal(elena, Vector3(23.15, 0.1, 22.02), Vector3(23.0, 0.1, 18.0))
+	check(threshold_wp == Vector3(23.0, 0.1, 18.0),
+		"Puerta: ya alineado en el vano no oscila a una alineacion interior")
+	world._server_door_states["Casa abandonada 3 Door"] = false
 	check(not world.bot_try_open_door_at(Vector3(59.0, 0.0, 52.0)),
 		"Puerta: ya abierta no se reabre")
 	check(not world._is_near_wildlife_blocker(Vector3(60.0, 0.0, 58.0), 0.0),

@@ -13593,7 +13593,7 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 			if not is_open or along < -0.25 or across > 0.65 or along > 3.0:
 				return Vector3(dc.x + out_dir.x * 2.4, cur.y, dc.z + out_dir.y * 2.4)
 			if along > -0.8:
-				return Vector3(dc.x - out_dir.x * 1.4, cur.y, dc.z - out_dir.y * 1.4)
+				return goal
 			return goal
 		# Saliendo de la casa al exterior: alinearse primero con el vano interior
 		# y cruzar recto hacia fuera.
