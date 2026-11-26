@@ -2832,6 +2832,30 @@ func run() -> void:
 		"Puerta: el estado del servidor queda abierto")
 	check(world._check_door_open(null, world.wildlife_blockers[house_idx]),
 		"Puerta: _check_door_open la da por abierta")
+	# Casa abandonada 3 real: el punto de aproximacion (z=24.15) cae en la
+	# celda nav z=24. Esa celda debe ser alcanzable con la puerta cerrada sin
+	# abrir el interior (z=20 sigue bloqueado).
+	var nav3_idx: int = world._register_wildlife_blocker(Vector3(23.0, 0.0, 18.0), 7.0)
+	var nav3: Dictionary = world.wildlife_blockers[nav3_idx]
+	nav3["house_bounds"] = Rect2(18.2, 13.75, 9.6, 8.5)
+	nav3["door_name"] = "Casa abandonada 3 Door"
+	nav3["door_pos"] = Vector3(22.1, 0.0, 21.75)
+	nav3["door_center"] = Vector3(23.15, 0.0, 21.75)
+	nav3["door_out_dir"] = Vector2(0.0, 1.0)
+	world._server_door_states["Casa abandonada 3 Door"] = false
+	check(world._is_in_bot_house_nav(Vector3(23.0, 0.0, 24.0), nav3),
+		"Puerta: la celda de aproximacion exterior es navegable con la puerta cerrada")
+	check(not world._is_in_bot_house_nav(Vector3(23.0, 0.0, 20.0), nav3),
+		"Puerta: el interior sigue bloqueado con la puerta cerrada")
+	check(not world._is_in_bot_house_nav(Vector3(20.0, 0.0, 24.0), nav3),
+		"Puerta: el corredor cerrado no abre el flanco de la casa")
+	var nav3_grid := NavPathfinding.new()
+	nav3_grid.build([nav3], [])
+	nav3_grid.update_door_cache([nav3], Callable(world, "_is_in_doorway_passage"), Callable(world, "_is_in_barn_doorway_passage"), Callable(world, "_is_in_bot_house_nav"))
+	check(not nav3_grid.is_cell_blocked(nav3_grid.world_to_grid(Vector3(23.0, 0.0, 24.0))),
+		"Puerta: la nav de bots alcanza la celda de aproximacion cerrada")
+	check(nav3_grid.is_cell_blocked(nav3_grid.world_to_grid(Vector3(23.0, 0.0, 20.0))),
+		"Puerta: la nav de bots no atraviesa el interior cerrado")
 	check(not world.bot_try_open_door_at(Vector3(59.0, 0.0, 52.0)),
 		"Puerta: ya abierta no se reabre")
 	check(not world._is_near_wildlife_blocker(Vector3(60.0, 0.0, 58.0), 0.0),

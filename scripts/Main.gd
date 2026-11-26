@@ -18601,7 +18601,21 @@ func _is_in_bot_house_nav(pos: Vector3, blocker: Dictionary) -> bool:
 	# en las 4 paredes salvo el puente recto del vano cuando la puerta está abierta.
 	if not bounds.grow(1.8).has_point(p):
 		return true
-	if not _check_door_open(blocker.get("door", null), blocker):
+	var dc_closed := _blocker_door_center(blocker, blocker_pos, bounds)
+	var door_is_open := _check_door_open(blocker.get("door", null), blocker)
+	if not door_is_open:
+		# La celda de 2 m que contiene el punto de aproximacion puede seguir
+		# dentro de la banda de muro por redondeo (Casa 3: z=24 para una puerta
+		# en z=21.75). Liberar solo el corredor EXTERIOR permite llegar al
+		# alcance de apertura; el interior sigue solido hasta abrir de verdad.
+		if dc_closed.is_finite():
+			var out_closed := _blocker_door_out_dir(blocker, blocker_pos, bounds)
+			var side_closed := Vector2(-out_closed.y, out_closed.x)
+			var rel_closed := p - Vector2(dc_closed.x, dc_closed.z)
+			var along_closed := rel_closed.dot(out_closed)
+			var across_closed := absf(rel_closed.dot(side_closed))
+			if across_closed <= 1.35 and along_closed >= -0.2 and along_closed <= 4.2:
+				return true
 		return false
 	if blocker.get("barn_door_always_open", false) == true:
 		if _is_in_barn_doorway_passage(pos, blocker):
