@@ -810,6 +810,40 @@ func _s27() -> void:
 		"S27 sin aprendizaje el hambre 58 aun no rompe la formacion")
 	leader.queue_free()
 
+func _s28() -> void:
+	print("S28: sed aprendida rompe la formacion antes del borde letal")
+	var env := _new_world(15.0)
+	env.dc.time_of_day = 14.0
+	var world: SimWorld = env.world
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[904]
+	world.river_segs = [{"center": Vector3(8.0, 0.0, 0.0), "size": Vector2(8.0, 4.0), "yaw": 0.0}]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 88.0, "thirst": 50.0, "sleep": 88.0, "body_temperature": 36.6, "inventory": []})
+	mgr._ensure_bot_memory(904)
+	b["_mem"]["death_lessons"] = {"dehydrated": 20.0}
+	var leader := Node3D.new()
+	world.add_child(leader)
+	leader.global_position = Vector3(-2.0, 0.4, 0.0)
+	b["_s_leader"] = leader
+	b["drink_scan"] = 0.0
+	b["drink_at"] = Vector3.INF
+	check(mgr._bot_thirst_vital_break_line(b) >= 53.0 and mgr._bot_vital_break(b),
+		"S28 las lecciones elevan la ruptura vital por sed (line=%.1f)" % mgr._bot_thirst_vital_break_line(b))
+	mgr._tick_bot(b, 0.1)
+	check(str(b.get("_act", "")) == "drink" and (b.get("drink_at") as Vector3) != Vector3.INF,
+		"S28 el seguidor con sed aprendida rompe hacia el agua (act=%s goal=%s)" % [str(b.get("_act", "")), str(b.get("drink_at"))])
+	var b2: Dictionary = mgr.bots[901]
+	_place_bot(b2, Vector3(0.0, 0.4, 0.0), {"hunger": 88.0, "thirst": 50.0, "sleep": 88.0, "body_temperature": 36.6, "inventory": []})
+	mgr._ensure_bot_memory(901)
+	b2["_mem"]["death_lessons"] = {}
+	b2["_s_leader"] = leader
+	b2["drink_scan"] = 0.0
+	b2["drink_at"] = Vector3.INF
+	mgr._tick_bot(b2, 0.1)
+	check(not mgr._bot_vital_break(b2) and str(b2.get("_act", "")) != "drink",
+		"S28 sin aprendizaje la sed 50 aun no rompe la formacion (act=%s)" % str(b2.get("_act", "")))
+	leader.queue_free()
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
@@ -839,6 +873,10 @@ func run() -> void:
 		return
 	if "--only-s27" in OS.get_cmdline_user_args():
 		_s27()
+		quit(1 if failures else 0)
+		return
+	if "--only-s28" in OS.get_cmdline_user_args():
+		_s28()
 		quit(1 if failures else 0)
 		return
 	if "--only-s19" in OS.get_cmdline_user_args():

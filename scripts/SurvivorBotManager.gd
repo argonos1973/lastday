@@ -14411,11 +14411,19 @@ func _bot_hunger_vital_break_line(b: Dictionary) -> float:
 		line += 6.0
 	return minf(65.0, line)
 
+func _bot_thirst_vital_break_line(b: Dictionary) -> float:
+	var mem: Dictionary = b.get("_mem", {})
+	var lessons := float((mem.get("death_lessons", {}) as Dictionary).get("dehydrated", 0))
+	var line := 35.0 + minf(18.0, lessons * 6.0)
+	if bool(mem.get("scarcity", false)):
+		line += 6.0
+	return minf(55.0, line)
+
 func _bot_vital_break(b: Dictionary) -> bool:
 	var proxy: Node3D = b["proxy"]
 	if _bot_is_freezing(b) or _bot_is_exhausted(b):
 		return true
-	if float(b["thirst"]) < 35.0 and not _bot_has_drink(proxy):
+	if float(b["thirst"]) < _bot_thirst_vital_break_line(b) and not _bot_has_drink(proxy):
 		return true
 	if float(b["hunger"]) < _bot_hunger_vital_break_line(b) and not _bot_has_edible_food(proxy):
 		return true
