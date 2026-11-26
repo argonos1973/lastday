@@ -1873,6 +1873,32 @@ func run() -> void:
 		"Incursion militar permite recoger cerillas para encender calor y luz")
 	elena["hunger"] = equip_hunger
 	world._dropped_items = equip_loot
+	var cold_loot_stats: SurvivalStats = elena["vstats"]
+	var before_cold_loot := [cold_loot_stats.body_temperature, cold_loot_stats.wetness, cold_loot_stats.sleep, elena["health"]]
+	cold_loot_stats.body_temperature = 35.8
+	cold_loot_stats.wetness = 0.0
+	cold_loot_stats.sleep = 80.0
+	elena["health"] = 100.0
+	var nearby_gun := gear.duplicate()
+	nearby_gun["pos"] = elena_proxy.global_position + Vector3(18, 0, 0)
+	check(mgr._bot_loot_allowed_while_freezing(elena, nearby_gun, false),
+		"Frio leve seco no veta el primer fusil observado a 18 m")
+	nearby_gun["pos"] = elena_proxy.global_position + Vector3(21, 0, 0)
+	check(not mgr._bot_loot_allowed_while_freezing(elena, nearby_gun, false),
+		"Recogida de fusil con frio no abre una expedicion larga")
+	nearby_gun["pos"] = elena_proxy.global_position + Vector3(2, 0, 0)
+	cold_loot_stats.wetness = 0.5
+	check(not mgr._bot_loot_allowed_while_freezing(elena, nearby_gun, false),
+		"Bot mojado sigue calentandose antes de recoger fusiles")
+	cold_loot_stats.wetness = 0.0
+	cold_loot_stats.body_temperature = 35.3
+	check(not mgr._bot_loot_allowed_while_freezing(elena, nearby_gun, false),
+		"Hipotermia instalada sigue priorizando calor sobre fusiles")
+	cold_loot_stats.body_temperature = before_cold_loot[0]
+	cold_loot_stats.wetness = before_cold_loot[1]
+	cold_loot_stats.sleep = before_cold_loot[2]
+	elena["health"] = before_cold_loot[3]
+	cold_loot_stats = null
 	elena["equip_mission"] = false
 	# Recogerla de verdad por la via normal de saqueo la mete en su inventario
 	mgr._collect_loot_entry(elena, gear)

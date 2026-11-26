@@ -11531,12 +11531,21 @@ func _bot_loot_allowed_while_freezing(b: Dictionary, entry: Dictionary, desperat
 		return false
 	var proxy: Node3D = b["proxy"]
 	var lpos := _loot_entry_pos(entry)
-	if Vector2(proxy.global_position.x - lpos.x, proxy.global_position.z - lpos.z).length() > 10.0:
+	var nm := str(entry.get("name", ""))
+	var tp := str(entry.get("type", ""))
+	# Frío leve, seco y estable: unos segundos hasta el primer fusil visto
+	# mejoran la defensa. No abre expediciones, no cruza agua ni permite
+	# acaparar armas mientras otro bot sigue desarmado.
+	var first_firearm := nm in GoalValidator.MILITARY_FIREARMS and st != null \
+		and st.body_temperature >= 35.7 and st.wetness <= 0.12 and st.sleep >= 20.0 \
+		and float(b.get("health", 100.0)) >= 65.0 \
+		and _bot_item_count(proxy, "Fusil de asalto") + _bot_item_count(proxy, "Rifle francotirador") == 0
+	if Vector2(proxy.global_position.x - lpos.x, proxy.global_position.z - lpos.z).length() > (20.0 if first_firearm else 10.0):
 		return false
 	if not InterruptionManager.dry_recovery_leg(world, proxy.global_position, lpos):
 		return false
-	var nm := str(entry.get("name", ""))
-	var tp := str(entry.get("type", ""))
+	if first_firearm:
+		return true
 	if tp in ["clothing", "tool_axe", "tool_torch", "tool_matches", "medical", "backpack"]:
 		return true
 	if nm in BUSH_TOOLS or nm in ["Piedra", "Cuerda", "Trapos", "Antorcha", "Cerillas"]:
@@ -20168,6 +20177,11 @@ func get_full_web_status() -> Dictionary:
 			"equip_mission": bool(b.get("equip_mission", false)),
 			"cold_roof_insufficient": bool(b.get("_cold_roof_insufficient", false)),
 			"cold_roof_recovery": bool(b.get("_cold_roof_recovery", false)),
+			"cold_alert": bool(b.get("_cold_alert", false)),
+			"craft": str(b.get("_craft_state", {}).get("recipe", {}).get("output", {}).get("name", "")),
+			"craft_left": snappedf(float(b.get("_craft_state", {}).get("t", 0.0)), 0.1),
+			"gather_id": str(b.get("_gather", {}).get("id", "")),
+			"gather_kind": str(b.get("_gather", {}).get("kind", "")),
 			"rifle_ammo": proxy.get_meta("bot_gun_ammo", proxy.get_meta("saved_extra", {}).get("rifle_ammo", {})) if is_instance_valid(proxy) else {},
 		}
 		snap["inventory"] = (proxy.get_meta("saved_inventory", []) as Array) if proxy != null and is_instance_valid(proxy) else []
