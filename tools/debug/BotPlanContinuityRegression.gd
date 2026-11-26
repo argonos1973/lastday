@@ -215,9 +215,14 @@ func run() -> void:
 	check(not m._ai_directive_completed(b, d), "Broken knife does not complete equipment")
 	b["proxy"].set_meta("saved_inventory", [{"name": "Arco reforzado", "type": "weapon", "durability": 0.0}, {"name": "Flecha", "type": "ammo_arrow"}])
 	check(not m._ai_directive_completed(b, d), "Broken bow with arrows still fails")
-	b["proxy"].set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon", "durability": 100.0}, {"name": "Munición 5.56", "type": "ammo", "quantity": 1}])
+	b["proxy"].set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon", "durability": 100.0},
+		{"name": "Munición 5.56", "type": "ammo", "quantity": 1},
+		{"name": "Chaqueta militar", "type": "clothing", "quantity": 1},
+		{"name": "Pantalones militares", "type": "clothing", "quantity": 1},
+	])
 	m._ai_note_loot(b, "Fusil de asalto", "weapon")
-	check(m._ai_directive_completed(b, d), "Functional rifle with matching ammunition completes equipment")
+	check(m._ai_directive_completed(b, d), "Functional rifle, ammunition and military clothing complete equipment")
 	check(m._ai_advance_plan(902, b, d), "Equipment success advances to return leg")
 	d = b["ai_directive"]
 	check(d["plan_id"] == id and d["step_index"] == 1 and d["action"] == "return_home",

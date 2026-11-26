@@ -47,6 +47,53 @@ static func decent_weapon(m, proxy: Node3D) -> String:
 			return name
 	return ""
 
+# Equipo militar real, no solo "algo con lo que defenderse". Un cuchillo o un
+# arco bastan para sobrevivir al primer dia, pero no deben cerrar una mision
+# llamada gear_up_at_military_base: el objetivo es salir con arma de fuego
+# municionada y parte del uniforme/equipo militar.
+const MILITARY_FIREARMS := ["Fusil de asalto", "Rifle francotirador"]
+const MILITARY_GEAR_NAMES := [
+	"Pantalones militares", "Pantalones militares azules", "Pantalones militares negros II",
+	"Pantalones camuflaje", "Pantalones camuflaje desert",
+	"Chaqueta militar", "Chaqueta militar azul", "Chaqueta militar negra II",
+	"Chaqueta camuflaje", "Chaqueta camuflaje desert", "Chaqueta militar digital",
+	"Guantes militares", "Botas militares", "Casco militar", "Gorra militar",
+	"Chaleco táctico", "Mochila militar",
+]
+
+static func military_firearm(m, proxy: Node3D) -> String:
+	if not is_instance_valid(proxy):
+		return ""
+	for it in proxy.get_meta("saved_inventory", []):
+		if not it is Dictionary or int(it.get("quantity", 1)) <= 0 or float(it.get("durability", 100.0)) <= 0:
+			continue
+		var name := str(it.get("name", ""))
+		if name in MILITARY_FIREARMS and m._bot_gun_any_ammo(proxy, name):
+			return name
+	return ""
+
+static func military_gear_count(proxy: Node3D) -> int:
+	if not is_instance_valid(proxy):
+		return 0
+	var seen := {}
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and int(it.get("quantity", 1)) > 0:
+			var nm := str(it.get("name", ""))
+			if nm in MILITARY_GEAR_NAMES:
+				seen[nm] = true
+	var extra: Dictionary = proxy.get_meta("saved_extra", {})
+	var worn: Dictionary = extra.get("worn_clothing", {})
+	for nm in worn.keys():
+		if str(nm) in MILITARY_GEAR_NAMES:
+			seen[str(nm)] = true
+	for nm in str(proxy.get_meta("saved_clothing", "")).split(",", false):
+		if nm in MILITARY_GEAR_NAMES:
+			seen[nm] = true
+	return seen.size()
+
+static func military_loadout_complete(m, proxy: Node3D) -> bool:
+	return not military_firearm(m, proxy).is_empty() and military_gear_count(proxy) >= 2
+
 static func near(b: Dictionary, pos, radius: float) -> bool:
 	var proxy = b.get("proxy")
 	if not is_instance_valid(proxy) or not pos is Vector3 or not pos.is_finite():
@@ -195,8 +242,8 @@ static func result(m, b: Dictionary, d: Dictionary) -> Dictionary:
 	var dest = d.get("pos", d.get("_dest_pos", Vector3.INF))
 	var weapon := decent_weapon(m, proxy) if need in ["gear", "weapons"] else ""
 	if need == "gear":
-		done = not weapon.is_empty()
-		reason = "functional_weapon" if done else "insufficient_equipment"
+		done = military_loadout_complete(m, proxy)
+		reason = "military_loadout" if done else "military_equipment_pending"
 	else:
 		match action:
 			"seek_ally":

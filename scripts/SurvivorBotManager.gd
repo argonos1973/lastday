@@ -17452,16 +17452,16 @@ func _ai_stat_reason(b: Dictionary, reason: String) -> void:
 # ante una situación idéntica, Elena (supervivencia/curiosidad), Carlos
 # (valentía/cooperación/fortificación) y Kael (agresividad/desconfianza/saqueo)
 # producen decisiones distintas y sirven también como fallback cuando Groq no está.
-# Incursion de equipo autonoma ("equip_mission" sin jugador): el bot sin un
-# arma decente — fusil con municion, arco con flechas o acero de verdad
-# (Hacha, Cuchillo; los palos afilados y el hueso/piedra tallados no
-# cuentan) — que ya conoce una base militar (o, en su defecto, la ciudad)
+# Incursion de equipo autonoma ("equip_mission" sin jugador): sobrevivir con
+# un cuchillo o un arco no basta para dar por cerrada la progresion militar.
+# Mientras falte un arma de fuego municionada o el uniforme/equipo militar
+# basico, un bot que ya conoce una base militar (o, en su defecto, la ciudad)
 # monta su propia expedicion a por equipo. Devuelve el kind a saquear o "".
 func _bot_gear_raid_kind(b: Dictionary) -> String:
 	var proxy = b.get("proxy")
 	if proxy == null or not is_instance_valid(proxy):
 		return ""
-	if not GoalValidator.decent_weapon(self, proxy).is_empty():
+	if GoalValidator.military_loadout_complete(self, proxy):
 		return ""
 	var known: Dictionary = (b.get("_mem", {}) as Dictionary).get("known_locations", {})
 	for kid in known.keys():

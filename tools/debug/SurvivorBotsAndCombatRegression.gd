@@ -8110,10 +8110,18 @@ func run() -> void:
 	check(str(grd3.get("action", "")) != "scavenge" and not bool(rb.get("equip_mission", false)),
 		"10Y6: incursion vetada tras stuck_timeout no se reemite (act=%s)" % grd3.get("action", ""))
 	(rb["_mem"] as Dictionary)["failed_goals"] = {}
-	# Con arma decente la incursion no se propone.
+	# Un cuchillo/arco es supervivencia basica, no equipo militar: la incursion
+	# sigue abierta hasta que haya arma de fuego municionada y uniforme militar.
 	rp.set_meta("saved_inventory", [{"name": "Cuchillo", "type": "weapon", "quantity": 1, "durability": 80.0}])
+	check(mgr._bot_gear_raid_kind(rb) == "military",
+		"10Y7a: con Cuchillo pero sin equipo militar la incursion sigue activa")
+	rp.set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon_rifle", "quantity": 1, "durability": 100.0},
+		{"name": "Chaqueta militar", "type": "clothing", "quantity": 1, "durability": 100.0},
+		{"name": "Pantalones militares", "type": "clothing", "quantity": 1, "durability": 100.0},
+	])
 	check(mgr._bot_gear_raid_kind(rb) == "",
-		"10Y7: con Cuchillo en el inventario ya no hace falta incursion")
+		"10Y7b: fusil municionado y dos piezas militares cierran la incursion")
 	rp.set_meta("saved_inventory", [])
 	# Sembrar/forrajear en ruta cuenta como trabajo legitimo del paso.
 	rb["aggro_target"] = null
