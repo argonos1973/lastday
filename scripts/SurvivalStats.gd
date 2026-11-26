@@ -38,6 +38,12 @@ var survival_seconds := 0.0
 var overeat_count := 0
 var overdrink_count := 0
 
+# El mundo corre en tiempo real: la noche dura horas reales, asi que hambre y
+# sed no pueden consumirse al ritmo diurno — dormir bien en refugio no deberia
+# costar mas que una cena contundente, y ni asi un jugador/bot podria reunir
+# las ~15 piezas de carne que exigia el drenaje antiguo cada noche.
+const NIGHT_DRAIN_MULT := 0.2
+
 var hunger_decay := 0.12
 var thirst_decay := 0.10
 var energy_decay := 0.06
@@ -85,10 +91,11 @@ func tick(delta: float, sprinting: bool, ambient_temperature: float, sheltered: 
 	var temp_hunger_mult := 1.0
 	if body_temperature < 36.0:
 		temp_hunger_mult = 1.0 + (36.0 - body_temperature) * 0.3
-	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier * sprint_multiplier * 0.5 * sleep_factor * shelter_factor * temp_hunger_mult)
+	var night_drain := NIGHT_DRAIN_MULT if night else 1.0
+	hunger = max(0.0, hunger - hunger_decay * delta * move_multiplier * sprint_multiplier * 0.5 * sleep_factor * shelter_factor * temp_hunger_mult * night_drain)
 	if hunger < max_stat - 10.0:
 		overeat_count = 0
-	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * shelter_factor * temp_thirst_mult)
+	thirst = max(0.0, thirst - thirst_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * shelter_factor * temp_thirst_mult * night_drain)
 	if thirst < max_stat - 10.0:
 		overdrink_count = 0
 	energy = max(0.0, energy - energy_decay * delta * sprint_multiplier * move_multiplier * sleep_factor * (1.0 + carry_ratio * 8.0))
