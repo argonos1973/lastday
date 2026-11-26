@@ -8482,6 +8482,14 @@ func _rel_time_decay(b: Dictionary) -> void:
 		if int(rel.get("attacked", 0)) > 2 and now_ms - scar >= REL_SCAR_MS:
 			rel["attacked"] = int(rel.get("attacked", 0)) - 1
 			rel["scar_t"] = now_ms
+		var refused_n := int(rel.get("refused", 0))
+		if refused_n > 0:
+			var rt := int(rel.get("refused_t", 0))
+			var elapsed := now_ms - rt if rt > 0 else REL_SCAR_MS * refused_n
+			var forgiven := int(elapsed / REL_SCAR_MS)
+			if forgiven > 0:
+				rel["refused"] = maxi(0, refused_n - forgiven)
+				rel["refused_t"] = now_ms - int(elapsed % REL_SCAR_MS) if int(rel["refused"]) > 0 else now_ms
 
 # Gesto de paz autonomo: con un rival de su faccion cerca, herida abierta
 # (miedo/odio/rencor) pero sangre no fresca, el bot puede dejarle comida o
@@ -12009,7 +12017,7 @@ func _bot_craft_preserves_fire(b: Dictionary, recipe: Dictionary) -> bool:
 	# es exactamente la prioridad vital: una antorcha no vale más que desangrarse.
 	var medical_reserve := _bot_medical_rag_reserve(b, proxy)
 	if inputs.has("Trapos") and not ["Venda", "Antorcha"].has(out_name) and medical_reserve > 0:
-		if _bot_item_count(proxy, "Trapos") - int(inputs.get("Trapos", 0)) < medical_reserve:
+		if _bot_medical_rag_potential(b, proxy) - int(inputs.get("Trapos", 0)) < medical_reserve:
 			return false
 	var cold_rope_emergency := _bot_is_freezing(b) or (st_fire != null and not st_fire.dead and st_fire.body_temperature <= 35.95)
 	if inputs.has("Trapos") and out_name != "Cuerda" \
@@ -17495,6 +17503,9 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 		"help", "ally":
 			if kind == "help":
 				rel["helped"] = int(rel.get("helped", 0)) + 1
+				if int(rel.get("refused", 0)) > 0:
+					rel["refused"] = int(rel.get("refused", 0)) - 1
+					rel["refused_t"] = Time.get_ticks_msec()
 			var coop_mul := 0.75 + float(pers.get("cooperation", 0.6)) * 0.6
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) + step * 0.75 * coop_mul, -1.0, 1.0), 0.001)
 			var host_decay := step * 0.55
@@ -17533,6 +17544,7 @@ func record_social_event(bot_id: int, actor_key: String, actor_name: String, kin
 			# no siga sumando vinculo (credito "ally" en pausa) ni el olvido
 			# enfrie el agravio recien hecho.
 			rel["refused"] = int(rel.get("refused", 0)) + 1
+			rel["refused_t"] = Time.get_ticks_msec()
 			rel["harm_t"] = Time.get_ticks_msec()
 			var dist_mul2 := 0.8 + float(pers.get("distrust", 0.4)) * 0.6
 			rel["trust"] = snappedf(clampf(float(rel.get("trust", 0.0)) - step * 0.55 * dist_mul2, -1.0, 1.0), 0.001)
@@ -19660,7 +19672,7 @@ func _restore_relationship_clocks(rels: Dictionary, snapshot: Dictionary, now_ms
 	for value in rels.values():
 		if not (value is Dictionary):
 			continue
-		for key in ["harm_t", "scar_t", "bond_t"]:
+		for key in ["harm_t", "scar_t", "bond_t", "refused_t"]:
 			if not value.has(key):
 				continue
 			if has_clock:
@@ -21762,7 +21774,7 @@ func _bot_medical_rag_reserve(b: Dictionary, proxy: Node3D) -> int:
 	var st: SurvivalStats = b.get("vstats")
 	if st != null and st.bleeding > 0.0:
 		return 3
-	if _bot_is_freezing(b):
+	if st != null and not st.dead and st.body_temperature <= 35.3:
 		return 0
 	var mem: Dictionary = b.get("_mem", {})
 	var lessons: Dictionary = mem.get("death_lessons", {})
@@ -22103,13 +22115,30 @@ func _find_fire_prep_loot(b: Dictionary, radius: float, materials_only := false,
 # recetas) no son prendas: sin este filtro el bot recolectaba cuchillos como
 # si fueran ropa para cortar.
 func _bot_cuts_into_trapos(nm: String) -> bool:
+	return _bot_trapos_yield(nm) > 0
+
+func _bot_trapos_yield(nm: String) -> int:
 	if CraftingSystem._is_tool(nm):
-		return false
+		return 0
+	var best := 0
 	for r in CraftingSystem.RECIPES:
-		if str((r.get("output", {}) as Dictionary).get("name", "")) == "Trapos" \
-				and (r.get("inputs", {}) as Dictionary).has(nm):
-			return true
-	return false
+		var out: Dictionary = r.get("output", {})
+		if str(out.get("name", "")) == "Trapos" and (r.get("inputs", {}) as Dictionary).has(nm):
+			best = maxi(best, int(out.get("quantity", 1)))
+	return best
+
+func _bot_medical_rag_potential(b: Dictionary, proxy: Node3D) -> int:
+	var total := _bot_item_count(proxy, "Trapos")
+	for it in proxy.get_meta("saved_inventory", []):
+		if it is Dictionary and float(it.get("durability", 100.0)) > 0.0:
+			total += _bot_trapos_yield(str(it.get("name", ""))) * maxi(1, int(it.get("quantity", 1)))
+	var extra: Dictionary = proxy.get_meta("saved_extra", {})
+	var worn_items: Dictionary = extra.get("worn_clothing", {})
+	for nm_v in str(b.get("clothing", "")).split(",", false):
+		var cn := str(nm_v)
+		if float(PlayerController.CLOTHING_WARMTH.get(cn, 0.0)) <= 0.12 and float((worn_items.get(cn, {}) as Dictionary).get("durability", 100.0)) > 0.0:
+			total += _bot_trapos_yield(cn)
+	return total
 
 # Mochila llena sin luz: por un objeto critico de fuego (antorcha, palo,
 # tronco, trapos o ropa para cortar) vale soltar lo menos

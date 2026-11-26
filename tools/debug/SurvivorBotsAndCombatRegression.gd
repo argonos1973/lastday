@@ -7079,6 +7079,30 @@ func run() -> void:
 	mgr._sync_team_base(b_nt)
 	check(int(b_nt.get("team_leader_id", -1)) == 0 and str(b_nt.get("faction", "")) == "hostile",
 		"10J5x5: 3 negativas de ayuda al grupo tambien expulsan")
+	# Las negativas antiguas no son una condena perpetua: el tiempo de paz y
+	# una ayuda real las perdonan. Asi una deuda de hace vidas no expulsa al
+	# bot en el primer minuto de una nueva alianza.
+	var b_ld_x: Dictionary = mgr.bots[901]
+	rel_ld_vs_nt2["refused"] = 3
+	rel_ld_vs_nt2["refused_t"] = Time.get_ticks_msec() - mgr.REL_SCAR_MS * 4
+	rel_ld_vs_nt2["harm_t"] = int(rel_ld_vs_nt2["refused_t"])
+	mgr._rel_time_decay(b_ld_x)
+	check(int(rel_ld_vs_nt2.get("refused", -1)) == 0,
+		"10J5x6: el tiempo de paz perdona negativas antiguas (refused=%s)" % str(rel_ld_vs_nt2.get("refused", -1)))
+	b_nt["team_leader_id"] = 901
+	check(not mgr._team_check_expulsion(b_nt),
+		"10J5x6: perdonadas esas negativas, rehacer el equipo no expulsa al reincorporado")
+	rel_ld_vs_nt2["refused"] = 3
+	rel_ld_vs_nt2.erase("refused_t")
+	rel_ld_vs_nt2.erase("harm_t")
+	mgr._rel_time_decay(b_ld_x)
+	check(int(rel_ld_vs_nt2.get("refused", -1)) == 0,
+		"10J5x6: la migracion trata negativas legacy sin fecha como antiguas (refused=%s)" % str(rel_ld_vs_nt2.get("refused", -1)))
+	rel_ld_vs_nt2["refused"] = 2
+	mgr.record_social_event(901, "bot_902", "Carlos", "help", 0.3, "test_amends")
+	check(int(rel_ld_vs_nt2.get("refused", -1)) == 1,
+		"10J5x6: una ayuda real repara una negativa pendiente (refused=%s)" % str(rel_ld_vs_nt2.get("refused", -1)))
+	b_nt["team_leader_id"] = 0
 	# Restaurar x.
 	b_nt["_asked"] = save_asked_x
 	b_nt["_survive_decision"] = save_surv_x
@@ -8496,9 +8520,13 @@ func run() -> void:
 	check(mgr._bot_medical_rag_reserve(b_zmed, p_zmed) == 3,
 		"10Z6a: el preenfriamiento no desactiva la reserva médica; solo el frío ya peligroso puede reclamarla")
 	st_zmed.body_temperature = 35.4
+	check(mgr._bot_medical_rag_reserve(b_zmed, p_zmed) == 3,
+		"10Z6a: el frío de equilibrio nocturno no reclama la reserva antes de tiempo")
+	st_zmed.body_temperature = 35.25
 	check(mgr._bot_medical_rag_reserve(b_zmed, p_zmed) == 0,
-		"10Z6a: la hipotermia real sí puede reclamar los trapos para la cadena de fuego")
+		"10Z6a: solo la hipotermia inminente reclama los trapos para la cadena de fuego")
 	st_zmed.body_temperature = 36.6
+	b_zmed["clothing"] = "Zapatillas"
 	var torch_rec10z := {}
 	var rope_rec10z := {}
 	var bandage_rec10z := {}
@@ -8521,6 +8549,17 @@ func run() -> void:
 		{"name":"Trapos","type":"resource","quantity":5,"weight":0.05}])
 	check(mgr._bot_craft_preserves_fire(b_zmed, torch_rec10z) and mgr._bot_craft_preserves_fire(b_zmed, rope_rec10z),
 		"10Z6a: con excedente real sí conviven reserva médica y cadena de fuego")
+	b_zmed["clothing"] = "Pantalones,Zapatillas"
+	p_zmed.set_meta("saved_inventory", [
+		{"name":"Palo","type":"resource","quantity":4,"weight":0.3},
+		{"name":"Trapos","type":"resource","quantity":1,"weight":0.05}])
+	check(not mgr._bot_craft_preserves_fire(b_zmed, rope_rec10z),
+		"10Z6a: un trapo más los pantalones aún no bastan para cuerda y venda")
+	p_zmed.set_meta("saved_inventory", [
+		{"name":"Palo","type":"resource","quantity":4,"weight":0.3},
+		{"name":"Trapos","type":"resource","quantity":3,"weight":0.05}])
+	check(mgr._bot_craft_preserves_fire(b_zmed, rope_rec10z),
+		"10Z6a: tres trapos más la fuente de dos de los pantalones sí permiten cuerda sin dejar al bot sin venda")
 
 	# El caso de Ataulfo: mochila llena, ropa básica aún puesta y un lobo pasivo
 	# al lado. La hemorragia debe abrir hueco soltando lastre, cortar camiseta y
