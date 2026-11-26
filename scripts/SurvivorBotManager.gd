@@ -2533,6 +2533,16 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		# el proximo escaneo de sed en ~4 s. Antes este return se ejecutaba
 		# siempre y el bot quedaba congelado en idle para siempre.
 
+	# Hambre critica con carne/pescado ya cocinable en la mochila: convertir
+	# esa comida segura gana al forrajeo incierto y a las tareas de campamento.
+	# La rama general de cocina queda mucho mas abajo; sin esta excepcion un
+	# bot podia morir de inanicion persiguiendo setas con carne, espeton,
+	# troncos y palos encima.
+	if float(b["hunger"]) < 26.0 and not _bot_has_edible_food(proxy) and _bot_can_cook_raw_meat(proxy):
+		if _bot_try_cook_meat(b, delta):
+			b["_act"] = "cook"
+			return
+
 	# 4b) Hambre sin comida comestible: forrajeo — setas (eat_food) y arboles
 	# frutales (pick_fruit), lo mismo que buscaria un jugador hambriento.
 	if not checked_food and _bot_try_forage(b, delta):

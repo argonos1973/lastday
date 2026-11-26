@@ -2812,6 +2812,65 @@ func run() -> void:
 	elena_proxy.get_meta("saved_inventory", []).append({"name": "Cuchillo", "type": "weapon", "weight": 0.2, "quantity": 1, "use_value": 10.0, "durability": 80.0, "max_durability": 80.0})
 	check(mgr._is_loot_desirable(elena, "Lata de guiso", "food"),
 		"Lata: con cuchillo la lata cerrada si es botin util")
+	# Hambre critica con carne cocinable en la mochila: una seta incierta no
+	# puede seguir robando el tick antes que ensartar/encender/cocinar.
+	var tod_cook := float(world.day_cycle.time_of_day)
+	world.day_cycle.time_of_day = 14.0
+	var seta_cook := WorldActionScript.new()
+	seta_cook.setup("test_seta_cook_priority", "eat_food", "Seta amanita", Vector3(0.2, 0.2, 0.2), Color(0.8, 0.15, 0.1), false, false)
+	seta_cook.set_meta("item_name", "Seta amanita")
+	seta_cook.set_meta("item_type", "food")
+	seta_cook.set_meta("item_use_value", 12.0)
+	seta_cook.set_meta("item_quantity", 1)
+	world.add_child(seta_cook)
+	elena_proxy.global_position = Vector3(0.0, 0.4, 0.0)
+	seta_cook.global_position = elena_proxy.global_position + Vector3(12.0, 0.0, 0.0)
+	world.world_actions_by_id["test_seta_cook_priority"] = seta_cook
+	elena["pos"] = elena_proxy.global_position
+	elena["hunger"] = 12.0
+	elena["thirst"] = 90.0
+	elena["health"] = 100.0
+	elena["eat_cooldown"] = 0.0
+	elena["cook_cooldown"] = 0.0
+	elena["consume_anim_t"] = 0.0
+	elena["_consume_from_inventory"] = false
+	elena["sense_t"] = 30.0
+	elena["hide_timer"] = 0.0
+	elena["flinch_timer"] = 0.0
+	elena["flee_until"] = 0.0
+	elena["aggro_target"] = null
+	elena["gut_target"] = null
+	elena["_forage"] = {}
+	elena["_food_trip"] = {}
+	elena["_s_leader"] = null
+	elena["_s_predator"] = null
+	elena["_s_foe"] = null
+	elena["_s_loot"] = {}
+	elena["_s_prey"] = null
+	elena["_s_corpse"] = null
+	elena["_s_tame_wolf"] = null
+	elena["campfire_id"] = ""
+	elena["campfire_pos"] = Vector3.INF
+	var vs_cook: SurvivalStats = elena.get("vstats")
+	if vs_cook != null:
+		vs_cook.body_temperature = 36.5
+		vs_cook.wetness = 0.0
+		vs_cook.energy = 100.0
+		vs_cook.sleep = 100.0
+	world._lit_campfires.clear()
+	elena_proxy.set_meta("saved_inventory", [
+		{"name": "Carne cruda de lobo", "type": "food", "weight": 0.5, "quantity": 2, "use_value": 20.0},
+		{"name": "Palo afilado", "type": "tool_spear", "weight": 0.3, "quantity": 1, "use_value": 0.0},
+		{"name": "Palo", "type": "resource", "weight": 0.15, "quantity": 9, "use_value": 0.0},
+		{"name": "Tronco", "type": "resource", "weight": 1.2, "quantity": 2, "use_value": 0.0},
+		{"name": "Cerillas", "type": "tool_matches", "quantity": 1, "durability": 2.0},
+	])
+	mgr._tick_bot(elena, 0.1)
+	check(str(elena.get("_act", "")) == "cook",
+		"Forrajeo: con hambre critica cocinar carne transportada gana a la seta incierta (act=%s)" % str(elena.get("_act", "")))
+	world.day_cycle.time_of_day = tod_cook
+	seta_cook.queue_free()
+	world.world_actions_by_id.erase("test_seta_cook_priority")
 	seta.queue_free()
 	arbol.queue_free()
 	world.world_actions_by_id.clear()
