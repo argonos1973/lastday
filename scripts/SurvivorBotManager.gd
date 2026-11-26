@@ -17109,10 +17109,11 @@ func share_bot_knowledge(bot_id_a: int, bot_id_b: int) -> int:
 	# las ubicaciones nuevas traspasan SHARE_MAX_LOCS por transmision,
 	# elegidas por utilidad real: lo que el compañero piso, lo peligroso
 	# y lo cercano al receptor.
-	shared_count += _share_refine_intersection(ka, kb)
-	shared_count += _share_refine_intersection(kb, ka)
-	shared_count += _share_new_locations(ka, kb, _bot_pos_v(bot_id_b))
-	shared_count += _share_new_locations(kb, ka, _bot_pos_v(bot_id_a))
+	var share_firearms := in_same_team
+	shared_count += _share_refine_intersection(ka, kb, share_firearms)
+	shared_count += _share_refine_intersection(kb, ka, share_firearms)
+	shared_count += _share_new_locations(ka, kb, _bot_pos_v(bot_id_b), share_firearms)
+	shared_count += _share_new_locations(kb, ka, _bot_pos_v(bot_id_a), share_firearms)
 	mem_a["known_locations"] = ka
 	mem_b["known_locations"] = kb
 	# Las advertencias tambien viajan: los aliados comparten quien mato a
@@ -17129,10 +17130,12 @@ func _bot_pos_v(bot_id: int) -> Vector3:
 		return (proxy as Node3D).global_position
 	return b.get("pos", Vector3.INF)
 
-func _merge_shared_location_progress(dst: Dictionary, src: Dictionary) -> void:
+func _merge_shared_location_progress(dst: Dictionary, src: Dictionary, include_firearms := true) -> void:
 	dst["risk"] = maxf(float(dst.get("risk", 0.0)), float(src.get("risk", 0.0)))
 	dst["combat_risk"] = maxf(float(dst.get("combat_risk", 0.0)), float(src.get("combat_risk", 0.0)))
 	dst["visits"] = maxf(float(dst.get("visits", 0)), float(src.get("visits", 0)))
+	if not include_firearms:
+		return
 	var taken: Array = dst.get("firearm_ids_taken", [])
 	for id in src.get("firearm_ids_taken", []):
 		if not taken.has(id):
@@ -17140,20 +17143,20 @@ func _merge_shared_location_progress(dst: Dictionary, src: Dictionary) -> void:
 	if not taken.is_empty():
 		dst["firearm_ids_taken"] = taken
 
-func _share_refine_intersection(ka: Dictionary, kb: Dictionary) -> int:
+func _share_refine_intersection(ka: Dictionary, kb: Dictionary, include_firearms := true) -> int:
 	var n := 0
 	for loc_id in ka.keys():
 		if not kb.has(loc_id):
 			continue
 		var entry: Dictionary = ka[loc_id]
-		_merge_shared_location_progress(kb[loc_id], entry)
+		_merge_shared_location_progress(kb[loc_id], entry, include_firearms)
 		n += 1
 	return n
 
 # Traspasa como mucho SHARE_MAX_LOCS ubicaciones nuevas por llamada, elegidas
 # por lo que el compañero contaria primero: sitios que el mismo piso (visits),
 # avisos de peligro (risk/combat_risk) y lo cercano al receptor.
-func _share_new_locations(ka: Dictionary, kb: Dictionary, recv_pos: Vector3) -> int:
+func _share_new_locations(ka: Dictionary, kb: Dictionary, recv_pos: Vector3, include_firearms := true) -> int:
 	var cands: Array = []
 	for loc_id in ka.keys():
 		if kb.has(loc_id):
@@ -17178,10 +17181,12 @@ func _share_new_locations(ka: Dictionary, kb: Dictionary, recv_pos: Vector3) -> 
 		if merged_id.is_empty() and not kb.has(loc_id):
 			var copy := entry.duplicate(true)
 			copy["source"] = "shared"
+			if not include_firearms:
+				copy.erase("firearm_ids_taken")
 			kb[loc_id] = copy
 			moved += 1
 		elif not merged_id.is_empty():
-			_merge_shared_location_progress(kb[merged_id], entry)
+			_merge_shared_location_progress(kb[merged_id], entry, include_firearms)
 			moved += 1
 	return moved
 

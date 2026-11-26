@@ -109,8 +109,16 @@ func run() -> void:
 	b["_share_cd_902"] = 0.0
 	c["_share_cd_901"] = 0.0
 	check(m.share_bot_knowledge(901, 902) > 0 and c._mem.known_locations.has("secret:20:20"), "trusted pair still exchanges knowledge")
+	check(c._mem.known_locations.has("military:202:435")
+		and (c._mem.known_locations["military:202:435"].get("firearm_ids_taken", []) as Array).is_empty(),
+		"trusted non-teammates hear about the base but not its firearm depletion")
+	c["team_leader_id"] = 901
+	b["_share_cd_902"] = 0.0
+	c["_share_cd_901"] = 0.0
+	m.share_bot_knowledge(901, 902)
 	check((c._mem.known_locations.get("military:202:435", {}).get("firearm_ids_taken", []) as Array).has("remote_tent_loot_m4"),
 		"trusted teammates share military firearm depletion")
+	c["team_leader_id"] = 0
 	var from_mem := {"killers": {"bot_901": {"count": 1}, "bot_902": {"count": 2}, "bot_903": {"count": 3}}, "relationships": {}}
 	var to_mem := {"killers": {}, "relationships": {}}
 	m._share_enemy_knowledge(from_mem, to_mem, "bot_902", "bot_901")
