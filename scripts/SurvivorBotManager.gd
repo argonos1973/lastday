@@ -18226,7 +18226,13 @@ func _ai_step_target_dist(b: Dictionary, d: Dictionary) -> float:
 # propia de la accion. Sin destino conocido solo cuenta la permanencia.
 func _ai_step_budget_msec(b: Dictionary, d: Dictionary) -> int:
 	var dist := _ai_step_target_dist(b, d)
-	var travel := clampf((dist if dist != INF else 160.0) / 2.6, 20.0, 420.0) * 1000.0
+	var gear_mission := GoalValidator.purpose(d) == "gear"
+	var travel_cap := 720.0 if gear_mission else 420.0
+	# Una incursion militar activa sigue trabajando aunque se detenga a saquear,
+	# esquivar fauna o cruzar un vado; presupuestarla como si todo el trayecto
+	# fuese carrera limpia la condenaba a timeout antes de llegar.
+	var travel_speed := 1.5 if gear_mission else 2.6
+	var travel := clampf((dist if dist != INF else 160.0) / travel_speed, 20.0, travel_cap) * 1000.0
 	var dwell := float(AI_STEP_DWELL_SEC.get(str(d.get("action", "")), 60.0)) * 1000.0
 	return int(travel + dwell)
 

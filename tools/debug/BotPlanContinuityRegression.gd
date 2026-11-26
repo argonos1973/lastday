@@ -140,6 +140,10 @@ func run() -> void:
 	b["_mem"]["failed_goals"] = {}
 	b["proxy"].set_meta("saved_backpack", "Mochila militar")
 	check(Goals.military_gear_count(b["proxy"]) == 1, "Equipped military backpack counts as military gear")
+	var far_gear := d.duplicate()
+	far_gear["pos"] = Vector3(900.0, 0.4, 200.0)
+	far_gear["_dest_pos"] = Vector3(900.0, 0.4, 200.0)
+	check(m._ai_step_budget_msec(b, far_gear) > 500000, "Long military gear travel receives an extended execution budget")
 	b["proxy"].set_meta("saved_inventory", [
 		{"name": "Fusil de asalto", "type": "weapon_rifle", "quantity": 1, "durability": 100.0},
 		{"name": "Cargador de M4", "type": "ammo", "quantity": 1},
