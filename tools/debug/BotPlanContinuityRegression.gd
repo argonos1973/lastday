@@ -154,6 +154,9 @@ func run() -> void:
 	m._note_military_firearm_pickup(b, {"id": "tent_loot_m4", "name": "Fusil de asalto", "pos": Vector3(300.0, 0.4, 200.0)})
 	check((b["_mem"]["known_locations"]["military:300:200"].get("firearm_ids_taken", []) as Array).has("tent_loot_m4"),
 		"Picking a fixed military firearm records that base depletion")
+	check(m._is_fixed_firearm_loot_id("clock_tower_roof_m4") and m._is_fixed_firearm_loot_id("summit_tower_nest_rifle")
+		and not m._is_fixed_firearm_loot_id("clock_tower_roof_m4mag_0"),
+		"Tower and summit fixed firearms are recognized without counting magazines")
 	var shared_dst := {"firearm_ids_taken": ["tent_loot_m4"]}
 	m._merge_shared_location_progress(shared_dst, {"firearm_ids_taken": ["tent_loot_m4", "city_tent_loot_rifle"]})
 	check((shared_dst["firearm_ids_taken"] as Array).size() == 2,

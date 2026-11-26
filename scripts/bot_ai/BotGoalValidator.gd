@@ -126,7 +126,13 @@ static func bind_gear_target(m, b: Dictionary, d: Dictionary) -> bool:
 		candidate["_dest_pos"] = pos
 		if m._ai_goal_recently_failed(b, candidate, ["timeout"]):
 			continue
-		if (entry.get("firearm_ids_taken", []) as Array).size() >= 2:
+		# Una marca de arma recogida no vacía automáticamente la zona: cima,
+		# torres y ciudad tienen varias fuentes separadas. El veto fuerte de dos
+		# solo aplica a las tiendas clásicas con rifle+M4 en el mismo punto.
+		var taken_n := (entry.get("firearm_ids_taken", []) as Array).size()
+		var pos_sig := "%d:%d" % [int(pos.x), int(pos.z)]
+		var paired_tent := pos_sig in ["460:0", "202:435"]
+		if taken_n >= (2 if paired_tent else 1):
 			continue
 		var dist: float = b["proxy"].global_position.distance_to(pos)
 		var score := dist + gear_route_water_penalty(m, b["proxy"].global_position, pos)

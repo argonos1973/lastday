@@ -3178,10 +3178,14 @@ func _explore_pois() -> Array:
 				_poi_cache.append({"pos": b_pos + Vector3(-1.2, 3.92, -2.6).rotated(Vector3.UP, b_yaw), "kind": "city"})
 				if b_idx % 4 in [1, 2]:
 					_poi_cache.append({"pos": b_pos + Vector3(1.6, 7.86, 4.8).rotated(Vector3.UP, b_yaw), "kind": "tower"})
-	# Torre del Reloj de la ciudad (41, 0, 750): vestíbulo, plantas intermedias y azotea (29.46 m)
+	# Torre del Reloj de la ciudad (41, 0, 750): vestíbulo, plantas intermedias y azotea (29.46 m).
+	# La azotea y la torre de agua del pueblo también son objetivos de equipamiento:
+	# contienen armas de fuego fijas aunque arquitectónicamente no sean tiendas militares.
 	_poi_cache.append({"pos": Vector3(41.0, 0.06, 745.0), "kind": "city"})
 	_poi_cache.append({"pos": Vector3(39.0, 12.66, 750.0), "kind": "tower"})
 	_poi_cache.append({"pos": Vector3(39.6, 29.46, 750.8), "kind": "tower"})
+	_poi_cache.append({"pos": Vector3(39.6, 29.46, 750.8), "kind": "military"})
+	_poi_cache.append({"pos": Vector3(-43.0, _ground_y(-43.0, -48.0), -48.0), "kind": "military"})
 	var zones = world.get("_spawn_zones")
 	if zones is Array:
 		for z in zones:
@@ -11683,9 +11687,14 @@ func _tick_loot_pickup(b: Dictionary, entry: Dictionary, delta: float) -> void:
 # Las tiendas militares tienen dos armas fijas por zona. Registrar los ids
 # reales recogidos evita dos errores de equipo: contar dos veces el mismo arma
 # si cambia de manos y enviar a los aliados desarmados a una base ya vacia.
+func _is_fixed_firearm_loot_id(id: String) -> bool:
+	return id.ends_with("loot_rifle") or id.ends_with("loot_m4") \
+		or id in ["clock_tower_roof_m4", "clock_tower_loot_7_5",
+			"summit_comms_top_m4", "summit_towerfoot_m4", "summit_tower_nest_rifle"]
+
 func _note_military_firearm_pickup(b: Dictionary, entry: Dictionary) -> void:
 	var id := str(entry.get("id", ""))
-	if not (id.ends_with("loot_rifle") or id.ends_with("loot_m4")):
+	if not _is_fixed_firearm_loot_id(id):
 		return
 	var pos := _loot_entry_pos(entry)
 	var mem: Dictionary = b.get("_mem", {})
