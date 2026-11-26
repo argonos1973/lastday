@@ -42,6 +42,23 @@ static func hunger_interrupt_line(b: Dictionary) -> float:
 static func thirst_interrupt_line(b: Dictionary) -> float:
 	return 30.0 + (thirst_vital_line(b) - 35.0)
 
+static func predator_demands_response(b: Dictionary, predator: Node3D) -> bool:
+	if predator == null or not is_instance_valid(predator):
+		return false
+	var proxy = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy) or not (proxy is Node3D):
+		return false
+	if Time.get_ticks_msec() - int(b.get("_wolf_bite_msec", -999999)) < 6000:
+		return true
+	var state := str(predator.get("_state"))
+	if state in ["chase_player", "attack", "bear_warn"]:
+		return true
+	if state in ["flee", "retreat", "eating", "seek_corpse", "fight_wolf", "chase_prey", "follow", "guard", "wary_torch"]:
+		return false
+	var dist := (proxy as Node3D).global_position.distance_to(predator.global_position)
+	var close_range := 12.0 if str(predator.get("animal_type")) == "bear" else 8.0
+	return dist <= close_range
+
 static func dry_recovery_leg(world, from_pos: Vector3, to_pos: Vector3) -> bool:
 	# Check the whole short warming leg, not just its endpoint. Normal travel
 	# may ford water; a hypothermia recovery must not repeatedly soak the bot.
@@ -63,10 +80,14 @@ static func reasons(b: Dictionary, d: Dictionary, night: bool = false) -> Array:
 	var old: Array = d.get("interruptions", [])
 	var action := str(d.get("action", ""))
 	var act := str(b.get("_act", ""))
-	for key in ["_s_predator", "_s_foe", "aggro_target"]:
-		if is_instance_valid(b.get(key)):
-			out.append("combat")
-			break
+	var sensed_predator = b.get("_s_predator")
+	if is_instance_valid(sensed_predator) and predator_demands_response(b, sensed_predator):
+		out.append("combat")
+	else:
+		for key in ["_s_foe", "aggro_target"]:
+			if is_instance_valid(b.get(key)):
+				out.append("combat")
+				break
 	if float(b.get("flee_until", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0:
 		out.append("escape")
 	var st = b.get("vstats")

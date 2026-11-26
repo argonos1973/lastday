@@ -21,6 +21,7 @@ extends SceneTree
 const SurvivorBotManagerScript = preload("res://scripts/SurvivorBotManager.gd")
 const WorldActionScript = preload("res://scripts/WorldAction.gd")
 const NightSim = preload("res://tools/debug/BotNightSurvivalSimRegression.gd")
+const Interruptions = preload("res://scripts/bot_ai/BotInterruptionManager.gd")
 
 var failures := 0
 
@@ -405,9 +406,54 @@ func _knife() -> Dictionary:
 func _m4() -> Dictionary:
 	return {"name": "Fusil de asalto", "type": "weapon", "weight": 3.2, "quantity": 1, "use_value": 0.0, "durability": 100.0, "max_durability": 100.0}
 
+func _d13() -> void:
+	# ================= D13: depredador pasivo vs agresivo =================
+	print("D13: un oso visto no secuestra la vida si no esta agresivo")
+	var env := _new_world(12.0, 16.0)
+	var w: DayWorld = env["world"]
+	var mgr: DayMgr = env["mgr"]
+	var elena: Dictionary = mgr.bots[901]
+	mgr._set_bot_faction(elena, "friendly")
+	_place_bot(elena, Vector3(0.0, 0.4, 0.0), {"inventory": [_knife()], "sleep": 30.0})
+	var bear := Beast.new()
+	bear.animal_type = "bear"
+	bear._state = "patrol"
+	w.add_child(bear)
+	bear.add_to_group("wildlife")
+	bear.global_position = Vector3(18.0, 0.4, 0.0)
+	var reps := simulate(env, [elena], {"dt": 0.2, "steps": 3, "advance_clock": false})
+	check(elena.get("_s_predator") == bear, "D13 el oso pasivo sigue siendo percibido")
+	check(int(reps[0]["acts"].get("predator", 0)) == 0 and int(reps[0]["flee_ticks"]) == 0,
+		"D13 el oso en patrol a 18 m no roba el tick (acts=%s)" % str(reps[0]["acts"]))
+	(elena["proxy"] as Node3D).global_position = Vector3(0.0, 0.4, 0.0)
+	bear.global_position = Vector3(18.0, 0.4, 0.0)
+	check(not Interruptions.predator_demands_response(elena, bear)
+			and not Interruptions.reasons(elena, {"action": "scavenge"}).has("combat"),
+		"D13 la presencia pasiva no se clasifica como combate estrategico")
+	elena["sleeping"] = true
+	elena["sense_t"] = 0.0
+	mgr._tick_bot(elena, 0.2)
+	check(bool(elena.get("sleeping", false)), "D13 el oso pasivo tampoco despierta al bot")
+	elena["sleeping"] = false
+	bear._state = "bear_warn"
+	bear._player = elena["proxy"]
+	elena["sense_t"] = 0.0
+	reps = simulate(env, [elena], {"dt": 0.2, "steps": 8, "advance_clock": false})
+	check(int(reps[0]["acts"].get("predator", 0)) > 0,
+		"D13 bear_warn si exige respuesta inmediata (acts=%s)" % str(reps[0]["acts"]))
+	check(Interruptions.predator_demands_response(elena, bear)
+			and Interruptions.reasons(elena, {"action": "scavenge"}).has("combat"),
+		"D13 la amenaza activa si se clasifica como combate estrategico")
+
+
 func run() -> void:
 	seed(4242)
 	var t0 := Time.get_ticks_msec()
+	if "--only-d13" in OS.get_cmdline_user_args():
+		_d13()
+		print("BotDaySurvivalSimRegression D13 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
 	var env: Dictionary
 	var w: DayWorld
 	var mgr: DayMgr
@@ -830,6 +876,8 @@ func run() -> void:
 	reps = simulate(env, [kael], {"dt": 0.2, "steps": 20, "advance_clock": false})
 	check(int(reps[0]["acts"].get("search_foe", 0)) <= 1 and int(reps[0]["sensed_ticks"]) == 0,
 		"D12 sin indicios abandona la busqueda y sigue con su vida (acts=%s)" % str(reps[0]["acts"]))
+
+	_d13()
 
 	print("BotDaySurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	for key in ["world", "net"]:

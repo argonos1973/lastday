@@ -2161,6 +2161,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	if predator != null and not _bot_wolf_is_aggressive(b, predator) \
 			and (_bot_tame_progress(b, predator) > 0 or (predator == wild_wolf and float(b.get("_tame_wait_t", 0.0)) > 0.0)):
 		predator = null
+	if predator != null and not InterruptionManager.predator_demands_response(b, predator):
+		predator = null
 	if predator != null:
 		b["_act"] = "predator"
 		_handle_predator_encounter(b, predator, delta)
@@ -4919,7 +4921,7 @@ func _bot_wolf_is_aggressive(b: Dictionary, wolf: Node3D) -> bool:
 		return false
 	if Time.get_ticks_msec() - int(b.get("_wolf_bite_msec", -999999)) < 6000:
 		return true
-	return str(wolf.get("_state")) in ["chase_player", "attack"] and wolf.get("_player") == b.get("proxy")
+	return str(wolf.get("_state")) in ["chase_player", "attack"]
 
 # Motivos para aparcar la doma: estan atacando al bot o hay una amenaza
 # real encima. Con histeresis (_tame_pause_until) para no alternar entre
@@ -4942,7 +4944,7 @@ func _bot_tame_interrupted(b: Dictionary, wolf: Node3D) -> bool:
 		threat = true
 	else:
 		var pred := _sensed_node(b, "_s_predator")
-		threat = pred != null and pred != wolf
+		threat = pred != null and pred != wolf and InterruptionManager.predator_demands_response(b, pred)
 	if threat:
 		if now_s >= float(b.get("_tame_pause_until", 0.0)):
 			record_bot_event(int(b["bot_id"]), "tame_interrupted", "wolf", _poi_kind_near(wolf.global_position), wolf.global_position, "amenaza: doma aparcada")
@@ -9294,7 +9296,7 @@ func _chat_order_gate(b: Dictionary, sender_id: int, skey: String, cmd: String) 
 	# Bajo fuego nadie acepta compromisos — ni siquiera la orden del propio
 	# lider (desacuerdo justificado: primero sobrevivir, luego obedecer).
 	# stay/dismiss/attack si pasan: son ordenes coherentes en combate.
-	if b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
+	if b.get("aggro_target") != null or _bot_active_predator(b) != null or _sensed_node(b, "_s_foe") != null:
 		if not cmd in ["stay", "dismiss", "attack"]:
 			return {"ok": false, "why": "busy"}
 	# La historia bilateral manda mas que el cargo: la victima no coopera con
@@ -9697,7 +9699,7 @@ func _chat_request_need(b: Dictionary) -> String:
 				break
 		if not has_med:
 			return "vendas"
-	var under_fire: bool = b.get("aggro_target") != null or _sensed_node(b, "_s_foe") != null or _sensed_node(b, "_s_predator") != null
+	var under_fire: bool = b.get("aggro_target") != null or _sensed_node(b, "_s_foe") != null or _bot_active_predator(b) != null
 	if under_fire and _best_weapon_name(proxy).is_empty():
 		return "arma"
 	return ""
@@ -14001,7 +14003,7 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 	# Gestion de estamina como en PlayerController: fuera de combate/huida,
 	# cuando la energia cae a <=12 pasa a caminar hasta recuperar >=45, evitando
 	# que corran con energia 0 (lo que multiplicaba x1.875 el desgaste de sueno).
-	var in_urgent_chase: bool = b.get("aggro_target") != null or _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null or float(b.get("flee_until", 0.0)) > 0.0
+	var in_urgent_chase: bool = b.get("aggro_target") != null or _bot_active_predator(b) != null or _sensed_node(b, "_s_foe") != null or float(b.get("flee_until", 0.0)) > 0.0
 	var cur_energy := float(b.get("energy", 100.0))
 	if cur_energy <= 12.0 and not in_urgent_chase:
 		b["_stamina_recover"] = true
@@ -14727,10 +14729,15 @@ func _bot_fire_band_update(b: Dictionary) -> String:
 # busqueda de enemigo o fuego enemigo reciente. Regular la distancia al
 # fuego no puede interrumpir ninguna de estas maniobras — el fuego quema
 # lento, el lobo no.
+func _bot_active_predator(b: Dictionary) -> Node3D:
+	var predator := _sensed_node(b, "_s_predator")
+	return predator if predator != null and InterruptionManager.predator_demands_response(b, predator) else null
+
 func _bot_under_immediate_threat(b: Dictionary) -> bool:
 	if b.get("aggro_target") != null:
 		return true
-	if _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
+	var immediate_predator := _bot_active_predator(b)
+	if immediate_predator != null or _sensed_node(b, "_s_foe") != null:
 		return true
 	if float(b.get("hide_timer", 0.0)) > 0.0 or float(b.get("flee_until", 0.0)) > 0.0:
 		return true
@@ -15239,7 +15246,8 @@ func _bot_needs_food_or_water(b: Dictionary) -> bool:
 	return float(b.get("hunger", 100.0)) < 40.0 or float(b.get("thirst", 100.0)) < 35.0
 
 func _bot_should_wake(b: Dictionary, is_night: bool) -> bool:
-	if b.get("aggro_target") != null or b.get("_s_predator") != null or b.get("_s_foe") != null:
+	var wake_predator := _sensed_node(b, "_s_predator")
+	if b.get("aggro_target") != null or (wake_predator != null and InterruptionManager.predator_demands_response(b, wake_predator)) or b.get("_s_foe") != null:
 		return true
 	# Dormir dentro del rio no es descanso: si el agua pasa de vadeable
 	# (empujon, deriva de nav, respawn dentro) despierta al instante — el
@@ -17369,7 +17377,7 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	var hunger := float(situation.get("hunger", b.get("hunger", 90.0)))
 	var thirst := float(situation.get("thirst", b.get("thirst", 90.0)))
 	var has_shelter := bool(situation.get("has_shelter", b.get("shelter_pos", Vector3.INF) != Vector3.INF or not str(b.get("shelter_id", "")).is_empty()))
-	var threat_present := bool(situation.get("threat", _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null))
+	var threat_present := bool(situation.get("threat", _bot_active_predator(b) != null or _sensed_node(b, "_s_foe") != null))
 	var risky_zone := str(situation.get("risky_zone", ""))
 
 	var bravery := float(pers.get("bravery", 0.5))
@@ -17787,7 +17795,7 @@ func _ai_situation_signature(b: Dictionary) -> String:
 	# 1 lo ve/oye ahora; 2 sabe donde se esfumo o le avisaron (amenaza oculta
 	# reciente que exige decision); 0 nada.
 	var threat := 0
-	if _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
+	if _bot_active_predator(b) != null or _sensed_node(b, "_s_foe") != null:
 		threat = 1
 	elif b.get("aggro_target") != null or int(b.get("_lost_foe_until_msec", 0)) > Time.get_ticks_msec():
 		threat = 2
@@ -18324,7 +18332,7 @@ func _ai_build_prompt(b: Dictionary) -> String:
 		"temp": snappedf(vst_p.body_temperature, 0.1) if vst_p != null else 36.6,
 		"weapon": str(b.get("held_item", "")),
 		"night": _is_world_night(),
-		"threat": _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null,
+		"threat": _bot_active_predator(b) != null or _sensed_node(b, "_s_foe") != null,
 		"dusk": _is_pre_night(),
 		"weather": {"code":int(weather.get("weather_code", 3)), "rain":float(weather.get("rain", 0)),
 			"snow":float(weather.get("snow", 0)), "wind":float(weather.get("wind_speed", 0))},
@@ -19724,7 +19732,7 @@ func _bot_restlessness(b: Dictionary) -> float:
 		return 0.0
 	if _is_world_night() or _is_pre_night():
 		return 0.0
-	if _sensed_node(b, "_s_predator") != null or _sensed_node(b, "_s_foe") != null:
+	if _bot_active_predator(b) != null or _sensed_node(b, "_s_foe") != null:
 		return 0.0
 	if float(b.get("health", 100.0)) < 50.0 or minf(float(b.get("hunger", 90.0)), float(b.get("thirst", 90.0))) < 25.0:
 		return 0.0
