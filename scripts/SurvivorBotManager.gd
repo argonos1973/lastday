@@ -3984,6 +3984,23 @@ func _bot_critical_blood_loss(b: Dictionary) -> bool:
 # presente no es combate: la misma clasificacion de amenaza del sistema decide
 # si hay que zafarse primero. En cambio, con la sangre casi agotada intentar
 # la venda es la ultima maniobra aunque el enemigo siga cerca.
+# Sin filo no puede convertir la ropa en trapos. La hemorragia convierte la
+# cadena Piedra -> Piedra afilada en tratamiento médico: primero piedra suelta
+# real, luego nodos de piedra; nunca inventa el material.
+func _bot_try_medical_edge_tool(b: Dictionary, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	if not _bot_bush_tool(proxy).is_empty():
+		return false
+	if _bot_item_count(proxy, "Piedra") >= 2:
+		return _bot_try_craft_named(b, delta, ["Piedra afilada"], false)
+	var entry := _find_fire_prep_loot(b, 80.0, false, ["Piedra"])
+	if not entry.is_empty():
+		b["_s_loot"] = entry
+		b["_fire_loot_scan"] = 0.0
+		if _bot_try_fire_material_pickup(b, delta, 80.0, false):
+			return true
+	return _bot_try_gather_mats(b, delta, true, true)
+
 func _bot_try_bleeding_firstaid(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var vst: SurvivalStats = b.get("vstats")
@@ -4002,8 +4019,11 @@ func _bot_try_bleeding_firstaid(b: Dictionary, delta: float) -> bool:
 	var cs_med: Dictionary = b.get("_craft_state", {})
 	if not cs_med.is_empty():
 		var cur_med := str(((cs_med.get("recipe", {}) as Dictionary).get("output", {}) as Dictionary).get("name", ""))
-		if not ["Venda", "Trapos"].has(cur_med):
+		if not ["Venda", "Trapos", "Piedra afilada"].has(cur_med):
 			b["_craft_state"] = {}
+	if _bot_item_count(proxy, "Trapos") < 3 and _bot_bush_tool(proxy).is_empty() \
+			and _bot_try_medical_edge_tool(b, delta):
+		return true
 	if _bot_item_count(proxy, "Trapos") < 3:
 		var has_source := false
 		for it in proxy.get_meta("saved_inventory", []):
@@ -21352,7 +21372,7 @@ func _bot_try_cold_rescue(b: Dictionary, delta: float) -> bool:
 		return true
 	return false
 
-func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> bool:
+func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false, stone_only := false) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var st: Dictionary = b.get("_gather", {})
 	# The daytime chores pass runs before cold rescue. Yield without
@@ -21406,8 +21426,17 @@ func _bot_try_gather_mats(b: Dictionary, delta: float, fire_rescue := false) -> 
 		palo_need = fire_sticks
 		piedra_need = (2 if tool.is_empty() else 1) if prepare_axe else 0
 		seeds_need = false
+	if stone_only:
+		if not st.is_empty() and str(st.get("kind", "")) != "stone":
+			_bot_release_gather_claim(b, st)
+			b["_gather"] = {}
+			st = {}
+		tronco_need = 0
+		palo_need = 0
+		piedra_need = 2 if tool.is_empty() else 0
+		seeds_need = false
 	var tronco_short := _bot_item_count(proxy, "Tronco") < tronco_need
-	if (needs_fire or fire_sticks > 0) and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
+	if not stone_only and (needs_fire or fire_sticks > 0) and float(b.get("hide_timer", 0.0)) <= 0.0 and not _bot_is_exhausted(b) \
 			and (not _bot_is_freezing(b) or freezing_rescue) and (b.get("_gather", {}) as Dictionary).is_empty():
 		if _bot_try_fire_material_pickup(b, delta, 120.0 if freezing_rescue else (24.0 if night_no_light else 80.0)):
 			return true
@@ -21733,7 +21762,7 @@ func _bot_medical_rag_reserve(b: Dictionary, proxy: Node3D) -> int:
 	var st: SurvivalStats = b.get("vstats")
 	if st != null and st.bleeding > 0.0:
 		return 3
-	if _bot_is_freezing(b) or (st != null and not st.dead and st.body_temperature <= 35.95):
+	if _bot_is_freezing(b):
 		return 0
 	var mem: Dictionary = b.get("_mem", {})
 	var lessons: Dictionary = mem.get("death_lessons", {})

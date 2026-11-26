@@ -8491,8 +8491,14 @@ func run() -> void:
 	var p_zmed: Node3D = b_zmed["proxy"]
 	var st_zmed: SurvivalStats = b_zmed["vstats"]
 	(b_zmed["_mem"] as Dictionary)["death_lessons"] = {"medical": 3}
-	st_zmed.body_temperature = 36.6
+	st_zmed.body_temperature = 35.9
 	st_zmed.wetness = 0.0
+	check(mgr._bot_medical_rag_reserve(b_zmed, p_zmed) == 3,
+		"10Z6a: el preenfriamiento no desactiva la reserva médica; solo el frío ya peligroso puede reclamarla")
+	st_zmed.body_temperature = 35.4
+	check(mgr._bot_medical_rag_reserve(b_zmed, p_zmed) == 0,
+		"10Z6a: la hipotermia real sí puede reclamar los trapos para la cadena de fuego")
+	st_zmed.body_temperature = 36.6
 	var torch_rec10z := {}
 	var rope_rec10z := {}
 	var bandage_rec10z := {}
@@ -8562,6 +8568,54 @@ func run() -> void:
 	check(mgr._bot_item_count(p_zmed, "Hacha de piedra") == 1,
 		"10Z6b: abrir hueco para la venda no suelta la herramienta de corte")
 	zmed_wolf.queue_free()
+
+	# 10Z6c: el caso observado en vivo es aun peor — ropa puesta pero ningun
+	# filo ni piedra en la mochila. La hemorragia debe convertir la recogida de
+	# piedra y la lasca en primeros auxilios, no quedarse en reposo hasta morir.
+	mgr._respawn_bot(mgr.bots[904])
+	var b_ztool: Dictionary = mgr.bots[904]
+	var p_ztool: Node3D = b_ztool["proxy"]
+	var st_ztool: SurvivalStats = b_ztool["vstats"]
+	(b_ztool["_mem"] as Dictionary)["death_lessons"] = {"medical": 3}
+	p_ztool.global_position = Vector3(430.0, 0.4, 430.0)
+	b_ztool["pos"] = p_ztool.global_position
+	b_ztool["sense_t"] = 10000.0
+	b_ztool["aggro_target"] = null
+	b_ztool["_s_foe"] = null
+	b_ztool["_s_predator"] = null
+	b_ztool["flee_until"] = 0.0
+	b_ztool["hide_timer"] = 0.0
+	b_ztool["clothing"] = "Camiseta,Pantalones,Zapatillas"
+	p_ztool.set_meta("saved_extra", {})
+	p_ztool.set_meta("saved_inventory", [
+		{"name":"Semillas","type":"resource","quantity":2,"weight":0.05},
+		{"name":"Palo","type":"resource","quantity":1,"weight":0.3}])
+	st_ztool.body_temperature = 36.6
+	st_ztool.wetness = 0.0
+	st_ztool.bleeding = 1.0
+	st_ztool.blood = 72.0
+	b_ztool["health"] = 75.0
+	b_ztool["_gather_scan"] = 0.0
+	var ztool_stone := WorldActionScript.new()
+	ztool_stone.setup("ztool_stone", "stone", "Piedras", Vector3(0.5, 0.3, 0.5), Color.GRAY, true, false)
+	ztool_stone.set_meta("item_quantity", 3)
+	world.add_child(ztool_stone)
+	ztool_stone.global_position = p_ztool.global_position + Vector3(4.0, 0.0, 0.0)
+	world.world_actions_by_id["ztool_stone"] = ztool_stone
+	mgr._cached_wa_size = -1
+	var ztool_ticks := 0
+	for itool in range(300):
+		ztool_ticks += 1
+		mgr._tick_bot(b_ztool, 0.1)
+		if st_ztool.bleeding <= 0.0:
+			break
+	check(st_ztool.bleeding <= 0.0,
+		"10Z6c: sin filo la hemorragia recoge piedra, lasca, corta ropa y se venda (bleed=%.1f blood=%.1f ticks=%d act=%s)" % [st_ztool.bleeding, st_ztool.blood, ztool_ticks, str(b_ztool.get("_act", ""))])
+	check(mgr._bot_item_count(p_ztool, "Piedra afilada") + mgr._bot_item_count(p_ztool, "Venda") > 0,
+		"10Z6c: la cadena produce una herramienta/venda real, no inventa la cura")
+	world.world_actions_by_id.erase("ztool_stone")
+	ztool_stone.queue_free()
+	mgr._cached_wa_size = -1
 
 	for tk_end in mgr._tts_jobs.keys():
 		DirAccess.remove_absolute(jobdir + str(tk_end) + ".json")
