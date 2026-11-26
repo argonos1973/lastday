@@ -3495,6 +3495,10 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 		_ai_enqueue_request(int(b.get("bot_id", 0)), 4, "plan_blocked", true)
 	if str(b.get("_act", "")) == "drink" and b.get("drink_at", Vector3.INF) != Vector3.INF and Vector2(goal.x - b["drink_at"].x, goal.z - b["drink_at"].z).length() < 6.0:
 		_abandon_water_access(b)
+	var ft: Dictionary = b.get("_food_trip", {})
+	var ft_pos = ft.get("pos")
+	if ft_pos is Vector3 and Vector2(goal.x - (ft_pos as Vector3).x, goal.z - (ft_pos as Vector3).z).length() < 10.0:
+		b.erase("_food_trip")
 	var gst: Dictionary = b.get("_gather", {})
 	var gpos = gst.get("pos")
 	if not gst.is_empty() and gpos is Vector3 and Vector2(goal.x - (gpos as Vector3).x, goal.z - (gpos as Vector3).z).length() < 6.0:
@@ -20202,6 +20206,7 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 	if not allowed or _bot_has_edible_food(proxy):
 		if not st0.is_empty():
 			b["_forage"] = {}
+		b.erase("_food_trip")
 		return false
 	# Objetivo en curso: caminar hasta el, esperar el tiempo de la accion y rematar
 	var st: Dictionary = b.get("_forage", {})
@@ -20253,6 +20258,25 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 			_bot_forage_complete(b, st)
 			_cancel_bot_ground_pickup(b)
 		return true
+	# Un viaje de comida ya elegido no caduca entre dos escaneos: antes solo se
+	# reafirmaba cada ~1.2 s y la exploracion ordinaria lo reemplazaba por POIs
+	# contradictorios hasta morir de hambre en ruta.
+	var trip: Dictionary = b.get("_food_trip", {})
+	if not trip.is_empty():
+		var tpos = trip.get("pos")
+		if not (tpos is Vector3) or (tpos as Vector3) == Vector3.INF or _is_goal_blacklisted(b, tpos) or not _bot_supply_goal_allowed(b, tpos):
+			b.erase("_food_trip")
+		else:
+			var trip_flat := Vector2(proxy.global_position.x - (tpos as Vector3).x, proxy.global_position.z - (tpos as Vector3).z).length()
+			if trip_flat > 7.0:
+				b["sitting"] = false
+				b["crouching"] = false
+				b["explore_target"] = tpos
+				_move_bot_towards(b, tpos, 4.8 if trip_flat > 9.0 else 3.8, delta, "run" if hunger < 26.0 else "walk")
+				return true
+			_mark_poi_visited(b, tpos)
+			b.erase("_food_trip")
+			b["_forage_scan"] = 0.0
 	# Escaneo con cadencia: iterar world_actions_by_id cada frame por bot era caro
 	b["_forage_scan"] = float(b.get("_forage_scan", 0.0)) - delta
 	if float(b["_forage_scan"]) > 0.0:
@@ -20279,6 +20303,8 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 	if _bot_night_supply_emergency(b):
 		radius = maxf(radius, NIGHT_LETHAL_SUPPLY_RADIUS)
 	var target := _find_forage_target(b, radius)
+	if not target.is_empty():
+		b.erase("_food_trip")
 	if target.is_empty():
 		# Nada comestible ni en 200 m: no orbitar el parche agotado — viajar
 		# al POI con comida mas prometedor (monte = setas/fruta/caza, casa/
@@ -20294,6 +20320,7 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 				# A >140 m el viaje se trocea en saltos POI a POI navegables —
 				# la linea recta larga es la que terminaba vetada.
 				var fpos: Vector3 = _bot_route_leg(b, fpoi["pos"])
+				b["_food_trip"] = {"pos": fpos, "poi": str(fpoi.get("id", "")), "t": Time.get_ticks_msec()}
 				b["explore_target"] = fpos
 				b["sitting"] = false
 				b["crouching"] = false

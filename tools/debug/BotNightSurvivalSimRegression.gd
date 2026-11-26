@@ -934,6 +934,29 @@ func _s28() -> void:
 		"S28 sin curriculum la capa de planes no suspende a 50")
 	leader.queue_free()
 
+
+func _s30() -> void:
+	print("S30: el viaje largo de comida sobrevive al enfriamiento del escaneo")
+	var env := _new_world(15.0)
+	env.dc.time_of_day = 14.0
+	var mgr: SurvivorBotManagerScript = env.mgr
+	var b: Dictionary = mgr.bots[901]
+	_place_bot(b, Vector3(0.0, 0.4, 0.0), {"hunger": 32.0, "thirst": 78.0, "sleep": 82.0, "body_temperature": 36.6, "inventory": []})
+	check(mgr._bot_try_forage(b, 0.1), "S30 sin comida local se inicia el viaje de aprovisionamiento")
+	var trip: Dictionary = b.get("_food_trip", {})
+	check(not trip.is_empty() and trip.get("pos") is Vector3, "S30 el viaje queda comprometido en _food_trip (%s)" % str(trip))
+	var goal: Vector3 = trip.get("pos", Vector3.INF)
+	var start: Vector3 = (b["proxy"] as Node3D).global_position
+	b["_forage_scan"] = 1.2
+	var committed := true
+	for i in 8:
+		if not mgr._bot_try_forage(b, 0.1):
+			committed = false
+			break
+	check(committed, "S30 el enfriamiento del escaneo no devuelve el control a explorar")
+	check((b.get("_food_trip", {}) as Dictionary).get("pos", Vector3.INF) == goal, "S30 el destino no se reemplaza entre escaneos")
+	check(Vector2((b["proxy"] as Node3D).global_position.x - start.x, (b["proxy"] as Node3D).global_position.z - start.z).length() > 0.5, "S30 el compromiso produce avance real (pos=%s)" % str((b["proxy"] as Node3D).global_position))
+
 func run() -> void:
 	seed(911)
 	var t0 := Time.get_ticks_msec()
@@ -971,6 +994,10 @@ func run() -> void:
 		return
 	if "--only-s29" in OS.get_cmdline_user_args():
 		_s29()
+		quit(1 if failures else 0)
+		return
+	if "--only-s30" in OS.get_cmdline_user_args():
+		_s30()
 		quit(1 if failures else 0)
 		return
 	if "--only-s19" in OS.get_cmdline_user_args():
@@ -1570,6 +1597,7 @@ func run() -> void:
 	_s19()
 	_s20()
 	_s29()
+	_s30()
 
 	print("BotNightSurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	quit(1 if failures else 0)
