@@ -808,6 +808,24 @@ func _s27() -> void:
 	b["_forage_scan"] = 0.0
 	check(not mgr._bot_vital_break(b) and not mgr._bot_try_forage(b, 0.1),
 		"S27 sin aprendizaje el hambre 58 aun no rompe la formacion")
+	b["_mem"]["death_lessons"] = {"starved": 20.0}
+	b["_mem"]["experience"] = {"forage": 3}
+	b["_forage"] = {}
+	b["_forage_scan"] = 0.0
+	b["explore_target"] = Vector3.INF
+	var food_to_free = world.world_actions_by_id.get("s27_food")
+	world.world_actions_by_id.erase("s27_food")
+	if food_to_free is Node:
+		food_to_free.queue_free()
+	check(mgr._bot_try_forage(b, 0.0) and (b.get("explore_target") as Vector3) != Vector3.INF,
+		"S27 la linea aprendida tambien inicia el viaje largo a comida (target=%s)" % str(b.get("explore_target")))
+	b["_mem"]["death_lessons"] = {}
+	b["_mem"]["experience"] = {}
+	b["_forage"] = {}
+	b["_forage_scan"] = 0.0
+	b["explore_target"] = Vector3.INF
+	check(not mgr._bot_try_forage(b, 0.0) and (b.get("explore_target") as Vector3) == Vector3.INF,
+		"S27 sin curriculum el hambre 58 aun no inicia el viaje largo")
 	leader.queue_free()
 
 func _s28() -> void:

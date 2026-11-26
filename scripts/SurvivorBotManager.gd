@@ -20193,11 +20193,14 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 	var d0 := _ai_active_directive(b)
 	if str(d0.get("mode", "")) == "food":
 		radius = 55.0
-	# Hambre sin comida encima (<40, no esperar al limite 26): el escaneo
-	# local ya no basta — viajar de verdad hacia la comida en vez de
-	# orbitar el parche agotado hasta caerse. Con 200 m de radio el bot
-	# alcanza setas/frutales/latas que el escaneo normal nunca ve.
-	if float(b["hunger"]) < 40.0 and not _bot_has_edible_food(proxy):
+	# Hambre sin comida encima: el escaneo local ya no basta — viajar de
+	# verdad hacia la comida en vez de orbitar el parche agotado hasta
+	# caerse. La linea no es fija: quien ya murio de inanicion rompe la
+	# formacion pronto (_bot_vital_break) y necesita iniciar entonces la
+	# logistica larga; esperar a 40 le dejaba solo unos minutos para una
+	# caminata de 100-200 m.
+	var food_trip_line := maxf(40.0, _bot_hunger_vital_break_line(b))
+	if float(b["hunger"]) < food_trip_line and not _bot_has_edible_food(proxy):
 		radius = maxf(radius, 200.0)
 	# Hambre/sed letales: el escaneo crece al alcance de la urgencia — la
 	# seta a 60 m salva igual que la de al lado, y morir buscando a 30 m
@@ -20216,7 +20219,7 @@ func _bot_try_forage(b: Dictionary, delta: float, allow_poi_trip := true) -> boo
 		# de emergencia (150 m) ya cubre lo alcanzable con luz propia; al
 		# atardecer toca volver al refugio, no empezar una caminata de 200 m;
 		# y un bot aterido debe calentarse antes de buscar comida.
-		if allow_poi_trip and hunger < 40.0 and ["dawn", "day"].has(_world_day_phase()) and not _bot_is_freezing(b):
+		if allow_poi_trip and hunger < food_trip_line and ["dawn", "day"].has(_world_day_phase()) and not _bot_is_freezing(b):
 			var fpoi := _ai_pick_poi(b, ["wild", "house", "city"], ["military", "tower"], false)
 			if not fpoi.is_empty():
 				# A >140 m el viaje se trocea en saltos POI a POI navegables —
