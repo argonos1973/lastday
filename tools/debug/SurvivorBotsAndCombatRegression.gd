@@ -2856,6 +2856,21 @@ func run() -> void:
 		"Puerta: la nav de bots alcanza la celda de aproximacion cerrada")
 	check(nav3_grid.is_cell_blocked(nav3_grid.world_to_grid(Vector3(23.0, 0.0, 20.0))),
 		"Puerta: la nav de bots no atraviesa el interior cerrado")
+	# Tienda militar rotada: la malla no la bloquea, asi que el waypoint debe
+	# entrar por el vano frontal real; desde atras nunca puede apuntar al centro.
+	world._military_tent_pos = Vector3(460.0, 0.0, 0.0)
+	var tent_yaw := deg_to_rad(35.0)
+	var tent_pos: Vector3 = world._military_tent_pos
+	var tent_rear := tent_pos + Vector3(0.0, 0.0, -10.0).rotated(Vector3.UP, tent_yaw)
+	var tent_front := tent_pos + Vector3(0.0, 0.0, 9.0).rotated(Vector3.UP, tent_yaw)
+	check(mgr._wall_between(tent_rear, tent_pos),
+		"Tienda: la linea trasera al centro choca con la pared")
+	check(not mgr._wall_between(tent_front, tent_pos),
+		"Tienda: el vano frontal permite entrar al centro")
+	var tent_wp: Vector3 = mgr._resolve_building_interior_waypoint(elena, tent_rear, tent_pos)
+	var tent_local := (tent_wp - tent_pos).rotated(Vector3.UP, -tent_yaw)
+	check(tent_wp != tent_pos and tent_local.z > 6.0 and absf(tent_local.x) < 0.2,
+		"Tienda: desde atras el waypoint es la aproximacion exterior al vano")
 	check(not world.bot_try_open_door_at(Vector3(59.0, 0.0, 52.0)),
 		"Puerta: ya abierta no se reabre")
 	check(not world._is_near_wildlife_blocker(Vector3(60.0, 0.0, 58.0), 0.0),

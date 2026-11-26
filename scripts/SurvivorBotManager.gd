@@ -13188,6 +13188,53 @@ func _is_city_building_door_open(b_idx: int, door_world: Vector3) -> bool:
 # 3) Las 16 viviendas de 2 plantas city_01..city_16 (planta alta 3.92 m y azotea)
 # 4) Torre de vigilancia militar (_watchtower_climb)
 # 5) Casas del pueblo (Casa abandonada 1..10)
+func _bot_tent_defs() -> Array:
+	var out: Array = []
+	if world == null:
+		return out
+	for spec in [
+		{"key": "_military_tent_pos", "yaw": 35.0},
+		{"key": "_remote_tent_pos", "yaw": 120.0},
+		{"key": "_city_tent_pos", "yaw": 205.0},
+		{"key": "_city_tent2_pos", "yaw": 205.0},
+	]:
+		var pos = world.get(str(spec["key"]))
+		if pos is Vector3 and (pos as Vector3) != Vector3.ZERO:
+			out.append({"id": str(spec["key"]), "pos": pos, "yaw": deg_to_rad(float(spec["yaw"]))})
+	return out
+
+func _bot_tent_at(pos: Vector3, margin := 0.0) -> Dictionary:
+	for tent in _bot_tent_defs():
+		var local := (pos - (tent["pos"] as Vector3)).rotated(Vector3.UP, -float(tent["yaw"]))
+		if absf(local.x) <= 4.5 + margin and absf(local.z) <= 6.0 + margin:
+			var hit := (tent as Dictionary).duplicate()
+			hit["local"] = local
+			return hit
+	return {}
+
+func _bot_tent_world(tent: Dictionary, local: Vector3) -> Vector3:
+	return (tent["pos"] as Vector3) + local.rotated(Vector3.UP, float(tent["yaw"]))
+
+# Las tiendas militares son cascaras fisicas rotadas sin nodo Door y sin
+# bloqueador nav: la entrada real es el vano central del frente local z=+6.
+# Apuntar al centro atraviesa los laterales/trasera y terminaba en nav_blocked.
+func _resolve_tent_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
+	var cur_tent := _bot_tent_at(cur, 0.05)
+	var goal_tent := _bot_tent_at(goal, 0.05)
+	if cur_tent.is_empty() and goal_tent.is_empty():
+		return goal
+	if not cur_tent.is_empty() and (goal_tent.is_empty() or str(cur_tent.get("id", "")) != str(goal_tent.get("id", ""))):
+		var lc0: Vector3 = cur_tent.get("local", Vector3.ZERO)
+		if absf(lc0.x) > 1.45 or lc0.z < 4.7:
+			return _bot_tent_world(cur_tent, Vector3(0.0, cur.y, 5.2))
+		return _bot_tent_world(cur_tent, Vector3(0.0, cur.y, 8.3))
+	if not goal_tent.is_empty() and (cur_tent.is_empty() or str(cur_tent.get("id", "")) != str(goal_tent.get("id", ""))):
+		var lg0 := (cur - (goal_tent["pos"] as Vector3)).rotated(Vector3.UP, -float(goal_tent["yaw"]))
+		if lg0.z > 5.65 and absf(lg0.x) <= 1.75:
+			return _bot_tent_world(goal_tent, Vector3(0.0, goal.y, 4.4))
+		return _bot_tent_world(goal_tent, Vector3(0.0, cur.y, 8.4))
+	return goal
+
 func _resolve_building_interior_waypoint(b: Dictionary, cur: Vector3, goal: Vector3) -> Vector3:
 	# Finish crossing the doorway before returning to outdoor steering. The
 	# inside test stops at the wall, while the actor still overlaps the jamb.
@@ -13217,6 +13264,11 @@ func _resolve_building_interior_waypoint_uncached(b: Dictionary, cur: Vector3, g
 	if cur_cb >= 0 or goal_cb >= 0:
 		var target_cb := cur_cb if (cur_cb >= 0 and (goal_cb < 0 or cur_cb != goal_cb)) else goal_cb
 		return _resolve_city_building_waypoint(b, cur, goal, target_cb, cur_cb == target_cb, goal_cb == target_cb)
+
+	# 3) Tiendas militares rotadas: entrar/salir solo por el vano frontal.
+	var tent_wp := _resolve_tent_waypoint(cur, goal)
+	if tent_wp != goal:
+		return tent_wp
 
 	# Tower traversal also applies to combat/follow/retreat, not just exploration.
 	var cur_tower := _bot_tower_at(cur, true)
@@ -13571,6 +13623,8 @@ func _building_exterior_waypoint(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		for blk in world.wildlife_blockers:
 			if blk is Dictionary and blk.has("house_bounds") and int(blk.get("city_building_index",-1)) < 0:
 				shapes.append({"origin":Vector3.ZERO,"yaw":0.0,"bounds":blk.house_bounds})
+	for tent in _bot_tent_defs():
+		shapes.append({"origin": tent["pos"], "yaw": float(tent["yaw"]), "bounds": Rect2(-4.5, -6.0, 9.0, 12.0)})
 	for def in CityBlock.BUILDINGS:
 		var fp: Vector2 = def.get("footprint",Vector2(6,6))
 		shapes.append({"origin":CityExpansion.CENTER+def.position,"yaw":float(def.get("yaw",0.0)),"bounds":Rect2(-fp,fp*2.0)})
@@ -13642,6 +13696,16 @@ func _wall_between(a: Vector3, bpt: Vector3) -> bool:
 	if (pb - pa).length() < 0.05:
 		return false
 	var seg_rect := Rect2(pa, Vector2.ZERO).expand(pb)
+	for tent in _bot_tent_defs():
+		var origin: Vector3 = tent["pos"]
+		if not seg_rect.grow(8.0).has_point(Vector2(origin.x, origin.z)):
+			continue
+		var yaw := float(tent["yaw"])
+		var la := (Vector3(pa.x, 0.0, pa.y) - origin).rotated(Vector3.UP, -yaw)
+		var lb := (Vector3(pb.x, 0.0, pb.y) - origin).rotated(Vector3.UP, -yaw)
+		var rect := Rect2(-4.8, -6.3, 9.6, 12.6)
+		if _seg2d_crosses_rect_wall(Vector2(la.x, la.z), Vector2(lb.x, lb.z), rect, [{"edge": 2, "at": 0.0, "half": 2.0}]):
+			return true
 	if world != null and ("wildlife_blockers" in world):
 		for blk in world.wildlife_blockers:
 			if not (blk is Dictionary) or not (blk as Dictionary).has("house_bounds"):
