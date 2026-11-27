@@ -13618,36 +13618,47 @@ func _resolve_building_interior_waypoint(b: Dictionary, cur: Vector3, goal: Vect
 	return waypoint
 
 func _resolve_building_interior_waypoint_uncached(b: Dictionary, cur: Vector3, goal: Vector3) -> Vector3:
-	# 1) Torre del Reloj (41, 0, 750)
+	# Resolve the structure containing the actor before any destination type.
+	# A distant tent/clock-tower entrance must not pull a bot through the barn
+	# or house it is still inside.
 	var cur_ct := _is_in_clock_tower(cur, 0.25)
 	var goal_ct := _is_in_clock_tower(goal, 0.8)
-	if cur_ct or goal_ct:
-		return _resolve_clock_tower_waypoint(b, cur, goal, cur_ct, goal_ct)
-
-	# 2) Edificios de la ciudad (city_01..city_17, 2 y 4 plantas con escaleras)
+	if cur_ct:
+		return _resolve_clock_tower_waypoint(b, cur, goal, true, goal_ct)
 	var cur_cb := _find_city_building_for_pos(cur, 0.25)
 	var goal_cb := _find_city_building_for_pos(goal, 0.85)
-	if cur_cb >= 0 or goal_cb >= 0:
-		var target_cb := cur_cb if (cur_cb >= 0 and (goal_cb < 0 or cur_cb != goal_cb)) else goal_cb
-		return _resolve_city_building_waypoint(b, cur, goal, target_cb, cur_cb == target_cb, goal_cb == target_cb)
+	if cur_cb >= 0:
+		return _resolve_city_building_waypoint(b, cur, goal, cur_cb, true, goal_cb == cur_cb)
+	if not _bot_tent_at(cur, 0.05).is_empty():
+		return _resolve_tent_waypoint(cur, goal)
+	var cur_tower := _bot_tower_at(cur, true)
+	var goal_tower := _bot_tower_at(goal, true)
+	if not cur_tower.is_empty():
+		return ElevationRoutes.waypoint(cur, goal, cur_tower["points"],
+			str(goal_tower.get("id", "")) == str(cur_tower["id"]))
+	if world != null and "wildlife_blockers" in world:
+		for blk in world.wildlife_blockers:
+			if not (blk is Dictionary) or not blk.has("house_bounds") \
+					or int(blk.get("city_building_index", -1)) >= 0:
+				continue
+			var interior: Rect2 = (blk["house_bounds"] as Rect2).grow(-0.25)
+			if interior.has_point(Vector2(cur.x, cur.z)):
+				return _resolve_door_approach_goal(b, cur, goal)
 
-	# 3) Tiendas militares rotadas: entrar/salir solo por el vano frontal.
+	# Only an actor already outside approaches the destination's entrance.
+	if goal_ct:
+		return _resolve_clock_tower_waypoint(b, cur, goal, false, true)
+	if goal_cb >= 0:
+		return _resolve_city_building_waypoint(b, cur, goal, goal_cb, false, true)
 	var tent_wp := _resolve_tent_waypoint(cur, goal)
 	if tent_wp != goal:
 		return tent_wp
-
-	# Tower traversal also applies to combat/follow/retreat, not just exploration.
-	var cur_tower := _bot_tower_at(cur, true)
-	var goal_tower := _bot_tower_at(goal, true)
-	if not cur_tower.is_empty() or not goal_tower.is_empty():
-		var route: Dictionary = cur_tower if not cur_tower.is_empty() else goal_tower
-		var points: Array = route["points"]
-		var same_tower := str(goal_tower.get("id", "")) == str(route["id"])
+	if not goal_tower.is_empty():
+		var points: Array = goal_tower["points"]
 		if _bot_tower_at(cur).is_empty() and cur.distance_to(points[0]) > .25:
 			return points[0]
-		return ElevationRoutes.waypoint(cur, goal, points, same_tower)
+		return ElevationRoutes.waypoint(cur, goal, points, true)
 
-	# 4) Casas del pueblo y resto de bloqueadores con puerta (house_bounds)
 	return _resolve_door_approach_goal(b, cur, goal)
 
 func _resolve_clock_tower_waypoint(b: Dictionary, cur: Vector3, goal: Vector3, cur_in: bool, goal_in: bool) -> Vector3:

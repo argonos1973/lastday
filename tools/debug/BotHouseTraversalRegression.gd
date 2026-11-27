@@ -263,6 +263,36 @@ func city_ground_partition_escape(city: Node3D, b: Dictionary) -> void:
 			"city_%02d ground partition: exits and drinks (pos=%s thirst=%.1f)" % [index + 1, b.proxy.global_position, float(b["thirst"])])
 		check(not crossed_partition, "city_%02d ground partition: escape crosses no wall" % (index + 1))
 
+func mixed_building_departures(city: Node3D) -> void:
+	world._remote_tent_pos = Vector3(460, 0, 0)
+	world._create_tent_shell_colliders(world._remote_tent_pos, 120, "RaidTentWalls", "RaidTentRoof")
+	await physics_frame
+	await physics_frame
+	for sample in [
+		["live barn to military tent", Vector3(48.5, 2.25, 111.9), Vector3(460, .1, 0)],
+		["house 4 to military tent", Vector3(42, .12, 26), Vector3(460, .1, 0)],
+		["city room to clock-tower gun", city.buildings[10].to_global(Vector3(.5, .12, -1.8)), Vector3(41, 29.46, 750)],
+	]:
+		actor.global_position = sample[1]
+		var b := bot()
+		var goal: Vector3 = sample[2]
+		var first: Vector3 = manager._resolve_building_interior_waypoint(b, actor.global_position, goal)
+		check(first.distance_to(actor.global_position) < 30.0, sample[0] + " resolves the current exit first")
+		var crossed := false
+		for tick in 2400:
+			var before := actor.global_position
+			manager._move_bot_towards(b, goal, 6.2, .05, "run")
+			var after := actor.global_position
+			if before.distance_to(after) > .001:
+				var query := PhysicsRayQueryParameters3D.create(before + Vector3.UP * .9, after + Vector3.UP * .9, 1)
+				if not world.get_world_3d().direct_space_state.intersect_ray(query).is_empty(): crossed = true
+			if after.distance_to(goal) < 1.0: break
+			for door in get_nodes_in_group("doors"):
+				if door._tween != null and door._tween.is_running(): door._tween.custom_step(.05)
+			if tick % 3 == 0: await physics_frame
+		check(actor.global_position.distance_to(goal) < 1.0, "%s reaches destination (pos=%s)" % [sample[0], actor.global_position])
+		check(not crossed, sample[0] + " crosses no walls")
+
 func hot_house_escape() -> void:
 	var fire := Vector3(-20,0,30)
 	var pit := WorldAction.new()
@@ -454,6 +484,7 @@ func run() -> void:
 			await travel(origin+Vector3(-9,0,side*6),"barn %s exit %s" % [origin,side])
 	await city_drink_escape(city)
 	await hot_house_escape()
+	await mixed_building_departures(city)
 	print("BotHouseTraversal: checks=%d errors=%d" % [checks,errors])
 	actor.free(); manager.free(); world.free()
 	quit(1 if errors else 0)
