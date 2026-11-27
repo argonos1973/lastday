@@ -1295,7 +1295,7 @@ func puppet_apply(pos: Vector3, rot: float, anim: String) -> void:
 	rotation.y = rot
 	if not ground_fields.is_empty():
 		_sync_ground_gesture(ground_fields)
-		anim = _motion("pickup_ground") if ground_fields[0] == "pickup" else "eat"
+		anim = _ground_pickup_clip() if ground_fields[0] == "pickup" else "eat"
 	elif _ground_gesture != null:
 		end_ground_gesture()
 	_puppet_anim = anim
@@ -7382,6 +7382,10 @@ func end_ground_gesture(restore_equipment := true) -> void:
 		else:
 			_sync_held_item()
 
+func _ground_pickup_clip() -> String:
+	var food: bool = _ground_gesture != null and _ground_gesture.item.item_type == "food"
+	return _motion("pickup_ground_food" if food else "pickup_ground", third_person_gather_animation)
+
 func play_action_animation(action_name: String, duration := 1.1) -> void:
 	if is_dead or third_person_animation_player == null:
 		return
@@ -7428,7 +7432,7 @@ func play_action_animation(action_name: String, duration := 1.1) -> void:
 			if target_animation.is_empty():
 				target_animation = third_person_plant_animation
 		"pickup", "collect":
-			target_animation = _motion("pickup_ground", third_person_gather_animation)
+			target_animation = _ground_pickup_clip()
 		"cook":
 			target_animation = third_person_sit_animation
 			if target_animation.is_empty():

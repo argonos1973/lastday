@@ -1,6 +1,7 @@
 extends SceneTree
 # Isolated rendered preview/check. -- --rifle or --sniper samples a picked-up
-# gun; --check-only validates its GPU hand contact without writing PNG frames.
+# gun; --check-only validates without writing PNG frames. --continuous uses
+# 20 Hz state packets, a 60 Hz animator and the real crossfades/ground alignment.
 class Actor extends "res://scripts/PlayerController.gd":
 	func _ready(): pass
 	func _process(_delta): pass
@@ -14,6 +15,8 @@ func run():
 	var args := OS.get_cmdline_user_args()
 	var gun := "--rifle" in args or "--sniper" in args
 	var capture := not "--check-only" in args
+	var continuous := "--continuous" in args
+	var fps := 60 if continuous else 30
 	var errors := 0
 	var worst_grip := 0.0
 	root.size = Vector2i(960, 720)
@@ -31,6 +34,8 @@ func run():
 	var item_name: String = (actor.RIFLE_NAME if "--sniper" in args else actor.M4_NAME) if gun else "Seta amanita"
 	var item_type := "weapon_rifle" if gun else "food"
 	var ap: AnimationPlayer = actor.third_person_animation_player
+	if continuous:
+		ap.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	var environment := WorldEnvironment.new()
 	environment.environment = Environment.new()
 	environment.environment.background_mode = Environment.BG_COLOR
@@ -65,12 +70,18 @@ func run():
 	else:
 		world._create_mushroom_pickup("preview_meal", Vector3(0.03,0.03,-0.76))
 	var directory := "res://build/tmp/ground_pickup_preview" + ("_sniper" if "--sniper" in args else "_m4" if gun else "")
+	if continuous: directory += "_continuous"
 	if capture:
 		DirAccess.make_dir_recursive_absolute(directory)
 	var skeleton: Skeleton3D = actor._find_skeleton(actor.third_person_model)
 	var hand_index: int = skeleton.find_bone(actor._resolve_mixamo_bone_name(skeleton, "mixamorig:RightHand"))
 	var lowest := Vector3.INF
 	var lowest_t := 0.0
+	var eat_feet := {}
+	var eat_foot_travel := 0.0
+	var eat_toe_travel := 0.0
+	var previous_feet := {}
+	var transition_foot_step := 0.0
 	var mesh: MeshInstance3D = actor._find_mesh_in_third_person("Desnudo_hands")
 	var skin := skeleton.register_skin(mesh.skin)
 	var middle := skeleton.find_bone(actor._resolve_mixamo_bone_name(skeleton, "mixamorig:RightHandMiddle1"))
@@ -79,14 +90,15 @@ func run():
 		if mesh.skin.get_bind_name(bind) == skeleton.get_bone_name(middle):
 			middle_bind = bind
 	var end_time: float = actor.GroundGesture.DURATION + (0.0 if gun else 1.2)
-	for frame in 123:
-		var t := frame / 30.0
+	for frame in int(4.1 * fps):
+		var t := float(frame) / fps
 		var phase := "pickup" if t < actor.GroundGesture.DURATION else "eat"
 		var phase_time := t if phase == "pickup" else t - actor.GroundGesture.DURATION
 		if t < end_time:
-			actor.puppet_apply(Vector3.ZERO, 0.0, actor.GroundGesture.packet(phase, "preview_meal", item_name, item_type, phase_time))
-			actor._ground_gesture.elapsed = phase_time
-			actor._ground_gesture.tick(0.0)
+			if not continuous or frame % 3 == 0:
+				actor.puppet_apply(Vector3.ZERO, 0.0, actor.GroundGesture.packet(phase, "preview_meal", item_name, item_type, phase_time))
+			if not continuous: actor._ground_gesture.elapsed = phase_time
+			actor._ground_gesture.tick(1.0 / fps if continuous else 0.0)
 		else:
 			if not world.world_actions_by_id["preview_meal"].depleted:
 				world._hide_action_visual(world.world_actions_by_id["preview_meal"])
@@ -94,18 +106,41 @@ func run():
 				if gun:
 					actor.puppet_apply_visuals(clothing, item_name, "")
 					actor.puppet_set_rifle(true)
-			actor.puppet_apply(Vector3.ZERO, 0.0, "idle")
+			if not continuous or frame % 3 == 0:
+				actor.puppet_apply(Vector3.ZERO, 0.0, "idle")
 		# Freeze individual poses after removing the network crossfade; a paused
 		# AnimationPlayer otherwise keeps the previous pose at zero blend weight.
-		ap.play(ap.current_animation, 0.0)
-		ap.speed_scale = 0.0
-		if t < end_time:
-			ap.seek(phase_time, true)
-			ap.advance(0.0)
-		actor._update_puppet_ground_alignment(1.0)
+		if continuous:
+			ap.advance(1.0 / fps)
+		else:
+			ap.play(ap.current_animation, 0.0)
+			ap.speed_scale = 0.0
+			if t < end_time:
+				ap.seek(phase_time, true)
+				ap.advance(0.0)
+		actor._update_puppet_ground_alignment(1.0 / fps if continuous else 1.0)
 		await process_frame
-		actor._update_puppet_ground_alignment(1.0)
+		if not continuous: actor._update_puppet_ground_alignment(1.0)
 		await RenderingServer.frame_post_draw
+		for side in ["Left", "Right"]:
+			var fi := skeleton.find_bone(actor._resolve_mixamo_bone_name(skeleton, "mixamorig:" + side + "Foot"))
+			var foot := skeleton.global_transform * skeleton.get_bone_global_pose(fi).origin
+			var transition := (t >= actor.GroundGesture.DURATION and phase_time < 0.25) \
+				or (t >= end_time and t < end_time + 0.25)
+			if previous_feet.has(side) and transition:
+				transition_foot_step = maxf(transition_foot_step, foot.distance_to(previous_feet[side]))
+			previous_feet[side] = foot
+		if not gun and phase == "eat" and phase_time >= 0.2 and t < end_time:
+			for part in ["LeftFoot", "RightFoot", "LeftToeBase", "RightToeBase"]:
+				var foot_index := skeleton.find_bone(actor._resolve_mixamo_bone_name(skeleton, "mixamorig:" + part))
+				var foot := skeleton.global_transform * skeleton.get_bone_global_pose(foot_index).origin
+				if not eat_feet.has(part): eat_feet[part] = foot
+				var first_foot: Vector3 = eat_feet[part]
+				var travel := Vector2(foot.x-first_foot.x, foot.z-first_foot.z).length()
+				if part.ends_with("ToeBase"):
+					eat_toe_travel = maxf(eat_toe_travel, travel)
+				else:
+					eat_foot_travel = maxf(eat_foot_travel, travel)
 		if gun and t >= actor.GroundGesture.GRAB_TIME and t < end_time:
 			var rig: Dictionary = actor._grip_rig_for(skeleton, hand_index, false)
 			var pose := RenderingServer.skeleton_bone_get_transform(skin.get_skeleton(), middle_bind) \
@@ -131,7 +166,16 @@ func run():
 	if actor._rifle_ammo_initialized or actor._m4_ammo_initialized:
 		errors += 1
 		push_error("Cosmetic pickup must not initialize ammunition")
+	if not gun and (eat_feet.size() != 4 or maxf(eat_foot_travel, eat_toe_travel) > 0.015):
+		errors += 1
+		push_error("Eating must keep its feet and toes planted after the pickup")
+	if continuous and not gun and transition_foot_step > 0.015:
+		errors += 1
+		push_error("Pickup/eat/idle transitions must not snap the legs")
 	print("GROUND_PICKUP_CAPTURE min_hand=", lowest, " time=", lowest_t, " GPU_GRIP=", worst_grip, " errors=", errors)
+	print("EATING_FOOT_TRAVEL=", eat_foot_travel)
+	print("EATING_TOE_TRAVEL=", eat_toe_travel)
+	print("EATING_TRANSITION_FOOT_STEP=", transition_foot_step)
 	world.free()
 	await process_frame
 	quit(1 if errors else 0)

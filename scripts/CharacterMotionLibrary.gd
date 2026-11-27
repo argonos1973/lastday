@@ -31,7 +31,7 @@ static func install(actor) -> Dictionary:
 		return {}
 	var animation_root := player.get_node(player.root_node)
 	# Rest transforms and the track path matter, not just the number of bones.
-	var signature: Array = [str(animation_root.get_path_to(target))]
+	var signature: Array = [str(animation_root.get_path_to(target)), actor.third_person_idle_animation]
 	for bone in target.get_bone_count():
 		signature.append(target.get_bone_name(bone))
 		signature.append(target.get_bone_parent(bone))
@@ -72,6 +72,9 @@ static func install(actor) -> Dictionary:
 					actor._smooth_loop_boundary(clip)
 				library.add_animation(role, clip)
 			source.free()
+		if library.has_animation("pickup_ground"):
+			library.add_animation("pickup_ground_food", library.get_animation("pickup_ground").duplicate(true))
+		_plant_consumption_stance(library, actor, target)
 		_libraries[key] = library
 	if not player.has_animation_library("motion"):
 		player.add_animation_library("motion", library)
@@ -79,6 +82,55 @@ static func install(actor) -> Dictionary:
 	for role in library.get_animation_list():
 		result[String(role)] = PREFIX + String(role)
 	return result
+
+static func _plant_consumption_stance(library: AnimationLibrary, actor, skeleton: Skeleton3D) -> void:
+	# The donor eating take shifts its hips/feet. That stance change snapped
+	# the knees inward after the pickup and slid the feet during each bite.
+	# Keep the captured upper body; finish the rise on the actor's idle support.
+	var player: AnimationPlayer = actor.third_person_animation_player
+	if not player.has_animation(actor.third_person_idle_animation):
+		return
+	var idle: Animation = player.get_animation(actor.third_person_idle_animation)
+	var support := {}
+	for track in idle.get_track_count():
+		if idle.track_get_type(track) != Animation.TYPE_ROTATION_3D:
+			continue
+		var bone: String = actor._resolve_mixamo_bone_name(skeleton,
+			actor._extract_mixamo_bone_name(str(idle.track_get_path(track))))
+		if bone.ends_with("Hips") or bone.ends_with("Leg") or bone.ends_with("Foot") or bone.contains("Toe"):
+			support[bone] = idle.rotation_track_interpolate(track, 0.0)
+	for role in ["pickup_ground_food", "eat_fruit"]:
+		if not library.has_animation(role):
+			continue
+		var clip := library.get_animation(role)
+		var rise_start := clip.length - 0.3
+		var tracks := {}
+		for track in clip.get_track_count():
+			var bone: String = actor._resolve_mixamo_bone_name(skeleton,
+				actor._extract_mixamo_bone_name(str(clip.track_get_path(track))))
+			tracks[bone] = track
+		var hips: String = actor._resolve_mixamo_bone_name(skeleton, "mixamorig:Hips")
+		var spine: String = actor._resolve_mixamo_bone_name(skeleton, "mixamorig:Spine")
+		if tracks.has(hips) and tracks.has(spine) and support.has(hips):
+			# Changing the pelvis must not tilt the captured torso/head/arms.
+			# Counter-rotate its spine child before replacing the hip keys.
+			var hip_track: int = tracks[hips]
+			var spine_track: int = tracks[spine]
+			for key in clip.track_get_key_count(spine_track):
+				var time := clip.track_get_key_time(spine_track, key)
+				var weight := 1.0 if role == "eat_fruit" else smoothstep(rise_start, clip.length, time)
+				var before := clip.rotation_track_interpolate(hip_track, time)
+				var after := before.slerp(support[hips], weight)
+				var rotation: Quaternion = clip.track_get_key_value(spine_track, key)
+				clip.track_set_key_value(spine_track, key, (after.inverse() * before * rotation).normalized())
+		for bone in tracks:
+			if not support.has(bone):
+				continue
+			var track: int = tracks[bone]
+			for key in clip.track_get_key_count(track):
+				var weight := 1.0 if role == "eat_fruit" else smoothstep(rise_start, clip.length, clip.track_get_key_time(track, key))
+				var rotation: Quaternion = clip.track_get_key_value(track, key)
+				clip.track_set_key_value(track, key, rotation.slerp(support[bone], weight).normalized())
 
 static func _remove_turn_yaw(clip: Animation, skeleton: Skeleton3D, actor) -> void:
 	for track in clip.get_track_count():

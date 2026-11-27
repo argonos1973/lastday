@@ -231,6 +231,40 @@ func _test_pickup_hand_dimensions() -> void:
 	world.free()
 	current_scene = null
 
+func _test_consumption_support(player: Node) -> void:
+	var ap: AnimationPlayer = player.third_person_animation_player
+	var skeleton: Skeleton3D = player._find_skeleton(player.third_person_model)
+	var rig_to_model: Transform3D = player.third_person_model.global_transform.affine_inverse() * skeleton.global_transform
+	var model_scale: float = player.MIXAMO_CHARACTER_SCALE
+	var contacts := {}
+	ap.play(player.third_person_idle_animation, 0.0)
+	ap.advance(0.0)
+	for part in ["LeftFoot", "RightFoot", "LeftToeBase", "RightToeBase"]:
+		var bone: int = skeleton.find_bone(player._resolve_mixamo_bone_name(skeleton, "mixamorig:" + part))
+		contacts[bone] = (rig_to_model * skeleton.get_bone_global_pose(bone).origin) * model_scale
+	var hand: int = skeleton.find_bone(player._resolve_mixamo_bone_name(skeleton, "mixamorig:RightHand"))
+	var head: int = skeleton.find_bone(player._resolve_mixamo_bone_name(skeleton, "mixamorig:Head"))
+	var hand_start := Vector3.ZERO
+	var hand_motion := 0.0
+	for clip in [player._motion("pickup_ground_food"), player.third_person_eat_animation]:
+		var pickup: bool = clip == player._motion("pickup_ground_food")
+		var worst := 0.0
+		ap.play(clip, 0.0)
+		for frame in (1 if pickup else 61):
+			ap.seek(ap.get_animation(clip).length if pickup else float(frame) / 30.0, true)
+			ap.advance(0.0)
+			for bone in contacts:
+				var foot := (rig_to_model * skeleton.get_bone_global_pose(bone).origin) * model_scale
+				var standing: Vector3 = contacts[bone]
+				worst = maxf(worst, Vector2(foot.x-standing.x, foot.z-standing.z).length())
+			if not pickup:
+				var relative := rig_to_model.basis * (skeleton.get_bone_global_pose(hand).origin - skeleton.get_bone_global_pose(head).origin) * model_scale
+				if frame == 0: hand_start = relative
+				hand_motion = maxf(hand_motion, relative.distance_to(hand_start))
+		print("CONSUMPTION_STANCE clip=", clip, " drift=", worst)
+		check(worst < 0.02, "pickup rise and eating keep the standing foot/toe support: " + clip)
+	check(hand_motion > 0.06, "eating retains the hand-to-mouth motion while its feet stay planted")
+
 func _initialize() -> void:
 	print("=== PickupAnimRegression ===")
 	await process_frame
@@ -239,6 +273,7 @@ func _initialize() -> void:
 	await process_frame
 	var ap: AnimationPlayer = _mount_model(player)
 	await process_frame
+	_test_consumption_support(player)
 
 	var offset: float = player.THIRD_PERSON_GATHER_ANIM_OFFSET
 	var gather: String = player.third_person_gather_animation
@@ -253,6 +288,10 @@ func _initialize() -> void:
 		check(player.third_person_action_timer == player.GroundGesture.DURATION, action + " waits for the pickup gesture")
 		check(player.third_person_action_animation == player._motion("pickup_ground"), action + " uses the ground-reaching clip")
 		check(ap.get_animation(player.third_person_action_animation).loop_mode == Animation.LOOP_NONE, action + " is a single pickup")
+	player.begin_ground_gesture("local_meal", "Seta", "food")
+	player.play_action_animation("pickup", player.GroundGesture.DURATION)
+	check(ap.current_animation == player._motion("pickup_ground_food"), "local ground food uses the stable consumption support")
+	player.end_ground_gesture()
 
 	# Forage resolves the same clip — same offset keeps sender/puppet aligned.
 	player.play_action_animation("forage", 3.0)
@@ -321,7 +360,7 @@ func _initialize() -> void:
 	puppet.is_puppet = true
 	var packet: String = player.GroundGesture.packet("pickup", "seta|1", "Seta", "food", 0.7)
 	puppet.puppet_apply(Vector3.ZERO, 0.0, packet)
-	check(puppet_ap.current_animation == puppet._motion("pickup_ground"), "remote pickup selects the same clip")
+	check(puppet_ap.current_animation == puppet._motion("pickup_ground_food"), "remote food pickup selects the same support as the local actor")
 	check(absf(puppet_ap.current_animation_position - 0.7) < 0.02, "joining during a pickup preserves its phase")
 	check(puppet._ground_gesture.action_id == "seta|1", "gesture IDs survive packet escaping")
 	check(puppet._ground_gesture.item.item_name == "Seta", "remote gesture displays the actual food")
