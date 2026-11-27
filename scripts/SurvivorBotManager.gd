@@ -14252,6 +14252,8 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 	# haya un obstaculo directo; dentro de edificios/escaleras/vanos seguir los
 	# waypoints 3D exactos sin cuantizarlos a la rejilla de 2.0 m.
 	var bot_nav_ref = world.get("bot_nav") if world != null else null
+	if world != null and world.get("bot_dry_nav") != null and _bot_prefers_dry_nav(b):
+		bot_nav_ref = world.get("bot_dry_nav")
 	if bot_nav_ref == null and world != null:
 		bot_nav_ref = world.get("wolf_nav")
 	if facade_route or in_building_3d or (on_mountain_3d and (cur.x < -235.0 and cur.z < -235.0)):
@@ -14786,6 +14788,15 @@ func _bot_cold_water_guard(b: Dictionary) -> bool:
 		return true
 	var st: SurvivalStats = b.get("vstats")
 	return st != null and not st.dead and st.wetness > 0.12 and st.body_temperature < 36.3
+
+func _bot_prefers_dry_nav(b: Dictionary) -> bool:
+	if not _bot_cold_water_guard(b):
+		return false
+	# La excepcion de rescate termico si permite un vado corto; para ese caso el
+	# grafo normal ponderado puede usarlo. El grafo seco es para viajes ordinarios
+	# frios/mojados, donde entrar en agua seria contradecir la regla de movimiento.
+	var st: SurvivalStats = b.get("vstats")
+	return st == null or st.wetness < 0.30 or str(b.get("_act", "")) not in ["rest", "fire_rescue", "cold_escape"]
 
 func _bot_cold_water_limit(b: Dictionary, depth_cur: float) -> float:
 	if _bot_is_freezing(b) or _bot_cold_water_guard(b):

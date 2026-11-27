@@ -8592,6 +8592,59 @@ func run() -> void:
 	st_hyp.body_temperature = 36.6
 	st_hyp.wetness = 0.0
 
+	# 10Z5e: la nav ordinaria puede ponderar un atajo por agua somera, pero un
+	# bot frio/mojado debe usar el grafo seco paralelo y rodear por el vado en
+	# vez de oscilar en la orilla hasta vetar el destino.
+	var nav_bak5e = world.bot_nav
+	var dry_nav_bak5e = world.get("bot_dry_nav")
+	var river_bak5e: Array = world.river_segs.duplicate(true)
+	var water_rect_bak5e := world.water_rect
+	var water_depth_bak5e := world.water_depth
+	var road_rect_bak5e := world.road_rect
+	world.water_rect = Rect2(-64.0, -74.0, 8.0, 30.0)
+	world.water_depth = 0.18
+	world.road_rect = Rect2(-64.0, -52.0, 8.0, 10.0)
+	world.river_segs = [{"center": Vector3(-60.0, 0.0, -59.0), "size": Vector2(30.0, 8.0), "yaw": 90.0}]
+	world.bot_nav = NavPathfinding.new()
+	world.bot_nav.build([], world.river_segs, Callable(world, "_is_bot_river_ford"))
+	var dry_nav5e := NavPathfinding.new()
+	dry_nav5e.build([], world.river_segs, Callable(world, "_is_bot_river_dry_cell"))
+	world.bot_dry_nav = dry_nav5e
+	var start5e := Vector3(-56.0, 0.4, -59.0)
+	var goal5e := Vector3(-64.0, 0.4, -59.0)
+	var normal_path5e: Array = world.bot_nav.find_path(start5e, goal5e)
+	var dry_path5e: Array = dry_nav5e.find_path(start5e, goal5e)
+	check(normal_path5e.size() >= 2 and absf((normal_path5e[0] as Vector3).z + 60.0) < 0.1,
+		"10Z5e: la nav ponderada conserva el atajo por agua somera para bots sanos (%s)" % [normal_path5e])
+	check(dry_path5e.size() >= 3 and (dry_path5e[0] as Vector3).z > -59.0,
+		"10Z5e: el grafo seco sale hacia el vado en vez de entrar en el agua (%s)" % [dry_path5e])
+	p_hyp.global_position = start5e
+	b_hyp["pos"] = start5e
+	b_hyp["path"] = []
+	b_hyp["path_timer"] = 0.0
+	b_hyp["path_idx"] = 0
+	b_hyp["stuck_count"] = 0
+	b_hyp["stuck_timer"] = 0.0
+	b_hyp["macro_timer"] = 0.0
+	b_hyp["macro_pos"] = start5e
+	b_hyp["_act"] = "forage"
+	b_hyp["_goal_prog"] = {}
+	b_hyp.erase("_last_step_block")
+	st_hyp.body_temperature = 36.1
+	st_hyp.wetness = 0.23
+	for i5e in range(8):
+		mgr._move_bot_towards(b_hyp, goal5e, 4.5, 0.1, "run")
+	check(p_hyp.global_position.z > -57.0 and b_hyp.get("_last_step_block", {}).is_empty(),
+		"10Z5e: frio/mojado con meta ordinaria rodea por el grafo seco sin cold_water_limit (pos=%s step=%s)" % [p_hyp.global_position, b_hyp.get("_last_step_block", {})])
+	world.bot_nav = nav_bak5e
+	world.bot_dry_nav = dry_nav_bak5e
+	world.river_segs = river_bak5e
+	world.water_rect = water_rect_bak5e
+	world.water_depth = water_depth_bak5e
+	world.road_rect = road_rect_bak5e
+	st_hyp.body_temperature = 36.6
+	st_hyp.wetness = 0.0
+
 	# 10Z6: hemorragia activa — la reserva médica aprendida manda sobre la
 	# antorcha/cuerda y un lobo pasivo de compañía no impide fabricar la venda.
 	mgr._respawn_bot(mgr.bots[904])

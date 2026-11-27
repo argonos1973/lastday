@@ -58,6 +58,7 @@ var server_proxies: Dictionary = {}  # peer_id -> Node3D (server-side proxy for 
 var nav = null
 var wolf_nav = null
 var bot_nav = null
+var bot_dry_nav = null
 var proxy_by_client_id: Dictionary = {}  # client_id -> Node3D (persistent proxy)
 var _server_saved_players: Dictionary = {}  # client_id -> saved player data (server save)
 var pending_client_ids: Dictionary = {}  # peer_id -> client_id (until proxy is created)
@@ -8370,6 +8371,19 @@ func _create_map() -> void:
 			bot_nav = NavPathfindingScript.new()
 			bot_nav.build(wildlife_blockers, river_segments_data, ford_test)
 			push_warning("LastDayNav lacks build_with_ford — bot_nav uses GDScript NavPathfinding")
+		# Parallel dry graph for hypothermia-aware bots: ordinary cold/wet travel
+		# must never plan a water shortcut that the movement layer will veto.
+		# Road fords remain open; non-road water is solid here instead of merely
+		# expensive. Thermal-rescue fords still use the normal weighted graph.
+		bot_dry_nav = _new_nav_pathfinding()
+		var dry_test := Callable(self, "_is_bot_river_dry_cell")
+		if bot_dry_nav.has_method("build_with_ford"):
+			bot_dry_nav.build_with_ford(wildlife_blockers, river_segments_data, dry_test)
+		elif bot_dry_nav.get_script() != null:
+			bot_dry_nav.build(wildlife_blockers, river_segments_data, dry_test)
+		else:
+			bot_dry_nav = NavPathfindingScript.new()
+			bot_dry_nav.build(wildlife_blockers, river_segments_data, dry_test)
 		_refresh_nav_door_caches()
 		await get_tree().process_frame
 		if _loading_label != null:
@@ -15824,6 +15838,14 @@ func _is_bot_river_ford(pos: Vector3) -> float:
 		return 0.0
 	return 1.0 + depth * 8.0
 
+func _is_bot_river_dry_cell(pos: Vector3) -> float:
+	# Grafo seco paralelo: los vados de carretera permanecen abiertos, pero el
+	# agua fuera de ellos es infranqueable para un bot frio/mojado. Esto evita
+	# planificar un atajo que _bot_cold_water_limit tendria que vetar al pie.
+	if _is_on_road(pos):
+		return 1.0
+	return 1.0 if get_river_depth_at(pos) <= 0.05 else 0.0
+
 func get_river_surface_y_at(world_pos: Vector3) -> float:
 	# El agua se construye en la altura Y del segmento; exponerla evita que los
 	# efectos de lanzamiento queden bajo el plano o flotando sobre lagos/ríos.
@@ -18665,6 +18687,8 @@ func _refresh_nav_door_caches(force: bool = false) -> void:
 		wolf_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage, Callable())
 	if bot_nav != null:
 		bot_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage, Callable(self, "_is_in_bot_house_nav"))
+	if bot_dry_nav != null:
+		bot_dry_nav.update_door_cache(wildlife_blockers, _is_in_doorway_passage, _is_in_barn_doorway_passage, Callable(self, "_is_in_bot_house_nav"))
 
 func _wildlife_water_obstacles() -> Array:
 	return river_segments_data.filter(func(segment): return segment["size"].x >= 60.0)
