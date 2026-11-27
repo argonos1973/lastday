@@ -24,7 +24,7 @@ class TestPlayer extends Node3D:
 	var hits: Array = []
 	func apply_damage(amount: float, _kind: String = "") -> void:
 		hits.append(amount)
-	func _play_hit_reaction(_h: bool) -> void:
+	func _play_hit_reaction(_h: bool, _animal: bool = false) -> void:
 		pass
 
 class TestWolf extends WildlifeController:
@@ -76,6 +76,7 @@ func sim(wolf: TestWolf, seconds: float, dt: float = 0.05) -> void:
 		if speed > 0.0:
 			wolf.global_position = wolf.global_position.move_toward(target, speed * dt)
 		wolf._attack_cooldown = maxf(0.0, wolf._attack_cooldown - dt)
+		wolf._bite_anim_timer = maxf(0.0, wolf._bite_anim_timer - dt)
 		wolf._chase_cooldown = maxf(0.0, wolf._chase_cooldown - dt)
 		wolf._foe_timer = maxf(0.0, wolf._foe_timer - dt)
 		wolf._prey_flee_timer = maxf(0.0, wolf._prey_flee_timer - dt)

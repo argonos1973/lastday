@@ -7,7 +7,7 @@ class World extends "res://scripts/Main.gd":
 
 class Target extends Node3D:
 	var damage := 0.0
-	func apply_damage(amount: float) -> void: damage += amount
+	func apply_damage(amount: float, _source: String = "") -> void: damage += amount
 
 class Wolf extends WildlifeController:
 	func _ready() -> void: pass
@@ -33,6 +33,7 @@ func run() -> void:
 		positions.append(world.HOUSE_DATA[i]["pos"])
 		world._server_door_states["Casa abandonada %d Door" % (i + 1)] = true
 	var player := Target.new()
+	player.name = "Player"
 	world.add_child(player)
 	var wolf := Wolf.new()
 	world.add_child(wolf)
@@ -72,6 +73,7 @@ func run() -> void:
 	check(not world._is_pos_wolf_protected(outside), "Outside spawn radius stays exposed at %s" % outside)
 	var safe_zone: Vector3 = world._spawn_zones[14]
 	player.position = safe_zone
+	player.set_meta("disconnected", true)
 	player.set_meta("proxy_health", 100.0)
 	player.damage = 0.0
 	wolf.position = safe_zone + Vector3(2, 0, 0)
@@ -81,8 +83,62 @@ func run() -> void:
 	wolf._chase_target = player
 	wolf._attack_cooldown = 0.0
 	wolf._wolf_ai(0.016)
-	check(wolf._state != "chase_player" and wolf._chase_target == null, "Spawn zone cancels an active chase")
-	check(player.damage == 0.0 and player.get_meta("proxy_health") == 100.0, "No damage inside spawn zone")
+	check(wolf._state != "chase_player" and wolf._chase_target == null, "Spawn zone cancels a chase of a disconnected body")
+	check(player.damage == 0.0 and player.get_meta("proxy_health") == 100.0, "No damage to a disconnected body inside spawn zone")
+	# The spawn sanctuary is victim-specific: it protects loading/fresh players
+	# and parked offline bodies, but it must not turn the whole village into a
+	# permanent no-wolf zone for an active player.
+	var village_pos: Vector3 = world._spawn_zones[0]
+	check(not world._is_player_in_house(village_pos), "Village encounter is outdoors")
+	for encounter_pos in [village_pos, safe_zone]:
+		player.position = encounter_pos
+		wolf.position = encounter_pos + Vector3(2.0, 0.0, 0.0)
+		for mode in ["local", "connected", "fresh", "loading", "disconnected"]:
+			player.set_meta("disconnected", mode == "disconnected")
+			player.set_meta("protection_timer", 5.0 if mode == "fresh" else 0.0)
+			player.set_meta("has_real_pos", mode != "loading")
+			player.set_meta("peer_id", 777)
+			if mode != "local": player.add_to_group("net_player_proxy")
+			wolf._is_dedicated = mode != "local"
+			wolf._player = null
+			wolf._resolve_player()
+			check((wolf._player == player) == (mode in ["local", "connected"]),
+				"Spawn target selection respects %s victim at %s" % [mode, encounter_pos])
+			if mode != "local": player.remove_from_group("net_player_proxy")
+		# Start a real strike, then change protection during its wind-up.
+		# Only the still-active victim may take damage at contact.
+		wolf._is_dedicated = false
+		for at_contact in ["active", "fresh", "disconnected", "roof"]:
+			player.position = encounter_pos
+			player.damage = 0.0
+			player.set_meta("proxy_health", 100.0)
+			player.set_meta("protection_timer", 0.0)
+			player.set_meta("disconnected", false)
+			wolf._cancel_player_bite()
+			wolf._player = player
+			wolf._chase_cooldown = 0.0
+			wolf._attack_cooldown = 0.0
+			wolf._state = "patrol"
+			wolf._chase_target = null
+			wolf._wolf_ai(0.016)
+			check(wolf._state == "chase_player" and wolf._player_bite_pending,
+				"Active village player is chased and a bite starts at %s" % encounter_pos)
+			check(player.damage == 0.0, "Bite does not damage before its wind-up")
+			if at_contact == "fresh": player.set_meta("protection_timer", 5.0)
+			if at_contact == "disconnected":
+				player.add_to_group("net_player_proxy")
+				player.set_meta("disconnected", true)
+			if at_contact == "roof":
+				world._built_shelters.append({"pos": [encounter_pos.x, encounter_pos.y, encounter_pos.z]})
+			for step in range(32):
+				wolf._bite_anim_timer = maxf(0.0, wolf._bite_anim_timer - 0.016)
+				wolf._wolf_ai(0.016)
+			check(not wolf._player_bite_pending, "The bite reaches its contact time")
+			check(player.damage == (25.0 if at_contact == "active" else 0.0)
+				and player.get_meta("proxy_health") == 100.0,
+				"Village bite damages only an active victim, contact state=%s" % at_contact)
+			if at_contact == "disconnected": player.remove_from_group("net_player_proxy")
+			if at_contact == "roof": world._built_shelters.pop_back()
 	world._built_shelters.clear()
 	check(not world._is_pos_wolf_protected(Vector3(350, 0, 350)), "Dismantling shelter removes protection")
 	for tent in [{"pos": world._military_tent_pos, "yaw": 35.0}, {"pos": world._remote_tent_pos, "yaw": 120.0}]:

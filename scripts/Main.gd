@@ -16302,12 +16302,9 @@ const SPAWN_WOLF_SAFE_RADIUS := 40.0
 
 # Roof protection is independent of doors and visual/collision nodes, so the
 # dedicated server applies the same rule before damaging connected/offline bodies.
-# Spawn zones count too: a fresh spawn, a player still loading, or a body
-# parked at spawn on disconnect must not be wolf food. Predators can still
-# patrol through — they just cannot target or keep chasing anyone inside.
-func _is_pos_wolf_protected(pos: Vector3) -> bool:
-	if _is_player_in_house(pos) or _is_near_built_shelter(pos):
-		return true
+# Spawn zones identify where fresh/loading players and parked offline bodies
+# can be protected; whether a live victim is exempt is decided below.
+func _is_pos_in_spawn_wolf_safe_radius(pos: Vector3) -> bool:
 	var r2: float = SPAWN_WOLF_SAFE_RADIUS * SPAWN_WOLF_SAFE_RADIUS
 	for sz: Vector3 in _spawn_zones:
 		var dx: float = pos.x - sz.x
@@ -16315,6 +16312,26 @@ func _is_pos_wolf_protected(pos: Vector3) -> bool:
 		if dx * dx + dz * dz < r2:
 			return true
 	return false
+
+func _is_pos_wolf_protected(pos: Vector3) -> bool:
+	if _is_player_in_house(pos) or _is_near_built_shelter(pos):
+		return true
+	return _is_pos_in_spawn_wolf_safe_radius(pos)
+
+# Victim-aware predator protection. Houses and shelters are positional, but the
+# spawn radius is not a permanent safe bubble for everyone: it protects only a
+# freshly spawned/loading victim or a parked disconnected body. Otherwise the
+# overlapping village spawn zones make wolves harmless for the whole game.
+func _is_wolf_victim_protected(pos: Vector3, victim: Node) -> bool:
+	if _is_player_in_house(pos) or _is_near_built_shelter(pos):
+		return true
+	if not _is_pos_in_spawn_wolf_safe_radius(pos):
+		return false
+	if victim == null or not is_instance_valid(victim):
+		return true
+	if float(victim.get_meta("protection_timer", 0.0)) > 0.0:
+		return true
+	return bool(victim.get_meta("disconnected", false))
 
 func _is_named_door_open(door_name: String) -> bool:
 	# Live node state first (clients, single player, host); the server-side

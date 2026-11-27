@@ -41,6 +41,8 @@ class TestPlayer extends Node3D:
 	var health := 100.0
 	func apply_damage(amount: float, _source := "") -> void:
 		health -= amount
+	func _play_hit_reaction(_h: bool, _animal: bool = false) -> void:
+		pass
 
 var failures := 0
 
@@ -131,8 +133,13 @@ func _run() -> void:
 	bear._wolf_hunger = 100.0
 	bear._wolf_hunger_threshold = 0.0
 	bear._wolf_ai(0.016)
+	# Direct-AI regression harnesses do not run _process, so advance the same
+	# bite wind-up timer that the real animal process pumps every frame.
+	for step in range(32):
+		bear._bite_anim_timer = maxf(0.0, bear._bite_anim_timer - 0.016)
+		bear._wolf_ai(0.016)
 	check(player.health == 65.0, "bear attack damages a nearby character for 35 health")
-	check(bear.last_sound == "bite", "bear plays contact sound when striking character")
+	check(bear.last_sound == "attack", "bear plays its attack cue while striking a character")
 
 	# Bears require exactly 3 rifle shots (260 base dmg each) to die and do not flee when shot
 	var shot_bear := TestAnimal.new()

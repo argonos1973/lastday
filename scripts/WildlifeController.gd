@@ -1220,8 +1220,7 @@ func _wolf_ai(delta: float) -> Dictionary:
 			var f_dist := global_position.distance_to(_wolf_foe.global_position)
 			var foe_is_wild: bool = str(_wolf_foe.get("tamed_to")).is_empty()
 			if (foe_is_wild and p_dist < _effective_player_sight_range(_player)) or (p_dist < 18.0 and p_dist + 2.0 < f_dist):
-				var sc := get_tree().current_scene
-				var p_protected: bool = absf(p_pos.y - global_position.y) >= 1.8 or _is_near_lit_campfire(p_pos, 10.0) or (sc != null and sc.has_method("_is_pos_wolf_protected") and sc._is_pos_wolf_protected(p_pos))
+				var p_protected: bool = absf(p_pos.y - global_position.y) >= 1.8 or _is_near_lit_campfire(p_pos, 10.0) or _scene_wolf_victim_protected(p_pos, _player)
 				if not p_protected:
 					yield_to_player = true
 		if foe_dead or foe_far or _foe_timer <= 0.0 or foe_futile or yield_to_player:
@@ -1291,9 +1290,8 @@ func _wolf_ai(delta: float) -> Dictionary:
 		# Skip if player is near a lit campfire or under a roof (house,
 		# barn, tent, shelter). The roof check also stops damage through walls,
 		# since the attack range test ignores obstacles.
-		var scene := get_tree().current_scene
 		var out_of_reach := _is_near_lit_campfire(_player.global_position, 10.0)
-		if not out_of_reach and scene != null and scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected(_player.global_position):
+		if not out_of_reach and _scene_wolf_victim_protected(_player.global_position, _player):
 			out_of_reach = true
 		if out_of_reach:
 			_state = "patrol"
@@ -1697,6 +1695,16 @@ func _cancel_player_bite() -> void:
 	_player_bite_pending = false
 	_bite_anim_timer = 0.0
 
+func _scene_wolf_victim_protected(pos: Vector3, victim: Node) -> bool:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return false
+	if scene.has_method("_is_wolf_victim_protected"):
+		return bool(scene._is_wolf_victim_protected(pos, victim))
+	if scene.has_method("_is_pos_wolf_protected"):
+		return bool(scene._is_pos_wolf_protected(pos))
+	return false
+
 func _continue_player_bite(delta: float) -> Dictionary:
 	var victim := _player_bite_target
 	_face_towards(victim.global_position, minf(delta * 7.0, 1.0))
@@ -1709,10 +1717,9 @@ func _continue_player_bite(delta: float) -> Dictionary:
 		var offset := victim.global_position - global_position
 		var flat := Vector3(offset.x, 0.0, offset.z)
 		var facing := flat.length_squared() < 0.01 or global_basis.z.dot(flat.normalized()) > 0.45
-		var scene := get_tree().current_scene
 		var protected: bool = victim.get_meta("proxy_dead", false) or victim.get("is_dead") == true or victim.get_meta("protection_timer", 0.0) > 0.0 or victim.get_meta("in_built_shelter", false)
-		if not protected and scene != null and scene.has_method("_is_pos_wolf_protected"):
-			protected = scene._is_pos_wolf_protected(victim.global_position)
+		if not protected:
+			protected = _scene_wolf_victim_protected(victim.global_position, victim)
 		if not protected:
 			protected = _is_near_lit_campfire(victim.global_position, 10.0)
 		if not protected and facing and flat.length() <= _player_bite_reach() and absf(offset.y) < 1.8 and _animal_bite_clear(victim.global_position, victim):
@@ -4811,7 +4818,7 @@ func _resolve_player_impl() -> void:
 			if p.get_meta("in_built_shelter", false):
 				continue
 			# Predators cannot target roofed players, regardless of door state.
-			if (animal_type == "wolf" or animal_type == "bear") and scene.has_method("_is_pos_wolf_protected") and scene._is_pos_wolf_protected((p as Node3D).global_position):
+			if (animal_type == "wolf" or animal_type == "bear") and _scene_wolf_victim_protected((p as Node3D).global_position, p):
 				continue
 			var d: float = global_position.distance_to((p as Node3D).global_position)
 			if d < nearest_dist:
