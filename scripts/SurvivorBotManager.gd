@@ -14713,7 +14713,13 @@ func _bot_cold_water_guard(b: Dictionary) -> bool:
 func _bot_cold_water_limit(b: Dictionary, depth_cur: float) -> float:
 	if _bot_is_freezing(b) or _bot_cold_water_guard(b):
 		# Incluso un vado al tobillo empapa la ropa. En seco no se entra; ya
-		# mojado solo se permite salir sin internarse mas.
+		# mojado solo se permite salir sin internarse mas. Excepcion de
+		# supervivencia: si ya esta bastante mojado y la marcha actual ES el
+		# rescate termico, un vado corto hacia el techo/fuego es mejor que
+		# quedarse atrapado en la orilla fria y vetar todas las casas.
+		var st: SurvivalStats = b.get("vstats")
+		if st != null and st.wetness >= 0.30 and str(b.get("_act", "")) in ["rest", "fire_rescue", "cold_escape"]:
+			return maxf(depth_cur + 0.02, 0.80)
 		return 0.05 if depth_cur <= 0.05 else depth_cur + 0.02
 	return -1.0
 

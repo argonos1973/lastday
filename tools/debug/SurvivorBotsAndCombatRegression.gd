@@ -8558,13 +8558,30 @@ func run() -> void:
 	b_hyp["_speed"] = 0.0
 	b_hyp["_mdir"] = Vector3.ZERO
 	b_hyp["stuck_count"] = 0
+	b_hyp["_act"] = "wander"
 	st_hyp.body_temperature = 34.9
 	for i5b in range(6):
 		mgr._move_bot_towards(b_hyp, Vector3(-60.0, 0.375, -59.0), 5.0, 0.2, "run")
 	var depth5b := float(world.get_river_depth_at(p_hyp.global_position))
 	check(depth5b <= 0.55,
-		"10Z5b: helado no se interna en agua de 1 m hacia la meta (depth=%.2f pos=%s)" % [depth5b, p_hyp.global_position])
+		"10Z5b: helado no se interna en agua de 1 m hacia una meta ordinaria (depth=%.2f pos=%s)" % [depth5b, p_hyp.global_position])
+	# Ya mojado, el rescate termico sí puede aceptar un vado corto hacia un
+	# techo/fuego: quedarse seco fuera es peor que llegar empapado al refugio.
+	world.water_depth = 0.7
+	st_hyp.wetness = 0.6
+	st_hyp.body_temperature = 35.6
+	b_hyp["_act"] = "rest"
+	p_hyp.global_position = Vector3(-55.5, 0.375, -59.0)
+	b_hyp["pos"] = p_hyp.global_position
+	b_hyp["_speed"] = 0.0
+	for i5d in range(6):
+		mgr._move_bot_towards(b_hyp, Vector3(-60.0, 0.375, -59.0), 5.0, 0.2, "run")
+	check(float(world.get_river_depth_at(p_hyp.global_position)) > 0.55,
+		"10Z5d: ya mojado, el rescate termico acepta un vado corto hacia el refugio (depth=%.2f)" % float(world.get_river_depth_at(p_hyp.global_position)))
+	world.water_depth = 1.0
+	b_hyp["_act"] = "wander"
 	st_hyp.body_temperature = 36.6
+	st_hyp.wetness = 0.0
 	p_hyp.global_position = Vector3(-55.5, 0.375, -59.0)
 	b_hyp["_speed"] = 0.0
 	for i5c in range(6):
