@@ -13810,7 +13810,29 @@ func _resolve_door_approach_goal(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 		return goal
 	var p_cur := Vector2(cur.x, cur.z)
 	var p_goal := Vector2(goal.x, goal.z)
-	for blk in world.wildlife_blockers:
+	# Primero salir del edificio que ya contiene al bot; solo despues entrar en
+	# el edificio destino. Iterar las casas en orden de registro hacia lo
+	# contrario: estando dentro de Casa 8 y yendo a Casa 1, el primer POI de
+	# Casa 1 ganaba y el bot chocaba contra los muros de Casa 8 hasta vetar la
+	# ruta/morir de frio.
+	var blocker_order: Array = []
+	var exit_first := -1
+	for bi in range(world.wildlife_blockers.size()):
+		var ob = world.wildlife_blockers[bi]
+		if not (ob is Dictionary) or not (ob as Dictionary).has("house_bounds"):
+			continue
+		var ohb: Rect2 = (ob as Dictionary)["house_bounds"]
+		var ointerior := ohb.grow(-0.25)
+		if ointerior.has_point(p_cur) and not ointerior.has_point(p_goal):
+			exit_first = bi
+			break
+	if exit_first >= 0:
+		blocker_order.append(exit_first)
+	for bi in range(world.wildlife_blockers.size()):
+		if bi != exit_first:
+			blocker_order.append(bi)
+	for bi in blocker_order:
+		var blk = world.wildlife_blockers[bi]
 		if not (blk is Dictionary) or not (blk as Dictionary).has("house_bounds"):
 			continue
 		var dblk: Dictionary = blk

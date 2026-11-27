@@ -10,7 +10,7 @@ class World extends "res://scripts/Main.gd":
 class Manager extends SurvivorBotManager:
 	func _bot_carry_ratio(_b: Dictionary) -> float: return 0.0
 	func _kill_bot(b: Dictionary, cause: String) -> void: b["death_cause"] = cause
-	func _abandon_unreachable_goal(b: Dictionary, _goal: Vector3) -> void: b["abandoned"] = true
+	func _abandon_unreachable_goal(b: Dictionary, _goal: Vector3, _nav_reason: String = "") -> void: b["abandoned"] = true
 	func _ai_note_loot(_b: Dictionary, _nm: String, _tp: String) -> void: pass
 	func _auto_equip_best_gear(_b: Dictionary) -> void: pass
 
@@ -282,6 +282,18 @@ func run() -> void:
 		await travel(center+Vector3(h[4]*.5-1.3,0,0),str(h[1])+" approaches interior item")
 		manager._collect_loot_entry(looter,entry)
 		check(world._dropped_items.is_empty() and manager._bot_item_count(actor,"Palo")==1,str(h[1])+" interior loot transfers once to inventory")
+	# Live hypothermia regression: Kael was INSIDE Casa 8 at (-40.6,-7.9)
+	# while the thermal refuge target was inside Casa 1. The resolver iterated
+	# Casa 1 first and aimed through Casa 8's wall; he oscillated there until
+	# nav_blocked and then froze. The current building's exit must be resolved
+	# before any destination-house entrance.
+	actor.position = Vector3(-40.6, 0.1, -7.9)
+	var kael_probe := bot()
+	var kael_goal := Vector3(-23.0, 0.1, -17.0)
+	var kael_wp: Vector3 = manager._resolve_door_approach_goal(kael_probe, actor.position, kael_goal)
+	check(kael_wp.x < -35.0 and kael_wp.z > -5.0,
+		"casa8->casa1: resolver exits current Casa 8 before entering Casa 1 (wp=%s)" % kael_wp)
+	await travel(kael_goal, "casa8 interior reaches Casa 1 refuge")
 	for idx in CityBlock.BUILDINGS.size():
 		var building: Node3D = city.buildings[idx]
 		actor.position = building.to_global(Vector3(0,.12,-11))
