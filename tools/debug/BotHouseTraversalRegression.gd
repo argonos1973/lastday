@@ -304,6 +304,12 @@ func run() -> void:
 	world._refresh_nav_door_caches()
 	actor.position = Vector3(-34.85, 0.1, -35.2)
 	await travel(Vector3(-35.0, 0.1, -40.0), "casa6 aligned open doorway enters")
+	# Carlos' wet/cold live approach did not start perfectly centred: the outdoor
+	# path reached the Casa 6 jamb around x=-35.4. Once aligned, exterior nav and
+	# facade repulsion must not retake control and pendulum the bot out of the
+	# doorway; the portal crossing stays committed until the real interior.
+	actor.position = Vector3(55.0, 0.1, 68.2)
+	await travel(Vector3(-35.0, 0.1, -40.0), "casa6 live off-centre approach enters")
 	for idx in CityBlock.BUILDINGS.size():
 		var building: Node3D = city.buildings[idx]
 		actor.position = building.to_global(Vector3(0,.12,-11))
