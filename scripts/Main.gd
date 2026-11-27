@@ -473,7 +473,9 @@ const REAL_BUSH_MODELS := [
 	POLY_MODEL_DIR + "weed_plant_02/weed_plant_02_1k.gltf",
 	POLY_MODEL_DIR + "tree_stump_01/tree_stump_01_1k.gltf",
 	POLY_MODEL_DIR + "tree_stump_02/tree_stump_02_1k.gltf",
-	Q_NATURE + "Bush_Common.gltf",
+	# Retire the white Bush_Common variant. Keep its slot so seeded shuffles
+	# consume the same random draws and existing world positions stay aligned.
+	Q_NATURE + "Bush_Common_Flowers.gltf",
 	Q_NATURE + "Bush_Common_Flowers.gltf",
 	Q_NATURE + "Plant_1.gltf",
 	Q_NATURE + "Plant_1_Big.gltf",
