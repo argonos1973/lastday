@@ -56,6 +56,54 @@ func run() -> void:
 	await process_frame
 	check(bp_root.get_node_or_null("BackpackAsset") == null, "unequipped backpack removed from puppet")
 	check(puppet._puppet_backpack == "" and puppet.equipped_backpack == "", "puppet backpack state cleared")
+	# Visible long equipment on the shoulders is also public sync state. A bot
+	# or human using food/tools can therefore keep its rifle visible on the back
+	# instead of appearing unarmed whenever it leaves the hands.
+	puppet.puppet_apply_visuals("", "Hacha", "")
+	puppet.puppet_apply_back_items([
+		{"name": "Fusil de asalto", "type": "weapon_rifle"},
+		{"name": "Arco reforzado", "type": "weapon_bow"},
+	])
+	await process_frame
+	var back_rifle: Node3D = puppet._stored_back_visuals[0]
+	var back_bow: Node3D = puppet._stored_back_visuals[1]
+	check(is_instance_valid(back_rifle) and back_rifle.is_visible_in_tree(),
+		"synced rifle appears on the remote puppet shoulder")
+	check(is_instance_valid(back_bow) and back_bow.is_visible_in_tree(),
+		"synced bow appears on the other remote puppet shoulder")
+	# Unchanged packets do not rebuild the models every network tick.
+	puppet.puppet_apply_back_items([
+		{"name": "Fusil de asalto", "type": "weapon_rifle"},
+		{"name": "Arco reforzado", "type": "weapon_bow"},
+	])
+	await process_frame
+	check(puppet._stored_back_visuals[0] == back_rifle and puppet._stored_back_visuals[1] == back_bow,
+		"unchanged shoulder sync does not rebuild visuals")
+	# A model rebuild/wipe is self-healed on the next packet with the same data.
+	back_rifle.free()
+	puppet.puppet_apply_back_items([
+		{"name": "Fusil de asalto", "type": "weapon_rifle"},
+		{"name": "Arco reforzado", "type": "weapon_bow"},
+	])
+	await process_frame
+	check(is_instance_valid(puppet._stored_back_visuals[0]),
+		"wiped shoulder rifle visual is rebuilt from the same sync state")
+	# Backpack refreshes coexist with those shoulder visuals instead of wiping
+	# them for a frame whenever the backpack state is rebuilt.
+	puppet.puppet_apply_back_items([
+		{"name": "Fusil de asalto", "type": "weapon_rifle"},
+		{},
+	])
+	puppet.puppet_apply_visuals("", "Hacha", "Mochila")
+	await process_frame
+	check(is_instance_valid(puppet._stored_back_visuals[0]),
+		"backpack rebuild preserves the synced shoulder rifle")
+	# Clearing the public state removes the shoulder equipment.
+	puppet.puppet_apply_back_items([{}, {}])
+	await process_frame
+	check(puppet._stored_back_visuals[0] == null and puppet._stored_back_visuals[1] == null,
+		"cleared shoulder sync removes remote back weapons")
+
 	# Local equip of the socket "Mochila" registers equipped_backpack so it
 	# gains capacity and travels in sync_player_state.
 	var player := PlayerScript.new()

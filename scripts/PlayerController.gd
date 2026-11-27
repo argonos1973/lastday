@@ -1579,6 +1579,10 @@ func puppet_apply_visuals(clothing: String, held_item: String, backpack: String,
 		_puppet_backpack = backpack
 		if third_person_back_item_root != null:
 			for child in third_person_back_item_root.get_children():
+				# Backpack refreshes must not destroy separately synced shoulder
+				# equipment; those nodes are owned by _stored_back_visuals.
+				if _stored_back_visuals.has(child):
+					continue
 				third_person_back_item_root.remove_child(child)
 				child.free()
 		if not backpack.is_empty():
@@ -1691,6 +1695,7 @@ func puppet_set_state_flags(sleeping: bool, sitting: bool, prone: bool, crouchin
 	is_crouching = crouching
 
 var _puppet_torch_lit := false
+var _puppet_back_items_sig := ""
 
 func puppet_set_torch(lit: bool) -> void:
 	if not is_puppet:
@@ -1719,6 +1724,52 @@ func puppet_set_flashlight(on: bool) -> void:
 		flashlight.rotation_degrees = Vector3(-8.0, 180.0, 0.0)
 	flashlight.visible = on
 	_sync_headlamp_light_pose()
+
+# Public, visual-only copy of the two shoulder slots. Unlike inventory this is
+# meant to be broadcast: carrying a rifle/bow/rod on the back is observable
+# equipment, not private loot information.
+func public_back_items_data() -> Array:
+	var out: Array = []
+	for entry in _stored_back_items:
+		if entry is Dictionary:
+			var nm := str((entry as Dictionary).get("name", ""))
+			var tp := str((entry as Dictionary).get("type", ""))
+			out.append({"name": nm, "type": tp} if not nm.is_empty() and not tp.is_empty() else {})
+		else:
+			out.append({})
+	return out
+
+# Remote puppets do not own an inventory, but their visible shoulder equipment
+# still has to mirror the public sync state. Rebuild only on signature changes
+# or when a model rebuild wiped one of the visuals.
+func puppet_apply_back_items(items: Array) -> void:
+	if not is_puppet:
+		return
+	var normalized: Array = []
+	for slot in range(_stored_back_items.size()):
+		var entry: Dictionary = {}
+		if slot < items.size() and items[slot] is Dictionary:
+			var data: Dictionary = items[slot]
+			var nm := str(data.get("name", ""))
+			var tp := str(data.get("type", ""))
+			if not nm.is_empty() and not tp.is_empty():
+				entry = {"name": nm, "type": tp}
+		normalized.append(entry)
+	var sig := JSON.stringify(normalized)
+	var visual_missing := false
+	for slot in range(_stored_back_items.size()):
+		var wants_visual: bool = not (normalized[slot] as Dictionary).is_empty()
+		var has_visual: bool = slot < _stored_back_visuals.size() and is_instance_valid(_stored_back_visuals[slot])
+		if wants_visual != has_visual:
+			visual_missing = true
+			break
+	if sig == _puppet_back_items_sig and not visual_missing:
+		return
+	_puppet_back_items_sig = sig
+	for slot in range(_stored_back_items.size()):
+		var entry: Dictionary = normalized[slot]
+		_stored_back_items[slot] = entry.duplicate(true) if not entry.is_empty() else null
+		_build_stored_back_visual(slot)
 
 func _puppet_swap_to_naked() -> void:
 	if not is_puppet:

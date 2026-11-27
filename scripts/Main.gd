@@ -5424,7 +5424,7 @@ func _broadcast_player_death(peer_id: int, proxy: Node3D, cause: String = "") ->
 			continue
 		if not net.peer_alive(pid):
 			continue
-		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, death_anim, clothing, held, backpack, false, false, false, false, false, false, false, false)
+		net.sync_player_state.rpc_id(pid, peer_id, pos, rot, death_anim, clothing, held, backpack, false, false, false, false, false, false, false, false, [], [])
 
 func _net_player_death_broadcast(peer_id: int, pos: Vector3, rot: float, cause: String = "") -> void:
 	# Reliable death notification from server — apply immediately to puppet
@@ -5542,7 +5542,7 @@ func _update_server_proxies(delta: float) -> void:
 			# Check if peer is actually still connected before sending RPC
 			if net.peer != null and not net.peer_alive(connected_pid):
 				continue
-			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false, off_colors)
+			net.sync_player_state.rpc_id(connected_pid, pid, offline_proxy.global_position, net.players[pid].get("rot", 0.0), net.players[pid].get("anim", "idle"), off_clothing, off_held, off_backpack, false, false, net.players[pid].get("sleeping", false), net.players[pid].get("sitting", false), net.players[pid].get("prone", false), net.players[pid].get("crouching", false), false, false, off_colors, net.players[pid].get("back_items", []))
 	# Disconnected proxies keep the body in the world (wolves can still attack
 	# it) and their survival stats decay very slowly offline — logging out
 	# slows survival pressure ~25x rather than freezing it, and must never
@@ -5705,7 +5705,8 @@ func _sync_local_player_state() -> void:
 	var flashlight_on_flag := false
 	if player.flashlight != null:
 		flashlight_on_flag = player.flashlight.visible
-	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag, sleeping_flag, sitting_flag, prone_flag, crouching_flag, torch_lit_flag, flashlight_on_flag, clothing_colors)
+	var public_back_items: Array = player.public_back_items_data() if player.has_method("public_back_items_data") else []
+	net.sync_player_state.rpc(my_id, pos, rot, anim, clothing, held, backpack, aim_flag, rifle_flag, sleeping_flag, sitting_flag, prone_flag, crouching_flag, torch_lit_flag, flashlight_on_flag, clothing_colors, public_back_items)
 
 func _sync_local_player_inventory() -> void:
 	if net == null or player == null or not net.is_connected:
@@ -5845,6 +5846,7 @@ func _update_remote_players() -> void:
 		var remote_crouching: bool = data.get("crouching", false)
 		var remote_torch_lit: bool = data.get("torch_lit", false)
 		var remote_flashlight_on: bool = data.get("flashlight_on", false)
+		var remote_back_items: Array = data.get("back_items", [])
 		# LOD visual por distancia: a mas de 90 m el puppet ocupa unos pocos
 		# pixeles — se saltan las actualizaciones de manos/armas/mochila/
 		# apariencia (todas idempotentes y con cambio-gate, asi que al volver
@@ -5871,6 +5873,8 @@ func _update_remote_players() -> void:
 				rp.puppet_set_torch(remote_torch_lit)
 			if rp.has_method("puppet_set_flashlight"):
 				rp.puppet_set_flashlight(remote_flashlight_on)
+			if rp.has_method("puppet_apply_back_items"):
+				rp.puppet_apply_back_items(remote_back_items)
 		if is_offline:
 			# Snap to exact position for offline characters
 			rp.set_meta("puppet_move_speed", 0.0)

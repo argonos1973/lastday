@@ -3072,6 +3072,7 @@ func run() -> void:
 	elena["_bow_shot_anim_until"] = 0
 	elena["_bow_drawing"] = false
 	elena["has_rifle"] = true
+	elena["held_item"] = "Fusil de asalto"
 	elena["is_aiming"] = true
 	elena["sitting"] = true
 	elena["anim"] = "idle"
@@ -3116,6 +3117,7 @@ func run() -> void:
 	check(mgr._bot_effective_net_anim(elena) == "riflewalk",
 		"No recorded heading falls back to riflewalk (got %s)" % mgr._bot_effective_net_anim(elena))
 	elena["has_rifle"] = false
+	elena["held_item"] = ""
 	elena["anim"] = "idle"
 
 	# Sprinting sideways must finish the doorway crossing before turning.
@@ -8037,6 +8039,25 @@ func run() -> void:
 	])
 	check(mgr._best_weapon_name(px) == "Arco de madera",
 		"10X3d: Arco con flechas si se elige como arma principal")
+	# 10X3e: el estado visual publico muestra el fusil en la espalda mientras el
+	# bot usa hacha/comida, sin duplicarlo cuando vuelve a la mano.
+	px.set_meta("saved_inventory", [
+		{"name": "Fusil de asalto", "type": "weapon", "weight": 3.1, "quantity": 1, "durability": 100.0},
+		{"name": "Arco reforzado", "type": "weapon_bow", "weight": 1.1, "quantity": 1, "durability": 100.0},
+	])
+	bx["held_item"] = "Hacha"
+	var back_sync := mgr._bot_back_items_sync(bx)
+	check(str(back_sync[0].get("name", "")) == "Fusil de asalto" and str(back_sync[0].get("type", "")) == "weapon_rifle" and str(back_sync[1].get("name", "")) == "Arco reforzado",
+		"10X3e: fusil legacy type=weapon se normaliza y arco ocupar los dos hombros visuales (%s)" % [back_sync])
+	bx["held_item"] = "Fusil de asalto"
+	back_sync = mgr._bot_back_items_sync(bx)
+	check(str(back_sync[0].get("name", "")) == "Arco reforzado" and (back_sync[1] as Dictionary).is_empty(),
+		"10X3e: el fusil en mano no se duplica en la espalda (%s)" % [back_sync])
+	bx["held_item"] = "Cerillas"
+	bx["has_rifle"] = true
+	check(not mgr._bot_visual_has_rifle(bx),
+		"10X3e: un has_rifle interno obsoleto no convierte cerillas en fusil visual")
+	bx["held_item"] = ""
 	# 10X4: Antorcha: consume durabilidad ardiendo y al romperse devuelve el Palo base
 	px.set_meta("saved_inventory", [
 		{"name": "Antorcha", "type": "tool_torch", "weight": 0.3, "quantity": 1, "durability": 3.0, "max_durability": 600.0},

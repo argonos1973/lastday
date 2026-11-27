@@ -814,7 +814,7 @@ func _register_player(id: int, player_name: String, cid: String = "", pw: String
 			if players[pid].get("offline", false):
 				continue
 			var pdata: Dictionary = players[pid]
-			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""), pdata.get("is_aiming", false), pdata.get("has_rifle", false), pdata.get("sleeping", false), pdata.get("sitting", false), pdata.get("prone", false), pdata.get("crouching", false), pdata.get("torch_lit", false), pdata.get("flashlight_on", false), pdata.get("clothing_colors", []))
+			sync_player_state.rpc_id(id, pid, pdata.get("pos", Vector3(8.0, 0.4, 2.5)), pdata.get("rot", 0.0), pdata.get("anim", "idle"), pdata.get("equipped_clothing", ""), pdata.get("held_item", ""), pdata.get("equipped_backpack", ""), pdata.get("is_aiming", false), pdata.get("has_rifle", false), pdata.get("sleeping", false), pdata.get("sitting", false), pdata.get("prone", false), pdata.get("crouching", false), pdata.get("torch_lit", false), pdata.get("flashlight_on", false), pdata.get("clothing_colors", []), pdata.get("back_items", []))
 			if bool(pdata.get("is_ai_bot", false)):
 				sync_bot_team_state.rpc_id(id, int(pid), int(pdata.get("team_leader_id", 0)), str(pdata.get("bot_follow_mode", "follow")), int(pdata.get("health", 100)), int(pdata.get("hunger", 100)), int(pdata.get("thirst", 100)))
 			# Send character appearance if available
@@ -865,10 +865,28 @@ func _check_all_ready() -> void:
 	if players.size() >= 1:
 		all_players_ready.emit()
 
+# Shoulder equipment is public visual state, not inventory authority. Clamp the
+# untrusted RPC payload before storing/relaying it so a peer cannot grow the
+# replicated player dictionary with arbitrary arrays or strings.
+func _sanitize_back_items(items: Array) -> Array:
+	var out: Array = []
+	for i in range(mini(items.size(), 2)):
+		var entry: Dictionary = {}
+		if items[i] is Dictionary:
+			var data: Dictionary = items[i]
+			var nm := str(data.get("name", "")).left(48)
+			var tp := str(data.get("type", "")).left(32)
+			if not nm.is_empty() and not tp.is_empty():
+				entry = {"name": nm, "type": tp}
+		out.append(entry)
+	while out.size() < 2:
+		out.append({})
+	return out
+
 # Position sync — called by each client for their own player
 # Server relays to all other clients (dedicated server doesn't auto-forward)
 @rpc("any_peer", "unreliable_ordered")
-func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false, torch_lit: bool = false, flashlight_on: bool = false, clothing_colors: Array = []) -> void:
+func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped_clothing: String, held_item: String, equipped_backpack: String, is_aiming: bool = false, has_rifle: bool = false, sleeping: bool = false, sitting: bool = false, prone: bool = false, crouching: bool = false, torch_lit: bool = false, flashlight_on: bool = false, clothing_colors: Array = [], back_items: Array = []) -> void:
 	if not accepts_player_state(is_host, multiplayer.get_remote_sender_id(), id):
 		return
 	# A NaN/inf position would poison proxies, broadcasts and the saved record.
@@ -948,6 +966,8 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 	players[id]["crouching"] = crouching
 	players[id]["torch_lit"] = torch_lit
 	players[id]["flashlight_on"] = flashlight_on
+	back_items = _sanitize_back_items(back_items)
+	players[id]["back_items"] = back_items
 	# Server relays to all other clients
 	if is_host and peer != null:
 		for pid in players.keys():
@@ -958,7 +978,7 @@ func sync_player_state(id: int, pos: Vector3, rot: float, anim: String, equipped
 				# Skip peers that are not actually connected
 				if not can_send_snapshot(pid):
 					continue
-				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching, torch_lit, flashlight_on, clothing_colors)
+				sync_player_state.rpc_id(pid, id, pos, rot, anim, equipped_clothing, held_item, equipped_backpack, is_aiming, has_rifle, sleeping, sitting, prone, crouching, torch_lit, flashlight_on, clothing_colors, back_items)
 
 # Server->client payloads buffered when they arrive while the client is still
 # in Inicio.tscn (before Main.tscn and its player exist). Main consumes them.

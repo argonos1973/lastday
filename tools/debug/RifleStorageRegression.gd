@@ -16,6 +16,11 @@ func run():
 	actor.inventory=preload("res://scripts/Inventory.gd").new();actor.add_child(actor.inventory)
 	actor.hands=preload("res://scripts/PlayerHands.gd").new();actor.add_child(actor.hands)
 	actor.setup_as_puppet()
+	# El harness usa setup_as_puppet solo para construir los sockets 3D ligeros;
+	# lo que se ejercita aquí es la lógica LOCAL de inventario/hombros. Sin
+	# restaurar is_puppet, _sync_held_item sale pronto y la auto-reparación de
+	# visuales no puede comprobarse.
+	actor.is_puppet = false
 	actor.inventory.changed.connect(actor._on_inventory_changed)
 	actor.equip_clothing("Camiseta");actor.equip_clothing("Pantalones")
 	var rifle=ItemScript.create(actor.RIFLE_NAME,"weapon_rifle",3.5,1,0)
@@ -25,6 +30,9 @@ func run():
 	check(actor.get_back_item_data(0).get("name")==actor.RIFLE_NAME,"First pickup occupies first shoulder")
 	check(actor.receive_pickup_item(m4),"Second rifle accepted")
 	check(actor.get_back_item_data(1).get("name")==actor.M4_NAME,"Second pickup occupies remaining shoulder")
+	var public_back := actor.public_back_items_data()
+	check(str(public_back[0].get("name", "")) == actor.RIFLE_NAME and str(public_back[1].get("name", "")) == actor.M4_NAME,
+		"public shoulder sync exposes both visible rifles without inventory details")
 	check(actor.receive_pickup_item(rifle),"Third rifle accepted in inventory")
 	check(actor.inventory.items.size()==1,"Both shoulders full: third rifle stays in inventory")
 	check(actor.get_back_item_data(0).get("wetness")==37,"Shoulder transfer preserves item payload")

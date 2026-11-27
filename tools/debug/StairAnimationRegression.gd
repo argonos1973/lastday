@@ -34,6 +34,7 @@ func run():
  actor.puppet_apply(Vector3.ZERO,0.0,manager._bot_effective_net_anim(bot_state))
  check(player.current_animation==actor.third_person_walk_animation,"bot stair descent uses human walking, not the ascending clip")
  bot_state.has_rifle=true
+ bot_state.held_item="Fusil de asalto"
  actor.puppet_apply(Vector3.ZERO,0.0,manager._bot_effective_net_anim(bot_state))
  check(player.current_animation==actor._rifle_walk_animation,"armed bot uses the same rifle locomotion as the human")
  manager.free()

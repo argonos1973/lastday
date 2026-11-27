@@ -251,6 +251,7 @@ func run() -> void:
 	check(not manager._bot_is_moving(b) and manager.shots == before, "without cover the bot holds still to finish reloading instead of cancelling it forever")
 	manager.cover_goal = Vector3(4, 0, 0)
 	b.has_rifle = false
+	b.held_item = "Arco reforzado"
 	b.gun_reloading = false
 	b._bow_drawing = true
 	b.anim = "walk"

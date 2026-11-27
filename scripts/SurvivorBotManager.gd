@@ -1539,8 +1539,9 @@ func _publish_bot_to_net_players(b: Dictionary) -> void:
 		"clothing_colors": b["clothing_colors"],
 		"held_item": str(b["held_item"]),
 		"equipped_backpack": str(b["backpack"]),
+		"back_items": _bot_back_items_sync(b),
 		"is_aiming": bool(b.get("is_aiming", false)),
-		"has_rifle": bool(b["has_rifle"]),
+		"has_rifle": _bot_visual_has_rifle(b),
 		"sleeping": bool(b["sleeping"]),
 		"sitting": bool(b.get("sitting", false)),
 		"prone": bool(b["prone"]),
@@ -1717,12 +1718,19 @@ func _refresh_client_bot_avatars() -> void:
 				if not rp.is_in_group("interactable"):
 					rp.add_to_group("interactable")
 
+func _bot_visual_has_rifle(b: Dictionary) -> bool:
+	# Network/puppet rifle state means "a firearm is physically in the hands".
+	# Deriving it from held_item avoids stale true flags when ignition, food or
+	# tools temporarily replace the firearm.
+	return str(b.get("held_item", "")) in ["Fusil de asalto", "Rifle francotirador"]
+
 func _bot_effective_net_anim(b: Dictionary) -> String:
 	var raw := str(b.get("anim", "idle"))
+	var visual_has_rifle := _bot_visual_has_rifle(b)
 	if raw.begins_with("dead"):
 		return raw
 	# The client selects the matching reload for the authoritative posture.
-	if bool(b.get("gun_reloading", false)) and bool(b.get("has_rifle", false)) \
+	if bool(b.get("gun_reloading", false)) and visual_has_rifle \
 			and raw == "idle":
 		return "reload"
 	if bool(b.get("sleeping", false)):
@@ -1735,11 +1743,11 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 	# puppet (la libreria external es la misma en todos los clientes). Sin
 	# fusil no hay clip prono: cuclillas es lo mas parecido visualmente.
 	if bool(b.get("prone", false)):
-		if bool(b.get("has_rifle", false)):
+		if visual_has_rifle:
 			return "external/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_PRONE_ANIMATION
 		return "sneak"
 	if bool(b.get("sitting", false)) or raw == "sit":
-		if bool(b.get("has_rifle", false)) and bool(b.get("is_aiming", false)):
+		if visual_has_rifle and bool(b.get("is_aiming", false)):
 			return "external/" + PlayerController.THIRD_PERSON_EXTERNAL_RIFLE_SIT_ANIMATION
 		return "sit"
 	if bool(b.get("crouching", false)):
@@ -1755,7 +1763,7 @@ func _bot_effective_net_anim(b: Dictionary) -> String:
 		return "bow/" + PlayerController.THIRD_PERSON_EXTERNAL_BOW_SHOOT_ANIMATION
 	if bool(b.get("_bow_drawing", false)) and raw in ["idle", "walk"]:
 		return "bow/" + (PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_WALK_ANIMATION if raw == "walk" else PlayerController.THIRD_PERSON_EXTERNAL_BOW_AIM_IDLE_ANIMATION)
-	if bool(b.get("has_rifle", false)):
+	if visual_has_rifle:
 		# Paso lateral real (strafe): el clip se elige por la direccion de
 		# desplazamiento respecto a donde mira el bot — vale apuntando o no.
 		if raw == "walk":
@@ -1792,6 +1800,7 @@ func _broadcast_bots() -> void:
 	var net = world.get("net")
 	for bot_id in bots.keys():
 		var b: Dictionary = bots[bot_id]
+		b["has_rifle"] = _bot_visual_has_rifle(b)
 		var net_anim := _bot_effective_net_anim(b)
 		_publish_bot_to_net_players(b)
 		if net != null and net.players.has(bot_id):
@@ -1804,9 +1813,9 @@ func _broadcast_bots() -> void:
 				net.sync_player_state.rpc_id(
 					pid, bot_id, b["pos"], float(b["rot"]), net_anim,
 					_bot_clothing_sync(b), str(b["held_item"]), str(b["backpack"]),
-					bool(b.get("is_aiming", false)), bool(b["has_rifle"]),
+					bool(b.get("is_aiming", false)), _bot_visual_has_rifle(b),
 					bool(b["sleeping"]), bool(b.get("sitting", false)), bool(b["prone"]), bool(b.get("crouching", false)),
-					bool(b["torch_lit"]), bool(b["flashlight_on"]), b["clothing_colors"]
+					bool(b["torch_lit"]), bool(b["flashlight_on"]), b["clothing_colors"], _bot_back_items_sync(b)
 				)
 	if (net == null or not net.is_connected) and world.has_method("_update_remote_players"):
 		world._update_remote_players()
@@ -4155,6 +4164,45 @@ func _auto_equip_best_gear(b: Dictionary) -> void:
 		proxy.set_meta("saved_clothing", _bot_clothing_sync(b))
 		b["_want_cache"] = {}
 		proxy.set_meta("saved_inventory", inv)
+
+func _bot_back_items_sync(b: Dictionary) -> Array:
+	# Bots abstract long equipment in inventory rather than shoulder slots. For
+	# remote rendering, the observable fact is still the same: up to two long
+	# items carried on the back. The item currently in hand is not duplicated.
+	var out: Array = []
+	var proxy: Node3D = b.get("proxy")
+	if proxy == null or not is_instance_valid(proxy):
+		return [{}, {}]
+	var held := str(b.get("held_item", ""))
+	for it in proxy.get_meta("saved_inventory", []):
+		if not (it is Dictionary):
+			continue
+		var nm := str((it as Dictionary).get("name", ""))
+		var tp := str((it as Dictionary).get("type", ""))
+		var long_item: bool = tp in ["weapon_rifle", "weapon_bow", "tool_fishing", "tool_spear"] or nm in [
+			"Fusil de asalto", "Rifle francotirador", "Caña de pescar",
+			"Palo afilado", "Lanza", "Lanza de hueso", "Arco de madera", "Arco reforzado"
+		]
+		if not long_item or nm.is_empty() or nm == held or int((it as Dictionary).get("quantity", 1)) <= 0:
+			continue
+		if (it as Dictionary).has("durability") and float((it as Dictionary).get("durability", 100.0)) <= 0.0:
+			continue
+		# Legacy bot inventories often label rifles generically as "weapon";
+		# the visual builder needs the canonical type to choose the firearm mesh.
+		if nm in ["Fusil de asalto", "Rifle francotirador"]:
+			tp = "weapon_rifle"
+		elif nm in ["Arco de madera", "Arco reforzado"]:
+			tp = "weapon_bow"
+		elif nm == "Caña de pescar":
+			tp = "tool_fishing"
+		elif nm in ["Palo afilado", "Lanza", "Lanza de hueso"]:
+			tp = "tool_spear"
+		out.append({"name": nm, "type": tp})
+		if out.size() >= 2:
+			break
+	while out.size() < 2:
+		out.append({})
+	return out
 
 func _bot_clothing_sync(b: Dictionary) -> String:
 	# Keep plain names for AI/carry/thermal rules; reuse the human wire format.

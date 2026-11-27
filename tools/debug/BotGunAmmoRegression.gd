@@ -362,7 +362,7 @@ func _verify_pickup_and_parity(mgr: SurvivorBotManager) -> void:
 	check(actor._m4_magazine == 5 and int(mgr._bot_gun_ammo(p).m4_magazine) == 5,
 		"ambos conservan el cargador parcial mientras recargan")
 	for posture in ["crouching", "sitting", "prone"]:
-		var visual := {"anim": "idle", "has_rifle": true, "gun_reloading": true}
+		var visual := {"anim": "idle", "held_item": "Fusil de asalto", "has_rifle": true, "gun_reloading": true}
 		visual[posture] = true
 		check(mgr._bot_effective_net_anim(visual) == "reload", "recarga visible en " + posture)
 	check(mgr._bot_effective_net_anim({"anim": "idle", "_throw_pending": {}}) == "throw", "preparacion de lanza usa el gesto de lanzamiento")
