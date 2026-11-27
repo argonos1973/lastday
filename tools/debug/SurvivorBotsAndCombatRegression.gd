@@ -4299,7 +4299,11 @@ func run() -> void:
 	world.river_segs = [{"center":failed_bank}]
 	fresh_b["drink_at"] = failed_bank
 	fresh_b["_act"] = "drink"
-	mgr._abandon_unreachable_goal(fresh_b, failed_bank)
+	# Esta posicion esta dentro de city_04. Un unico nav_blocked solo prueba
+	# que la salida del edificio ha fallado; el acceso de agua se abandona tras
+	# la evidencia repetida, no en el primer bache de puerta/escalera.
+	for failed_exit_n in range(3):
+		mgr._abandon_unreachable_goal(fresh_b, failed_bank)
 	mgr._tick_bot(fresh_b, 0.1)
 	var ftn_goal: Vector3 = fresh_b["drink_at"]
 	var ftn_dist := Vector2(ftn_goal.x - fountain_pos.x, ftn_goal.z - fountain_pos.z).length() if ftn_goal != Vector3.INF else -1.0
@@ -8350,6 +8354,37 @@ func run() -> void:
 	check(mgr._pos_in_house_bounds(p_hyp.global_position),
 		"10Z7: tras 12 s de marcha interior el bot sigue bajo techo (pos=%s)" % [p_hyp.global_position])
 	b_hyp["_freeze_march"] = {}
+
+	# 10Z8: un nav_blocked dentro de un edificio no es prueba de que el agua
+	# exterior sea inaccesible. Carlos/Elena morían deshidratados porque la
+	# oscilación en la salida vetaba la fuente de la plaza y el escaneo elegía
+	# después ríos lejanos. Debe conservar el mismo acceso y reintentar el
+	# camino; solo tras varios fallos duros puede vetarlo.
+	world.house_rect = Rect2(446.0, 746.0, 8.0, 8.0)
+	p_hyp.global_position = Vector3(450.0, 0.4, 750.0)
+	b_hyp["pos"] = p_hyp.global_position
+	b_hyp["_act"] = "drink"
+	b_hyp["drink_at"] = Vector3(480.0, 0.0, 790.0)
+	b_hyp["drink_walk_t"] = 9.0
+	b_hyp["_drink_best_d"] = 30.0
+	b_hyp["_bad_water"] = []
+	b_hyp.erase("_drink_exit_retries")
+	mgr._abandon_unreachable_goal(b_hyp, b_hyp["drink_at"], "stuck_window")
+	check(b_hyp["drink_at"] == Vector3(480.0, 0.0, 790.0),
+		"10Z8: nav_blocked en la salida conserva la fuente de agua cercana")
+	check((b_hyp.get("_bad_water", []) as Array).is_empty(),
+		"10Z8: nav_blocked en la salida no vetea el agua exterior")
+	check(float(b_hyp.get("drink_walk_t", 99.0)) == 0.0 and float(b_hyp.get("_drink_best_d", 0.0)) == INF,
+		"10Z8: conservar el agua reinicia el cronómetro de acceso para repath")
+	for exit_fail in range(2):
+		b_hyp["drink_at"] = Vector3(480.0, 0.0, 790.0)
+		mgr._abandon_unreachable_goal(b_hyp, b_hyp["drink_at"], "macro_oscillation")
+	check(b_hyp["drink_at"] == Vector3.INF and not (b_hyp.get("_bad_water", []) as Array).is_empty(),
+		"10Z8: tres fallos duros de salida sí abandonan ese acceso")
+	b_hyp["_bad_water"] = []
+	b_hyp.erase("_drink_exit_retries")
+	b_hyp["_act"] = "idle"
+	world.house_rect = Rect2(300000.0, 300000.0, 4.0, 4.0)
 
 	# 10Z4: los solares nunca caen fuera de la malla de navegacion ([556, 856]) y
 	# un bot desarmado recoge piedra para lascar su primera Piedra afilada.

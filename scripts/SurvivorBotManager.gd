@@ -3591,7 +3591,22 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3, nav_reason: String 
 		_ai_stat_inc(b, "blocked_recoveries")
 		_ai_enqueue_request(int(b.get("bot_id", 0)), 4, "plan_blocked", true)
 	if str(b.get("_act", "")) == "drink" and b.get("drink_at", Vector3.INF) != Vector3.INF and Vector2(goal.x - b["drink_at"].x, goal.z - b["drink_at"].z).length() < 6.0:
-		_abandon_water_access(b)
+		# Un nav_blocked antes de salir del edificio no demuestra que la fuente
+		# exterior sea mala. Si se vetara aqui, cada oscilacion en puerta/escalera
+		# sustituia la fuente cercana por rios lejanos y el bot moria de sed en el
+		# ciclo. Reintentar el mismo acceso con repath; solo varios fallos duros
+		# seguidos lo abandonan, como en el timeout de acceso al agua.
+		if _bot_water_failure_is_building_exit(b):
+			var exit_retries := int(b.get("_drink_exit_retries", 0)) + 1
+			if exit_retries >= 3:
+				b.erase("_drink_exit_retries")
+				_abandon_water_access(b)
+			else:
+				b["_drink_exit_retries"] = exit_retries
+				b["drink_walk_t"] = 0.0
+				b["_drink_best_d"] = INF
+		else:
+			_abandon_water_access(b)
 	var ft: Dictionary = b.get("_food_trip", {})
 	var ft_pos = ft.get("pos")
 	if ft_pos is Vector3 and Vector2(goal.x - (ft_pos as Vector3).x, goal.z - (ft_pos as Vector3).z).length() < 10.0:

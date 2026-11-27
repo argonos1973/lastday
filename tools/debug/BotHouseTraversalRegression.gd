@@ -160,6 +160,35 @@ func city_drink_escape(city: Node3D) -> void:
 	check(c3_descended, "city_03 upper floor: critical thirst descends the stairs")
 	check(float(b["thirst"]) >= 95.0 or c3_min_dist < 4.0,
 		"city_03 upper floor: critical thirst reaches the fountain after descending (min_d=%.2f thirst=%.1f)" % [c3_min_dist, float(b["thirst"])])
+	# Elena died dehydrated on the ground floor of city_11 (rotated PI) while
+	# nominally drinking. The full decision tick must leave that exact ground-floor
+	# pocket too; a static movement-only traversal is not sufficient coverage.
+	var city11: Node3D = city.buildings[10]
+	var c11pos0 := city11.to_global(Vector3(0.2, 0.12, -1.1))
+	b.proxy.global_position = c11pos0
+	b.proxy.set_meta("saved_pos", c11pos0)
+	b["pos"] = c11pos0
+	b["thirst"] = 8.0
+	b["drink_scan"] = 0.0
+	b["drink_at"] = Vector3.INF
+	b["drink_walk_t"] = 0.0
+	b["_bad_water"] = []
+	var c11_escaped := false
+	var c11_min_dist := INF
+	for tick in 500:
+		manager._tick_bot(b, .1)
+		var c11pos: Vector3 = b.proxy.global_position
+		c11_min_dist = minf(c11_min_dist, Vector2(c11pos.x - fountain_pos.x, c11pos.z - fountain_pos.z).length())
+		if not world._is_player_in_house(c11pos):
+			c11_escaped = true
+		if float(b["thirst"]) >= 95.0:
+			break
+		if tick % 5 == 0:
+			await physics_frame
+	print("city11 drink escape: pos=%s act=%s drink_at=%s escaped=%s min_dist=%.2f thirst=%.1f" % [b.proxy.global_position, b.get("_act"), b.get("drink_at"), c11_escaped, c11_min_dist, float(b["thirst"])])
+	check(c11_escaped, "city_11 ground floor: critical thirst leaves the building")
+	check(float(b["thirst"]) >= 95.0 or c11_min_dist < 4.0,
+		"city_11 ground floor: critical thirst reaches the fountain (min_d=%.2f thirst=%.1f)" % [c11_min_dist, float(b["thirst"])])
 	if drink != null:
 		world.world_actions_by_id.erase("city10_escape_drink")
 		drink.queue_free()
@@ -321,6 +350,19 @@ func run() -> void:
 	var city06: Node3D = city.buildings[5]
 	actor.position = city06.to_global(Vector3(-1.5,3.92,-0.3))
 	await travel(city06.to_global(Vector3(11,.12,0)),"city_06 upper floor sofa pocket exits")
+	# Live regression after the dry-nav deploy: Carlos/Kael were stuck in the
+	# same upper sofa pocket at local ~=(-1.6,3.92,-0.7), but their real goal
+	# was a distant explore target southwest of the city, not the side-exit
+	# probe above. The descent must not depend on the caller choosing a kinder
+	# outdoor destination.
+	actor.position = city06.to_global(Vector3(-1.6,3.92,-0.7))
+	await travel(Vector3(36.0,0.1,556.0),"city_06 upper sofa pocket reaches distant explore goal")
+	# Elena died in the ground floor of city_11 (rotated PI) around local
+	# ~(0.2,0.12,-1.1): the drink/explore route toward the southwest never
+	# left the house and ended in a stuck_window nav veto.
+	var city11: Node3D = city.buildings[10]
+	actor.position = city11.to_global(Vector3(0.2,0.12,-1.1))
+	await travel(Vector3(34.0,0.1,706.0),"city_11 ground floor reaches live drink goal")
 	# Live regression: Kael remained running in city_03 (rotated PI, flat roof)
 	# around local (-1.1,3.92,-0.1). Both mirrored flat-roof variants must
 	# descend from that pocket instead of oscillating on the landing.
