@@ -223,9 +223,45 @@ func city_drink_escape(city: Node3D) -> void:
 	check(c11_escaped, "city_11 ground floor: critical thirst leaves the building")
 	check(float(b["thirst"]) >= 95.0 or c11_min_dist < 4.0,
 		"city_11 ground floor: critical thirst reaches the fountain (min_d=%.2f thirst=%.1f)" % [c11_min_dist, float(b["thirst"])])
+	await city_ground_partition_escape(city, b)
 	if drink != null:
 		world.world_actions_by_id.erase("city10_escape_drink")
 		drink.queue_free()
+
+func city_ground_partition_escape(city: Node3D, b: Dictionary) -> void:
+	# The live low-floor failure sits behind the partition, not inside it.
+	# Use 50 ms movement ticks: a 100 ms test can escape by a different side
+	# probe and conceal the oscillation at (25.1,0.1,757.9).
+	for index in [9, 10]:
+		var building: Node3D = city.buildings[index]
+		var start := building.to_global(Vector3(.1, .12, -1.1))
+		b.proxy.global_position = start
+		b.proxy.set_meta("saved_pos", start)
+		b["pos"] = start
+		b["thirst"] = 8.0
+		b["hunger"] = 90.0
+		b["energy"] = 85.0
+		b["drink_at"] = Vector3.INF
+		b["drink_scan"] = 0.0
+		b["drink_walk_t"] = 0.0
+		b["_bad_water"] = []
+		b["_unreachable"] = []
+		b["path"] = []
+		b["path_timer"] = 0.0
+		var crossed_partition := false
+		for tick in 1000:
+			var before: Vector3 = b.proxy.global_position
+			manager._tick_bot(b, .05)
+			var after: Vector3 = b.proxy.global_position
+			if before.distance_to(after) > .001:
+				var query := PhysicsRayQueryParameters3D.create(before + Vector3.UP * .9, after + Vector3.UP * .9, 1)
+				if not world.get_world_3d().direct_space_state.intersect_ray(query).is_empty():
+					crossed_partition = true
+			if float(b["thirst"]) >= 95.0: break
+			if tick % 3 == 0: await physics_frame
+		check(float(b["thirst"]) >= 95.0,
+			"city_%02d ground partition: exits and drinks (pos=%s thirst=%.1f)" % [index + 1, b.proxy.global_position, float(b["thirst"])])
+		check(not crossed_partition, "city_%02d ground partition: escape crosses no wall" % (index + 1))
 
 func hot_house_escape() -> void:
 	var fire := Vector3(-20,0,30)

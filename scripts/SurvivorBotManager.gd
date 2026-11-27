@@ -13801,6 +13801,16 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 		return b_origin + Vector3(3.85, 3.92, -3.2).rotated(Vector3.UP, yaw)
 	var cur_lvl_c := 0 if lc.y < 2.2 else (1 if lc.y < 6.0 else 2)
 	var goal_lvl_c := 0 if lg.y < 2.2 else (1 if (lg.y < 6.0 or not flat_roof) else 2)
+	# Ground-floor back rooms share the same partition. Leaving the house or
+	# reaching the stairs first requires crossing its west doorway; a direct
+	# vector to the front door traps actors just behind z=-1 against the wall.
+	if cur_lvl_c == 0 and (not goal_in or goal_lvl_c > 0 or lg.z > -0.9):
+		if lc.z < -0.9 and lc.x < 3.1:
+			if absf(lc.x + 2.8) > 0.3:
+				return b_origin + Vector3(-2.8, 0.12, -1.8).rotated(Vector3.UP, yaw)
+			return b_origin + Vector3(-2.8, 0.12, 0.4).rotated(Vector3.UP, yaw)
+		if lc.x > -3.2 and lc.x < -2.1 and lc.z < -0.4:
+			return b_origin + Vector3(-2.8, 0.12, 0.4).rotated(Vector3.UP, yaw)
 	if cur_lvl_c == 0 and goal_lvl_c >= 1:
 		if lc.x < stair_x - .12:
 			if lc.z < 3.8:
