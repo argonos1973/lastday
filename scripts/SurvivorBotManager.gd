@@ -14079,9 +14079,12 @@ func _building_exterior_waypoint(b: Dictionary, cur: Vector3, goal: Vector3) -> 
 				var la := (nodes[at]-(shape.origin as Vector3)).rotated(Vector3.UP,-float(shape.yaw))
 				var lb := (nodes[j]-(shape.origin as Vector3)).rotated(Vector3.UP,-float(shape.yaw))
 				var wall: Rect2 = (shape.bounds as Rect2).grow(.8)
-				# The first point can already overlap the safety margin. It may
-				# leave it, but the physical footprint stays solid.
-				if at == 0 and wall.has_point(Vector2(la.x,la.z)): wall = shape.bounds
+				# Endpoints may lie in the safety margin outside the real wall.
+				# Allow leaving/approaching that margin while keeping the actual
+				# footprint solid; otherwise loot beside a tent has no route.
+				if (at == 0 and wall.has_point(Vector2(la.x,la.z))) \
+						or (j == 1 and wall.has_point(Vector2(lb.x,lb.z))):
+					wall = shape.bounds
 				if wall.has_point(Vector2(lb.x,lb.z)) or _seg2d_crosses_rect_wall(Vector2(la.x,la.z),Vector2(lb.x,lb.z),wall,[]):
 					clear = false
 					break

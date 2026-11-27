@@ -11686,7 +11686,7 @@ func _create_house_loot() -> void:
 	# Guarantee a rifle in each military tent — fixed IDs so they don't respawn
 	if not _depleted_action_ids.has("tent_loot_rifle"):
 		var rifle_data: Dictionary = rifle_template.duplicate()
-		rifle_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		rifle_data["pos"] = _find_pos_inside_tent(tent_origin, tent_half_w, tent_half_d, 35.0)
 		rifle_data["pos"].y = tent_floor_y
 		rifle_data["floor_y"] = tent_floor_y
 		rifle_data["id"] = "tent_loot_rifle"
@@ -11751,7 +11751,7 @@ func _create_house_loot() -> void:
 	var _tent_clothing_idx := 0
 	for gidx in guaranteed_clothing:
 		var g_data: Dictionary = tent_loot_pool[gidx].duplicate()
-		g_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		g_data["pos"] = _find_pos_inside_tent(tent_origin, tent_half_w, tent_half_d, 35.0)
 		g_data["pos"].y = tent_ground_y + 0.06
 		g_data["id"] = "tent_loot_clothing_%d" % _tent_clothing_idx
 		_tent_clothing_idx += 1
@@ -11761,7 +11761,7 @@ func _create_house_loot() -> void:
 	for _j in range(tent_num_items):
 		var template: Dictionary = tent_loot_pool[_world_rng.randi() % tent_loot_pool.size()]
 		var loot_data: Dictionary = template.duplicate()
-		loot_data["pos"] = _find_pos_inside_house(tent_origin, tent_half_w, tent_half_d)
+		loot_data["pos"] = _find_pos_inside_tent(tent_origin, tent_half_w, tent_half_d, 35.0)
 		loot_data["pos"].y = tent_ground_y + 0.06
 		loot_data["id"] = "tent_loot_extra_%d" % _j
 		_create_pickup_item(loot_data)
@@ -11773,7 +11773,7 @@ func _create_house_loot() -> void:
 	var remote_tent_floor_y := remote_tent_ground_y + 0.10
 	if not _depleted_action_ids.has("remote_tent_loot_rifle"):
 		var rt_rifle: Dictionary = rifle_template.duplicate()
-		rt_rifle["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		rt_rifle["pos"] = _find_pos_inside_tent(remote_tent_origin, remote_tent_half_w, remote_tent_half_d, 120.0)
 		rt_rifle["pos"].y = remote_tent_floor_y
 		rt_rifle["floor_y"] = remote_tent_floor_y
 		rt_rifle["id"] = "remote_tent_loot_rifle"
@@ -11837,7 +11837,7 @@ func _create_house_loot() -> void:
 	var _rt_loot_idx := 0
 	for gidx in rt_guaranteed:
 		var g_data: Dictionary = remote_tent_loot[gidx].duplicate()
-		g_data["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		g_data["pos"] = _find_pos_inside_tent(remote_tent_origin, remote_tent_half_w, remote_tent_half_d, 120.0)
 		g_data["pos"].y = remote_tent_ground_y + 0.06
 		g_data["id"] = "remote_tent_loot_clothing_%d" % _rt_loot_idx
 		_rt_loot_idx += 1
@@ -11845,12 +11845,12 @@ func _create_house_loot() -> void:
 	# Guaranteed food items
 	for _fi in range(2):
 		var food_data: Dictionary = remote_tent_loot[6 + _world_rng.randi() % 3].duplicate()
-		food_data["pos"] = _find_pos_inside_house(remote_tent_origin, remote_tent_half_w, remote_tent_half_d)
+		food_data["pos"] = _find_pos_inside_tent(remote_tent_origin, remote_tent_half_w, remote_tent_half_d, 120.0)
 		food_data["pos"].y = remote_tent_ground_y + 0.06
 		food_data["id"] = "remote_tent_loot_food_%d" % _fi
 		_create_pickup_item(food_data)
 	# Guaranteed backpack in remote tent
-	_create_backpack_pickup("remote_tent_backpack_0", _find_pos_inside_house(remote_tent_origin, remote_tent_half_w - 1.0, remote_tent_half_d - 1.0) + Vector3(0, remote_tent_ground_y + 0.06, 0))
+	_create_backpack_pickup("remote_tent_backpack_0", _find_pos_inside_tent(remote_tent_origin, remote_tent_half_w - 1.0, remote_tent_half_d - 1.0, 120.0) + Vector3(0, remote_tent_ground_y + 0.06, 0))
 	# City military store — same military pool, guaranteed rifle + gear
 	var city_tent_origin := _city_tent_pos
 	var city_tent_half_w := 4.0
@@ -11859,7 +11859,7 @@ func _create_house_loot() -> void:
 	var city_tent_floor_y := city_tent_ground_y + 0.10
 	if not _depleted_action_ids.has("city_tent_loot_rifle"):
 		var ct_rifle: Dictionary = rifle_template.duplicate()
-		ct_rifle["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+		ct_rifle["pos"] = _find_pos_inside_tent(city_tent_origin, city_tent_half_w, city_tent_half_d, CITY_TENT_YAW)
 		ct_rifle["pos"].y = city_tent_floor_y
 		ct_rifle["floor_y"] = city_tent_floor_y
 		ct_rifle["id"] = "city_tent_loot_rifle"
@@ -11882,13 +11882,13 @@ func _create_house_loot() -> void:
 	var _ct_loot_idx := 0
 	for gidx in [0, 2]:
 		var g_data: Dictionary = city_tent_loot[gidx].duplicate()
-		g_data["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+		g_data["pos"] = _find_pos_inside_tent(city_tent_origin, city_tent_half_w, city_tent_half_d, CITY_TENT_YAW)
 		g_data["pos"].y = city_tent_ground_y + 0.06
 		g_data["id"] = "city_tent_loot_item_%d" % _ct_loot_idx
 		_ct_loot_idx += 1
 		_create_pickup_item(g_data)
 	var ct_food: Dictionary = city_tent_loot[5 + _world_rng.randi() % 3].duplicate()
-	ct_food["pos"] = _find_pos_inside_house(city_tent_origin, city_tent_half_w, city_tent_half_d)
+	ct_food["pos"] = _find_pos_inside_tent(city_tent_origin, city_tent_half_w, city_tent_half_d, CITY_TENT_YAW)
 	ct_food["pos"].y = city_tent_ground_y + 0.06
 	ct_food["id"] = "city_tent_loot_food_0"
 	_create_pickup_item(ct_food)
@@ -11929,12 +11929,12 @@ func _create_house_loot() -> void:
 	_create_pickup_item(ct2_hat)
 	var ct2_extra_choices := [1, 3, 4]
 	var ct2_extra: Dictionary = city_tent_loot[ct2_extra_choices[_world_rng.randi() % ct2_extra_choices.size()]].duplicate()
-	ct2_extra["pos"] = _find_pos_inside_house(city_tent2_origin, city_tent_half_w, city_tent_half_d)
+	ct2_extra["pos"] = _find_pos_inside_tent(city_tent2_origin, city_tent_half_w, city_tent_half_d, _city_tent2_yaw)
 	ct2_extra["pos"].y = city_tent2_ground_y + 0.06
 	ct2_extra["id"] = "city_tent2_loot_item_0"
 	_create_pickup_item(ct2_extra)
 	var ct2_food: Dictionary = city_tent_loot[5 + _world_rng.randi() % 3].duplicate()
-	ct2_food["pos"] = _find_pos_inside_house(city_tent2_origin, city_tent_half_w, city_tent_half_d)
+	ct2_food["pos"] = _find_pos_inside_tent(city_tent2_origin, city_tent_half_w, city_tent_half_d, _city_tent2_yaw)
 	ct2_food["pos"].y = city_tent2_ground_y + 0.06
 	ct2_food["id"] = "city_tent2_loot_food_0"
 	_create_pickup_item(ct2_food)
@@ -12189,6 +12189,11 @@ func _create_house_loot() -> void:
 			ca_tmpl["floor_y"] = arr_fy
 		ca_tmpl["id"] = "city_loot_arrow_%d" % b_idx
 		_create_pickup_item(ca_tmpl)
+
+# Military loot uses the tent's local floor, including its wall clearance.
+# Keep the exact two random draws so depleted pickups cannot move other loot.
+func _find_pos_inside_tent(origin: Vector3, half_w: float, half_d: float, yaw_degrees: float) -> Vector3:
+	return origin + (_find_pos_inside_house(origin, half_w, half_d) - origin).rotated(Vector3.UP, deg_to_rad(yaw_degrees))
 
 func _find_pos_inside_house(origin: Vector3, half_w: float, half_d: float, rng: RandomNumberGenerator = null) -> Vector3:
 	var r: RandomNumberGenerator = rng if rng != null else _world_rng
