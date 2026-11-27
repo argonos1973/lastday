@@ -294,6 +294,16 @@ func run() -> void:
 	check(kael_wp.x < -35.0 and kael_wp.z > -5.0,
 		"casa8->casa1: resolver exits current Casa 8 before entering Casa 1 (wp=%s)" % kael_wp)
 	await travel(kael_goal, "casa8 interior reaches Casa 1 refuge")
+	# Casa 6's centre is farther than the outdoor-nav cutoff from its door.
+	# Once aligned with an open door the bot must cross the inner jamb waypoint;
+	# the coarse exterior path must not pull it back out of the doorway.
+	var door6 := world.get_node("Casa abandonada 6 Door") as Door
+	door6.set_open(true, false)
+	if door6._tween != null: door6._tween.custom_step(1.0)
+	world._server_door_states[door6.name] = true
+	world._refresh_nav_door_caches()
+	actor.position = Vector3(-34.85, 0.1, -35.2)
+	await travel(Vector3(-35.0, 0.1, -40.0), "casa6 aligned open doorway enters")
 	for idx in CityBlock.BUILDINGS.size():
 		var building: Node3D = city.buildings[idx]
 		actor.position = building.to_global(Vector3(0,.12,-11))

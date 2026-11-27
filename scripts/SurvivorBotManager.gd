@@ -199,6 +199,7 @@ const CLOTHING_PRIORITY := {
 }
 
 var world: Node = null
+var _last_step_block_diag: Dictionary = {}
 var bots: Dictionary = {} # bot_id -> Dictionary state
 var _pelt_clothing_recipes: Array = []
 var _sync_accum := 0.0
@@ -3400,9 +3401,13 @@ func _mark_poi_unreachable(b: Dictionary, pos: Vector3, cause: String, nav_reaso
 	# reason distingue malla vacia, agua profunda, atasco local u oscilacion;
 	# sin ese dato un veto legitimo y un bug de puerta/terreno son identicos.
 	var proxy_nb: Node3D = b.get("proxy")
-	b["_last_nav_block"] = {"pos": pos, "cause": cause, "t": Time.get_unix_time_from_system(),
+	var nav_diag := {"pos": pos, "cause": cause, "t": Time.get_unix_time_from_system(),
 		"reason": nav_reason, "act": str(b.get("_act", "")), "goal": str(b.get("current_goal", "")),
 		"from": proxy_nb.global_position if proxy_nb != null and is_instance_valid(proxy_nb) else Vector3.INF}
+	var step_nb: Dictionary = b.get("_last_step_block", {})
+	if not step_nb.is_empty():
+		nav_diag["step"] = step_nb.duplicate(true)
+	b["_last_nav_block"] = nav_diag
 	var un: Dictionary = mem.get("unreachable_pois", {})
 	# Borrado de vetos caducados: un POI marcado hace mas de una hora sale del
 	# registro — su contador de fallos vuelve a cero y necesita fallos NUEVOS
@@ -13354,13 +13359,28 @@ func _can_leave_building_margin(from_pos: Vector3, to_pos: Vector3) -> bool:
 		if z.distance_to(near_z) >= a.distance_to(near_a)-.001: return true
 	return false
 
+func _mark_step_block(branch: String, from_pos: Vector3, to_pos: Vector3, extra: Dictionary = {}) -> void:
+	var d := {"branch": branch, "from": from_pos, "to": to_pos}
+	if world != null and world.has_method("get_river_depth_at"):
+		d["depth_from"] = float(world.get_river_depth_at(from_pos))
+		d["depth_to"] = float(world.get_river_depth_at(to_pos))
+	for k in extra.keys():
+		d[k] = extra[k]
+	_last_step_block_diag = d
+
 func _is_step_blocked(from_pos: Vector3, to_pos: Vector3, allow_deep: bool = false) -> bool:
+	_last_step_block_diag = {}
 	if _is_pos_blocked(to_pos, 0.42, allow_deep):
-		if _is_pos_blocked(to_pos,-.45,allow_deep) or not _can_leave_building_margin(from_pos,to_pos):
+		if _is_pos_blocked(to_pos,-.45,allow_deep):
+			_mark_step_block("pos_blocked_core", from_pos, to_pos)
+			return true
+		if not _can_leave_building_margin(from_pos,to_pos):
+			_mark_step_block("pos_blocked_margin", from_pos, to_pos)
 			return true
 	elif _is_pos_blocked(from_pos,0.42,allow_deep) and _wall_between(from_pos,to_pos):
 		# A free interior must not turn a step out of the facade margin into
 		# a shortcut through a window (the chest ray can see through one).
+		_mark_step_block("margin_wall_shortcut", from_pos, to_pos)
 		return true
 	if world != null and (world is Node3D) and (world as Node3D).get_world_3d() != null:
 		var space: PhysicsDirectSpaceState3D = (world as Node3D).get_world_3d().direct_space_state
@@ -13379,6 +13399,16 @@ func _is_step_blocked(from_pos: Vector3, to_pos: Vector3, allow_deep: bool = fal
 					var nrm: Vector3 = hit.get("normal", Vector3.UP)
 					if nrm.y > 0.42:
 						return false
+					var cinfo := {"hit": hit.get("position", Vector3.INF), "normal": nrm}
+					if col is Node:
+						cinfo["collider"] = str((col as Node).name)
+						cinfo["collider_type"] = (col as Node).get_class()
+						var groups: Array = []
+						for g in (col as Node).get_groups(): groups.append(str(g))
+						cinfo["groups"] = groups
+						if col is CollisionObject3D:
+							cinfo["layer"] = int((col as CollisionObject3D).collision_layer)
+					_mark_step_block("physics_ray", from_pos, to_pos, cinfo)
 					return true
 	return false
 
@@ -14411,8 +14441,11 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 		if str(b.get("_act", "")) != "water_escape" and not b.has("_water_escape"):
 			freeze_wet_limit = _bot_cold_water_limit(b, depth_cur)
 	var front_blocked := false if on_stair_segment else _is_step_blocked(cur, new_pos, deep_now)
+	var step_diag: Dictionary = _last_step_block_diag.duplicate(true) if front_blocked else {}
 	if not front_blocked and freeze_wet_limit >= 0.0 and float(world.get_river_depth_at(new_pos)) > freeze_wet_limit:
 		front_blocked = true
+		step_diag = {"branch": "cold_water_limit", "from": cur, "to": new_pos,
+			"depth_from": depth_cur, "depth_to": float(world.get_river_depth_at(new_pos)), "limit": freeze_wet_limit}
 	# Una puerta cerrada no es un muro: si el paso choca y hay una puerta
 	# cerrada al alcance, el bot la abre como un jugador y repatha ya libre.
 	if front_blocked and world != null and world.has_method("bot_try_open_door_at") and world.bot_try_open_door_at(cur):
@@ -14443,6 +14476,12 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 	# Si todos los tanteos fallan, no aplicar el paso frontal que ya sabemos
 	# bloqueado. Conservar el detector de atasco para que busque otra ruta.
 	if front_blocked:
+		if not step_diag.is_empty():
+			step_diag["t"] = Time.get_unix_time_from_system()
+			step_diag["act"] = str(b.get("_act", ""))
+			step_diag["waypoint"] = next_goal
+			step_diag["raw_goal"] = raw_goal
+			b["_last_step_block"] = step_diag
 		new_pos = cur
 	elif anim_name == "run" and not in_building_3d and world != null and world.has_method("get_river_depth_at"):
 		# The first step off the bank starts dry; check the actual (possibly
@@ -20354,9 +20393,21 @@ func get_full_web_status() -> Dictionary:
 		if not nb.is_empty() and nb.get("pos") is Vector3:
 			var nbp: Vector3 = nb["pos"]
 			var nfrom: Vector3 = nb.get("from", Vector3.INF)
-			snap["last_nav_block"] = {"pos": [int(nbp.x), int(nbp.z)], "cause": str(nb.get("cause", "")), "age_min": int((Time.get_unix_time_from_system() - float(nb.get("t", 0.0))) / 60.0),
+			var nb_out := {"pos": [int(nbp.x), int(nbp.z)], "cause": str(nb.get("cause", "")), "age_min": int((Time.get_unix_time_from_system() - float(nb.get("t", 0.0))) / 60.0),
 				"reason": str(nb.get("reason", "")), "act": str(nb.get("act", "")), "goal": str(nb.get("goal", "")),
 				"from": [snappedf(nfrom.x, 0.1), snappedf(nfrom.z, 0.1)] if nfrom != Vector3.INF else []}
+			var step_out: Dictionary = nb.get("step", {})
+			if not step_out.is_empty():
+				var sd := {"branch": str(step_out.get("branch", "")), "collider": str(step_out.get("collider", "")),
+					"collider_type": str(step_out.get("collider_type", "")), "layer": int(step_out.get("layer", 0))}
+				for sk in ["from", "to", "hit", "normal", "waypoint", "raw_goal"]:
+					var sv = step_out.get(sk)
+					if sv is Vector3:
+						sd[sk] = [snappedf((sv as Vector3).x, 0.01), snappedf((sv as Vector3).y, 0.01), snappedf((sv as Vector3).z, 0.01)]
+				for sk in ["depth_from", "depth_to", "limit"]:
+					if step_out.has(sk): sd[sk] = snappedf(float(step_out.get(sk, 0.0)), 0.01)
+				nb_out["step"] = sd
+			snap["last_nav_block"] = nb_out
 		snap["camp_spot"] = [snappedf(camp.x, 0.1), snappedf(camp.y, 0.1), snappedf(camp.z, 0.1)] if camp != Vector3.INF else []
 		snap["shelter_pos"] = [snappedf(sh.x, 0.1), snappedf(sh.y, 0.1), snappedf(sh.z, 0.1)] if sh != Vector3.INF else []
 		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
