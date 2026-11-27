@@ -234,6 +234,38 @@ func test_dry_change(manager: Bots, world: BotFixtures.TestWorld) -> void:
 	world._dropped_items.clear()
 	world.water_rect = Rect2(100000, 100000, 4, 4)
 
+func test_harvested_pelts(manager: Bots, world: BotFixtures.TestWorld) -> void:
+	var b: Dictionary = manager.bots[901]
+	for specimen in [["wolf", false], ["wolf", true], ["deer", false], ["fox", false], ["bear", false]]:
+		reset_bot(b, "Chaqueta de otoño,Pantalones cargo con rodilleras,Botas de montaña,Casco militar",
+			materials_for("oso", 0))
+		b["hunger"] = 95.0
+		var animal := WildlifeController.new()
+		animal.name = "PeltYield_%s_%s" % [specimen[0], specimen[1]]
+		animal.animal_type = specimen[0]
+		animal.black_coat = specimen[1]
+		animal._is_dead = true
+		world.add_child(animal)
+		animal.global_position = b.proxy.global_position
+		animal.set_process(false)
+		var expected := animal._hide_count()
+		var hide := animal._hide_name()
+		manager._bot_harvest_dead_animal(b, animal)
+		var collected := manager._bot_item_count(b.proxy, hide)
+		print("HARVEST_PELT %s bot=%d human=%d" % [hide, collected, expected])
+		check(collected == expected, "%s gives bots the same hides as human harvesting" % hide)
+		manager._bot_harvest_dead_animal(b, animal)
+		check(manager._bot_item_count(b.proxy, hide) == collected, "the same carcass cannot grant hides twice")
+		if specimen[0] == "bear":
+			# Elena carried three bear hides forever: the duplicated bot yield
+			# lost the fourth hide needed for her first jacket.
+			for tick in 20: manager._bot_try_craft(b, 3.0)
+			check("Chaqueta de piel" in str(b.clothing), "one harvested bear supplies a jacket that the bot actually wears")
+			var worn: Dictionary = b.proxy.get_meta("saved_extra", {}).get("worn_clothing", {})
+			check(str((worn.get("Chaqueta de piel", {}) as Dictionary).get("pelt_species", "")) == "oso",
+				"the harvested bear species reaches the worn jacket")
+		animal.free()
+
 func test_bot_pelts() -> void:
 	var world := BotFixtures.TestWorld.new()
 	root.add_child(world)
@@ -251,6 +283,7 @@ func test_bot_pelts() -> void:
 	# Spawn real bot state without loading/saving the user's AI memory.
 	manager.spawn_all_bots()
 	test_dry_change(manager, world)
+	test_harvested_pelts(manager, world)
 	var outfit := ["Chaqueta de piel", "Pantalones de piel", "Botas de piel", "Guantes de piel"]
 	var recipes := {}
 	for recipe in Crafting.RECIPES:

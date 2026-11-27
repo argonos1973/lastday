@@ -5,6 +5,10 @@ cuando sus necesidades y amenazas permiten trabajar y el resultado mejora su
 equipo. Necesitan un cuchillo funcional o una alternativa admitida por la receta,
 como una piedra afilada. Cada fabricación desgasta la herramienta en 3 puntos.
 
+El destripado usa el nombre y la cantidad de pieles del propio animal, igual
+que el jugador: lobo y zorro dan una piel, ciervo dos y oso cuatro. Un oso
+proporciona así las cuatro pieles necesarias para fabricar la primera chaqueta.
+
 | Prenda | Materiales consumidos |
 |---|---|
 | Chaqueta de piel | 4 pieles |

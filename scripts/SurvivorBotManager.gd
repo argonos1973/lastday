@@ -4827,27 +4827,23 @@ func _bot_harvest_dead_animal(b: Dictionary, animal: Node3D) -> void:
 	var kind := str(animal.get("animal_type"))
 	var meat_name := "Carne cruda de lobo"
 	var meat_qty := 3
-	var hide_name := "Piel de lobo negro" if animal.get("black_coat") == true else "Piel de lobo"
-	var hide_qty := 1
+	# Use the same hide yield as human harvesting. The old duplicated bear
+	# count was three instead of four, stranding bots one hide short of a jacket.
+	var hide_name := str(animal.call("_hide_name"))
+	var hide_qty := int(animal.call("_hide_count"))
 	var part_qty := 1
 	match kind:
 		"deer":
 			meat_name = "Carne cruda de ciervo"
 			meat_qty = 4
-			hide_name = "Piel de ciervo"
-			hide_qty = 2
 			part_qty = 2
 		"fox":
 			meat_name = "Carne cruda de zorro"
 			meat_qty = 2
-			hide_name = "Piel de zorro"
-			hide_qty = 1
 			part_qty = 1
 		"bear":
 			meat_name = "Carne cruda de oso"
 			meat_qty = 5
-			hide_name = "Piel de oso"
-			hide_qty = 3
 			part_qty = 2
 	if take_meat:
 		var meat := {"name": meat_name, "type": "food", "weight": 0.3, "quantity": meat_qty, "use_value": 15.0}
@@ -13829,19 +13825,23 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 			return b_origin + Vector3(stair_x, 0.12, 4.7).rotated(Vector3.UP, yaw)
 		return b_origin + Vector3(stair_x, 3.92, -3.2).rotated(Vector3.UP, yaw)
 	if cur_lvl_c == 1 and goal_lvl_c == 0:
+		# Both roof layouts have the upstairs sofa and west partition door.
+		# Pitched-roof houses must leave this room before aiming at the stairs
+		# too: Elena's city_04 death came from crossing the sofa diagonally.
+		if lc.x < 3.1:
+			if lc.z > -0.9:
+				if lc.x > 0.8 and lc.z < 0.25:
+					return b_origin + Vector3(2.4, 3.92, 0.4).rotated(Vector3.UP,yaw)
+				# The partition at z=-1 spans x=-2.1..2.9. Its doorway
+				# is west, x=-3.5..-2.1; x=-1.5 is solid wall.
+				if lc.x > -2.5:
+					return b_origin + Vector3(-2.8, 3.92, 0.4).rotated(Vector3.UP,yaw)
+				return b_origin + Vector3(-2.8, 3.92, -1.8).rotated(Vector3.UP,yaw)
+			# Clear the far jamb before turning east along the corridor.
+			if lc.x < -2.1 and lc.z > -1.45:
+				return b_origin + Vector3(-2.8, 3.92, -1.8).rotated(Vector3.UP,yaw)
 		if flat_roof and lc.x < 4.9:
 			if lc.x < 3.1:
-				if lc.z > -0.9:
-					if lc.x > 0.8 and lc.z < 0.25:
-						return b_origin + Vector3(2.4, 3.92, 0.4).rotated(Vector3.UP,yaw)
-					# The partition at z=-1 spans x=-2.1..2.9. Its doorway
-					# is west, x=-3.5..-2.1; x=-1.5 is solid wall.
-					if lc.x > -2.5:
-						return b_origin + Vector3(-2.8, 3.92, 0.4).rotated(Vector3.UP,yaw)
-					return b_origin + Vector3(-2.8, 3.92, -1.8).rotated(Vector3.UP,yaw)
-				# Clear the far jamb before turning east along the corridor.
-				if lc.x < -2.1 and lc.z > -1.45:
-					return b_origin + Vector3(-2.8, 3.92, -1.8).rotated(Vector3.UP,yaw)
 				if lc.x < 2.3:
 					return b_origin + Vector3(2.5, 3.92, -1.45).rotated(Vector3.UP,yaw)
 				if lc.x < 3.1 or lc.z > -1.9:
@@ -14286,6 +14286,24 @@ func _stop_bot_motion(b: Dictionary) -> void:
 		proxy.set_meta("moving", false)
 		proxy.set_meta("sprinting", false)
 
+func _exterior_nav_start(cur: Vector3, path: Array) -> int:
+	# Snapping a blocked outdoor grid cell can choose a free cell INSIDE a
+	# house. The map path is valid from that cell, but reaching it through the
+	# facade is not. Join the nearby visible outdoor part of the same path.
+	if path.size() < 2 or _is_in_any_building_3d(cur) \
+			or not _is_in_any_building_3d(path[0]) or not _wall_between(cur, path[0]):
+		return 0
+	var best := 0
+	for index in range(1, mini(5, path.size())):
+		var point: Vector3 = path[index]
+		point.y = cur.y
+		if cur.distance_to(point) > 10.0 or _is_in_any_building_3d(point) or _wall_between(cur, point):
+			continue
+		if not InterruptionManager.dry_recovery_leg(world, cur, point) or _is_step_blocked(cur, point):
+			continue
+		best = index
+	return best
+
 func _move_bot_towards(b: Dictionary, raw_goal: Vector3, speed: float, delta: float, anim_name: String) -> void:
 	var started := Time.get_ticks_usec()
 	_move_bot_towards_impl(b, raw_goal, speed, delta, anim_name)
@@ -14393,6 +14411,8 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 					_stop_bot_motion(b)
 					return
 		var pidx := int(b["path_idx"])
+		if pidx == 0:
+			pidx = _exterior_nav_start(cur, path)
 		# Si find_path devuelve un unico punto (_nearest_free_cell) que queda
 		# MAS LEJOS del objetivo que la posicion actual, el nav esta intentando
 		# tirar hacia atras desde el margen de un rio o edificio: ignorar ese

@@ -224,6 +224,7 @@ func city_drink_escape(city: Node3D) -> void:
 	check(float(b["thirst"]) >= 95.0 or c11_min_dist < 4.0,
 		"city_11 ground floor: critical thirst reaches the fountain (min_d=%.2f thirst=%.1f)" % [c11_min_dist, float(b["thirst"])])
 	await city_ground_partition_escape(city, b)
+	await city_upper_front_escape(city, b)
 	if drink != null:
 		world.world_actions_by_id.erase("city10_escape_drink")
 		drink.queue_free()
@@ -262,6 +263,43 @@ func city_ground_partition_escape(city: Node3D, b: Dictionary) -> void:
 		check(float(b["thirst"]) >= 95.0,
 			"city_%02d ground partition: exits and drinks (pos=%s thirst=%.1f)" % [index + 1, b.proxy.global_position, float(b["thirst"])])
 		check(not crossed_partition, "city_%02d ground partition: escape crosses no wall" % (index + 1))
+
+func city_upper_front_escape(city: Node3D, b: Dictionary) -> void:
+	# Elena died at (26.4,3.9,697.3) behind the city_04 upstairs sofa.
+	# This is a pitched roof: the flat-roof doorway fix did not apply.
+	for index in [3, 0, 4, 7, 8, 11, 12, 15]:
+		var building: Node3D = city.buildings[index]
+		var start := building.to_global(Vector3(-1.4, 3.92, -.3))
+		b.proxy.global_position = start
+		b.proxy.set_meta("saved_pos", start)
+		b["pos"] = start
+		b["thirst"] = 18.0
+		b["hunger"] = 90.0
+		b["health"] = 100.0
+		b["energy"] = 85.0
+		b["drink_at"] = Vector3.INF
+		b["drink_scan"] = 0.0
+		b["drink_walk_t"] = 0.0
+		b["_bad_water"] = []
+		b["_unreachable"] = []
+		b["path"] = []
+		b["path_timer"] = 0.0
+		b.erase("_last_step_block")
+		var crossed := false
+		for tick in 1200:
+			var before: Vector3 = b.proxy.global_position
+			manager._tick_bot(b, .05)
+			var after: Vector3 = b.proxy.global_position
+			if before.distance_to(after) > .001:
+				var query := PhysicsRayQueryParameters3D.create(before + Vector3.UP * .9, after + Vector3.UP * .9, 1)
+				if not world.get_world_3d().direct_space_state.intersect_ray(query).is_empty(): crossed = true
+			if float(b["thirst"]) >= 95.0: break
+			if tick % 3 == 0: await physics_frame
+		print("city_%02d upper front: start=%s pos=%s thirst=%.1f block=%s" %
+			[index + 1, start, b.proxy.global_position, float(b["thirst"]), b.get("_last_step_block", {})])
+		check(float(b["thirst"]) >= 95.0 and b.proxy.global_position.y < 1.0,
+			"city_%02d upstairs front room: escapes and drinks" % (index + 1))
+		check(not crossed, "city_%02d upstairs front room: no wall/furniture crossing" % (index + 1))
 
 func mixed_building_departures(city: Node3D) -> void:
 	world._remote_tent_pos = Vector3(460, 0, 0)
@@ -364,7 +402,8 @@ func run() -> void:
 		var i := world._register_wildlife_blocker(building.global_position,fp.length())
 		var out := Vector3.BACK.rotated(Vector3.UP,yaw)
 		world.wildlife_blockers[i].merge({"door":door,"door_name":str(door.name),"door_pos":door.global_position,"door_center":building.to_global(Vector3(.15,.12,6.08)),"door_out_dir":Vector2(out.x,out.z),"city_building_index":idx,"building_yaw":yaw,"house_bounds":Rect2(Vector2(building.global_position.x-fp.x,building.global_position.z-fp.y),fp*2)},true)
-	world.bot_nav = world._new_nav_pathfinding()
+	world.bot_nav = NavPathfinding.new() if "--fallback-nav" in OS.get_cmdline_user_args() else world._new_nav_pathfinding()
+	print("HOUSE_NAV ", "GDScript" if "--fallback-nav" in OS.get_cmdline_user_args() else world.bot_nav.get_class())
 	world.bot_nav.build(world.wildlife_blockers,[])
 	world.wolf_nav = world.bot_nav
 	world.nav = world.bot_nav
