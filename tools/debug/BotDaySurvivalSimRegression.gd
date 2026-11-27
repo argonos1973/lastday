@@ -122,6 +122,10 @@ class Beast extends Node3D:
 	var damage_taken := 0.0
 	var hits_taken := 0
 	var _gutted := false
+	func _hide_name() -> String:
+		return {"deer": "Piel de ciervo", "wolf": "Piel de lobo", "bear": "Piel de oso", "fox": "Piel de zorro"}.get(animal_type, "Piel animal")
+	func _hide_count() -> int:
+		return 4 if animal_type == "bear" else (2 if animal_type == "deer" else 1)
 	func take_damage(amount: float, _knife: bool = false, _attacker: Node = null) -> void:
 		damage_taken += amount
 		hits_taken += 1
@@ -446,9 +450,43 @@ func _d13() -> void:
 		"D13 la amenaza activa si se clasifica como combate estrategico")
 
 
+func _d14() -> void:
+	print("D14: agotamiento letal durante una caminata para beber")
+	for hour in [12.0, 23.0]:
+		var env := _new_world(hour, 16.0)
+		var w: DayWorld = env.world
+		var mgr: DayMgr = env.mgr
+		var kael: Dictionary = mgr.bots[903]
+		mgr._set_bot_faction(kael, "friendly")
+		_place_bot(kael, Vector3(0, .4, 0), {"health": 68.0, "hunger": 48.0, "thirst": 16.0,
+			"sleep": 3.0, "body_temperature": 36.1, "inventory": []})
+		kael.clothing = "Chaqueta militar,Pantalones,Botas de montaña,Linterna frontal"
+		w.river_segs = [{"center": Vector3(120, 0, 0), "size": Vector2(8, 8), "yaw": 0.0}]
+		var water := Vector3(116.3, .4, 0)
+		kael.drink_at = water
+		mgr._tick_bot(kael, .2)
+		check(bool(kael.sleeping), "D14 %.0fh: sueño 3 y sed 16 permiten el colapso antes del viaje" % hour)
+		check(kael.drink_at == water, "D14 la siesta conserva el acceso al agua")
+		simulate(env, [kael], {"dt": .2, "steps": 80, "advance_clock": false,
+			"until": func(_step): return kael.vstats.sleep > 8.5})
+		check(kael.vstats.sleep > 8.0 and kael.health > 0.0, "D14 recupera sueño real y sigue vivo")
+		for tick in 5: mgr._tick_bot(kael, .2)
+		check(not bool(kael.sleeping) and kael.proxy.global_position.x > .1,
+			"D14 tras la siesta retoma el camino hacia el agua")
+		# The existing final supply attempt still outranks sleep at thirst <10.
+		_place_bot(kael, Vector3(0, .4, 0), {"hunger": 48.0, "thirst": 9.0, "sleep": 3.0, "inventory": []})
+		kael.drink_at = water
+		mgr._tick_bot(kael, .2)
+		check(not bool(kael.sleeping), "D14 la expedicion con sed <10 sigue despierta")
+
 func run() -> void:
 	seed(4242)
 	var t0 := Time.get_ticks_msec()
+	if "--only-d14" in OS.get_cmdline_user_args():
+		_d14()
+		print("BotDaySurvivalSimRegression D14 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
 	if "--only-d13" in OS.get_cmdline_user_args():
 		_d13()
 		print("BotDaySurvivalSimRegression D13 errors=%d" % failures)
@@ -498,7 +536,15 @@ func run() -> void:
 		"events": [{"every": 60, "fn": func():
 			var ph := dc.get_phase() if not dc.is_dark() else "night"
 			if phases_seen.is_empty() or str(phases_seen[-1]) != ph:
-				phases_seen.append(ph)}]})
+				phases_seen.append(ph)
+			if "--trace-d1" in OS.get_cmdline_user_args():
+				for b in [elena, carlos, kael]:
+					var st: SurvivalStats = b.vstats
+					if not st.dead and st.health < 30.0:
+						print("D1LOW ", b.name, " pos=", b.proxy.global_position, " act=", b.get("_act"),
+							" hp=", st.health, " temp=", st.body_temperature, " wet=", st.wetness,
+							" sleep=", st.sleep, " hunger=", b.hunger, " thirst=", b.thirst,
+							" leader=", b.get("team_leader_id"), " clothes=", b.clothing)}]})
 	var trio := [elena, carlos, kael]
 	for i in range(3):
 		print(_report(env, reps[i], trio[i]))
@@ -522,6 +568,11 @@ func run() -> void:
 		check(not dusk_acts.is_empty() and int(dusk_acts.get("need_light", 0)) == 0,
 			"D1 %s sigue operativo en el crepusculo con luz util (%s)" % [r1["name"], str(dusk_acts)])
 		check(int(r1["max_static"]) < 600, "D1 %s sin bloqueos largos de navegacion (max %d s)" % [r1["name"], int(r1["max_static"])])
+
+	if "--only-d1" in OS.get_cmdline_user_args():
+		print("BotDaySurvivalSimRegression D1 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
 
 	# ================= D2: escasez de comida y agua =======================
 	print("D2: escasez de comida y agua")
@@ -878,6 +929,7 @@ func run() -> void:
 		"D12 sin indicios abandona la busqueda y sigue con su vida (acts=%s)" % str(reps[0]["acts"]))
 
 	_d13()
+	_d14()
 
 	print("BotDaySurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	for key in ["world", "net"]:

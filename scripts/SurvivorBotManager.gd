@@ -2310,7 +2310,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# Sleep damage starts below 10. Do not wait for optional jobs or a
 	# distant camp when the current spot is safe for an uninterrupted nap.
 	var vst_med: SurvivalStats = b.get("vstats")
-	if vst_med != null and vst_med.sleep < 10.0 and float(b["thirst"]) >= 18.0 \
+	if vst_med != null and vst_med.sleep < 10.0 \
 			and not _bot_is_freezing(b) and not _bot_night_supply_emergency(b) \
 			and (b.get("_fire_ignition", {}) as Dictionary).is_empty() \
 			and float(b.get("consume_anim_t", 0.0)) <= 0.0 and not _bot_under_immediate_threat(b) \
@@ -13745,6 +13745,14 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 	var is_open := _is_city_building_door_open(b_idx, door_world)
 	if not is_open and _try_open_building_door(b, cur, door_world):
 		is_open = true
+	# The containment tolerance includes the OUTSIDE of the front jamb.
+	# Kael stopped at local (1.12,.1,6.24); aiming at the interior door
+	# waypoint from there pushed him into the wall beside the opening.
+	if cur_in and int(def.get("floors", 2)) == 2 and lc.y < 2.2 and lc.z >= 6.08 \
+			and (not goal_in or absf(lc.x - 0.15) > 0.65):
+		# Clear the margin straight out before centring or re-entering.
+		# A diagonal move can cross the conservative wall boundary at the jamb.
+		return b_origin + Vector3(lc.x, 0.12, 8.3).rotated(Vector3.UP, yaw)
 	if not cur_in and goal_in:
 		var out3 := Vector3(0.0, 0.0, 1.0).rotated(Vector3.UP, yaw)
 		var qw := _bot_door_queue_wait(b, cur, door_world, Vector2(out3.x, out3.z))

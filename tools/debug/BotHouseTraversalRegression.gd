@@ -224,7 +224,7 @@ func city_drink_escape(city: Node3D) -> void:
 	check(float(b["thirst"]) >= 95.0 or c11_min_dist < 4.0,
 		"city_11 ground floor: critical thirst reaches the fountain (min_d=%.2f thirst=%.1f)" % [c11_min_dist, float(b["thirst"])])
 	await city_ground_partition_escape(city, b)
-	await city_upper_front_escape(city, b)
+	await city_thirst_traps(city, b)
 	if drink != null:
 		world.world_actions_by_id.erase("city10_escape_drink")
 		drink.queue_free()
@@ -264,12 +264,20 @@ func city_ground_partition_escape(city: Node3D, b: Dictionary) -> void:
 			"city_%02d ground partition: exits and drinks (pos=%s thirst=%.1f)" % [index + 1, b.proxy.global_position, float(b["thirst"])])
 		check(not crossed_partition, "city_%02d ground partition: escape crosses no wall" % (index + 1))
 
-func city_upper_front_escape(city: Node3D, b: Dictionary) -> void:
+func city_thirst_traps(city: Node3D, b: Dictionary) -> void:
 	# Elena died at (26.4,3.9,697.3) behind the city_04 upstairs sofa.
 	# This is a pitched roof: the flat-roof doorway fix did not apply.
+	var cases: Array = []
 	for index in [3, 0, 4, 7, 8, 11, 12, 15]:
+		cases.append([index, Vector3(-1.4, 3.92, -.3), "upper front"])
+	# Kael's later exhaustion death at (23.88,.1,786.76) was on the
+	# outside of city_12's front jamb, still inside the containment margin.
+	for index in [0, 11]:
+		cases.append([index, Vector3(1.12, .1, 6.24), "outside door margin"])
+	for spec in cases:
+		var index: int = spec[0]
 		var building: Node3D = city.buildings[index]
-		var start := building.to_global(Vector3(-1.4, 3.92, -.3))
+		var start := building.to_global(spec[1])
 		b.proxy.global_position = start
 		b.proxy.set_meta("saved_pos", start)
 		b["pos"] = start
@@ -295,11 +303,22 @@ func city_upper_front_escape(city: Node3D, b: Dictionary) -> void:
 				if not world.get_world_3d().direct_space_state.intersect_ray(query).is_empty(): crossed = true
 			if float(b["thirst"]) >= 95.0: break
 			if tick % 3 == 0: await physics_frame
-		print("city_%02d upper front: start=%s pos=%s thirst=%.1f block=%s" %
-			[index + 1, start, b.proxy.global_position, float(b["thirst"]), b.get("_last_step_block", {})])
-		check(float(b["thirst"]) >= 95.0 and b.proxy.global_position.y < 1.0,
-			"city_%02d upstairs front room: escapes and drinks" % (index + 1))
-		check(not crossed, "city_%02d upstairs front room: no wall/furniture crossing" % (index + 1))
+		var label := "city_%02d %s" % [index + 1, spec[2]]
+		print("%s: start=%s pos=%s thirst=%.1f block=%s" %
+			[label, start, b.proxy.global_position, float(b["thirst"]), b.get("_last_step_block", {})])
+		check(float(b["thirst"]) >= 95.0 and float(b["health"]) > 0.0 and b.proxy.global_position.y < 1.0,
+			label + ": escapes and drinks alive")
+		check(not crossed, label + ": no wall/furniture crossing")
+	for index in [0, 11]:
+		var building: Node3D = city.buildings[index]
+		var door := building.get_node(str(CityBlock.BUILDINGS[index].id) + "_door") as Door
+		door.set_open(false, false)
+		if door._tween != null: door._tween.custom_step(1.0)
+		world._server_door_states[door.name] = false
+		world._refresh_nav_door_caches()
+		await physics_frame
+		actor.position = building.to_global(Vector3(1.12, .1, 6.24))
+		await travel(building.to_global(Vector3(.15, .12, 4.6)), "city_%02d entry from outside door margin" % (index + 1))
 
 func mixed_building_departures(city: Node3D) -> void:
 	world._remote_tent_pos = Vector3(460, 0, 0)
