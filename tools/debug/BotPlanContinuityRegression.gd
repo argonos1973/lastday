@@ -96,6 +96,70 @@ func verify_disk_resume(m, actor: Dictionary) -> void:
 	restored.force_memory_io = false
 	restored.free()
 
+func check_undiscovered_base(m) -> void:
+	var original: Dictionary = m.bots[904]
+	var original_memory: Dictionary = m._memory[904]
+	var original_pos: Vector3 = original.proxy.global_position
+	var original_cache: Array = m._poi_cache
+	var original_built: bool = m._poi_cache_built
+	var b: Dictionary = original.duplicate(true)
+	m.bots[904] = b
+	m._memory[904] = original_memory.duplicate(true)
+	reset_bot(m, b, Vector3(90, .4, 10))
+	var summit := Vector3(-381.364, 56.0, -362.2721)
+	var summit_id: String = m._poi_id({"kind":"military", "pos":summit})
+	m._poi_cache = [{"kind":"military", "pos":Vector3(300,.4,200)}, {"kind":"military", "pos":summit}]
+	m._poi_cache_built = true
+	var normal: Dictionary = m.decide_situational_action(b)
+	check(normal.get("goal") == "gear_up_at_military_base", "An available known base still takes priority over discovery")
+	m._poi_cache = [{"kind":"military", "pos":Vector3(300,.4,200)}]
+	check(m._ai_apply_decision(904, JSON.stringify({"action":"explore", "target":"military",
+		"goal":"routine_exploration", "priority":3})), "An ordinary exploration plan can already be active")
+	m._poi_cache.append({"kind":"military", "pos":summit})
+	b["_mem"]["known_locations"]["military:300:200"]["firearm_ids_taken"] = ["tent_loot_m4", "tent_loot_rifle"]
+	var scout: Dictionary = m.decide_situational_action(b)
+	check(scout.get("action") == "explore" and scout.get("goal") == "discover_equipment_site",
+		"Exhausted known bases trigger discovery instead of an impossible repeated raid")
+	var accepted: bool = m._ai_apply_decision(904, JSON.stringify(scout))
+	check(accepted and b.get("ai_directive", {}).get("_dest_pos") == summit
+			and b.get("ai_directive", {}).get("goal") == "discover_equipment_site",
+		"The discovery plan and actual movement target the unexplored summit")
+	if accepted:
+		check(not b["_mem"]["known_locations"].has(summit_id) and m._choose_explore_target(b) == summit,
+			"Travelling to a new region does not invent prior observations")
+		b["_mem"]["known_locations"]["military:300:200"]["firearm_ids_taken"] = []
+		check(m.decide_situational_action(b).get("goal") == "discover_equipment_site",
+			"A newly available old base does not reverse an active discovery trip")
+		b["_mem"]["known_locations"]["military:300:200"]["firearm_ids_taken"] = ["tent_loot_m4", "tent_loot_rifle"]
+		# The site becomes visible before arrival. A restart must retain the
+		# route even though it is no longer an unknown candidate at that point.
+		m.observe_location(904, summit_id, "military", summit)
+		Plans.checkpoint(b, Time.get_ticks_msec())
+		var saved_steps: Array = b["_mem"]["pending_goals"].duplicate(true)
+		b["ai_directive"] = {}
+		check(m._ai_apply_decision(904, JSON.stringify({"steps":saved_steps}), "memory")
+				and b.get("ai_directive", {}).get("_dest_pos") == summit,
+			"Discovery resumes its saved route after the summit has been observed")
+		b.proxy.global_position = summit
+		m._mark_poi_visited(b, summit)
+		check(Goals.result(m, b, b.get("ai_directive", {})).get("complete", false),
+			"Actual arrival completes discovery")
+		b["ai_directive"] = {}
+		var raid: Dictionary = m.decide_situational_action(b)
+		check(raid.get("goal") == "gear_up_at_military_base" and Goals.bind_gear_target(m, b, raid)
+				and Vector3(raid.get("_dest_pos", Vector3.INF)).distance_to(summit) < .1,
+			"After discovery the bot equips at the newly known base (%s)" % raid)
+	b["thirst"] = 5.0
+	b["vstats"].thirst = 5.0
+	check(m.decide_situational_action(b).get("goal") != "discover_equipment_site",
+		"Critical thirst still prevents a discovery expedition")
+	original.proxy.global_position = original_pos
+	original["vstats"].thirst = 85.0
+	m.bots[904] = original
+	m._memory[904] = original_memory
+	m._poi_cache = original_cache
+	m._poi_cache_built = original_built
+
 func run() -> void:
 	seed(20261119)
 	var world := Fixtures.TestWorld.new()
@@ -116,6 +180,7 @@ func run() -> void:
 	m.set_process(false)
 	for id in m.bots:
 		reset_bot(m, m.bots[id], Vector3(int(id) * 0.1, 0.4, 10))
+	check_undiscovered_base(m)
 	var b: Dictionary = m.bots[902]
 	var trip := {"steps": [
 		{"action": "scavenge", "target": "military", "goal": "gear_up_at_military_base", "priority": 4},

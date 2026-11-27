@@ -24,7 +24,10 @@ static func step_key(step: Dictionary) -> String:
 	var target := str(step.get("target", ""))
 	if target.is_empty() and action in ["return_home", "rest", "fortify_camp"]:
 		target = "camp"
-	return JSON.stringify([action, target, Validator.purpose(step), step.prey] if step.has("prey") else [action, target, Validator.purpose(step)])
+	var key := [action, target, Validator.purpose(step), step.prey] if step.has("prey") else [action, target, Validator.purpose(step)]
+	if str(step.get("goal", "")) == "discover_equipment_site":
+		key.append("unknown_site")
+	return JSON.stringify(key)
 
 static func same_steps(a: Array, b: Array) -> bool:
 	if a.size() != b.size():
@@ -248,9 +251,21 @@ static func apply(m, bot_id: int, content: String, source: String = "qwen", prev
 			m._ai_stat_inc(b, "plan_kept")
 			b["_ai_last_apply"] = "kept"
 			return true
+	var saved_destination := Vector3.INF
+	var saved_id := str(saved.get("destination_id", ""))
+	var destination = saved.get("destination", [])
+	if destination is Array and destination.size() == 3 and str(d.get("mode", "")) == "poi":
+		var pos := Vector3(float(destination[0]), float(destination[1]), float(destination[2]))
+		if pos.is_finite() and not m._is_goal_blacklisted(b, pos) and not m._is_poi_unreachable(b, saved_id):
+			saved_destination = pos
 	if str(d.get("goal", "")) == "gear_up_at_military_base":
 		if not Validator.bind_gear_target(m, b, d):
 			return false
+	elif not pinned and saved_destination != Vector3.INF:
+		# Observation during travel can make a discovery destination known.
+		# Validate the checkpoint before requiring another unknown candidate.
+		d["_dest_pos"] = saved_destination
+		d["_dest_id"] = saved_id
 	elif not pinned and not m._ai_pin_step_destination(bot_id, b, d):
 		return false
 	if not cur.is_empty():
@@ -267,12 +282,9 @@ static func apply(m, bot_id: int, content: String, source: String = "qwen", prev
 	d["_prog_ref_m"] = m._ai_step_target_dist(b, d)
 	d["_prog_ref_ms"] = now
 	if not saved.is_empty():
-		var dest = saved.get("destination", [])
-		if dest is Array and dest.size() == 3 and str(d.get("mode", "")) == "poi":
-			var pos := Vector3(float(dest[0]), float(dest[1]), float(dest[2]))
-			if pos.is_finite() and not m._is_goal_blacklisted(b, pos):
-				d["_dest_pos"] = pos
-				d["_dest_id"] = str(saved.get("destination_id", ""))
+		if saved_destination != Vector3.INF:
+			d["_dest_pos"] = saved_destination
+			d["_dest_id"] = saved_id
 		d["_prog_ref_m"] = m._ai_step_target_dist(b, d)
 		d["_step_deadline_ms"] = now + m._ai_step_budget_msec(b, d)
 	start(b, d, steps, now, previous, saved)

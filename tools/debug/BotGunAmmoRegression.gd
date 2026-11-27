@@ -49,6 +49,90 @@ class TestPlayer extends "res://scripts/PlayerController.gd":
 	func _on_inventory_changed() -> void: pass
 	func _on_stats_changed() -> void: pass
 
+func _check_daily_firearms(mgr: SurvivorBotManager, template: Dictionary) -> void:
+	var m4 := {"name":"Fusil de asalto", "type":"weapon_rifle", "quantity":1, "weight":3.1}
+	var rifle := {"name":"Rifle francotirador", "type":"weapon", "quantity":1, "weight":4.0}
+	var m4_ammo := {"name":"Cargador de M4", "type":"ammo", "quantity":1, "weight":0.45, "use_value":30.0}
+	var rifle_ammo := {"name":"Cargador de fusil", "type":"ammo", "quantity":1, "weight":0.4, "use_value":5.0}
+	var knife := {"name":"Cuchillo", "type":"weapon", "quantity":1, "weight":0.35}
+	var p := _make_proxy([m4, rifle, m4_ammo, rifle_ammo, knife],
+		{"initialized":true, "m4_initialized":true, "m4_magazine":30, "m4_reserve":0, "magazine":5, "reserve":0})
+	var b := template.duplicate(true)
+	b["proxy"] = p
+	b["shelter_id"] = "daily_firearms"
+	b["clothing"] = ""
+	b["backpack"] = "Mochila militar"
+	b["_mem"] = {}
+	var sh := {"id":b.shelter_id, "pos":Vector3.ZERO, "contents":[]}
+	mgr.world._built_shelters.append(sh)
+	mgr._bot_sync_own_shelter_stash(b)
+	check(_has_all(p, ["Fusil de asalto", "Rifle francotirador", "Cargador de M4", "Cargador de fusil"]),
+		"equipo diario: conserva ambos fusiles y sus calibres cuando caben")
+	check(mgr._bot_sync_own_shelter_stash(b) == 0, "equipo diario: la siguiente visita al alijo es estable")
+	p.set_meta("saved_inventory", [m4.duplicate(true)])
+	sh["contents"] = [rifle.duplicate(true), rifle_ammo.duplicate(true)]
+	mgr._bot_sync_own_shelter_stash(b)
+	check(_has_all(p, ["Fusil de asalto", "Rifle francotirador", "Cargador de fusil"]),
+		"equipo diario: recupera el segundo fusil guardado si lo puede llevar")
+	b["backpack"] = ""
+	p.set_meta("saved_inventory", [m4.duplicate(true), m4_ammo.duplicate(true), knife.duplicate(true),
+		{"name":"Venda", "type":"medical", "quantity":1, "weight":0.1}])
+	sh["contents"] = []
+	mgr._bot_sync_own_shelter_stash(b)
+	check(_has_all(p, ["Fusil de asalto", "Cargador de M4"]) and mgr._bot_inv_stored_count(p.get_meta("saved_inventory")) <= 3,
+		"equipo diario: ante tres huecos conserva el fusil y su municion antes que el cuchillo")
+	p.set_meta("saved_inventory", [m4.duplicate(true), rifle.duplicate(true), m4_ammo.duplicate(true)])
+	sh["contents"] = []
+	mgr._bot_sync_own_shelter_stash(b)
+	check(_has_all(p, ["Fusil de asalto", "Cargador de M4"]) and mgr._bot_item_count(p, "Rifle francotirador") == 0,
+		"equipo diario: almacena el segundo fusil cuando los dos exceden el peso real")
+	check(not mgr._own_shelter_has_needed_item(b),
+		"equipo diario: un fusil secundario que no cabe no lo hace volver constantemente al refugio")
+	p.set_meta("saved_inventory", [knife.duplicate(true), m4_ammo.duplicate(true),
+		{"name":"Manzana", "type":"food", "quantity":1, "weight":0.2}])
+	mgr._bot_gun_ammo_save(p, {"initialized":true, "m4_initialized":true,
+		"m4_magazine":0, "m4_reserve":0, "magazine":0, "reserve":0})
+	sh["contents"] = [m4.duplicate(true)]
+	mgr._bot_sync_own_shelter_stash(b)
+	check(_has_all(p, ["Fusil de asalto", "Cargador de M4"]) and mgr._bot_inv_stored_count(p.get_meta("saved_inventory")) <= 3,
+		"equipo diario: hace sitio para recuperar el unico fusil sin guardar su unica municion")
+	check(mgr._bot_gun_ammo(p).m4_magazine == 0 and mgr._bot_item_count(p, "Cargador de M4") == 1,
+		"equipo diario: cambiar objetos con el alijo no inventa balas")
+	var stable_inv: Array = p.get_meta("saved_inventory").duplicate(true)
+	var stable_stash: Array = mgr._get_shelter_contents(b.shelter_id).duplicate(true)
+	for repeat in 5:
+		mgr._bot_sync_own_shelter_stash(b)
+	check(p.get_meta("saved_inventory") == stable_inv and mgr._get_shelter_contents(b.shelter_id) == stable_stash,
+		"equipo diario: el intercambio por capacidad no oscila en visitas repetidas")
+	var duplicate_guns := m4.duplicate(true)
+	duplicate_guns["quantity"] = 2
+	p.set_meta("saved_inventory", [duplicate_guns, m4_ammo.duplicate(true)])
+	sh["contents"] = []
+	mgr._bot_sync_own_shelter_stash(b)
+	check(mgr._bot_item_count(p, "Fusil de asalto") == 1 and mgr._bot_item_count(p, "Cargador de M4") == 1,
+		"equipo diario: un duplicado apilado no expulsa la municion ni los dos fusiles")
+	var broken := m4.duplicate(true)
+	broken["durability"] = 0.0
+	p.set_meta("saved_inventory", [broken, knife.duplicate(true), m4_ammo.duplicate(true)])
+	sh["contents"] = [m4.duplicate(true)]
+	mgr._bot_sync_own_shelter_stash(b)
+	check(mgr._best_weapon_name(p) == "Fusil de asalto" and mgr._bot_item_count(p, "Cargador de M4") == 1,
+		"equipo diario: reemplaza el fusil roto por el util del alijo")
+	for i in range(mgr.world._built_shelters.size() - 1, -1, -1):
+		if str(mgr.world._built_shelters[i].get("id", "")) == b.shelter_id:
+			mgr.world._built_shelters.remove_at(i)
+	p.free()
+
+func _has_all(proxy: Node3D, names: Array) -> bool:
+	for item_name in names:
+		var found := false
+		for item in proxy.get_meta("saved_inventory", []):
+			if item is Dictionary and item.get("name") == item_name and int(item.get("quantity", 1)) > 0:
+				found = true
+		if not found:
+			return false
+	return true
+
 func _initialize() -> void:
 	print("=== BotGunAmmoRegression ===")
 	await process_frame
@@ -290,6 +374,7 @@ func _verify_pickup_and_parity(mgr: SurvivorBotManager) -> void:
 	var b := {"proxy": p, "bot_id": 903, "held_item": "Fusil de asalto", "has_rifle": true,
 		"health": 100.0, "hunger": 100.0, "thirst": 100.0, "clothing": "", "backpack": "Mochila militar",
 		"torch_lit": false, "shoot_cooldown": 0.0, "shelter_id": "", "campfire_id": ""}
+	_check_daily_firearms(mgr, b)
 	mgr._bot_gun_ammo_save(p, {"m4_magazine": 0, "m4_reserve": 0, "magazine": 0, "reserve": 0})
 	p.set_meta("saved_inventory", [{"name": "Fusil de asalto", "type": "weapon_rifle", "quantity": 1}])
 	# World pickup -> inventory -> reserve -> timed reload -> spent rounds.

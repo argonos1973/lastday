@@ -1,7 +1,8 @@
 extends SceneTree
 const BotReg = preload("res://tools/debug/SurvivorBotsAndCombatRegression.gd")
 class RouteWorld extends BotReg.TestWorld:
- func _get_exact_ground_y(_x: float, _z: float, _from_y: float = 500.0) -> float: return .025
+ func _get_exact_ground_y(x: float, z: float, _from_y: float = 500.0) -> float:
+  return HighMountainZone.ground_height_at(Vector3(x, 0, z)) + .025 if x < -210 and z < -210 else .025
 class World extends "res://scripts/Main.gd":
  var generated: Dictionary = {}
  func _ready(): set_process(false)
@@ -95,6 +96,12 @@ func check_routes(source: World) -> int:
    ["_city_tent_pos", source.CITY_TENT_YAW], ["_city_tent2_pos", source._city_tent2_yaw]]:
   world.set(spec[0], source.get(spec[0]))
   world._create_tent_shell_colliders(world.get(spec[0]), spec[1], spec[0] + "Walls", spec[0] + "Roof")
+ await HighMountainZone.create(world, true)
+ for i in 2:
+  var shell := world.get_node_or_null("SummitMilitaryTent_%d_Col" % i)
+  if shell == null or shell.get_child_count() != 5:
+   errors += 1
+   push_error("Summit tent %d must have the same five wall colliders as the client" % i)
  var manager := SurvivorBotManager.new()
  world.add_child(manager)
  world.survivor_bot_mgr = manager
@@ -113,6 +120,25 @@ func check_routes(source: World) -> int:
   # Legacy ground drops still need a route even after correcting generation.
   ["remote_tent_loot_rifle", [], world._remote_tent_pos, 120.0, Vector3(205.69, .06, 438.97)],
  ]
+ var summit := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
+ var yaw := deg_to_rad(HighMountainZone.BASE_YAW_DEG)
+ var foot := Vector3(HighMountainZone.ROAD_START.x, .835, HighMountainZone.ROAD_START.y)
+ cases.append(["summit_tentA_loot_rifle", ["summit_tentA_loot_mag"],
+  summit + HighMountainZone.TENT_A_OFFSET.rotated(Vector3.UP, yaw), HighMountainZone.BASE_YAW_DEG + 90.0,
+  source.generated["summit_tentA_loot_rifle"].pos, foot, foot])
+ cases.append(["summit_tentB_loot_m4", ["summit_tentB_loot_m4mag_0", "summit_tentB_loot_m4mag_1"],
+  summit + HighMountainZone.TENT_B_OFFSET.rotated(Vector3.UP, yaw), HighMountainZone.BASE_YAW_DEG - 90.0,
+  source.generated["summit_tentB_loot_m4"].pos, foot, foot])
+ cases.append(["summit_towerfoot_m4", ["summit_towerfoot_m4mag"],
+  summit + HighMountainZone.COMMS_TOWER_OFFSET.rotated(Vector3.UP, yaw), HighMountainZone.BASE_YAW_DEG,
+  source.generated["summit_towerfoot_m4"].pos, foot, foot])
+ if "--only-summit" in OS.get_cmdline_user_args():
+  cases = cases.filter(func(c): return str(c[0]).begins_with("summit_"))
+ elif "--ground-only" in OS.get_cmdline_user_args():
+  cases = cases.filter(func(c): return not str(c[0]).begins_with("summit_"))
+ for arg in OS.get_cmdline_user_args():
+  if arg.begins_with("--only-loot="):
+   cases = cases.filter(func(c): return str(c[0]) == arg.trim_prefix("--only-loot="))
  await physics_frame
  await physics_frame
  for native_nav in [false, true]:
@@ -145,13 +171,25 @@ func check_routes(source: World) -> int:
    b.proxy.set_meta("bot_gun_ammo", {})
    b.proxy.global_position = test_case[2] + Vector3(4.7, .1, .9).rotated(Vector3.UP, deg_to_rad(test_case[3]))
    if test_case.size() > 4: b.proxy.global_position = Vector3(201.5, .1, 430.4)
+   var mountain_trip: bool = test_case.size() > 6
+   if mountain_trip:
+    b.proxy.global_position = test_case[5]
+    var poi_id: String = manager._poi_id({"kind":"military", "pos":test_case[2]})
+    var pp: Vector3 = test_case[2]
+    b["_mem"]["known_locations"] = {poi_id:{"kind":"military", "pos":[pp.x, pp.y, pp.z]}}
+    b["ai_directive"] = {}
+    if not manager._ai_apply_decision(901, JSON.stringify({"action":"scavenge", "target":"military", "goal":"gear_up_at_military_base", "priority":4})):
+     errors += 1
+     push_error("Summit gear trip was not adopted")
    b["pos"] = b.proxy.global_position
    var crossed_wall := false
+   var jumped := false
    var collected := false
-   for tick in 1200:
+   for tick in (6500 if mountain_trip else 1200):
     var before: Vector3 = b.proxy.global_position
     manager._tick_bot(b, .05)
     var after: Vector3 = b.proxy.global_position
+    if before.distance_to(after) > 1.0: jumped = true
     if before.distance_to(after) > .001:
      var query := PhysicsRayQueryParameters3D.create(before + Vector3.UP * .9, after + Vector3.UP * .9, 1)
      if not world.get_world_3d().direct_space_state.intersect_ray(query).is_empty(): crossed_wall = true
@@ -161,13 +199,15 @@ func check_routes(source: World) -> int:
     if collected: break
     if tick % 3 == 0: await physics_frame
    var exit_goal: Vector3 = test_case[2] + Vector3(-9, .1, -8).rotated(Vector3.UP, deg_to_rad(test_case[3]))
+   if mountain_trip: exit_goal = test_case[6]
    var exited := false
    if collected:
     b["_act"] = "explore"
-    for tick in 600:
+    for tick in (6500 if mountain_trip else 600):
      var before: Vector3 = b.proxy.global_position
      manager._move_bot_towards(b, exit_goal, 4.5, .05, "run")
      var after: Vector3 = b.proxy.global_position
+     if before.distance_to(after) > 1.0: jumped = true
      if before.distance_to(after) > .001:
       var query := PhysicsRayQueryParameters3D.create(before + Vector3.UP * .9, after + Vector3.UP * .9, 1)
       if not world.get_world_3d().direct_space_state.intersect_ray(query).is_empty(): crossed_wall = true
@@ -176,9 +216,9 @@ func check_routes(source: World) -> int:
       break
      if tick % 3 == 0: await physics_frame
    var armed: bool = b.get("held_item") == entry.name and manager._bot_gun_any_ammo(b.proxy, entry.name)
-   var valid: bool = collected and exited and armed and not crossed_wall and b.get("_unreachable", []).is_empty()
-   print("TENT_ROUTE native=%s id=%s collected=%s exited=%s armed=%s crossed_wall=%s pos=%s" %
-    [native_nav, entry.id, collected, exited, armed, crossed_wall, b.proxy.global_position])
+   var valid: bool = collected and exited and armed and not crossed_wall and not jumped and b.get("_unreachable", []).is_empty()
+   print("TENT_ROUTE native=%s id=%s collected=%s exited=%s armed=%s crossed_wall=%s jumped=%s pos=%s" %
+    [native_nav, entry.id, collected, exited, armed, crossed_wall, jumped, b.proxy.global_position])
    if not valid:
     errors += 1
     push_error("Military route failed: %s native=%s block=%s" % [entry.id, native_nav, b.get("_last_step_block")])

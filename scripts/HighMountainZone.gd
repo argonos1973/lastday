@@ -1088,7 +1088,9 @@ static func _build_summit_military_base(world: Node3D, parent: Node3D, server_on
 		var t_pos := base_origin + t_off.rotated(Vector3.UP, yaw_rad)
 		t_pos.y = SUMMIT_HEIGHT
 		var t_name := "SummitMilitaryTent_%d" % t_i
-		if not server_only:
+		if server_only:
+			world._create_tent_shell_colliders(t_pos, t_yaw, t_name + "_Col", t_name + "_RoofCol")
+		else:
 			world._try_instance_external_scene(
 				["res://assets/models/props/tent/tent_military.glb"],
 				t_name,

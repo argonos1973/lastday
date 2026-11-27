@@ -3672,7 +3672,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 			directive.erase("_dest_id")
 	var only_kinds: Array = directive.get("only_kinds", []) if not directive.is_empty() else []
 	var avoid_kinds: Array = directive.get("avoid_kinds", []) if not directive.is_empty() else []
-	var pick := _ai_pick_poi(b, only_kinds, avoid_kinds, true)
+	var pick := _ai_pick_poi(b, only_kinds, avoid_kinds, true, str(directive.get("goal", "")) == "discover_equipment_site")
 	if pick.is_empty():
 		return Vector3.INF
 	var best: Vector3 = pick["pos"]
@@ -3685,7 +3685,7 @@ func _choose_explore_target(b: Dictionary) -> Vector3:
 # paso: mismo criterio (personalidad, memoria, sector, anti-cluster) para que
 # el lugar que el plan registra sea EXACTAMENTE al que el bot camina.
 # jitter=false da la eleccion determinista que usa el veto de objetivos.
-func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: bool) -> Dictionary:
+func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: bool, unknown_only := false) -> Dictionary:
 	var pois := _explore_pois()
 	if pois.is_empty():
 		return {}
@@ -3717,6 +3717,8 @@ func _ai_pick_poi(b: Dictionary, only_kinds: Array, avoid_kinds: Array, jitter: 
 		for p in pois:
 			var pp: Vector3 = p["pos"]
 			var pid := _poi_id(p)
+			if unknown_only and (known.has(pid) or not _loc_merge_into(known, pid, pp).is_empty()):
+				continue
 			if _is_goal_blacklisted(b, pp):
 				continue
 			if _is_poi_unreachable(b, pid):
@@ -12414,7 +12416,7 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 			return true
 		if need_water and (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")):
 			return true
-		if tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_stored_weapon_is_upgrade(proxy, cd, contents):
+		if tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_stored_weapon_is_upgrade(proxy, cd, contents, b):
 			return true
 		if need_med and nm == "Venda":
 			return true
@@ -12423,8 +12425,8 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	return false
 
 # Calcula que entradas del inventario actual son sobrantes para guardar en el
-# refugio propio (conservando encima su mejor arma, el ultimo fusil aunque
-# este seco, su municion, 1 filo, 1 comida de reserva, 1 bebida y 2 vendas).
+# refugio propio (conservando los fusiles y sus calibres mientras quepan,
+# 1 filo, reservas de comida/bebida y 2 vendas).
 func _bot_count_storable_items(b: Dictionary) -> int:
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
@@ -12439,10 +12441,6 @@ func _bot_count_storable_items(b: Dictionary) -> int:
 func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictionary:
 	var proxy: Node3D = b["proxy"]
 	var best_w := _best_weapon_name(proxy)
-	var carried_firearm := _bot_carried_firearm(proxy)
-	var keep_last_firearm := carried_firearm if best_w not in ["Fusil de asalto", "Rifle francotirador"] else ""
-	var kept_firearm := false
-	var ammo_firearm := best_w if best_w in ["Fusil de asalto", "Rifle francotirador"] else keep_last_firearm
 	var cutters := ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Hacha", "Hacha de piedra", "Piedra afilada"]
 	var kept_primary := false
 	var kept_cutter: bool = best_w in cutters
@@ -12486,19 +12484,19 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 		if tp == "backpack":
 			keep.append(it)
 			continue
+		# El fusil secundario tambien es equipo de campo, no un excedente
+		# automatico. Solo el ajuste de capacidad de abajo puede almacenarlo.
+		if nm in ["Fusil de asalto", "Rifle francotirador"]:
+			if float(it.get("durability", 100.0)) > 0.0:
+				keep.append(it)
+			else:
+				store.append(it)
+			continue
 		if not best_w.is_empty() and nm == best_w and not kept_primary:
 			kept_primary = true
 			if qty > 1:
 				var k1 := it.duplicate(true); k1["quantity"] = 1; keep.append(k1)
 				var s1 := it.duplicate(true); s1["quantity"] = qty - 1; store.append(s1)
-			else:
-				keep.append(it)
-			continue
-		if not keep_last_firearm.is_empty() and nm == keep_last_firearm and not kept_firearm:
-			kept_firearm = true
-			if qty > 1:
-				var kg := it.duplicate(true); kg["quantity"] = 1; keep.append(kg)
-				var sg := it.duplicate(true); sg["quantity"] = qty - 1; store.append(sg)
 			else:
 				keep.append(it)
 			continue
@@ -12530,8 +12528,7 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			keep.append(it)
 			continue
 		if tp in ["ammo", "ammo_arrow"]:
-			var keep_ammo := (tp == "ammo" and ammo_firearm in ["Fusil de asalto", "Rifle francotirador"] \
-				and PlayerController.ammo_item_is_m4(nm) == _bot_gun_is_m4(ammo_firearm)) \
+			var keep_ammo := (tp == "ammo" and _bot_gun_wants_ammo_item(proxy, nm)) \
 				or (best_w in ["Arco de madera", "Arco reforzado"] and tp == "ammo_arrow")
 			if keep_ammo:
 				keep.append(it)
@@ -12644,8 +12641,25 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 		var idx := _bot_least_essential_index(b, keep)
 		if idx < 0:
 			break
-		store.append(keep[idx])
-		keep.remove_at(idx)
+		var excess: Dictionary = keep[idx]
+		if str(excess.get("name", "")) in ["Fusil de asalto", "Rifle francotirador"] and int(excess.get("quantity", 1)) > 1:
+			var single := excess.duplicate(true)
+			single["quantity"] = 1
+			store.append(single)
+			excess["quantity"] = int(excess["quantity"]) - 1
+		else:
+			store.append(excess)
+			keep.remove_at(idx)
+	# Si el peso obligo a dejar un fusil, guardar su calibre en esta misma
+	# transaccion, sin una retirada/deposito adicional en la siguiente visita.
+	var carried_calibres := []
+	for it in keep:
+		if str(it.get("name", "")) in ["Fusil de asalto", "Rifle francotirador"]:
+			carried_calibres.append(_bot_gun_is_m4(str(it.name)))
+	for i in range(keep.size() - 1, -1, -1):
+		if str(keep[i].get("type", "")) == "ammo" and not carried_calibres.has(PlayerController.ammo_item_is_m4(str(keep[i].get("name", "")))):
+			store.append(keep[i])
+			keep.remove_at(i)
 	return {"keep": keep, "store": store}
 
 # Retira lo que necesite de su propio refugio y guarda alli todo el loot sobrante.
@@ -12681,6 +12695,42 @@ func _bot_sync_own_shelter_stash(b: Dictionary) -> int:
 	_pbm("stash_sync", started)
 	return moved
 
+func _bot_withdraw_firearm_with_room(b: Dictionary, inv: Array, contents: Array, index: int) -> Dictionary:
+	var gun: Dictionary = contents[index]
+	var nm := str(gun.get("name", ""))
+	if nm not in ["Fusil de asalto", "Rifle francotirador"]:
+		return {}
+	var current := _best_weapon_name(b["proxy"])
+	if not current.is_empty() and _bot_weapon_rank(current) <= _bot_weapon_rank(nm):
+		return {} # Un segundo fusil no desplaza el equipo diario que ya cabe.
+	var trial := inv.duplicate(true)
+	var displaced: Array = []
+	var one := gun.duplicate(true)
+	one["quantity"] = 1
+	while not _bot_would_fit(b, trial, one):
+		var spare := _bot_least_essential_index(b, trial, nm)
+		if spare < 0:
+			return {}
+		displaced.append(trial[spare])
+		trial.remove_at(spare)
+	var stash := contents.duplicate(true)
+	if int(gun.get("quantity", 1)) > 1:
+		stash[index]["quantity"] = int(gun["quantity"]) - 1
+	else:
+		stash.remove_at(index)
+	var moved := 1
+	for item in displaced:
+		if stash.size() >= 18 and not (world.has_method("_stash_can_merge") and world._stash_can_merge(stash, item)):
+			return {} # Nada se pierde si el refugio tampoco tiene sitio.
+		if world.has_method("_stash_merge_or_append"):
+			world._stash_merge_or_append(stash, item)
+		else:
+			_bot_add_inventory_item(stash, item)
+		moved += int(item.get("quantity", 1))
+	if not _bot_try_add_inventory_item(b, trial, one):
+		return {}
+	return {"inventory":trial, "contents":stash, "moved":moved}
+
 func _bot_sync_own_shelter_stash_impl(b: Dictionary) -> int:
 	var sid := str(b.get("shelter_id", ""))
 	if sid.is_empty():
@@ -12710,9 +12760,9 @@ func _bot_sync_own_shelter_stash_impl(b: Dictionary) -> int:
 			want_withdraw = true
 		elif (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")) and _bot_shelter_needs_supply(b, "water"):
 			want_withdraw = true
-		elif tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_stored_weapon_is_upgrade(proxy, cd, contents):
+		elif tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_stored_weapon_is_upgrade(proxy, cd, contents, b):
 			want_withdraw = true
-		elif tp == "ammo" and _bot_stash_wants_ammo_item(proxy, nm, contents):
+		elif tp == "ammo" and _bot_stash_wants_ammo_item(proxy, nm, contents, b):
 			want_withdraw = true
 		elif nm == "Venda" and _bot_item_count(proxy, "Venda") == 0:
 			want_withdraw = true
@@ -12727,7 +12777,14 @@ func _bot_sync_own_shelter_stash_impl(b: Dictionary) -> int:
 			var one: Dictionary = (cd as Dictionary).duplicate(true)
 			one["quantity"] = take_qty
 			if not _bot_try_add_inventory_item(b, inv, one):
-				continue # no le cabe: se queda guardado en su refugio
+				var swap := _bot_withdraw_firearm_with_room(b, inv, contents, i)
+				if not swap.is_empty():
+					inv = swap["inventory"]
+					contents = swap["contents"]
+					proxy.set_meta("saved_inventory", inv)
+					changed = true
+					moved += int(swap["moved"])
+				continue # Intercambio completado, o sigue guardado si tampoco cabe.
 			proxy.set_meta("saved_inventory", inv)
 			if dry_upgrade:
 				_auto_equip_best_gear(b)
@@ -13570,12 +13627,16 @@ func _bot_tent_defs() -> Array:
 		var pos = world.get(str(spec["key"]))
 		if pos is Vector3 and (pos as Vector3) != Vector3.ZERO:
 			out.append({"id": str(spec["key"]), "pos": pos, "yaw": deg_to_rad(float(spec["yaw"]))})
+	var summit := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
+	var yaw := deg_to_rad(HighMountainZone.BASE_YAW_DEG)
+	out.append({"id":"summit_tent_a", "pos":summit + HighMountainZone.TENT_A_OFFSET.rotated(Vector3.UP, yaw), "yaw":yaw + PI * .5})
+	out.append({"id":"summit_tent_b", "pos":summit + HighMountainZone.TENT_B_OFFSET.rotated(Vector3.UP, yaw), "yaw":yaw - PI * .5})
 	return out
 
 func _bot_tent_at(pos: Vector3, margin := 0.0) -> Dictionary:
 	for tent in _bot_tent_defs():
 		var local := (pos - (tent["pos"] as Vector3)).rotated(Vector3.UP, -float(tent["yaw"]))
-		if absf(local.x) <= 4.5 + margin and absf(local.z) <= 6.0 + margin:
+		if absf(local.y) < 4.2 and absf(local.x) <= 4.5 + margin and absf(local.z) <= 6.0 + margin:
 			var hit := (tent as Dictionary).duplicate()
 			hit["local"] = local
 			return hit
@@ -13595,13 +13656,13 @@ func _resolve_tent_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 	if not cur_tent.is_empty() and (goal_tent.is_empty() or str(cur_tent.get("id", "")) != str(goal_tent.get("id", ""))):
 		var lc0: Vector3 = cur_tent.get("local", Vector3.ZERO)
 		if absf(lc0.x) > 1.45 or lc0.z < 4.7:
-			return _bot_tent_world(cur_tent, Vector3(0.0, cur.y, 5.2))
-		return _bot_tent_world(cur_tent, Vector3(0.0, cur.y, 8.3))
+			return _bot_tent_world(cur_tent, Vector3(0.0, lc0.y, 5.2))
+		return _bot_tent_world(cur_tent, Vector3(0.0, lc0.y, 8.3))
 	if not goal_tent.is_empty() and (cur_tent.is_empty() or str(cur_tent.get("id", "")) != str(goal_tent.get("id", ""))):
 		var lg0 := (cur - (goal_tent["pos"] as Vector3)).rotated(Vector3.UP, -float(goal_tent["yaw"]))
 		if lg0.z > 5.65 and absf(lg0.x) <= 1.75:
-			return _bot_tent_world(goal_tent, Vector3(0.0, goal.y, 4.4))
-		return _bot_tent_world(goal_tent, Vector3(0.0, cur.y, 8.4))
+			return _bot_tent_world(goal_tent, Vector3(0.0, goal.y - (goal_tent["pos"] as Vector3).y, 4.4))
+		return _bot_tent_world(goal_tent, Vector3(0.0, .1, 8.4))
 	return goal
 
 func _resolve_building_interior_waypoint(b: Dictionary, cur: Vector3, goal: Vector3) -> Vector3:
@@ -15923,10 +15984,22 @@ func _bot_carried_firearm(proxy: Node3D) -> String:
 
 # El alijo guarda excedentes, no la defensa del bot: un arma almacenada se
 # retira cuando mejora lo que lleva encima, aunque ya tenga un cuchillo/lanza.
-func _bot_stored_weapon_is_upgrade(proxy: Node3D, item: Dictionary, contents: Array = []) -> bool:
+func _bot_stored_weapon_is_upgrade(proxy: Node3D, item: Dictionary, contents: Array = [], b: Dictionary = {}) -> bool:
 	var nm := str(item.get("name", ""))
 	if not _bot_shelter_weapon_usable(proxy, item, contents):
 		return false
+	if nm in ["Fusil de asalto", "Rifle francotirador"]:
+		for carried in proxy.get_meta("saved_inventory", []):
+			if carried is Dictionary and str(carried.get("name", "")) == nm \
+					and int(carried.get("quantity", 1)) > 0 and float(carried.get("durability", 100.0)) > 0.0:
+				return false
+		var current := _best_weapon_name(proxy)
+		if not b.is_empty() and current in ["Fusil de asalto", "Rifle francotirador"] \
+				and _bot_weapon_rank(current) <= _bot_weapon_rank(nm):
+			var one := item.duplicate(true)
+			one["quantity"] = 1
+			return _bot_would_fit(b, proxy.get_meta("saved_inventory", []), one)
+		return true
 	var rank := _bot_weapon_rank(nm)
 	if rank < 0:
 		return false
@@ -16085,13 +16158,13 @@ func _bot_gun_wants_ammo_item(proxy: Node3D, item_name: String) -> bool:
 # Variante para alijos: la municion tambien interesa cuando su fusil esta en
 # el propio alijo y va a retirarse; el orden interno de los huecos no debe
 # decidir si salen juntos.
-func _bot_stash_wants_ammo_item(proxy: Node3D, item_name: String, contents: Array) -> bool:
+func _bot_stash_wants_ammo_item(proxy: Node3D, item_name: String, contents: Array, b: Dictionary = {}) -> bool:
 	if _bot_gun_wants_ammo_item(proxy, item_name):
 		return true
 	var gun := "Fusil de asalto" if PlayerController.ammo_item_is_m4(item_name) else "Rifle francotirador"
 	for stored in contents:
 		if stored is Dictionary and str(stored.get("name", "")) == gun \
-				and _bot_stored_weapon_is_upgrade(proxy, stored, contents):
+				and _bot_stored_weapon_is_upgrade(proxy, stored, contents, b):
 			return true
 	return false
 
@@ -16631,10 +16704,26 @@ func _bot_drop_to_ground(b: Dictionary, item_dict: Dictionary, at: Vector3 = Vec
 
 # La entrada de "keep" mas prescindible (para recortar lo que se queda encima
 # a la capacidad real): prioridad de loot menor; a empate, la mas pesada.
-func _bot_least_essential_index(b: Dictionary, inv: Array) -> int:
+func _bot_least_essential_index(b: Dictionary, inv: Array, required_firearm := "") -> int:
 	var best_i := -1
 	var best_score := INF
 	var reserve_fire := _bot_needs_campfire(b)
+	var primary_i := -1
+	var primary_rank := INF
+	for i in range(inv.size()):
+		var gun = inv[i]
+		if not (gun is Dictionary) or str(gun.get("name", "")) not in ["Fusil de asalto", "Rifle francotirador"] \
+				or float(gun.get("durability", 100.0)) <= 0.0:
+			continue
+		var rank := float(_bot_weapon_rank(str(gun.name))) + (0.0 if _bot_gun_any_ammo(b["proxy"], str(gun.name)) else 10.0)
+		if rank < primary_rank:
+			primary_rank = rank
+			primary_i = i
+	var ammo_weapon := str(inv[primary_i].name) if primary_i >= 0 else ""
+	if not required_firearm.is_empty():
+		ammo_weapon = required_firearm
+		if primary_i >= 0 and str(inv[primary_i].name) != required_firearm:
+			primary_i = -1
 	for i in range(inv.size()):
 		var it = inv[i]
 		if not (it is Dictionary):
@@ -16644,6 +16733,15 @@ func _bot_least_essential_index(b: Dictionary, inv: Array) -> int:
 		if reserve_fire and str(it.get("name", "")) in ["Tronco", "Palo"]:
 			continue
 		var sc := _loot_priority(b, str(it.get("name", "")), str(it.get("type", ""))) - float(it.get("weight", 0.0)) * int(it.get("quantity", 1)) * 0.001
+		# La prioridad de recoger no mide lo prescindible de lo ya equipado:
+		# el empate entre cuchillo, venda y fusil expulsaba el fusil por pesado.
+		if i == primary_i and int(it.get("quantity", 1)) <= 1:
+			sc += 20.0
+		elif str(it.get("name", "")) in ["Fusil de asalto", "Rifle francotirador"]:
+			sc = 1.0
+		elif not ammo_weapon.is_empty() and str(it.get("type", "")) == "ammo" \
+				and PlayerController.ammo_item_is_m4(str(it.get("name", ""))) == _bot_gun_is_m4(ammo_weapon):
+			sc += 18.0
 		if sc < best_score:
 			best_score = sc
 			best_i = i
@@ -18046,12 +18144,31 @@ func decide_situational_action(b: Dictionary, situation: Dictionary = {}) -> Dic
 	# bebiendo, forrajeando o sembrando si se queda sin recursos — las
 	# necesidades son actos del tick, el plan no se rompe por ellas.
 	var raid_kind := _bot_gear_raid_kind(b)
-	if raid_kind != "" and not threat_present and hunger >= 45.0 and thirst >= 40.0 and hp >= 40.0 \
+	if not threat_present and hunger >= 45.0 and thirst >= 40.0 and hp >= 40.0 \
 			and not _bot_is_freezing(b) and not _bot_is_exhausted(b):
-		var raid_spec := {"action": "scavenge", "target": raid_kind, "goal": "gear_up_at_military_base"}
-		if not _ai_goal_recently_failed(b, raid_spec):
-			return {"action": "scavenge", "target": raid_kind, "poi_kind": raid_kind,
-				"goal": "gear_up_at_military_base", "priority": 4, "reason": "gear_raid:unarmed"}
+		var active := _ai_active_directive(b)
+		if str(active.get("goal", "")) == "discover_equipment_site" \
+				and not GoalValidator.result(self, b, active).get("complete", false) \
+				and GoalValidator.viable(self, b, active, Time.get_ticks_msec()).is_empty():
+			# La caducidad del veto de una base anterior no debe dar media
+			# vuelta a una expedicion que sigue progresando hacia otro lugar.
+			return {"action":"explore", "target":str(active.get("target", "military")),
+				"goal":"discover_equipment_site", "priority":4, "reason":"gear_search:continue"}
+		if raid_kind != "":
+			var raid_spec := {"action": "scavenge", "target": raid_kind, "goal": "gear_up_at_military_base",
+				"priority": 4, "reason": "gear_raid:unarmed"}
+			var pinned := raid_spec.duplicate()
+			if not GoalValidator.bind_gear_target(self, b, pinned):
+				# Conocer bases no significa que alguna siga disponible.
+				# Buscar un lugar nuevo usa la exploracion normal del mapa;
+				# solo la observacion al llegar lo convierte en conocido.
+				if _bot_can_expedition(b) and not _ai_pick_poi(b, [raid_kind], [], false, true).is_empty():
+					raid_spec = {"action":"explore", "target":raid_kind, "goal":"discover_equipment_site",
+						"priority":4, "reason":"gear_search:known_sites_unavailable"}
+				else:
+					raid_spec = {}
+			if not raid_spec.is_empty() and not _ai_goal_recently_failed(b, raid_spec):
+				return raid_spec
 
 	# Beneficios brutos (sin preference): el modo legacy los multiplica por la
 	# preferencia aprendida; el modo EU los multiplica por P(éxito) beta-binomial
@@ -18756,7 +18873,7 @@ func _ai_step_target_dist(b: Dictionary, d: Dictionary) -> float:
 # propia de la accion. Sin destino conocido solo cuenta la permanencia.
 func _ai_step_budget_msec(b: Dictionary, d: Dictionary) -> int:
 	var dist := _ai_step_target_dist(b, d)
-	var gear_mission := GoalValidator.purpose(d) == "gear"
+	var gear_mission := GoalValidator.purpose(d) == "gear" or str(d.get("goal", "")) == "discover_equipment_site"
 	var travel_cap := 720.0 if gear_mission else 420.0
 	# Una incursion militar activa sigue trabajando aunque se detenga a saquear,
 	# esquivar fauna o cruzar un vado; presupuestarla como si todo el trayecto
@@ -19459,7 +19576,7 @@ func _ai_goal_intended_pos(b: Dictionary, d: Dictionary) -> Vector3:
 	if pin is Vector3 and (pin as Vector3) != Vector3.INF:
 		return pin
 	if str(d.get("mode", "")) == "poi":
-		var pick := _ai_pick_poi(b, d.get("only_kinds", []), [], false)
+		var pick := _ai_pick_poi(b, d.get("only_kinds", []), [], false, str(d.get("goal", "")) == "discover_equipment_site")
 		if not pick.is_empty():
 			return pick["pos"]
 		return Vector3.INF
@@ -19588,7 +19705,7 @@ func _ai_pin_step_destination(bot_id: int, b: Dictionary, d: Dictionary) -> bool
 # el mismo lugar). Solo se rechaza cuando HAY POIs pero ninguno sirve — un
 # mundo sin tabla de POIs no convierte el paso en imposible.
 func _ai_pin_poi_destination(b: Dictionary, d: Dictionary) -> bool:
-	var pick := _ai_pick_poi(b, d.get("only_kinds", []), [], false)
+	var pick := _ai_pick_poi(b, d.get("only_kinds", []), [], false, str(d.get("goal", "")) == "discover_equipment_site")
 	if pick.is_empty():
 		return _explore_pois().is_empty()
 	d["_dest_pos"] = pick["pos"]
