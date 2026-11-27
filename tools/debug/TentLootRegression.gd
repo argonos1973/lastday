@@ -122,16 +122,18 @@ func check_routes(source: World) -> int:
  ]
  var summit := Vector3(HighMountainZone.SUMMIT_CENTER.x, HighMountainZone.SUMMIT_HEIGHT, HighMountainZone.SUMMIT_CENTER.y)
  var yaw := deg_to_rad(HighMountainZone.BASE_YAW_DEG)
- var foot := Vector3(HighMountainZone.ROAD_START.x, .835, HighMountainZone.ROAD_START.y)
+ # Include the valley on both ends: stopping at ROAD_START missed the
+ # return-to-foot oscillation when survival interrupted the expedition.
+ var valley := Vector3(-205, .025, -205)
  cases.append(["summit_tentA_loot_rifle", ["summit_tentA_loot_mag"],
   summit + HighMountainZone.TENT_A_OFFSET.rotated(Vector3.UP, yaw), HighMountainZone.BASE_YAW_DEG + 90.0,
-  source.generated["summit_tentA_loot_rifle"].pos, foot, foot])
+  source.generated["summit_tentA_loot_rifle"].pos, valley, valley])
  cases.append(["summit_tentB_loot_m4", ["summit_tentB_loot_m4mag_0", "summit_tentB_loot_m4mag_1"],
   summit + HighMountainZone.TENT_B_OFFSET.rotated(Vector3.UP, yaw), HighMountainZone.BASE_YAW_DEG - 90.0,
-  source.generated["summit_tentB_loot_m4"].pos, foot, foot])
+  source.generated["summit_tentB_loot_m4"].pos, valley, valley])
  cases.append(["summit_towerfoot_m4", ["summit_towerfoot_m4mag"],
   summit + HighMountainZone.COMMS_TOWER_OFFSET.rotated(Vector3.UP, yaw), HighMountainZone.BASE_YAW_DEG,
-  source.generated["summit_towerfoot_m4"].pos, foot, foot])
+  source.generated["summit_towerfoot_m4"].pos, valley, valley])
  if "--only-summit" in OS.get_cmdline_user_args():
   cases = cases.filter(func(c): return str(c[0]).begins_with("summit_"))
  elif "--ground-only" in OS.get_cmdline_user_args():
@@ -139,6 +141,8 @@ func check_routes(source: World) -> int:
  for arg in OS.get_cmdline_user_args():
   if arg.begins_with("--only-loot="):
    cases = cases.filter(func(c): return str(c[0]) == arg.trim_prefix("--only-loot="))
+ if "--water-exit-only" in OS.get_cmdline_user_args():
+  cases = []
  await physics_frame
  await physics_frame
  for native_nav in [false, true]:
@@ -236,6 +240,50 @@ func check_routes(source: World) -> int:
     push_error("Military route failed: %s native=%s block=%s" % [entry.id, native_nav, b.get("_last_step_block")])
    b.proxy.global_position = Vector3(-400, 0, 1)
    stats.free()
+  if "--water-exit-only" in OS.get_cmdline_user_args() or OS.get_cmdline_user_args().is_empty():
+   errors += await check_valley_drink(world, manager, template, native_nav)
  world.free()
  net.free()
  return errors
+
+func check_valley_drink(world, manager, template: Dictionary, native_nav: bool) -> int:
+ var b: Dictionary = template.duplicate(true)
+ var stats := SurvivalStats.new()
+ manager.add_child(stats)
+ stats.died.connect(manager._on_bot_stats_died.bind(b))
+ b["vstats"] = stats
+ b["_mem"] = {}
+ manager._memory[901] = b["_mem"]
+ manager.bots[901] = b
+ b["ai_directive"] = {}
+ b["proxy"].global_position = Vector3(-247.6, .6, -268.9)
+ b["proxy"].set_meta("proxy_dead", false)
+ b["proxy"].set_meta("proxy_health", 100.0)
+ b["proxy"].set_meta("saved_inventory", [])
+ b["proxy"].set_meta("saved_extra", {})
+ b["pos"] = b["proxy"].global_position
+ b["health"] = 100.0
+ b["hunger"] = 90.0
+ b["thirst"] = 22.0
+ b["drink_at"] = Vector3(-158, .025, -137)
+ var water_id := "valley_exit_water_%s" % native_nav
+ var water = world._create_world_action(water_id, "drink_water", "Agua del valle",
+  b["drink_at"] + Vector3.UP * .9, Vector3(4.6, 1.7, 4.6), Color.TRANSPARENT, true, false)
+ water.set_meta("drink_source", "de la fuente")
+ water.set_meta("water_reach", 2.8)
+ world._dropped_items.clear()
+ await physics_frame
+ for tick in 2500:
+  manager._tick_bot(b, .05)
+  if float(b["thirst"]) >= 95.0 or bool(b["proxy"].get_meta("proxy_dead", false)):
+   break
+  if tick % 3 == 0: await physics_frame
+ var alive := not bool(b["proxy"].get_meta("proxy_dead", false))
+ var valid: bool = alive and float(b["thirst"]) >= 95.0 and b.get("_unreachable", []).is_empty()
+ print("VALLEY_DRINK native=%s alive=%s hp=%.1f thirst=%.1f pos=%s valid=%s" %
+  [native_nav, alive, b["health"], b["thirst"], b["proxy"].global_position, valid])
+ world.world_actions_by_id.erase(water_id)
+ water.queue_free()
+ stats.free()
+ b["proxy"].global_position = Vector3(-400, 0, 1)
+ return 0 if valid else 1

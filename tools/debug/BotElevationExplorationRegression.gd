@@ -99,6 +99,16 @@ func run() -> void:
 	var mb := bot()
 	travel(mb,Vector3(-356,56.035,-356),"summit road ascent",5000)
 	travel(mb,Vector3(-252,.835,-268),"summit road descent",5000)
+	# Reaching the first road point is not an exit: outside a ten-metre
+	# radius the former resolver pulled an actor back to the foot forever.
+	travel(mb,Vector3(-210,.12,-210),"continue from road foot into the valley",2500)
+	for water in [Vector3(-158,.12,-137), Vector3(184,.12,-303)]:
+		actor.position = Vector3(-247.6,.6,-268.9)
+		var thirsty := bot()
+		thirsty["thirst"] = 8.0
+		thirsty["_act"] = "drink"
+		thirsty["drink_at"] = water
+		travel(thirsty,water,"Carlos leaves the mountain approach to drink at %s" % water,2500)
 	var pois := mgr._explore_pois()
 	var roofs := 0
 	var regions := {}

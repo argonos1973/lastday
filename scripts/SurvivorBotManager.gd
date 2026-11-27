@@ -14349,7 +14349,10 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 			best_i2 = i
 	if on_summit_cur and best_d2 > 8.0:
 		return pts[top_idx]
-	if best_i2 <= foot_idx + 1 and Vector2(cur.x - pts[foot_idx].x, cur.z - pts[foot_idx].z).length() < 10.0:
+	# Alcanzado el tramo inferior, devolver el control a la ruta del valle.
+	# Limitar esta salida a un radio de 10 m volvia a atraer al bot al pie
+	# justo al alejarse: ni siquiera podia interrumpir la subida para beber.
+	if best_i2 <= foot_idx + 1:
 		return goal
 	return pts[maxi(foot_idx, best_i2 - 3)]
 
