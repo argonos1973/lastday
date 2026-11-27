@@ -3392,12 +3392,17 @@ func _is_goal_blacklisted(b: Dictionary, pos: Vector3, radius := 18.0) -> bool:
 # Un destino al que no se pudo llegar NO es una visita: no marca _visit_done
 # ni exito de exploracion. Se recuerda como INALCANZABLE (lista negra corta en
 # caliente + veto persistente) para no reelegirlo en las proximas horas.
-func _mark_poi_unreachable(b: Dictionary, pos: Vector3, cause: String) -> void:
+func _mark_poi_unreachable(b: Dictionary, pos: Vector3, cause: String, nav_reason: String = "") -> void:
 	var mem: Dictionary = b.get("_mem", {})
 	if mem.is_empty():
 		return
 	# Ultimo bloqueo de ruta para el monitor: donde y por que murio el viaje.
-	b["_last_nav_block"] = {"pos": pos, "cause": cause, "t": Time.get_unix_time_from_system()}
+	# reason distingue malla vacia, agua profunda, atasco local u oscilacion;
+	# sin ese dato un veto legitimo y un bug de puerta/terreno son identicos.
+	var proxy_nb: Node3D = b.get("proxy")
+	b["_last_nav_block"] = {"pos": pos, "cause": cause, "t": Time.get_unix_time_from_system(),
+		"reason": nav_reason, "act": str(b.get("_act", "")), "goal": str(b.get("current_goal", "")),
+		"from": proxy_nb.global_position if proxy_nb != null and is_instance_valid(proxy_nb) else Vector3.INF}
 	var un: Dictionary = mem.get("unreachable_pois", {})
 	# Borrado de vetos caducados: un POI marcado hace mas de una hora sale del
 	# registro — su contador de fallos vuelve a cero y necesita fallos NUEVOS
@@ -3533,7 +3538,7 @@ func _bot_water_failure_is_building_exit(b: Dictionary) -> bool:
 	var pos: Vector3 = proxy.global_position
 	return _is_in_any_building_3d(pos) and not _is_in_any_building_3d(target)
 
-func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
+func _abandon_unreachable_goal(b: Dictionary, goal: Vector3, nav_reason: String = "") -> void:
 	var now_s := float(Time.get_ticks_msec()) / 1000.0
 	var bl: Array = b.get("_unreachable", [])
 	var kept: Array = []
@@ -3542,11 +3547,11 @@ func _abandon_unreachable_goal(b: Dictionary, goal: Vector3) -> void:
 			kept.append(entry)
 	if goal != Vector3.INF:
 		kept.append({"pos": goal, "until": now_s + 240.0})
-		_mark_poi_unreachable(b, goal, "nav_blocked")
+		_mark_poi_unreachable(b, goal, "nav_blocked", nav_reason)
 	var et: Vector3 = b.get("explore_target", Vector3.INF)
 	if et != Vector3.INF:
 		kept.append({"pos": et, "until": now_s + 240.0})
-		_mark_poi_unreachable(b, et, "nav_blocked")
+		_mark_poi_unreachable(b, et, "nav_blocked", nav_reason)
 		b["explore_target"] = Vector3.INF
 		b["explore_dwell"] = 0.0
 	var sl: Dictionary = b.get("_s_loot", {})
@@ -14227,7 +14232,7 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 						b["path_timer"] = 1.8
 						path = b["path"]
 				if path.is_empty():
-					_abandon_unreachable_goal(b, raw_goal)
+					_abandon_unreachable_goal(b, raw_goal, "path_empty")
 					_stop_bot_motion(b)
 					return
 		var pidx := int(b["path_idx"])
@@ -14286,7 +14291,7 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 						b["stuck_count"] = 0
 						return
 				b["stuck_count"] = 0
-				_abandon_unreachable_goal(b, raw_goal)
+				_abandon_unreachable_goal(b, raw_goal, "deep_water")
 			return
 	var to_next := Vector3(next_goal.x - cur.x, 0.0, next_goal.z - cur.z)
 	var d := to_next.length()
@@ -14505,7 +14510,7 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 				gp["grace"] = int(gp.get("grace", 0)) + 1
 				if int(gp["grace"]) >= 2:
 					gp["grace"] = 0
-					_abandon_unreachable_goal(b, raw_goal)
+					_abandon_unreachable_goal(b, raw_goal, "stuck_window")
 				else:
 					b["path"] = []
 					b["path_timer"] = 0.0
@@ -14527,7 +14532,7 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 			gp["grace"] = int(gp.get("grace", 0)) + 1
 			if int(gp["grace"]) >= 2:
 				gp["grace"] = 0
-				_abandon_unreachable_goal(b, raw_goal)
+				_abandon_unreachable_goal(b, raw_goal, "macro_oscillation")
 			else:
 				b["path"] = []
 				b["path_timer"] = 0.0
@@ -20326,7 +20331,10 @@ func get_full_web_status() -> Dictionary:
 		var nb: Dictionary = b.get("_last_nav_block", {})
 		if not nb.is_empty() and nb.get("pos") is Vector3:
 			var nbp: Vector3 = nb["pos"]
-			snap["last_nav_block"] = {"pos": [int(nbp.x), int(nbp.z)], "cause": str(nb.get("cause", "")), "age_min": int((Time.get_unix_time_from_system() - float(nb.get("t", 0.0))) / 60.0)}
+			var nfrom: Vector3 = nb.get("from", Vector3.INF)
+			snap["last_nav_block"] = {"pos": [int(nbp.x), int(nbp.z)], "cause": str(nb.get("cause", "")), "age_min": int((Time.get_unix_time_from_system() - float(nb.get("t", 0.0))) / 60.0),
+				"reason": str(nb.get("reason", "")), "act": str(nb.get("act", "")), "goal": str(nb.get("goal", "")),
+				"from": [snappedf(nfrom.x, 0.1), snappedf(nfrom.z, 0.1)] if nfrom != Vector3.INF else []}
 		snap["camp_spot"] = [snappedf(camp.x, 0.1), snappedf(camp.y, 0.1), snappedf(camp.z, 0.1)] if camp != Vector3.INF else []
 		snap["shelter_pos"] = [snappedf(sh.x, 0.1), snappedf(sh.y, 0.1), snappedf(sh.z, 0.1)] if sh != Vector3.INF else []
 		snap["explore_target"] = [snappedf(et.x, 0.1), snappedf(et.y, 0.1), snappedf(et.z, 0.1)] if et != Vector3.INF else []
