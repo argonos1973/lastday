@@ -479,9 +479,51 @@ func _d14() -> void:
 		mgr._tick_bot(kael, .2)
 		check(not bool(kael.sleeping), "D14 la expedicion con sed <10 sigue despierta")
 
+func _d15() -> void:
+	print("D15: frio mojado y sueño bajo sin fuego ni refugio")
+	var env := _new_world(12.0, 15.0)
+	var mgr: DayMgr = env.mgr
+	var elena: Dictionary = mgr.bots[901]
+	_place_bot(elena, Vector3(0, .4, 0), {"health": 20.0, "hunger": 80.0, "thirst": 80.0,
+		"sleep": 6.0, "body_temperature": 35.1, "inventory": []})
+	elena.clothing = "Camiseta,Pantalones,Zapatillas"
+	elena.vstats.wetness = 1.0
+	var reps := simulate(env, [elena], {"dt": 1.0, "steps": 90, "advance_clock": false})
+	print("D15 hp=", elena.health, " temp=", elena.vstats.body_temperature,
+		" wet=", elena.vstats.wetness, " sleep=", elena.vstats.sleep, " acts=", reps[0].acts)
+	check(not elena.vstats.dead and elena.health > 0.0, "D15 sobrevive al frio sin quedar sentado esperando el colapso")
+	check(elena.vstats.body_temperature >= 35.4 and elena.vstats.wetness < .3,
+		"D15 se seca y recupera temperatura real")
+
+func _d16() -> void:
+	print("D16: un escape del agua invalida la marcha termica de la otra orilla")
+	var env := _new_world(12.0, 15.0)
+	var mgr: DayMgr = env.mgr
+	var w: DayWorld = env.world
+	var elena: Dictionary = mgr.bots[901]
+	_place_bot(elena, Vector3(14.4, .4, 0), {"body_temperature": 35.1, "inventory": []})
+	w.river_segs = [{"center": Vector3(20, 0, 0), "size": Vector2(10, 10), "yaw": 0.0}]
+	elena._freeze_march = {"anchor": Vector3(20, .4, -6), "pos": Vector3(26, .4, 0)}
+	var start: Vector3 = elena.proxy.global_position
+	mgr._bot_freeze_march(elena, .5)
+	var end: Vector3 = elena.proxy.global_position
+	check(end.distance_to(start) > .1, "D16 la recuperacion termica sigue avanzando")
+	check(Interruptions.dry_recovery_leg(w, start, end),
+		"D16 no vuelve a entrar al agua por conservar un destino de la otra orilla")
+
 func run() -> void:
 	seed(4242)
 	var t0 := Time.get_ticks_msec()
+	if "--only-d16" in OS.get_cmdline_user_args():
+		_d16()
+		print("BotDaySurvivalSimRegression D16 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
+	if "--only-d15" in OS.get_cmdline_user_args():
+		_d15()
+		print("BotDaySurvivalSimRegression D15 errors=%d" % failures)
+		quit(1 if failures else 0)
+		return
 	if "--only-d14" in OS.get_cmdline_user_args():
 		_d14()
 		print("BotDaySurvivalSimRegression D14 errors=%d" % failures)
@@ -930,6 +972,8 @@ func run() -> void:
 
 	_d13()
 	_d14()
+	_d15()
+	_d16()
 
 	print("BotDaySurvivalSimRegression errors=%d (%.1f s)" % [failures, (Time.get_ticks_msec() - t0) / 1000.0])
 	for key in ["world", "net"]:

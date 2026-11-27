@@ -803,15 +803,24 @@ func _s26() -> void:
 	world.river_segs = [{"center": Vector3(60.0, 0.0, 260.0), "size": Vector2(10.0, 10.0), "yaw": 0.0}]
 	_place_bot(b, Vector3(60.0, 0.4, 264.5), {"body_temperature": 35.9, "sleep": 92.0, "hunger": 88.0, "thirst": 88.0, "inventory": []})
 	check(world.get_river_depth_at((b["proxy"] as Node3D).global_position) > 0.05, "S26 el bot empieza realmente en agua somera (depth=%.2f)" % world.get_river_depth_at((b["proxy"] as Node3D).global_position))
-	var saw_escape := false
+	var saw_dryward_movement := false
+	var crafted_in_water := false
 	for i in 80:
+		var before: Vector3 = b["proxy"].global_position
+		var depth_before := world.get_river_depth_at(before)
 		mgr._tick_bot(b, 0.1)
-		if str(b.get("_act", "")) == "water_escape":
-			saw_escape = true
-		if world.get_river_depth_at((b["proxy"] as Node3D).global_position) <= 0.05:
+		var after: Vector3 = b["proxy"].global_position
+		var depth_after := world.get_river_depth_at(after)
+		# This 0.30 m bank is below WADE_DEPTH: a short warming march can
+		# also leave it. Check physical progress instead of an action label.
+		if after.distance_to(before) > .01 and depth_after < depth_before:
+			saw_dryward_movement = true
+		if depth_after > .05 and str(b.get("_act", "")) in ["craft", "torch"]:
+			crafted_in_water = true
+		if depth_after <= 0.05:
 			break
 	var depth_end := world.get_river_depth_at((b["proxy"] as Node3D).global_position)
-	check(saw_escape, "S26 aparece water_escape antes que el bootstrap (act=%s)" % str(b.get("_act", "")))
+	check(saw_dryward_movement and not crafted_in_water, "S26 avanza hacia tierra seca antes de fabricar")
 	check(depth_end <= 0.05, "S26 termina en tierra seca (depth=%.2f pos=%s)" % [depth_end, str((b["proxy"] as Node3D).global_position)])
 
 func _s27() -> void:

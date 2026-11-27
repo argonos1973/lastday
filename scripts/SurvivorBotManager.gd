@@ -2948,8 +2948,15 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# pie o sentado mojado es congelarse seguro. Un techo frio insuficiente
 	# tampoco es refugio termico: sin fuego/cadena de leña posible, el bot
 	# debe moverse aunque este bajo una casa.
-	if _bot_is_freezing(b) and (vst == null or vst.sleep > 8.0) \
+	# Short warming movement remains possible until the actual collapse
+	# threshold. Stopping at sleep=8 while sleep itself is vetoed until <=4
+	# leaves a cold, wet bot sitting in that gap until hypothermia kills it.
+	if _bot_is_freezing(b) and (vst == null or vst.sleep > 4.0) \
 			and (rest_pos == Vector3.INF or bool(b.get("_cold_roof_insufficient", false))):
+		if vst != null and vst.sleep <= 8.0 and not _bot_should_wake(b, is_night) \
+				and _bot_try_start_sleep(b, is_night):
+			b["_act"] = "rest"
+			return
 		if _bot_freeze_march(b, delta):
 			return
 	if rest_pos != Vector3.INF and wants_camp:
@@ -22552,7 +22559,11 @@ func _bot_freeze_march(b: Dictionary, delta: float) -> bool:
 	var tgt: Variant = fm.get("pos", null)
 	# Un tramo vetado por el navegador deja de ser candidato inmediatamente.
 	# Conservarlo hacia repetir el mismo destino bloqueado indefinidamente.
-	var has_tgt: bool = tgt is Vector3 and (tgt as Vector3).is_finite() and not _is_goal_blacklisted(b, tgt) and Vector2(proxy.global_position.x - (tgt as Vector3).x, proxy.global_position.z - (tgt as Vector3).z).length() > 1.4
+	# Water escape or another interruption may have moved us to the opposite
+	# bank. A previously dry target is reusable only if this leg is still dry.
+	var has_tgt: bool = tgt is Vector3 and (tgt as Vector3).is_finite() and not _is_goal_blacklisted(b, tgt) \
+		and Vector2(proxy.global_position.x - (tgt as Vector3).x, proxy.global_position.z - (tgt as Vector3).z).length() > 1.4 \
+		and InterruptionManager.dry_recovery_leg(world, proxy.global_position, tgt)
 	if not has_tgt:
 		fm["pos"] = null
 		fm["stalled"] = 0.0
