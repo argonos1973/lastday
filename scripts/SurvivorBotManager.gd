@@ -22340,19 +22340,30 @@ func _bot_freeze_march(b: Dictionary, delta: float) -> bool:
 		var indoor_rect := _house_bounds_at(proxy.global_position)
 		var indoor_march := indoor_rect.size.x > 0.0 or _pos_in_house_bounds(proxy.global_position)
 		var indoor_floor := indoor_rect.grow(-0.25) if indoor_rect.size.x > 0.0 else Rect2()
+		var march_anchor := proxy.global_position if indoor_march else anchor
 		for i in range(6):
 			var ang := rng.randf() * TAU
 			var rr := rng.randf_range(2.2, 5.0) if indoor_march else rng.randf_range(7.0, 13.0)
-			var cand := anchor + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
+			var cand := march_anchor + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
 			cand.y = proxy.global_position.y
 			if indoor_march:
 				# Marchar genera calor, pero salir de la casa bajo lluvia/nieve
-				# empapa la ropa y convierte el rescate en hipotermia. El paseo
-				# interior debe quedarse dentro del mismo rectángulo seco.
+				# empapa la ropa y convierte el rescate en hipotermia. El rectangulo
+				# de colision incluye un margen de muros: no basta con quedarse en el
+				# bounds del blocker, el destino tiene que seguir siendo techo real.
 				if indoor_floor.size.x > 0.0:
 					if not indoor_floor.has_point(Vector2(cand.x, cand.z)):
 						continue
 				elif not _pos_in_house_bounds(cand):
+					continue
+				var roofed_cand := false
+				if world != null and world.has_method("_is_player_in_house") and bool(world._is_player_in_house(cand)):
+					roofed_cand = true
+				elif world != null and world.has_method("_is_near_built_shelter") and bool(world._is_near_built_shelter(cand)):
+					roofed_cand = true
+				elif _bot_at_own_built_shelter(b, cand):
+					roofed_cand = true
+				if not roofed_cand:
 					continue
 			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
 				continue
