@@ -98,6 +98,21 @@ def import_and_export(kind: str) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.fbx(filepath=spec["source"], automatic_bone_orientation=False)
 
+    if kind == "bear":
+        # T_Bear is fully opaque. The FBX alpha link made glTF export BLEND
+        # with both sides visible, so far teeth/eyes/back faces overpainted
+        # the near skin instead of being hidden by its depth.
+        for material in bpy.data.materials:
+            if not material.use_nodes:
+                continue
+            for node in material.node_tree.nodes:
+                if node.type == "BSDF_PRINCIPLED":
+                    alpha = node.inputs.get("Alpha")
+                    for link in list(alpha.links):
+                        material.node_tree.links.remove(link)
+                    alpha.default_value = 1.0
+            material.use_backface_culling = True
+
     armatures = [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]
     if len(armatures) != 1:
         raise RuntimeError(f"{kind}: expected one armature, found {len(armatures)}")

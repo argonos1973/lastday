@@ -125,6 +125,7 @@ var _puppet_desired_anim := "walk"
 var _defer_locomotion_animation := false
 var _requested_locomotion := ""
 var _puppet_attack_timer := 0.0
+var _puppet_strike_pending_time := -1.0
 var _puppet_combat_timer := 0.0
 var _puppet_combat_active := false
 var _puppet_combat_target: Node3D = null
@@ -261,6 +262,7 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		_is_dead = true
 		_gutted = gutted
 		_puppet_attack_timer = 0.0
+		_puppet_strike_pending_time = -1.0
 		_puppet_combat_active = false
 		_update_tamed_visuals()
 		# Without a corpse lifetime the next _process would free the body the
@@ -274,9 +276,11 @@ func puppet_apply(pos: Vector3, rot_y: float, anim: String, dead: bool, gutted: 
 		if rot_left > 0.0:
 			_rot_timer = rot_left
 		return
-	_network_motion.push(self, pos, rot_y)
+	_network_motion.push(self, pos, rot_y, false, anim.to_lower())
 	if not dead:
 		_puppet_desired_anim = anim.to_lower()
+		if animal_type == "bear" and _network_motion.samples.size() > 1:
+			return # Present the pose when the buffered body reaches this packet.
 		if _puppet_attack_timer > 0.0 or (_puppet_combat_active and _puppet_desired_anim == "idle"):
 			return
 		if _uses_measured_locomotion() and _network_motion.samples.size() > 1 and _puppet_desired_anim in ["walk", "trot", "run", "gallop"]:
@@ -571,6 +575,8 @@ func _process_body(delta: float) -> void:
 		if not _is_dead:
 			var prev_puppet_pos := global_position
 			_network_motion.advance(self, delta)
+			if animal_type == "bear" and not _network_motion.render_animation.is_empty():
+				_puppet_desired_anim = _network_motion.render_animation
 			var far_from_viewer := false
 			if DisplayServer.get_name() != "headless":
 				var sc := get_tree().current_scene
@@ -3735,9 +3741,23 @@ func _update_puppet_combat(delta: float, travel_speed: float) -> void:
 	if _is_dead or (animal_type != "wolf" and animal_type != "bear"):
 		_puppet_combat_active = false
 		_puppet_attack_timer = 0.0
+		_puppet_strike_pending_time = -1.0
 		return
+	if animal_type == "bear" and _puppet_strike_pending_time >= 0.0:
+		var event_age: float = _network_motion.clock - _puppet_strike_pending_time
+		# The sound RPC can arrive before the next periodic stop snapshot.
+		# Wait for that pose/stop too, not just the nominal buffer delay.
+		if event_age > _network_motion.BUFFER_SECONDS + _predator_attack_duration():
+			_puppet_strike_pending_time = -1.0
+		elif event_age >= _network_motion.BUFFER_SECONDS \
+				and (_puppet_desired_anim == "attack" or travel_speed <= 0.12):
+			_puppet_strike_pending_time = -1.0
+			_begin_puppet_strike()
 	_puppet_attack_timer = maxf(0.0, _puppet_attack_timer - delta)
 	_puppet_combat_timer = maxf(0.0, _puppet_combat_timer - delta)
+	if animal_type == "bear" and travel_speed > 0.12 and _puppet_desired_anim in ["walk", "trot", "run", "gallop"]:
+		# A sound timer must not hold planted paws over the next buffered run.
+		_puppet_attack_timer = 0.0
 	_puppet_combat_active = _puppet_attack_timer > 0.0 or _puppet_desired_anim == "attack"
 	if _puppet_combat_active:
 		_play_animation_by_name("attack")
@@ -3750,6 +3770,17 @@ func _update_puppet_combat(delta: float, travel_speed: float) -> void:
 			_puppet_combat_active = true
 			_face_towards(foe.global_position, minf(delta * 8.5, 1.0))
 			_play_animation_by_name("attack")
+
+func _begin_puppet_strike() -> void:
+	var start_strike := _puppet_attack_timer <= 0.0
+	if start_strike:
+		_puppet_attack_timer = _predator_attack_duration()
+	_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
+	_play_animation_by_name("attack")
+	if _animation_player != null:
+		_animation_player.speed_scale = 1.0
+		if animal_type == "bear" and start_strike and not _animation_player.is_playing():
+			_animation_player.play(_animation_player.assigned_animation)
 
 func _ensure_tamed_visual_nodes() -> void:
 	if _tamed_collar_node == null or not is_instance_valid(_tamed_collar_node):
@@ -4228,15 +4259,12 @@ func _play_wolf_sound(sound_type: String) -> void:
 	if _net != null and _net.is_dedicated_server:
 		return
 	if is_puppet and not _is_dead and (sound_type == "attack" or sound_type == "bite"):
-		var start_strike := _puppet_attack_timer <= 0.0
-		if start_strike:
-			_puppet_attack_timer = _predator_attack_duration()
-		_puppet_combat_timer = maxf(_puppet_combat_timer, 3.0)
-		_play_animation_by_name("attack")
-		if _animation_player != null:
-			_animation_player.speed_scale = 1.0
-			if animal_type == "bear" and start_strike and not _animation_player.is_playing():
-				_animation_player.play(_animation_player.assigned_animation)
+		if animal_type == "bear" and _network_motion.samples.size() > 1:
+			var showing_strike := current_anim_keyword == "attack" and _animation_player != null and _animation_player.is_playing()
+			if _puppet_attack_timer <= 0.0 and _puppet_strike_pending_time < 0.0 and not showing_strike:
+				_puppet_strike_pending_time = _network_motion.clock
+		else:
+			_begin_puppet_strike()
 	var is_bear := animal_type == "bear"
 	# El lobo domesticado no aulla como el salvaje: usa un ladrido corto y mas
 	# agudo (growl agudo) para distinguirse de lejos en cualquier sonido.

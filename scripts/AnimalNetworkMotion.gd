@@ -7,15 +7,17 @@ const BUFFER_SECONDS := 0.22
 const TELEPORT_DISTANCE := 20.0
 var clock := 0.0
 var samples: Array[Dictionary] = []
+var render_animation := ""
 
-func push(body: Node3D, pos: Vector3, yaw: float, snap := false) -> void:
+func push(body: Node3D, pos: Vector3, yaw: float, snap := false, anim := "") -> void:
 	if snap or samples.is_empty() or pos.distance_to(samples.back()["pos"]) > TELEPORT_DISTANCE:
 		samples.clear()
 		body.global_position = pos
 		body.rotation.y = yaw
+		render_animation = anim
 	if not samples.is_empty() and is_equal_approx(float(samples.back()["time"]), clock):
 		samples.pop_back()
-	samples.append({"time": clock, "pos": pos, "yaw": yaw})
+	samples.append({"time": clock, "pos": pos, "yaw": yaw, "anim": anim})
 	while samples.size() > 16:
 		samples.pop_front()
 
@@ -32,3 +34,13 @@ func advance(body: Node3D, delta: float) -> void:
 	var weight := clampf((render_time - float(a["time"])) / span, 0.0, 1.0) if span > 0.00001 else 1.0
 	body.global_position = (a["pos"] as Vector3).lerp(b["pos"], weight)
 	body.rotation.y = lerp_angle(float(a["yaw"]), float(b["yaw"]), weight)
+	# A discrete pose belongs to the same timeline as the interpolated body.
+	# In particular, a strike starts at the stop, not while approaching it.
+	render_animation = str((b if weight >= 1.0 else a).get("anim", ""))
+	var next_anim := str(b.get("anim", ""))
+	if weight > 0.0 and next_anim in ["walk", "trot", "run", "gallop"]:
+		var departure: Vector3 = b["pos"] - a["pos"]
+		if Vector2(departure.x, departure.z).length_squared() > .0001:
+			# On departure the legs start with the first interpolated movement,
+			# rather than holding the previous planted pose until packet b.
+			render_animation = next_anim
