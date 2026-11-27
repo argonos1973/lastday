@@ -8284,6 +8284,39 @@ func run() -> void:
 		"10Z3: si se moja a esa misma temperatura vuelve a necesitar rescate")
 	st_hyp.wetness = 0.0
 
+	# 10Z7: la marcha contra el frío dentro de una casa no puede salir a la
+	# lluvia. El caso real mató a Elena/Kael: el techo frío marcaba insuficiente,
+	# la marcha elegía un punto 2-5 m fuera del rectángulo y la tormenta los caló
+	# en menos de dos minutos. Menos calor que una fogata no es peor que morir
+	# empapado: el paseo de emergencia debe quedarse bajo el mismo techo.
+	var march_house_idx := world._register_wildlife_blocker(Vector3(450.0, 0.0, 750.0), 8.0)
+	world.wildlife_blockers[march_house_idx]["house_bounds"] = Rect2(446.0, 746.0, 8.0, 8.0)
+	world.wildlife_blockers[march_house_idx]["door_name"] = "Casa marcha Door"
+	world._server_door_states["Casa marcha Door"] = true
+	var march_center := Vector3(450.0, 0.4, 750.0)
+	p_hyp.global_position = march_center
+	b_hyp["pos"] = march_center
+	st_hyp.body_temperature = 35.6
+	st_hyp.wetness = 0.0
+	st_hyp.sleep = 50.0
+	b_hyp["aggro_target"] = null
+	b_hyp["hide_timer"] = 0.0
+	var outside_candidates := 0
+	for march_n in range(12):
+		b_hyp["_freeze_march"] = {"n": march_n, "anchor": march_center}
+		mgr._bot_freeze_march(b_hyp, 0.0)
+		var march_tgt: Variant = (b_hyp.get("_freeze_march", {}) as Dictionary).get("pos", null)
+		if march_tgt is Vector3 and not mgr._pos_in_house_bounds(march_tgt):
+			outside_candidates += 1
+	check(outside_candidates == 0,
+		"10Z7: la marcha interior nunca elige un destino fuera de la casa (outside=%d)" % outside_candidates)
+	b_hyp["_freeze_march"] = {}
+	for march_i in range(120):
+		mgr._bot_freeze_march(b_hyp, 0.1)
+	check(mgr._pos_in_house_bounds(p_hyp.global_position),
+		"10Z7: tras 12 s de marcha interior el bot sigue bajo techo (pos=%s)" % [p_hyp.global_position])
+	b_hyp["_freeze_march"] = {}
+
 	# 10Z4: los solares nunca caen fuera de la malla de navegacion ([556, 856]) y
 	# un bot desarmado recoge piedra para lascar su primera Piedra afilada.
 	var oob_camp := mgr._find_valid_camp_spot(Vector3(556.0, 0.0, 872.0), Vector3(260.0, 0.0, 840.0), 0, [], 901)

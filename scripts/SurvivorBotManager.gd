@@ -8105,13 +8105,18 @@ func _bot_member_role(b: Dictionary) -> String:
 
 # Punto dentro del rectangulo de una casa registrada (wildlife_blockers) —
 # la cuña de escolta no se usa en interiores, solo en campo abierto.
-func _pos_in_house_bounds(pos: Vector3) -> bool:
+func _house_bounds_at(pos: Vector3) -> Rect2:
 	if world != null and "wildlife_blockers" in world:
 		var p2 := Vector2(pos.x, pos.z)
 		for blk in world.wildlife_blockers:
 			if blk is Dictionary and (blk as Dictionary).has("house_bounds") \
 					and ((blk as Dictionary)["house_bounds"] as Rect2).has_point(p2):
-				return true
+				return (blk as Dictionary)["house_bounds"]
+	return Rect2()
+
+func _pos_in_house_bounds(pos: Vector3) -> bool:
+	if _house_bounds_at(pos).size.x > 0.0:
+		return true
 	return world != null and world.has_method("_is_player_in_house") and bool(world._is_player_in_house(pos))
 
 # Orden deterministico del miembro dentro de la escolta del lider (0, 1...).
@@ -22269,12 +22274,23 @@ func _bot_freeze_march(b: Dictionary, delta: float) -> bool:
 		# Avanzar tambien si fallan los seis sondeos: el proximo intento debe
 		# probar otras direcciones, sin repetir para siempre la misma muestra.
 		fm["n"] = int(fm.get("n", 0)) + 1
-		var indoor_march := _pos_in_house_bounds(proxy.global_position)
+		var indoor_rect := _house_bounds_at(proxy.global_position)
+		var indoor_march := indoor_rect.size.x > 0.0 or _pos_in_house_bounds(proxy.global_position)
+		var indoor_floor := indoor_rect.grow(-0.25) if indoor_rect.size.x > 0.0 else Rect2()
 		for i in range(6):
 			var ang := rng.randf() * TAU
 			var rr := rng.randf_range(2.2, 5.0) if indoor_march else rng.randf_range(7.0, 13.0)
 			var cand := anchor + Vector3(cos(ang) * rr, 0.0, sin(ang) * rr)
 			cand.y = proxy.global_position.y
+			if indoor_march:
+				# Marchar genera calor, pero salir de la casa bajo lluvia/nieve
+				# empapa la ropa y convierte el rescate en hipotermia. El paseo
+				# interior debe quedarse dentro del mismo rectángulo seco.
+				if indoor_floor.size.x > 0.0:
+					if not indoor_floor.has_point(Vector2(cand.x, cand.z)):
+						continue
+				elif not _pos_in_house_bounds(cand):
+					continue
 			if _is_step_blocked(proxy.global_position, cand) or _is_goal_blacklisted(b, cand):
 				continue
 			if not InterruptionManager.dry_recovery_leg(world, proxy.global_position, cand):
