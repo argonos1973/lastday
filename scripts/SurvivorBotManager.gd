@@ -13746,6 +13746,17 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 		return b_origin + Vector3(stair_x, 3.92, -3.2).rotated(Vector3.UP, yaw)
 	if cur_lvl_c == 1 and goal_lvl_c == 0:
 		if flat_roof and lc.x < 4.9:
+			if lc.x < 3.1:
+				if lc.z > -0.9:
+					if lc.x > 0.8 and lc.z < 0.25:
+						return b_origin + Vector3(2.4, 3.92, 0.4).rotated(Vector3.UP,yaw)
+					if lc.x > -0.8:
+						return b_origin + Vector3(-1.0, 3.92, 0.4).rotated(Vector3.UP,yaw)
+					return b_origin + Vector3(-1.5, 3.92, -1.2).rotated(Vector3.UP,yaw)
+				if lc.x < 2.3:
+					return b_origin + Vector3(2.5, 3.92, -1.45).rotated(Vector3.UP,yaw)
+				if lc.x < 3.1 or lc.z > -1.9:
+					return b_origin + Vector3(3.5, 3.92, -2.2).rotated(Vector3.UP,yaw)
 			if lc.z > -3.0:
 				return b_origin + Vector3(3.85 if lc.x > 3.2 else 1.6, 3.92, -3.2).rotated(Vector3.UP,yaw)
 			return b_origin + Vector3(stair_x, 3.92, -3.2).rotated(Vector3.UP,yaw)

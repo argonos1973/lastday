@@ -322,6 +322,13 @@ func run() -> void:
 		var cb: Node3D = city.buildings[idx]
 		actor.position = cb.to_global(Vector3(-1.1,3.92,-0.1))
 		await travel(cb.to_global(Vector3(11,.12,0)),"city_%02d rotated upper pocket exits" % (idx+1))
+	# Ataulfo's live city_15 trap was the opposite bedroom pocket, local
+	# (2.4,3.92,-0.6): furniture and the stair partition make the direct landing
+	# vector cross solid geometry. The descent must use the positive-z lane,
+	# pass west of the obstruction and only then cross the upper corridor.
+	var city15: Node3D = city.buildings[14]
+	actor.position = city15.to_global(Vector3(2.4,3.92,-0.6))
+	await travel(city15.to_global(Vector3(11,.12,0)),"city_15 live upper bedroom pocket exits")
 	for origin in [Vector3(45,0,120),Vector3(-340,0,280)]:
 		for side in [-1,1]:
 			actor.position = origin+Vector3(9,0,side*6)
