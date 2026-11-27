@@ -12289,7 +12289,7 @@ func _bot_shelter_needs_supply(b: Dictionary, kind: String) -> bool:
 	return float(b["thirst"]) < 60.0 + minf(16.0, float(int(lessons.get("dehydrated", 0))) * 8.0) \
 		and not _bot_has_drink(proxy)
 
-func _bot_shelter_weapon_usable(proxy: Node3D, item: Dictionary) -> bool:
+func _bot_shelter_weapon_usable(proxy: Node3D, item: Dictionary, contents: Array = []) -> bool:
 	var nm := str(item.get("name", ""))
 	if nm not in BOT_WEAPON_ORDER or int(item.get("quantity", 1)) <= 0 or float(item.get("durability", 100.0)) <= 0.0:
 		return false
@@ -12303,7 +12303,16 @@ func _bot_shelter_weapon_usable(proxy: Node3D, item: Dictionary) -> bool:
 			ammo = proxy.get_meta("saved_extra", {}).get("rifle_ammo", {})
 		var flag := "m4_initialized" if _bot_gun_is_m4(nm) else "initialized"
 		var acquired := bool(ammo.get(flag, ammo.has(_bot_gun_loaded_key(nm)) or ammo.has(_bot_gun_reserve_key(nm))))
-		return not acquired or _bot_gun_any_ammo(proxy, nm)
+		if not acquired or _bot_gun_any_ammo(proxy, nm):
+			return true
+		# La municion puede estar guardada junto al fusil: retirar ambos es
+		# precisamente para lo que sirve el alijo. No exigir que ya este encima.
+		var want_m4 := _bot_gun_is_m4(nm)
+		for stored in contents:
+			if stored is Dictionary and str(stored.get("type", "")) == "ammo" and int(stored.get("quantity", 1)) > 0 \
+					and PlayerController.ammo_item_is_m4(str(stored.get("name", ""))) == want_m4:
+				return true
+		return false
 	return true
 
 func _own_shelter_has_needed_item(b: Dictionary) -> bool:
@@ -12316,7 +12325,6 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	# necesidad apriete: las lecciones suben el umbral de "lo necesito".
 	var need_food := _bot_shelter_needs_supply(b, "food")
 	var need_water := _bot_shelter_needs_supply(b, "water")
-	var need_weapon: bool = _best_weapon_name(proxy).is_empty()
 	var need_med: bool = float(b["health"]) < 78.0 and _bot_item_count(proxy, "Venda") == 0
 	var need_farm_kit: bool = _bot_needs_farm_kit_now(b)
 	for cd in contents:
@@ -12330,7 +12338,7 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 			return true
 		if need_water and (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")):
 			return true
-		if need_weapon and tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_shelter_weapon_usable(proxy, cd):
+		if tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_stored_weapon_is_upgrade(proxy, cd, contents):
 			return true
 		if need_med and nm == "Venda":
 			return true
@@ -12339,8 +12347,8 @@ func _own_shelter_has_needed_item(b: Dictionary) -> bool:
 	return false
 
 # Calcula que entradas del inventario actual son sobrantes para guardar en el
-# refugio propio (conservando encima su mejor arma, su municion, 1 filo,
-# 1 comida de reserva, 1 bebida y 2 vendas).
+# refugio propio (conservando encima su mejor arma, el ultimo fusil aunque
+# este seco, su municion, 1 filo, 1 comida de reserva, 1 bebida y 2 vendas).
 func _bot_count_storable_items(b: Dictionary) -> int:
 	var proxy: Node3D = b["proxy"]
 	var inv: Array = proxy.get_meta("saved_inventory", [])
@@ -12355,6 +12363,10 @@ func _bot_count_storable_items(b: Dictionary) -> int:
 func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictionary:
 	var proxy: Node3D = b["proxy"]
 	var best_w := _best_weapon_name(proxy)
+	var carried_firearm := _bot_carried_firearm(proxy)
+	var keep_last_firearm := carried_firearm if best_w not in ["Fusil de asalto", "Rifle francotirador"] else ""
+	var kept_firearm := false
+	var ammo_firearm := best_w if best_w in ["Fusil de asalto", "Rifle francotirador"] else keep_last_firearm
 	var cutters := ["Cuchillo", "Cuchillo de piedra", "Cuchillo de hueso", "Hacha", "Hacha de piedra", "Piedra afilada"]
 	var kept_primary := false
 	var kept_cutter: bool = best_w in cutters
@@ -12406,6 +12418,14 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			else:
 				keep.append(it)
 			continue
+		if not keep_last_firearm.is_empty() and nm == keep_last_firearm and not kept_firearm:
+			kept_firearm = true
+			if qty > 1:
+				var kg := it.duplicate(true); kg["quantity"] = 1; keep.append(kg)
+				var sg := it.duplicate(true); sg["quantity"] = qty - 1; store.append(sg)
+			else:
+				keep.append(it)
+			continue
 		if nm in cutters and not kept_cutter:
 			kept_cutter = true
 			if qty > 1:
@@ -12434,8 +12454,8 @@ func _bot_partition_inventory_for_shelter(b: Dictionary, inv: Array) -> Dictiona
 			keep.append(it)
 			continue
 		if tp in ["ammo", "ammo_arrow"]:
-			var keep_ammo := (tp == "ammo" and best_w in ["Fusil de asalto", "Rifle francotirador"] \
-				and PlayerController.ammo_item_is_m4(nm) == _bot_gun_is_m4(best_w)) \
+			var keep_ammo := (tp == "ammo" and ammo_firearm in ["Fusil de asalto", "Rifle francotirador"] \
+				and PlayerController.ammo_item_is_m4(nm) == _bot_gun_is_m4(ammo_firearm)) \
 				or (best_w in ["Arco de madera", "Arco reforzado"] and tp == "ammo_arrow")
 			if keep_ammo:
 				keep.append(it)
@@ -12614,9 +12634,9 @@ func _bot_sync_own_shelter_stash_impl(b: Dictionary) -> int:
 			want_withdraw = true
 		elif (tp == "water" or nm.contains("agua") or nm.contains("Cantimplora")) and _bot_shelter_needs_supply(b, "water"):
 			want_withdraw = true
-		elif tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _best_weapon_name(proxy).is_empty() and _bot_shelter_weapon_usable(proxy, cd):
+		elif tp in ["weapon", "weapon_rifle", "weapon_bow", "tool_axe", "tool_spear"] and _bot_stored_weapon_is_upgrade(proxy, cd, contents):
 			want_withdraw = true
-		elif tp == "ammo" and _bot_gun_wants_ammo_item(proxy, nm):
+		elif tp == "ammo" and _bot_stash_wants_ammo_item(proxy, nm, contents):
 			want_withdraw = true
 		elif nm == "Venda" and _bot_item_count(proxy, "Venda") == 0:
 			want_withdraw = true
@@ -15668,6 +15688,30 @@ func _best_weapon_name(proxy: Node3D) -> String:
 				return w
 	return ""
 
+func _bot_weapon_rank(weapon: String) -> int:
+	return BOT_WEAPON_ORDER.find(weapon)
+
+func _bot_carried_firearm(proxy: Node3D) -> String:
+	for w in ["Fusil de asalto", "Rifle francotirador"]:
+		if _bot_item_count(proxy, w) > 0:
+			return w
+	return ""
+
+# El alijo guarda excedentes, no la defensa del bot: un arma almacenada se
+# retira cuando mejora lo que lleva encima, aunque ya tenga un cuchillo/lanza.
+func _bot_stored_weapon_is_upgrade(proxy: Node3D, item: Dictionary, contents: Array = []) -> bool:
+	var nm := str(item.get("name", ""))
+	if not _bot_shelter_weapon_usable(proxy, item, contents):
+		return false
+	var rank := _bot_weapon_rank(nm)
+	if rank < 0:
+		return false
+	var carried := _best_weapon_name(proxy)
+	if carried.is_empty():
+		return true
+	var carried_rank := _bot_weapon_rank(carried)
+	return carried_rank < 0 or rank < carried_rank
+
 # Armas cuerpo a cuerpo por orden de letalidad (incluye las de crafteo).
 func _best_melee_weapon(proxy: Node3D) -> String:
 	var order := ["Lanza de hueso", "Lanza", "Hacha de piedra", "Hacha",
@@ -15813,6 +15857,19 @@ func _bot_gun_load_ammo_item(proxy: Node3D, ammo: Dictionary, weapon: String) ->
 func _bot_gun_wants_ammo_item(proxy: Node3D, item_name: String) -> bool:
 	var is_556 := PlayerController.ammo_item_is_m4(item_name)
 	return _bot_item_count(proxy, "Fusil de asalto" if is_556 else "Rifle francotirador") > 0
+
+# Variante para alijos: la municion tambien interesa cuando su fusil esta en
+# el propio alijo y va a retirarse; el orden interno de los huecos no debe
+# decidir si salen juntos.
+func _bot_stash_wants_ammo_item(proxy: Node3D, item_name: String, contents: Array) -> bool:
+	if _bot_gun_wants_ammo_item(proxy, item_name):
+		return true
+	var gun := "Fusil de asalto" if PlayerController.ammo_item_is_m4(item_name) else "Rifle francotirador"
+	for stored in contents:
+		if stored is Dictionary and str(stored.get("name", "")) == gun \
+				and _bot_stored_weapon_is_upgrade(proxy, stored, contents):
+			return true
+	return false
 
 # El arma solo es usable si queda algo cargado, en reserva o en items.
 func _bot_gun_any_ammo(proxy: Node3D, weapon: String) -> bool:

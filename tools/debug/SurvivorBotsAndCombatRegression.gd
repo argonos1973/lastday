@@ -54,6 +54,40 @@ func _check_stash_stability(mgr, world, template: Dictionary) -> void:
 			"Alijo estable durante 120 ticks: sin retirar/reguardar ni guardados repetidos (%s)" % sample)
 		check(mgr._bot_item_count(proxy, sample.name) == (1 if sample.take else 0),
 			"Alijo conserva la ubicacion y cantidad real del arma (%s)" % sample)
+	# Un fusil guardado no es decoracion: aunque el bot lleve un cuchillo,
+	# el M4 es una mejora clara y sale del alijo junto a su municion en
+	# cualquier orden de huecos.
+	proxy.set_meta("saved_inventory", [{"name":"Cuchillo", "type":"weapon", "quantity":1, "weight":0.4, "durability":100.0}])
+	proxy.set_meta("saved_extra", {})
+	proxy.set_meta("bot_gun_ammo", {})
+	sh["contents"] = [
+		{"name":"Cargador de M4", "type":"ammo", "quantity":1, "weight":0.45, "use_value":30.0},
+		{"name":"Fusil de asalto", "type":"weapon_rifle", "quantity":1, "weight":2.8, "durability":100.0},
+	]
+	check(mgr._own_shelter_has_needed_item(b), "Alijo: un M4 guardado es mejora aunque el bot lleve cuchillo")
+	mgr._bot_sync_own_shelter_stash(b)
+	check(mgr._bot_item_count(proxy, "Fusil de asalto") == 1 and mgr._bot_item_count(proxy, "Cargador de M4") == 1,
+		"Alijo: retira el M4 y su cargador juntos (gun=%d ammo=%d)" % [mgr._bot_item_count(proxy, "Fusil de asalto"), mgr._bot_item_count(proxy, "Cargador de M4")])
+	check(str(b.get("held_item", "")) == "Fusil de asalto" and bool(b.get("has_rifle", false)),
+		"Alijo: tras retirarlo el bot empuna el M4, no sale con el cuchillo")
+	# Si el unico fusil esta temporalmente seco sigue siendo equipo esencial:
+	# puede guardarse un excedente, nunca la unica defensa de fuego.
+	proxy.set_meta("saved_inventory", [
+		{"name":"Fusil de asalto", "type":"weapon_rifle", "quantity":1, "weight":2.8, "durability":100.0},
+		{"name":"Cuchillo", "type":"weapon", "quantity":1, "weight":0.4, "durability":100.0},
+	])
+	proxy.set_meta("bot_gun_ammo", {"initialized":true, "m4_initialized":true, "m4_magazine":0, "m4_reserve":0, "magazine":0, "reserve":0})
+	var dry_part: Dictionary = mgr._bot_partition_inventory_for_shelter(b, proxy.get_meta("saved_inventory", []))
+	var dry_keep := false
+	for kept_item in dry_part.get("keep", []):
+		if kept_item is Dictionary and str(kept_item.get("name", "")) == "Fusil de asalto":
+			dry_keep = true
+	check(dry_keep, "Alijo: nunca deposita el unico fusil aunque este temporalmente sin municion")
+	proxy.set_meta("saved_inventory", [])
+	proxy.set_meta("saved_extra", {})
+	proxy.set_meta("bot_gun_ammo", {})
+	sh["contents"] = []
+
 	# A reserve/capacity partition can reject an otherwise wanted withdrawal.
 	# The transaction must not write an unchanged inventory/stash.
 	proxy.set_meta("saved_inventory", [{"name":"Analgesicos", "type":"medical", "quantity":2, "weight":0.1}])
