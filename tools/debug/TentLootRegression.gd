@@ -155,6 +155,9 @@ func check_routes(source: World) -> int:
    world._pickup_claims.clear()
    world._pickup_claim_until.clear()
    var b: Dictionary = template.duplicate(true)
+   var stats := SurvivalStats.new()
+   stats.died.connect(manager._on_bot_stats_died.bind(b))
+   b["vstats"] = stats
    manager.bots[901] = b
    b["_mem"] = {}
    manager._memory[901] = b["_mem"]
@@ -167,6 +170,8 @@ func check_routes(source: World) -> int:
    b["vstats"].body_temperature = 37.0
    b["vstats"].wetness = 0.0
    b.proxy.set_meta("saved_inventory", [])
+   b.proxy.set_meta("proxy_dead", false)
+   b.proxy.set_meta("proxy_health", 100.0)
    b.proxy.set_meta("saved_extra", {})
    b.proxy.set_meta("bot_gun_ammo", {})
    b.proxy.global_position = test_case[2] + Vector3(4.7, .1, .9).rotated(Vector3.UP, deg_to_rad(test_case[3]))
@@ -186,6 +191,8 @@ func check_routes(source: World) -> int:
    var jumped := false
    var collected := false
    for tick in (6500 if mountain_trip else 1200):
+    if not is_instance_valid(b.proxy) or bool(b.proxy.get_meta("proxy_dead", false)):
+     break
     var before: Vector3 = b.proxy.global_position
     manager._tick_bot(b, .05)
     var after: Vector3 = b.proxy.global_position
@@ -215,6 +222,11 @@ func check_routes(source: World) -> int:
       exited = true
       break
      if tick % 3 == 0: await physics_frame
+   if not is_instance_valid(b.proxy):
+    push_error("Military route lost its actor: %s" % entry.id)
+    world.free()
+    net.free()
+    return errors + 1
    var armed: bool = b.get("held_item") == entry.name and manager._bot_gun_any_ammo(b.proxy, entry.name)
    var valid: bool = collected and exited and armed and not crossed_wall and not jumped and b.get("_unreachable", []).is_empty()
    print("TENT_ROUTE native=%s id=%s collected=%s exited=%s armed=%s crossed_wall=%s jumped=%s pos=%s" %
@@ -223,6 +235,7 @@ func check_routes(source: World) -> int:
     errors += 1
     push_error("Military route failed: %s native=%s block=%s" % [entry.id, native_nav, b.get("_last_step_block")])
    b.proxy.global_position = Vector3(-400, 0, 1)
+   stats.free()
  world.free()
  net.free()
  return errors

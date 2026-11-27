@@ -951,7 +951,9 @@ static func spawn_summit_base_loot(world: Node3D, tmpl: Dictionary) -> void:
 		return ct + p.rotated(Vector3.UP, yaw_rad)
 	var foot_spots := [
 		["summit_towerfoot_m4", "m4", Vector3(-7.1, 0.0, 3.4)],
-		["summit_towerfoot_m4mag", "m4_mag", Vector3(-6.6, 0.0, 2.6)],
+		# Fuera del margen del lateral del bunker: pegado a la pared el
+		# radio del actor impedia acercarse lo suficiente para recogerlo.
+		["summit_towerfoot_m4mag", "m4_mag", Vector3(-7.4, 0.0, 2.6)],
 		["summit_towerfoot_jacket", "jacket", Vector3(-6.9, 0.0, 4.3)],
 	]
 	for s in foot_spots:
