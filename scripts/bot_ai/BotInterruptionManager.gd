@@ -88,6 +88,8 @@ static func reasons(b: Dictionary, d: Dictionary, night: bool = false) -> Array:
 			if is_instance_valid(b.get(key)):
 				out.append("combat")
 				break
+	if night and act == "night_watch" and float(b.get("_night_watch_t", 0.0)) > 0.0 and not out.has("combat"):
+		out.append("combat") # listening pauses the route's watchdog like other threat responses
 	if float(b.get("flee_until", 0.0)) > 0.0 or float(b.get("hide_timer", 0.0)) > 0.0:
 		out.append("escape")
 	var st = b.get("vstats")

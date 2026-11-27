@@ -1903,6 +1903,7 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# lumbre, y moria de frio/exhausto huyendo de un fantasma.
 	b["flee_until"] = maxf(0.0, float(b.get("flee_until", 0.0)) - delta)
 	b["hide_timer"] = maxf(0.0, float(b.get("hide_timer", 0.0)) - delta)
+	b["_night_watch_t"] = maxf(0.0, float(b.get("_night_watch_t", 0.0)) - delta)
 	if float(b.get("_shot_alert_t", 0.0)) > 0.0:
 		b["_shot_alert_t"] = maxf(0.0, float(b["_shot_alert_t"]) - delta)
 	# La punteria decae igual que la del jugador: retroceso y sacudidas se
@@ -2053,10 +2054,11 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 	# Luz nocturna con antorcha — o antorcha de rescate cuando se esta
 	# helando: de dia tambien da calor real (ver _bot_survival_tick).
 	var has_headlamp := _bot_has_headlamp_worn(b)
-	b["flashlight_on"] = is_night and has_headlamp and not hiding_in_shelter and not bool(b.get("sleeping", false))
+	var tactical_dark := _bot_tactical_dark(b)
+	b["flashlight_on"] = is_night and has_headlamp and not hiding_in_shelter and not bool(b.get("sleeping", false)) and not tactical_dark
 	proxy.set_meta("flashlight_on", bool(b["flashlight_on"]))
 	var was_torch_lit := bool(b.get("torch_lit", false))
-	b["torch_lit"] = ((is_night and not has_headlamp) or _bot_is_freezing(b)) and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha")
+	b["torch_lit"] = ((is_night and not has_headlamp) or _bot_is_freezing(b)) and not hiding_in_shelter and not bool(b.get("sleeping", false)) and _bot_has_item(proxy, "Antorcha") and not tactical_dark
 	if bool(b["torch_lit"]) and not was_torch_lit and not _bot_ignite_torch(b):
 		b["torch_lit"] = false
 	proxy.set_meta("torch_lit", bool(b["torch_lit"]))
@@ -2205,6 +2207,8 @@ func _tick_bot(b: Dictionary, delta: float) -> void:
 		if threat_pos != Vector3.INF and _bot_seek_cover_from_pos(b, threat_pos, delta):
 			b["_act"] = "cover"
 			return
+	if _bot_night_watch_tick(b, delta):
+		return
 
 	# 2b) Emboscada: hostiles (solos o en equipo) acechan agachados a una
 	#     victima con recursos y golpean a la vez. Cede ante depredadores.
@@ -5394,6 +5398,10 @@ func _ai_note_foe_scan(b: Dictionary, foe: Node3D) -> void:
 			and _has_clear_shot(proxy.global_position, foe.global_position) \
 			and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position), true):
 		_ai_note_foe_intel(b, foe, foe.global_position, "seen")
+		_bot_start_night_watch(b, foe.global_position)
+	elif proxy != null and _is_world_night() and _can_bot_hear_actor(b, foe, proxy.global_position.distance_to(foe.global_position)):
+		_ai_note_foe_intel(b, foe, foe.global_position, "heard")
+		_bot_start_night_watch(b, b.get("_foe_mem", {}).get("pos", foe.global_position))
 
 # Version JSON de la pista de enemigo para el panel de diagnostico.
 func _foe_intel_snapshot(b: Dictionary) -> Dictionary:
@@ -5591,6 +5599,29 @@ func _bot_seek_cover_from_pos(b: Dictionary, threat_pos: Vector3, delta: float) 
 	b["sitting"] = false
 	b["sleeping"] = false
 	b["is_aiming"] = false
+	var gun := _bot_usable_gun(proxy)
+	if not gun.is_empty() and not _has_clear_shot(threat_pos, proxy.global_position):
+		var known_cover: Vector3 = b.get("_cover_goal", Vector3.INF)
+		if known_cover == Vector3.INF or proxy.global_position.distance_to(known_cover) > 6.0:
+			b["_cover_goal"] = proxy.global_position
+		b["held_item"] = gun
+		b["has_rifle"] = true
+		proxy.set_meta("saved_held_item", gun)
+		if bool(b.get("gun_reloading", false)) or _bot_gun_loaded(_bot_gun_ammo(proxy), gun) <= 0:
+			b["crouching"] = true
+			proxy.set_meta("crouching", true)
+			_stop_bot_motion(b)
+			_bot_start_gun_reload(b, gun)
+			return true
+	# Losing sight while ducked behind a wall must not cancel a planned look
+	# around its edge. This moves toward the remembered clue, never fires at
+	# an unseen actor or reads its current position.
+	var anchor: Vector3 = b.get("_cover_goal", Vector3.INF)
+	if anchor != Vector3.INF and proxy.global_position.distance_to(anchor) <= 6.0 and not _has_clear_shot(threat_pos, anchor) \
+			and not gun.is_empty() and not bool(b.get("gun_reloading", false)) \
+			and float(b.get("health", 100.0)) > _bot_retreat_hp(b) \
+			and _bot_cover_peek_step(b, threat_pos, delta):
+		return true
 	b["_cover_scan_t"] = maxf(0.0, float(b.get("_cover_scan_t", 0.0))-delta)
 	var goal: Vector3 = b.get("_cover_pos_goal", Vector3.INF)
 	if float(b["_cover_scan_t"]) <= 0.0:
@@ -5624,14 +5655,8 @@ static func is_ranged_threat_weapon(weapon: String) -> bool:
 func _find_ballistic_cover(b: Dictionary, foe: Node3D) -> Vector3:
 	return _find_ballistic_cover_from_pos(b, foe.global_position)
 
-# Combate con asomos desde una cobertura ya alcanzada: ciclos oculto
-# (1.2-2.4 s) / asomado (0.9-1.5 s). En el asomo el bot se incorpora — se
-# expone de verdad, ese es el precio — y dispara con la misma disciplina de
-# mira del combate normal: adquisicion, alineacion, tolerancia por
-# personalidad y puerta de vision nocturna. Sin omnisciencia: si no ve al
-# enemigo o la geometria no da tiro de pie, permanece oculto. La recarga
-# sigue ocurriendo oculto porque _bot_fire_rifle_at la bloquea en el asomo.
-# Devuelve true cuando gestiona la postura de este tick (asomado o en ciclo).
+# Equip the real gun, reload behind cover, then expose around the edge for
+# a short firing window. Every round still uses normal visibility and aim.
 func _bot_fire_cover_peek(b: Dictionary, foe: Node3D, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
 	var weapon := _best_weapon_name(proxy)
@@ -5639,39 +5664,36 @@ func _bot_fire_cover_peek(b: Dictionary, foe: Node3D, delta: float) -> bool:
 		return false
 	if foe == null or not is_instance_valid(foe):
 		return false
-	var dist := proxy.global_position.distance_to(foe.global_position)
-	if dist > 130.0 or not _bot_within_aim_sight(b, foe, dist):
+	if float(b.get("health", 100.0)) <= _bot_retreat_hp(b):
 		return false
-	if not b.has("_peek_phase"):
-		b["_peek_phase"] = "hidden"
-		b["_peek_t"] = 0.8 + fmod(float(int(b.get("bot_id", 0))) * 0.37, 1.4)
-	b["_peek_t"] = float(b.get("_peek_t", 1.0)) - delta
-	if float(b["_peek_t"]) <= 0.0:
-		if str(b["_peek_phase"]) == "hidden":
-			b["_peek_phase"] = "peeking"
-			b["_peek_t"] = randf_range(0.9, 1.5)
-		else:
-			b["_peek_phase"] = "hidden"
-			b["_peek_t"] = randf_range(1.2, 2.4)
-	if str(b["_peek_phase"]) == "hidden":
+	b["held_item"] = weapon
+	b["has_rifle"] = true
+	proxy.set_meta("saved_held_item", weapon)
+	if bool(b.get("gun_reloading", false)):
 		b["crouching"] = true
-		proxy.set_meta("crouching", true)
 		_stop_bot_motion(b)
 		return true
-	# Asomado: de pie, encarado, con la pipeline de punteria compartida.
-	b["crouching"] = false
-	proxy.set_meta("crouching", false)
-	_stop_bot_motion(b)
-	var fpos: Vector3 = foe.global_position
-	var toward := fpos - proxy.global_position
-	if Vector2(toward.x, toward.z).length_squared() > 0.01:
-		b["rot"] = atan2(-toward.x, -toward.z)
-		proxy.rotation.y = float(b["rot"])
-	# El tiro del asomo sale del ojo de pie: un parapeto bajo que cubre
-	# agachado no bloquea al incorporarse — y al reves, una pared lo sigue
-	# bloqueando y el bot no gasta balas contra ella.
-	var eye := proxy.global_position + Vector3(0.0, 1.4, 0.0)
-	var clear := _has_clear_shot(eye, fpos + Vector3(0.0, 1.2, 0.0))
+	if _bot_gun_loaded(_bot_gun_ammo(proxy), weapon) <= 0:
+		var anchor: Vector3 = b.get("_cover_goal", Vector3.INF)
+		if anchor != Vector3.INF and proxy.global_position.distance_to(anchor) > 0.25:
+			b["_peek_phase"] = "return"
+			return _bot_cover_peek_step(b, foe.global_position, delta)
+		b["crouching"] = true
+		_stop_bot_motion(b)
+		_bot_start_gun_reload(b, weapon)
+		return true
+	var dist := proxy.global_position.distance_to(foe.global_position)
+	if dist > 130.0:
+		return false
+	if not _bot_cover_peek_step(b, foe.global_position, delta):
+		return false
+	if str(b.get("_peek_phase", "")) != "peeking" or _bot_is_moving(b):
+		return true
+	var fpos := foe.global_position
+	_bot_face_combat_point(b, fpos, delta)
+	# _has_clear_shot takes BODY positions and adds eye heights itself.
+	# Passing eye positions here used to test a ray above the actual wall.
+	var clear := _has_clear_shot(proxy.global_position, fpos) and _bot_within_aim_sight(b, foe, dist, true)
 	b["is_aiming"] = clear
 	var aim_err := _bot_aim_tick(b, foe, dist, clear, delta, "m4" if _bot_gun_is_m4(weapon) else "sniper")
 	if float(b.get("shoot_cooldown", 0.0)) <= 0.0 and clear and _bot_has_firing_heading(b, fpos) \
@@ -5682,8 +5704,79 @@ func _bot_fire_cover_peek(b: Dictionary, foe: Node3D, delta: float) -> bool:
 		_bot_fire_rifle_at(b, foe, dmg, weapon)
 	return true
 
+# Walk around a tall obstacle, expose for a short firing window, then return
+# to the SAME protected anchor. A remembered threat position is sufficient
+# to look around the corner; firing still requires a currently visible actor.
+func _bot_cover_peek_step(b: Dictionary, threat_pos: Vector3, delta: float) -> bool:
+	var proxy: Node3D = b["proxy"]
+	var anchor: Vector3 = b.get("_cover_goal", Vector3.INF)
+	if anchor == Vector3.INF or _is_goal_blacklisted(b, anchor):
+		return false
+	if b.get("_peek_anchor", Vector3.INF) != anchor:
+		b.erase("_peek_phase")
+		b["_peek_anchor"] = anchor
+	if not b.has("_peek_phase"):
+		b["_peek_phase"] = "hidden"
+		b["_peek_t"] = 0.8 + fmod(float(int(b.get("bot_id", 0))) * 0.37, 1.4)
+	b["is_aiming"] = false
+	b["_peek_t"] = float(b["_peek_t"]) - delta
+	if str(b["_peek_phase"]) == "hidden" and float(b["_peek_t"]) <= 0.0:
+		var forward := threat_pos - anchor
+		forward.y = 0.0
+		var side := Vector3(-forward.z, 0, forward.x).normalized()
+		var goal := Vector3.INF
+		for distance in [1.6, 2.8, 4.0]:
+			for sign_side in [float(b.get("strafe_dir", 1.0)), -float(b.get("strafe_dir", 1.0))]:
+				var point: Vector3 = anchor + side * distance * sign_side
+				point.y = _ground_y(point.x, point.z, anchor.y)
+				if absf(point.y - anchor.y) <= 0.65 and not _is_goal_blacklisted(b, point) \
+						and not _is_step_blocked(anchor, point) and _has_clear_shot(point, threat_pos):
+					goal = point
+					break
+			if goal != Vector3.INF: break
+		if goal != Vector3.INF:
+			b["_peek_goal"] = goal
+			b["_peek_phase"] = "out"
+			b["_peek_t"] = 2.0 # bounded travel, even if a dynamic obstacle arrives
+		else:
+			b["_peek_t"] = 1.5
+	if str(b["_peek_phase"]) == "out":
+		var goal: Vector3 = b["_peek_goal"]
+		if float(b["_peek_t"]) <= 0.0 or _is_goal_blacklisted(b, goal):
+			b["_peek_phase"] = "return"
+		elif proxy.global_position.distance_to(goal) > 0.25:
+			b["crouching"] = false
+			_move_bot_towards(b, goal, 4.2, delta, "run")
+			_bot_face_combat_point(b, threat_pos, delta)
+			return true
+		else:
+			b["_peek_phase"] = "peeking"
+			b["_peek_t"] = randf_range(0.9, 1.5)
+	if str(b["_peek_phase"]) == "peeking" and float(b["_peek_t"]) <= 0.0:
+		b["_peek_phase"] = "return"
+	if str(b["_peek_phase"]) == "return":
+		if proxy.global_position.distance_to(anchor) > 0.25:
+			b["crouching"] = false
+			_move_bot_towards(b, anchor, 6.4, delta, "run")
+			return true
+		b["_peek_phase"] = "hidden"
+		b["_peek_t"] = randf_range(1.2, 2.4)
+		b["strafe_dir"] = -float(b.get("strafe_dir", 1.0))
+	if str(b["_peek_phase"]) == "hidden":
+		b["crouching"] = true
+	else:
+		b["crouching"] = false
+	proxy.set_meta("crouching", bool(b["crouching"]))
+	_stop_bot_motion(b)
+	return true
+
 func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
+	var gun := _bot_usable_gun(proxy)
+	if not gun.is_empty():
+		b["held_item"] = gun
+		b["has_rifle"] = true
+		proxy.set_meta("saved_held_item", gun)
 	b["_cover_scan_t"] = maxf(0.0, float(b.get("_cover_scan_t", 0.0))-delta)
 	b["sitting"] = false
 	b["sleeping"] = false
@@ -5700,6 +5793,10 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 			goal = _find_ballistic_cover(b, foe)
 			b["_cover_goal"] = goal
 	if goal != Vector3.INF:
+		if b.get("_peek_anchor", Vector3.INF) == goal and str(b.get("_peek_phase", "hidden")) != "hidden" \
+				and not _has_clear_shot(foe.global_position, goal) and not bool(b.get("gun_reloading", false)) \
+				and _bot_fire_cover_peek(b, foe, delta):
+			return true
 		if proxy.global_position.distance_to(goal) > .8:
 			_cover_learning_tick(b, delta, false)
 			b["crouching"] = false
@@ -5722,17 +5819,82 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 	if bool(b.get("gun_reloading", false)):
 		_stop_bot_motion(b)
 		return true
+	# Being hit must not disable a loaded firearm for five seconds after EVERY
+	# hit. In open ground a healthy rifleman bounds and returns aimed fire.
+	if not gun.is_empty() and float(b.get("health", 100.0)) > _bot_retreat_hp(b) \
+			and proxy.global_position.distance_to(foe.global_position) <= 48.0 \
+			and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)):
+		_engage_foe(b, foe, delta)
+		return true
 	# No solid cover nearby: keep moving instead of crouching in the open.
 	_bot_evade_move(b, foe.global_position, 6.4, delta)
 	return true
 
 const BOT_CLOSE_THREAT_RANGE := 12.0
 
+func _bot_tactical_dark(b: Dictionary) -> bool:
+	return _is_world_night() and (float(b.get("_night_watch_t", 0.0)) > 0.0 \
+		or _sensed_node(b, "_s_foe") != null \
+		or (Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 5000 \
+			and is_ranged_threat_weapon(str(b.get("_last_hit_weapon", "")))))
+
+func _bot_start_night_watch(b: Dictionary, sound_pos: Vector3) -> void:
+	if not _is_world_night() or sound_pos == Vector3.INF:
+		return
+	b["_night_watch_t"] = 8.0
+	b["_night_watch_pos"] = sound_pos
+	b["flashlight_on"] = false
+	b["torch_lit"] = false
+	b["sleeping"] = false
+	var proxy: Node3D = b["proxy"]
+	proxy.set_meta("flashlight_on", false)
+	proxy.set_meta("torch_lit", false)
+
+# Darkness is useful concealment, not night vision. Listen facing the last
+# audible clue and acquire a real visible enemy through the normal senses.
+func _bot_night_watch_tick(b: Dictionary, delta: float) -> bool:
+	if not _is_world_night() or float(b.get("_night_watch_t", 0.0)) <= 0.0:
+		return false
+	if _bot_night_supply_emergency(b) or _bot_is_freezing(b):
+		return false
+	if Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 5000:
+		return false
+	var predator := _sensed_node(b, "_s_predator")
+	if predator != null and InterruptionManager.predator_demands_response(b, predator):
+		return false
+	var proxy: Node3D = b["proxy"]
+	var foe := _sensed_node(b, "_s_foe")
+	if foe != null and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)):
+		return false
+	var point: Vector3 = b.get("_night_watch_pos", Vector3.INF)
+	if point == Vector3.INF:
+		return false
+	b["sitting"] = false
+	b["sleeping"] = false
+	b["prone"] = false
+	b["crouching"] = true
+	b["is_aiming"] = false
+	b["torch_lit"] = false
+	b["flashlight_on"] = false
+	var weapon := _best_weapon_name(proxy)
+	b["held_item"] = weapon
+	b["has_rifle"] = weapon in ["Fusil de asalto", "Rifle francotirador"]
+	proxy.set_meta("saved_held_item", weapon)
+	proxy.set_meta("torch_lit", false)
+	proxy.set_meta("flashlight_on", false)
+	proxy.set_meta("crouching", true)
+	_stop_bot_motion(b)
+	_bot_face_combat_point(b, point, delta)
+	b["_act"] = "night_watch"
+	return true
+
 func _bot_can_hide_from(spot: Vector3, foe: Node3D) -> bool:
 	return spot != Vector3.INF and (spot.distance_to(foe.global_position) > BOT_CLOSE_THREAT_RANGE \
 		or not _has_clear_shot(spot, foe.global_position))
 
 func _bot_listen_for_shots(b: Dictionary, delta: float = 0.016) -> bool:
+	if _bot_night_watch_tick(b, delta):
+		return true
 	if float(b.get("_shot_alert_t", 0.0)) <= 0.0:
 		return false
 	var proxy: Node3D = b["proxy"]
@@ -5984,6 +6146,12 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 		var d := proxy.global_position.distance_to(sound_pos)
 		if d > radius:
 			continue
+		var same_team := actor_id > 0 and (actor_id == int(b.get("team_leader_id", 0)) or actor_id in _bot_team_ids(b))
+		var truce := actor_id > 0 and actor_id == int(b.get("_truce_peer", 0)) and float(b.get("_truce_t", 0.0)) > 0.0
+		if not same_team and not truce and not (actor_id <= 0 and kind == "door" and d < 2.0):
+			_bot_start_night_watch(b, sound_pos)
+			if _is_world_night():
+				b["sense_t"] = 0.0
 		var keep_gunshot_clue := kind == "bullet_crack" and str(b.get("last_heard_kind", "")) == "gunshot" \
 				and float(b.get("last_heard_until", 0.0)) > now_s
 		if not keep_gunshot_clue:
@@ -6014,8 +6182,7 @@ func notify_sound_event(actor_id: int, sound_pos: Vector3, kind: String, radius:
 				# Y no espera al ciclo de sentidos: la maniobra arranca ya.
 				b["sense_t"] = 0.0
 			var my_faction := str(b.get("faction", "hostile"))
-			var same_team := actor_id > 0 and (actor_id == int(b.get("team_leader_id", 0)) or actor_id in _bot_team_ids(b))
-			if same_team or (actor_id > 0 and actor_id == int(b.get("_truce_peer", 0)) and float(b.get("_truce_t", 0.0)) > 0.0):
+			if same_team or truce:
 				continue
 			var shooter_faction := str(bots[actor_id].get("faction", "hostile")) if bots.has(actor_id) else "friendly"
 			var shooter_hostile := shooter_faction != my_faction or (actor_id <= 0 and my_faction == "hostile")
@@ -6341,10 +6508,13 @@ func _bot_combat_step(b: Dictionary, foe: Node3D, delta: float) -> void:
 		st = {"target": foe.get_instance_id(), "t": 0.0, "phase": "hold", "side": 1.0 if int(b["bot_id"]) % 2 == 0 else -1.0}
 	st["last"] = now
 	st["t"] = maxf(0.0, float(st.get("t", 0.0)) - delta)
+	var distance_now := proxy.global_position.distance_to(foe.global_position)
+	if distance_now < 4.0 and str(st.get("phase", "")) == "hold":
+		st["t"] = 0.0
 	if float(st["t"]) <= 0.0:
 		if str(st.get("phase", "")) == "move":
 			st["phase"] = "hold"
-			st["t"] = 0.9 + float(int(b["bot_id"]) % 4) * 0.15
+			st["t"] = randf_range(0.9, 1.35)
 			st["side"] = -float(st["side"])
 		else:
 			var forward := foe.global_position - proxy.global_position
@@ -6356,19 +6526,21 @@ func _bot_combat_step(b: Dictionary, foe: Node3D, delta: float) -> void:
 			for sign_side in [float(st["side"]), -float(st["side"])]:
 				var offset: Vector3 = side * float(sign_side) * 2.4
 				if distance < 8.0:
-					offset = (-forward + side * sign_side * 0.45).normalized() * 2.4
+					offset = (-forward + side * sign_side * 0.45).normalized() * clampf(9.0 - distance, 2.4, 5.0)
 				var point: Vector3 = proxy.global_position + offset
 				point.y = _ground_y(point.x, point.z, proxy.global_position.y)
 				if absf(point.y - proxy.global_position.y) <= 0.65 and not _is_goal_blacklisted(b, point) and not _is_step_blocked(proxy.global_position, point):
 					goal = point
 					break
 			st["goal"] = goal
+			st["retreat"] = distance < 8.0
 			st["phase"] = "move" if goal != Vector3.INF else "hold"
 			st["t"] = 0.85 if goal != Vector3.INF else 0.6
 	b["_combat_step"] = st
 	if str(st["phase"]) == "move" and proxy.global_position.distance_to(st["goal"]) > 0.3:
 		var facing := float(b.get("rot", proxy.rotation.y))
-		_move_bot_towards(b, st["goal"], 2.6, delta, "walk")
+		var retreat := bool(st.get("retreat", false))
+		_move_bot_towards(b, st["goal"], 6.2 if retreat else 2.6, delta, "run" if retreat else "walk")
 		b["rot"] = facing # el torso sigue al rival, no al paso lateral
 	else:
 		_stop_bot_motion(b)
@@ -6434,23 +6606,15 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		_bot_seek_ballistic_cover(b, foe, delta)
 		return
 
-	if wkind == "rifle" and dist > 3.5 and dist <= 48.0:
+	if wkind == "rifle" and dist > 1.0 and dist <= 48.0:
 		b["is_aiming"] = clear_los
-		# Si el objetivo está lejos o tras un muro/puerta/planta sin línea de
-		# tiro limpia, avanzar hacia él (abriendo puertas/subiendo escaleras) en
-		# lugar de quedarse strafeando enganchado contra la pared exterior.
-		if dist > 26.0 or not clear_los:
-			# Tiro largo (26-48 m) con linea limpia: se arrodilla en vez de
-			# correr a quemarropa — la postura sentada estabiliza la mira
-			# (0.28 vs 1.0 de dispersion) como hace un jugador humano.
-			if clear_los:
-				_stop_bot_motion(b)
-				b["sitting"] = true
-				_bot_face_combat_point(b, fpos, delta)
-			else:
-				_move_bot_towards(b, fpos, 6.4, delta, "run")
+		if not clear_los:
+			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		else:
 			_bot_combat_step(b, foe, delta)
+			# Stabilize long shots only during the firing pause, never sit
+			# indefinitely in the open while the player lines up another shot.
+			b["crouching"] = dist > 26.0 and not _bot_is_moving(b)
 		# Evaluar la mira después del movimiento y la postura de este tick.
 		var aim_err := _bot_aim_tick(b, foe, dist, clear_los, delta, "m4" if _bot_gun_is_m4(weapon) else "sniper")
 		# El gatillo pide mira asentada (tiempo de adquisicion) y alineada
@@ -15768,6 +15932,8 @@ func _bot_supply_goal_allowed(b: Dictionary, goal: Vector3) -> bool:
 # Returns true while preparing light or unable to leave safely.
 func _bot_prepare_night_supplies(b: Dictionary, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
+	if _bot_tactical_dark(b):
+		return _bot_night_watch_tick(b, delta)
 	if _bot_has_headlamp_worn(b):
 		b.erase("_night_emergency_origin")
 		b["flashlight_on"] = true
@@ -20612,6 +20778,7 @@ func get_full_web_status() -> Dictionary:
 		snap["clothing"] = str(b.get("clothing", ""))
 		snap["backpack"] = str(b.get("backpack", ""))
 		snap["torch_lit"] = bool(b.get("torch_lit", false))
+		snap["flashlight_on"] = bool(b.get("flashlight_on", false))
 		snap["sick"] = float(b.get("sick_timer", 0.0)) > 0.0
 		snap["crouching"] = bool(b.get("crouching", false))
 		snap["sitting"] = bool(b.get("sitting", false))
