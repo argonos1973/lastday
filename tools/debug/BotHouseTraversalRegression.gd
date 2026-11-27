@@ -160,6 +160,40 @@ func city_drink_escape(city: Node3D) -> void:
 	check(c3_descended, "city_03 upper floor: critical thirst descends the stairs")
 	check(float(b["thirst"]) >= 95.0 or c3_min_dist < 4.0,
 		"city_03 upper floor: critical thirst reaches the fountain after descending (min_d=%.2f thirst=%.1f)" % [c3_min_dist, float(b["thirst"])])
+	# Carlos's later death occurred only half a metre away, on the room side
+	# of the solid partition at local z=-1.0. The old (-1.5,-1.2) waypoint
+	# crossed that wall; the actual opening spans x=-3.5..-2.1.
+	var c3wall := city03.to_global(Vector3(-1.7, 3.92, -0.8))
+	b.proxy.global_position = c3wall
+	b.proxy.set_meta("saved_pos", c3wall)
+	b["pos"] = c3wall
+	b.erase("_last_step_block")
+	manager._move_bot_towards(b, city03.to_global(Vector3(-1.5, 3.92, -1.2)), 6.2, .05, "run")
+	var blocked_step: Dictionary = b.get("_last_step_block", {})
+	check(blocked_step.get("collider") == "Solid_Building_col" and blocked_step.get("steered", false),
+		"city_03 partition: successful sideways steering still records the original blocking wall")
+	b.proxy.global_position = c3wall
+	b.proxy.set_meta("saved_pos", c3wall)
+	b["pos"] = c3wall
+	b["thirst"] = 7.0
+	b["hunger"] = 50.0
+	b["sleep"] = 23.0
+	b["energy"] = 85.0
+	b["drink_at"] = Vector3(38, 0, 721)
+	b["drink_walk_t"] = 0.0
+	b["_bad_water"] = []
+	b["path"] = []
+	var c3wall_descended := false
+	for tick in 1200:
+		manager._tick_bot(b, .05)
+		if b.proxy.global_position.y < 1.0:
+			c3wall_descended = true
+		if float(b["thirst"]) >= 95.0:
+			break
+		if tick % 3 == 0: await physics_frame
+	check(c3wall_descended, "city_03 partition pocket: thirst escape descends through the real opening")
+	check(float(b["thirst"]) >= 95.0,
+		"city_03 partition pocket: drinks before dehydration (pos=%s thirst=%.1f)" % [b.proxy.global_position, float(b["thirst"])])
 	# Elena died dehydrated on the ground floor of city_11 (rotated PI) while
 	# nominally drinking. The full decision tick must leave that exact ground-floor
 	# pocket too; a static movement-only traversal is not sufficient coverage.

@@ -241,6 +241,7 @@ func run() -> void:
 	# stale peer_id — it must be rebound, not duplicated into a bare proxy.
 	var stale := Node3D.new()
 	stale.set_meta("client_id", "cid_stale")
+	stale.set_meta("client_live", true)
 	stale.set_meta("saved_clothing", "Camiseta,Pantalones")
 	stale.set_meta("saved_inventory", [{"name": "Cuerda"}])
 	world.add_child(stale)
@@ -253,6 +254,7 @@ func run() -> void:
 	world._match_proxy_to_client(60, "cid_stale")
 	check(not world.server_proxies.has(50), "stale peer_id proxy removed on rebind")
 	check(world.server_proxies.get(60) == stale, "reconnect rebinds existing proxy to new peer_id")
+	check(not stale.get_meta("client_live", true), "rebound proxy waits for the new client's accepted position")
 	check(str(stale.get_meta("saved_clothing", "")) == "Camiseta,Pantalones", "rebound proxy keeps saved clothing")
 	check(not is_instance_valid(dupe) or dupe.is_queued_for_deletion(), "fresh duplicate proxy freed on rebind")
 
@@ -387,6 +389,36 @@ func run() -> void:
 	check(not world.server_proxies.has(77), "offline peer does not respawn a ghost proxy")
 	check(not offproxy.get_meta("proxy_dead", false), "offline proxy does not starve to death")
 	check(float(offproxy.get_meta("saved_hunger", 100.0)) > 99.0, "offline proxy hunger decays very slowly")
+
+	# Sending spawn/restore is not proof that the client has finished loading.
+	# A registration placeholder must not move the proxy or expose it to wolves
+	# if loading takes longer than the initial 30-second protection timer.
+	var loading_id := 777
+	net.players[loading_id] = {"pos": Vector3(8.0, 0.4, 2.5), "offline": false}
+	world._spawn_server_proxy(loading_id)
+	var loading_proxy: Node3D = world.server_proxies[loading_id]
+	var assigned_spawn := Vector3(85.0, 0.4, -180.0)
+	loading_proxy.global_position = assigned_spawn
+	loading_proxy.set_meta("reconnecting", false)
+	world._update_server_proxies(40.0)
+	check(not loading_proxy.get_meta("has_real_pos", false),
+		"registration placeholder is not a real client position after slow loading")
+	check(loading_proxy.global_position == assigned_spawn,
+		"slow loading preserves the server-assigned spawn")
+	check(world._is_wolf_victim_protected(assigned_spawn, loading_proxy),
+		"slow-loading player remains protected after the initial timer expires")
+	# The accepted position RPC marks the client live; normal updates and
+	# vulnerability must then resume rather than freezing protection forever.
+	loading_proxy.set_meta("client_live", true)
+	world._update_server_proxies(0.1)
+	check(loading_proxy.get_meta("has_real_pos", false)
+		and loading_proxy.global_position == net.players[loading_id]["pos"],
+		"live client's accepted position reaches the server proxy")
+	check(not world._is_wolf_victim_protected(loading_proxy.global_position, loading_proxy),
+		"active player with expired grace is vulnerable at the village spawn")
+	net.players.erase(loading_id)
+	world.server_proxies.erase(loading_id)
+	loading_proxy.free()
 
 	# --- Server world-state restore (post-restart, no visuals spawned) ---
 	sgm.save_server_game({

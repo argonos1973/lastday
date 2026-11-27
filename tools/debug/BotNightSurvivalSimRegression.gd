@@ -917,6 +917,31 @@ func _s29() -> void:
 	check(escaped, "S29 el bot sale de verdad a tierra seca (pos=%s depth=%.2f)" % [str((b["proxy"] as Node3D).global_position), world.get_river_depth_at((b["proxy"] as Node3D).global_position)])
 	mgr._tick_bot(b, 0.1)
 	check(not b.has("_water_escape"), "S29 el compromiso de escape se limpia en seco")
+	# Production also has the dry A* graph. Its nearest-free-cell projection
+	# must not redirect an already-submerged bot away from its chosen shore.
+	# Carlos died around (-18.8,-61.5) while repeating water_escape.
+	for native_nav in [false, true]:
+		world.bot_nav = world._new_nav_pathfinding() if native_nav else NavPathfinding.new()
+		world.bot_dry_nav = world._new_nav_pathfinding() if native_nav else NavPathfinding.new()
+		for pair in [[world.bot_nav, Callable(world, "_is_bot_river_ford")],
+				[world.bot_dry_nav, Callable(world, "_is_bot_river_dry_cell")]]:
+			if pair[0].has_method("build_with_ford"):
+				pair[0].build_with_ford([], world.river_segs, pair[1])
+			else:
+				pair[0].build([], world.river_segs, pair[1])
+		for start in [Vector3(-18.8, .4, -61.5), Vector3(-16.4, .4, -63.4)]:
+			_place_bot(b, start, {"body_temperature": 33.7, "wetness": 1.0, "sleep": 55.0, "hunger": 79.0, "thirst": 72.0, "inventory": []})
+			b.erase("_water_escape")
+			b["path"] = []
+			b["path_timer"] = 0.0
+			var reached_bank := false
+			for tick in 300:
+				mgr._tick_bot(b, .1)
+				if world.get_river_depth_at(b.proxy.global_position) <= 0.05:
+					reached_bank = true
+					break
+			check(reached_bank, "S29 sale del cauce suroeste con grafo seco (native=%s start=%s pos=%s depth=%.2f)" %
+				[native_nav, start, b.proxy.global_position, world.get_river_depth_at(b.proxy.global_position)])
 
 func _s28() -> void:
 	print("S28: sed aprendida rompe la formacion antes del borde letal")

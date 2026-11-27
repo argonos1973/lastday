@@ -21,6 +21,10 @@ class ProbeNet extends "res://scripts/NetworkManager.gd":
 			_register_player.rpc_id(1, my_id, players[my_id]["name"], client_id, _join_password)
 		connection_succeeded.emit()
 
+class World extends Node3D:
+	var server_proxies: Dictionary = {}
+	var _boats: Dictionary = {}
+
 var failures := 0
 
 func check(ok: bool, label: String) -> void:
@@ -80,6 +84,35 @@ func _run() -> void:
 	for pid in legit.players.keys():
 		check(not (legit.players[pid] is Dictionary and legit.players[pid].has("client_id")), "broadcast list leaks client_id of peer %d" % pid)
 	check(not phantom.players.has(1) and phantom.players.size() == 1, "phantom never received the player list")
+
+	# Ignored packets during restore must not start the gameplay grace period.
+	# The first accepted packet, rather than registration or restore delivery,
+	# is the authoritative transition from loading to a live character.
+	var world := World.new()
+	root.add_child(world)
+	current_scene = world
+	var proxy := Node3D.new()
+	world.add_child(proxy)
+	world.server_proxies[legit_id] = proxy
+	proxy.set_meta("reconnecting", true)
+	proxy.set_meta("client_live", false)
+	proxy.set_meta("protection_timer", 0.0)
+	legit.sync_player_state.rpc_id(1, legit_id, Vector3(8, .4, 2.5), 0.0, "idle", "", "", "")
+	await create_timer(0.1).timeout
+	check(not proxy.get_meta("client_live", false), "ignored pre-restore packet does not mark client live")
+	check(proxy.get_meta("protection_timer") == 0.0, "ignored packet does not spend the gameplay grace")
+	proxy.set_meta("reconnecting", false)
+	legit.sync_player_state.rpc_id(1, legit_id, Vector3(9, .4, 2.5), 0.0, "run", "", "", "")
+	await create_timer(0.1).timeout
+	check(proxy.get_meta("client_live", false), "first accepted state marks the client live")
+	check(proxy.get_meta("protection_timer") == 30.0, "first accepted state starts full gameplay grace")
+	check(net.players[legit_id].pos == Vector3(9, .4, 2.5), "accepted state updates the authoritative position")
+	proxy.set_meta("protection_timer", 4.0)
+	legit.sync_player_state.rpc_id(1, legit_id, Vector3(10, .4, 2.5), 0.0, "run", "", "", "")
+	await create_timer(0.1).timeout
+	check(proxy.get_meta("protection_timer") == 4.0, "later packets cannot renew protection forever")
+	current_scene = null
+	world.free()
 
 	# --- Registration timeout kicks the phantom ---
 	await create_timer(net.REGISTRATION_TIMEOUT + 1.5).timeout

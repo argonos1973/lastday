@@ -3319,6 +3319,7 @@ func _match_proxy_to_client(peer_id: int, cid: String) -> bool:
 			existing.set_meta("client_id", cid)
 			existing.set_meta("disconnected", false)
 			existing.set_meta("reconnecting", true)
+			existing.set_meta("client_live", false)
 			existing.set_meta("protection_timer", 30.0)
 			existing.add_to_group("net_player_proxy")
 			server_proxies[peer_id] = existing
@@ -3433,8 +3434,9 @@ func _spawn_server_proxy(id: int) -> void:
 	proxy.position = _get_random_spawn_pos()
 	# Store peer_id as metadata
 	proxy.set_meta("peer_id", id)
-	# Spawn protection: wolves won't target this proxy for 20 seconds
+	# The first accepted position packet starts the 30-second gameplay grace.
 	proxy.set_meta("protection_timer", 30.0)
+	proxy.set_meta("client_live", false)
 	proxy.set_meta("has_real_pos", false)
 	proxy.set_meta("disconnected", false)
 	proxy.set_meta("reconnecting", true)
@@ -5495,13 +5497,14 @@ func _update_server_proxies(delta: float) -> void:
 		# Only update proxy position if client has sent real position data;
 		# while reconnecting, players[pid]["pos"] is still the SPAWN_POS
 		# placeholder written at register and must not stomp the restored pos.
-		if data.has("pos") and not proxy.get_meta("reconnecting", false):
+		var client_ready := bool(proxy.get_meta("client_live", false)) and not bool(proxy.get_meta("reconnecting", false))
+		if data.has("pos") and client_ready:
 			proxy.set_meta("has_real_pos", true)
 			proxy.global_position = data["pos"]
 			proxy.set_meta("in_built_shelter", _is_near_built_shelter(proxy.global_position))
-		if data.has("held_item") and not proxy.get_meta("reconnecting", false):
+		if data.has("held_item") and client_ready:
 			proxy.set_meta("saved_held_item", str(data["held_item"]))
-		if not proxy.get_meta("reconnecting", false):
+		if client_ready:
 			proxy.set_meta("prone", bool(data.get("prone", false)))
 			proxy.set_meta("crouching", bool(data.get("crouching", false)))
 			proxy.set_meta("torch_lit", bool(data.get("torch_lit", false)))
@@ -16323,6 +16326,14 @@ func _is_pos_wolf_protected(pos: Vector3) -> bool:
 # freshly spawned/loading victim or a parked disconnected body. Otherwise the
 # overlapping village spawn zones make wolves harmless for the whole game.
 func _is_wolf_victim_protected(pos: Vector3, victim: Node) -> bool:
+	# A sent restore/spawn packet can still be buffered on the loading screen.
+	# Only an accepted state packet makes a connected human playable. Keep a
+	# reconnecting body safe at its saved location too, including outside spawn.
+	if is_instance_valid(victim) and victim.is_in_group("net_player_proxy") \
+			and victim.has_meta("client_live") and not bool(victim.get_meta("client_live")) \
+			and not bool(victim.get_meta("disconnected", false)) \
+			and not bool(victim.get_meta("is_ai_bot", false)):
+		return true
 	if _is_player_in_house(pos) or _is_near_built_shelter(pos):
 		return true
 	if not _is_pos_in_spawn_wolf_safe_radius(pos):

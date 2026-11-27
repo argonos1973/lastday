@@ -13813,9 +13813,14 @@ func _resolve_city_building_waypoint(b: Dictionary, cur: Vector3, goal: Vector3,
 				if lc.z > -0.9:
 					if lc.x > 0.8 and lc.z < 0.25:
 						return b_origin + Vector3(2.4, 3.92, 0.4).rotated(Vector3.UP,yaw)
-					if lc.x > -0.8:
-						return b_origin + Vector3(-1.0, 3.92, 0.4).rotated(Vector3.UP,yaw)
-					return b_origin + Vector3(-1.5, 3.92, -1.2).rotated(Vector3.UP,yaw)
+					# The partition at z=-1 spans x=-2.1..2.9. Its doorway
+					# is west, x=-3.5..-2.1; x=-1.5 is solid wall.
+					if lc.x > -2.5:
+						return b_origin + Vector3(-2.8, 3.92, 0.4).rotated(Vector3.UP,yaw)
+					return b_origin + Vector3(-2.8, 3.92, -1.8).rotated(Vector3.UP,yaw)
+				# Clear the far jamb before turning east along the corridor.
+				if lc.x < -2.1 and lc.z > -1.45:
+					return b_origin + Vector3(-2.8, 3.92, -1.8).rotated(Vector3.UP,yaw)
 				if lc.x < 2.3:
 					return b_origin + Vector3(2.5, 3.92, -1.45).rotated(Vector3.UP,yaw)
 				if lc.x < 3.1 or lc.z > -1.9:
@@ -14551,13 +14556,16 @@ func _move_bot_towards_impl(b: Dictionary, raw_goal: Vector3, speed: float, delt
 			b["path_timer"] = maxf(float(b["path_timer"]), 0.8)
 	# Si todos los tanteos fallan, no aplicar el paso frontal que ya sabemos
 	# bloqueado. Conservar el detector de atasco para que busque otra ruta.
+	if not step_diag.is_empty():
+		# A successful sideways probe can still oscillate forever against the
+		# same wall. Preserve the original obstacle even when steering moves.
+		step_diag["t"] = Time.get_unix_time_from_system()
+		step_diag["act"] = str(b.get("_act", ""))
+		step_diag["waypoint"] = next_goal
+		step_diag["raw_goal"] = raw_goal
+		step_diag["steered"] = not front_blocked
+		b["_last_step_block"] = step_diag
 	if front_blocked:
-		if not step_diag.is_empty():
-			step_diag["t"] = Time.get_unix_time_from_system()
-			step_diag["act"] = str(b.get("_act", ""))
-			step_diag["waypoint"] = next_goal
-			step_diag["raw_goal"] = raw_goal
-			b["_last_step_block"] = step_diag
 		new_pos = cur
 	elif anim_name == "run" and not in_building_3d and world != null and world.has_method("get_river_depth_at"):
 		# The first step off the bank starts dry; check the actual (possibly
@@ -20484,7 +20492,8 @@ func get_full_web_status() -> Dictionary:
 			var step_out: Dictionary = nb.get("step", {})
 			if not step_out.is_empty():
 				var sd := {"branch": str(step_out.get("branch", "")), "collider": str(step_out.get("collider", "")),
-					"collider_type": str(step_out.get("collider_type", "")), "layer": int(step_out.get("layer", 0))}
+					"collider_type": str(step_out.get("collider_type", "")), "layer": int(step_out.get("layer", 0)),
+					"steered": bool(step_out.get("steered", false))}
 				for sk in ["from", "to", "hit", "normal", "waypoint", "raw_goal"]:
 					var sv = step_out.get(sk)
 					if sv is Vector3:
