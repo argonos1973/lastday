@@ -141,7 +141,7 @@ func check_routes(source: World) -> int:
  for arg in OS.get_cmdline_user_args():
   if arg.begins_with("--only-loot="):
    cases = cases.filter(func(c): return str(c[0]) == arg.trim_prefix("--only-loot="))
- if "--water-exit-only" in OS.get_cmdline_user_args():
+ if "--water-exit-only" in OS.get_cmdline_user_args() or "--slope-food-only" in OS.get_cmdline_user_args():
   cases = []
  await physics_frame
  await physics_frame
@@ -241,12 +241,14 @@ func check_routes(source: World) -> int:
    b.proxy.global_position = Vector3(-400, 0, 1)
    stats.free()
   if "--water-exit-only" in OS.get_cmdline_user_args() or OS.get_cmdline_user_args().is_empty():
-   errors += await check_valley_drink(world, manager, template, native_nav)
+   errors += await check_mountain_supply(world, manager, template, native_nav, false)
+  if "--slope-food-only" in OS.get_cmdline_user_args() or OS.get_cmdline_user_args().is_empty():
+   errors += await check_mountain_supply(world, manager, template, native_nav, true)
  world.free()
  net.free()
  return errors
 
-func check_valley_drink(world, manager, template: Dictionary, native_nav: bool) -> int:
+func check_mountain_supply(world, manager, template: Dictionary, native_nav: bool, food_case: bool) -> int:
  var b: Dictionary = template.duplicate(true)
  var stats := SurvivalStats.new()
  manager.add_child(stats)
@@ -257,33 +259,45 @@ func check_valley_drink(world, manager, template: Dictionary, native_nav: bool) 
  manager.bots[901] = b
  b["ai_directive"] = {}
  b["proxy"].global_position = Vector3(-247.6, .6, -268.9)
+ if food_case:
+  b["proxy"].global_position = Vector3(-265.7, manager._ground_y(-265.7,-270.9), -270.9)
  b["proxy"].set_meta("proxy_dead", false)
  b["proxy"].set_meta("proxy_health", 100.0)
  b["proxy"].set_meta("saved_inventory", [])
  b["proxy"].set_meta("saved_extra", {})
  b["pos"] = b["proxy"].global_position
  b["health"] = 100.0
- b["hunger"] = 90.0
- b["thirst"] = 22.0
- b["drink_at"] = Vector3(-158, .025, -137)
- var water_id := "valley_exit_water_%s" % native_nav
- var water = world._create_world_action(water_id, "drink_water", "Agua del valle",
-  b["drink_at"] + Vector3.UP * .9, Vector3(4.6, 1.7, 4.6), Color.TRANSPARENT, true, false)
- water.set_meta("drink_source", "de la fuente")
- water.set_meta("water_reach", 2.8)
+ b["hunger"] = 22.0 if food_case else 90.0
+ b["thirst"] = 90.0 if food_case else 22.0
+ var supply_id := ("slope_food_" if food_case else "valley_water_") + str(native_nav)
+ var supply
+ if food_case:
+  var food_pos := Vector3(-294, manager._ground_y(-294,-280), -280)
+  supply = world._create_world_action(supply_id, "eat_food", "Manzana",
+   food_pos, Vector3.ONE * .2, Color.TRANSPARENT, false, false)
+  supply.set_meta("item_name", "Manzana")
+  supply.set_meta("item_use_value", 12.0)
+ else:
+  b["drink_at"] = Vector3(-158, .025, -137)
+  supply = world._create_world_action(supply_id, "drink_water", "Agua del valle",
+   b["drink_at"] + Vector3.UP * .9, Vector3(4.6, 1.7, 4.6), Color.TRANSPARENT, true, false)
+  supply.set_meta("drink_source", "de la fuente")
+  supply.set_meta("water_reach", 2.8)
  world._dropped_items.clear()
  await physics_frame
+ var supplied := false
  for tick in 2500:
   manager._tick_bot(b, .05)
-  if float(b["thirst"]) >= 95.0 or bool(b["proxy"].get_meta("proxy_dead", false)):
+  supplied = world._depleted_action_ids.has(supply_id) if food_case else float(b["thirst"]) >= 95.0
+  if supplied or bool(b["proxy"].get_meta("proxy_dead", false)):
    break
   if tick % 3 == 0: await physics_frame
  var alive := not bool(b["proxy"].get_meta("proxy_dead", false))
- var valid: bool = alive and float(b["thirst"]) >= 95.0 and b.get("_unreachable", []).is_empty()
- print("VALLEY_DRINK native=%s alive=%s hp=%.1f thirst=%.1f pos=%s valid=%s" %
-  [native_nav, alive, b["health"], b["thirst"], b["proxy"].global_position, valid])
- world.world_actions_by_id.erase(water_id)
- water.queue_free()
+ var valid: bool = alive and supplied and b.get("_unreachable", []).is_empty()
+ print("MOUNTAIN_SUPPLY food=%s native=%s alive=%s hp=%.1f hunger=%.1f thirst=%.1f pos=%s valid=%s" %
+  [food_case, native_nav, alive, b["health"], b["hunger"], b["thirst"], b["proxy"].global_position, valid])
+ world.world_actions_by_id.erase(supply_id)
+ if is_instance_valid(supply): supply.queue_free()
  stats.free()
  b["proxy"].global_position = Vector3(-400, 0, 1)
  return 0 if valid else 1

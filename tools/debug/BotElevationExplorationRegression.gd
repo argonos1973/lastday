@@ -109,6 +109,23 @@ func run() -> void:
 		thirsty["_act"] = "drink"
 		thirsty["drink_at"] = water
 		travel(thirsty,water,"Carlos leaves the mountain approach to drink at %s" % water,2500)
+	for leg in [[Vector2(-265.7,-270.9), Vector2(-294,-280)],
+			[Vector2(-268.8,-256.2), Vector2(-37,24)],
+			[Vector2(-247.6,-268.9), Vector2(-265,-277)]]:
+		var start: Vector2 = leg[0]
+		var finish: Vector2 = leg[1]
+		actor.position = Vector3(start.x,mgr._ground_y(start.x,start.y),start.y)
+		var forager := bot()
+		forager["_act"] = "forage"
+		var food := Vector3(finish.x,mgr._ground_y(finish.x,finish.y),finish.y)
+		travel(forager,food,"Kael forage interruption %s -> %s" % [start,finish],2500)
+	actor.position = Vector3(-252,.835,-268)
+	var intermediate := bot()
+	var road := HighMountainZone.get_road_polyline_3d()
+	for fraction in [.75, .65, .85]:
+		var point: Vector3 = road[int(float(road.size() - 1) * fraction)]
+		point.y = mgr._ground_y(point.x,point.z)
+		travel(intermediate,point,"intermediate mountain road destination %.2f" % fraction,5000)
 	var pois := mgr._explore_pois()
 	var roofs := 0
 	var regions := {}

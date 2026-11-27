@@ -14306,9 +14306,10 @@ func _seg2d_crosses_rect_wall(pa: Vector2, pb: Vector2, r: Rect2, gaps: Array) -
 # entrada sureste de la base (-356, 56, -356).
 func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 	var on_summit_cur: bool = Vector2(cur.x, cur.z).distance_to(HighMountainZone.SUMMIT_CENTER) < 38.0 and cur.y >= 55.0
-	var goal_is_summit: bool = goal.x < -290.0 and goal.z < -290.0 and goal.y >= 20.0
+	var goal_is_summit: bool = Vector2(goal.x, goal.z).distance_to(HighMountainZone.SUMMIT_CENTER) < 38.0 and goal.y >= 55.0
+	var goal_on_mountain: bool = goal.x < -235.0 and goal.z < -235.0 and goal.y > 1.3
 	var on_road_slope: bool = not on_summit_cur and cur.x < -210.0 and cur.z < -210.0 and ((cur.x < -235.0 and cur.z < -235.0) or cur.y > 4.0)
-	if not goal_is_summit and not on_summit_cur and not on_road_slope:
+	if not goal_on_mountain and not on_summit_cur and not on_road_slope:
 		return goal
 	if on_summit_cur and goal_is_summit:
 		return goal
@@ -14323,6 +14324,31 @@ func _resolve_mountain_road_waypoint(cur: Vector3, goal: Vector3) -> Vector3:
 			foot_d = d
 			foot_idx = i
 	var top_idx := pts.size() - 1 # (-356.0, 56.0, -356.0) puerta sureste de la base
+	if goal_on_mountain and not goal_is_summit:
+		# Comida/botin en una ladera intermedia no significa bajar al valle.
+		# Seguir la carretera en el sentido del destino, y abandonarla junto
+		# a ese tramo; alcanzar siempre la cima o el pie crea un pendulo.
+		if not on_road_slope and not on_summit_cur and Vector2(cur.x - pts[foot_idx].x, cur.z - pts[foot_idx].z).length() > 14.0:
+			return pts[foot_idx]
+		if on_summit_cur and Vector2(cur.x - pts[top_idx].x, cur.z - pts[top_idx].z).length() > 8.0:
+			return pts[top_idx]
+		var cur_i := foot_idx
+		var goal_i := foot_idx
+		var cur_score := INF
+		var goal_score := INF
+		for i in range(foot_idx, pts.size()):
+			var point: Vector3 = pts[i]
+			var cd := Vector2(cur.x - point.x, cur.z - point.z).length() + absf(cur.y - point.y) * 2.5
+			var gd := Vector2(goal.x - point.x, goal.z - point.z).length() + absf(goal.y - point.y) * 2.5
+			if cd < cur_score:
+				cur_score = cd
+				cur_i = i
+			if gd < goal_score:
+				goal_score = gd
+				goal_i = i
+		if absi(cur_i - goal_i) <= 1:
+			return goal
+		return pts[mini(cur_i + 3, goal_i)] if cur_i < goal_i else pts[maxi(cur_i - 3, goal_i)]
 	if goal_is_summit:
 		# Ascenso: desde el valle ir primero al pie de la carretera (foot_idx)
 		if not on_road_slope and Vector2(cur.x - pts[foot_idx].x, cur.z - pts[foot_idx].z).length() > 14.0:
