@@ -20323,6 +20323,17 @@ func _ai_load_memory() -> void:
 					# permite que el enfriamiento temporal las erosione en minutos.
 					rel2["attacked"] = 6
 		_compact_known_locations(mem)
+		# Locations survive a fresh world, but its consumed pickups do not.
+		# Keep only depletion facts belonging to the world preloaded before
+		# setup(); a keep_world restart must retain the genuinely taken guns.
+		if world != null and "_depleted_action_ids" in world:
+			for location in (mem.get("known_locations", {}) as Dictionary).values():
+				if location is Dictionary and location.get("firearm_ids_taken") is Array:
+					var still_taken: Array = []
+					for loot_id in location["firearm_ids_taken"]:
+						if world._depleted_action_ids.has(loot_id):
+							still_taken.append(loot_id)
+					location["firearm_ids_taken"] = still_taken
 		_bot_apply_score_reset(mem)
 		var lp = sd.get("last_death_pos")
 		if lp is Array and (lp as Array).size() >= 3:

@@ -63,6 +63,46 @@ func capture(m, label: String) -> void:
 	snap["test_label"] = label
 	snapshots.append(snap)
 
+func check_world_loot_memory(m) -> void:
+	# Carlos remembered both eastern-tent guns as taken in an older world,
+	# so even a fresh server with rifles and magazines there rejected the raid.
+	var writer := Manager.new()
+	writer.force_memory_io = true
+	writer.memory_path = "res://build/tmp/gear-world-memory.json"
+	var mem: Dictionary = writer._ensure_bot_memory(902)
+	mem["score_reset_v"] = 1
+	mem["deaths"] = 244
+	mem["death_lessons"] = {"water": 3}
+	mem["known_locations"] = {
+		"military:460:0": {"id": "military:460:0", "kind": "military",
+			"pos": [460.0, 0.0, 0.0], "visits": 8,
+			"firearm_ids_taken": ["tent_loot_rifle", "tent_loot_m4"]},
+	}
+	writer._ai_save_memory()
+	writer._ai_flush_writes()
+	var previous_depleted: Array = m.world._depleted_action_ids.duplicate()
+	for depleted in [[], ["tent_loot_rifle"], ["tent_loot_rifle", "tent_loot_m4"]]:
+		m.world._depleted_action_ids = depleted.duplicate()
+		var restored := Manager.new()
+		restored.world = m.world
+		restored.memory_path = writer.memory_path
+		restored.force_memory_io = true
+		restored._ai_load_memory()
+		var saved: Dictionary = restored._ensure_bot_memory(902)
+		var base: Dictionary = saved.get("known_locations", {}).get("military:460:0", {})
+		check(base.get("firearm_ids_taken", []) == depleted,
+			"Reloaded depletion matches the current world, including keep-world restarts (%s)" % str(depleted))
+		check(saved.get("deaths") == 244 and int(saved.get("death_lessons", {}).get("water", 0)) == 3
+				and base.get("visits") == 8 and base.get("pos") == [460.0, 0.0, 0.0],
+			"World reset preserves learned locations, visits, deaths and survival lessons")
+		var actor := {"bot_id": 902, "proxy": m.bots[902].proxy, "_mem": saved}
+		var raid := {"action": "scavenge", "target": "military", "goal": "gear_up_at_military_base"}
+		check(Goals.bind_gear_target(restored, actor, raid) == (depleted.size() < 2),
+			"Actual raid binding can revisit renewed rifles but still skips a depleted base (%s)" % str(depleted))
+		restored.free()
+	m.world._depleted_action_ids = previous_depleted
+	writer.free()
+
 func verify_disk_resume(m, actor: Dictionary) -> void:
 	m.force_memory_io = true
 	m._ai_save_memory()
@@ -178,6 +218,7 @@ func run() -> void:
 	m.setup(world)
 	m.set_physics_process(false)
 	m.set_process(false)
+	check_world_loot_memory(m)
 	for id in m.bots:
 		reset_bot(m, m.bots[id], Vector3(int(id) * 0.1, 0.4, 10))
 	check_undiscovered_base(m)
