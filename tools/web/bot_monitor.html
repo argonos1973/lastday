@@ -1158,7 +1158,7 @@ function renderBots(data) {
         return `<details class="sec" data-sec id="sec_${b.bot_id}_death"><summary class="section-label">☠ Muertes (${b.deaths || 0})${nem.name ? ` · Némesis: ${esc(nem.name)} ×${nem.count}` : ""}</summary>
         <div class="decision-box" style="border-left-color:var(--danger)">
           ${lastBy || lastWp ? `<div class="meta-line">Última: ${lastBy ? `<b>${esc(lastBy)}</b> con ` : ""}<b>${esc(kindEs(lastWp))}</b>${b.last_death_unix ? ` · hace ${esc(timeAgo(Number(b.last_death_unix)))}` : ""}</div>` : ""}
-          ${dlog.slice().reverse().map(d2 => `<div class="meta-line" style="color:var(--muted)">— ${d2.by ? `Matado por <b>${esc(d2.by)}</b> · ` : ""}${esc(kindEs(d2.weapon || d2.kind || ""))}${d2.t ? ` · ${new Date(Number(d2.t) * 1000).toLocaleString()}` : ""}</div>`).join("")}
+          ${dlog.slice().reverse().map(d2 => `<div class="meta-line" style="color:var(--muted)">— ${d2.by ? `Matado por <b>${esc(d2.by)}</b> · ` : ""}${esc(kindEs(d2.weapon || d2.kind || ""))}${d2.weapon && d2.kind && d2.weapon !== d2.kind ? ` · causa final: ${esc(kindEs(d2.kind))}` : ""}${d2.t ? ` · ${new Date(Number(d2.t) * 1000).toLocaleString()}` : ""}</div>`).join("")}
         </div></details>`;
       })()}
 

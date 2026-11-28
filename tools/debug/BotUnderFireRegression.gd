@@ -31,6 +31,10 @@ class Arena extends Node3D:
 		shots += 1
 	func get_river_depth_at(_pos: Vector3) -> float: return 0.0
 
+class ColdManager extends FireManager:
+	func _nearest_safe_refuge(_b: Dictionary, _radius: float, _threat: Vector3 = Vector3.INF, _dry_roof_only := false) -> Vector3:
+		return Vector3.ZERO
+
 var errors := 0
 var checks := 0
 func check(ok: bool, message: String) -> void:
@@ -213,9 +217,89 @@ func test_night_watch() -> void:
 	check(not mgr._bot_tactical_dark(b), "daylight releases the night concealment policy")
 	arena.free()
 
+func test_cold_arrow_response() -> void:
+	var arena := SurvivalFixture.TestWorld.new()
+	root.add_child(arena)
+	var net := SurvivalFixture.FakeNet.new()
+	arena.add_child(net)
+	arena.net = net
+	var day := SurvivalFixture.FakeDayCycle.new()
+	arena.add_child(day)
+	arena.day_cycle = day
+	var mgr := ColdManager.new()
+	arena.add_child(mgr)
+	mgr.world = arena
+	mgr._spawn_bot(mgr.BOT_CONFIGS[2])
+	var b: Dictionary = mgr.bots[903]
+	var proxy: Node3D = b.proxy
+	proxy.position = Vector3.ZERO
+	var archer := Node3D.new()
+	arena.add_child(archer)
+	archer.position = Vector3(0, 0, -20)
+	archer.set_meta("saved_held_item", "Arco reforzado")
+	archer.set_meta("peer_id", 77)
+	arena.server_proxies[77] = archer
+	b["vstats"].body_temperature = 35.0
+	b["vstats"].sleep = 80.0
+	b["health"] = 80.0
+	b["hunger"] = 95.0
+	b["thirst"] = 95.0
+	proxy.set_meta("proxy_health", 80.0)
+	b["sitting"] = true
+	mgr.on_bot_damaged(903, 20.0, 77, "arco")
+	b["_s_foe"] = archer
+	b["sense_t"] = 100.0
+	var exposed_sits := 0
+	for i in 60:
+		mgr._tick_bot(b, 0.05)
+		if b.sitting and mgr._has_clear_shot(archer.position, proxy.position):
+			exposed_sits += 1
+	check(exposed_sits == 0 and proxy.position.length() > 1.0,
+		"cold bot hit by arrows leaves its exposed rest spot through the full decision loop")
+	check(b.get("_act") == "cover", "cold recovery does not override the incoming-arrow defence")
+	# Body arrows intentionally stop at 1 HP. Real subsequent cold damage
+	# must retain the attack that left the victim moribund, and its final cause.
+	for scenario in ["fresh", "expired", "no_damage_refresh", "healed"]:
+		mgr._respawn_bot(mgr.bots[903])
+		b = mgr.bots[903]
+		proxy = b.proxy
+		proxy.position = Vector3.ZERO
+		b["health"] = 20.0
+		proxy.set_meta("proxy_health", 20.0)
+		mgr.on_bot_damaged(903, 55.0, 77, "arco")
+		check(is_equal_approx(float(b.health), 1.0), "body-arrow nonlethal rule remains intact (%s)" % scenario)
+		if scenario in ["expired", "no_damage_refresh"] and b.has("_fatal_attack"):
+			b["_fatal_attack"]["t"] = Time.get_ticks_msec() - 11000
+		if scenario == "no_damage_refresh":
+			mgr.on_bot_damaged(903, 55.0, 77, "arco")
+		if scenario == "healed":
+			b["health"] = 20.0
+			proxy.set_meta("proxy_health", 20.0)
+			b["vstats"].body_temperature = 37.0
+			mgr._bot_survival_tick(b, 0.01)
+			b["health"] = 1.0
+			proxy.set_meta("proxy_health", 1.0)
+		b["vstats"].body_temperature = 34.0
+		b["vstats"].bleeding = 0.0
+		b["hunger"] = 95.0
+		b["thirst"] = 95.0
+		day.ambient_temp = 0.0
+		mgr._stop_bot_motion(b)
+		for tick in 30:
+			mgr._bot_survival_tick(b, 1.0)
+			if proxy.get_meta("proxy_dead", false):
+				break
+		var death: Dictionary = mgr._memory[903]
+		check(proxy.get_meta("proxy_dead", false) and death.get("last_death_cause") == "hypothermia",
+			"real cold tick retains the terminal cause (%s)" % scenario)
+		check((death.get("last_death_weapon") == "arco" and not str(death.get("last_death_killer", "")).is_empty()) == (scenario == "fresh"),
+			"monitor credits only a recent unrecovered near-fatal arrow (%s)" % scenario)
+	arena.free()
+
 func run() -> void:
 	await test_armed_response()
 	test_night_watch()
+	test_cold_arrow_response()
 	# -- 1) Serpentina impredecible: los quiebros no siguen el reloj de 900 ms
 	var mgr := FireManager.new()
 	var p1 := Node3D.new()

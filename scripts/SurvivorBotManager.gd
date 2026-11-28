@@ -5985,6 +5985,14 @@ func _bot_try_cold_disengage(b: Dictionary, delta: float) -> bool:
 		threat_pos = _bot_threat_direction_pos(b)
 	if threat_pos == Vector3.INF:
 		return false
+	# A roof can be warm while its doorway still exposes the bot to arrows.
+	# Do not return to sitting at that thermal refuge during incoming fire.
+	var ranged_hit := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) < 5000 \
+		and is_ranged_threat_weapon(str(b.get("_last_hit_weapon", "")))
+	if ranged_hit or (foe != null and _actor_holds_ranged(foe)):
+		var clue := _bot_threat_direction_pos(b)
+		b["_act"] = "cover"
+		return _bot_seek_cover_from_pos(b, clue if clue != Vector3.INF else threat_pos, delta)
 	# Desenganche real: deja de apuntar/perseguir y declara la huida para que
 	# otras ramas no lo devuelvan al intercambio en el mismo tramo crítico.
 	b["aggro_target"] = null
@@ -7532,6 +7540,10 @@ func on_bot_damaged(bot_id: int, amount: float, attacker_id: int, weapon: String
 	b["health"] = hp
 	proxy.set_meta("proxy_health", hp)
 	proxy.set_meta("saved_health", hp)
+	if hp < prev_hp:
+		b.erase("_fatal_attack")
+		if hp <= 1.0 and attacker_id > 0 and _bot_survivor_combat_cause(weapon):
+			b["_fatal_attack"] = {"id": attacker_id, "weapon": weapon, "t": Time.get_ticks_msec()}
 	var st: SurvivalStats = b.get("vstats")
 	var wound := SurvivalStats.wound_severity(weapon)
 	if hp > 0.0 and hp < prev_hp and st != null and wound > 0.0:
@@ -7645,6 +7657,12 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	var natural_death := death_kind in ["starved", "dehydrated", "hypothermia", "heatstroke", "exhausted"]
 	var recent_hit := Time.get_ticks_msec() - int(b.get("_last_attacker_msec", -999999)) <= 60000
 	var killer_id := int(b.get("_last_attacker_id", 0)) if (not natural_death and recent_hit) else 0
+	# A body arrow can leave 1 HP and cold can take the last point moments
+	# later. Preserve that actual attack without blaming old/non-damaging hits.
+	var fatal_attack: Dictionary = b.get("_fatal_attack", {})
+	if natural_death and not fatal_attack.is_empty() \
+			and Time.get_ticks_msec() - int(fatal_attack.get("t", -999999)) <= 10000:
+		killer_id = int(fatal_attack.get("id", 0))
 	var killer_name := ""
 	if killer_id > 0:
 		_credit_survivor_kill(killer_id, "kills_bot")
@@ -7671,6 +7689,9 @@ func _kill_bot(b: Dictionary, death_kind: String) -> void:
 	# monitor y para que el asesor IA razone sobre su verdugo. El arma solo es
 	# fiable si hubo atacante (de lo contrario seria la del combate anterior).
 	var death_weapon := str(b.get("_last_hit_weapon", "")) if killer_id > 0 else ""
+	if natural_death and killer_id > 0:
+		death_weapon = str(fatal_attack.get("weapon", ""))
+	b.erase("_fatal_attack")
 	b["_last_hit_weapon"] = ""
 	mem["last_death_killer"] = killer_name
 	mem["last_death_weapon"] = death_weapon if not death_weapon.is_empty() else death_kind
@@ -15317,6 +15338,8 @@ func _bot_survival_tick(b: Dictionary, delta: float) -> void:
 	var proxy: Node3D = b["proxy"]
 	if st == null or st.dead:
 		return
+	if float(b.get("health", 100.0)) > 1.0:
+		b.erase("_fatal_attack")
 	# Las acciones de la IA (comer, beber, vendas, daño recibido) viven en b y
 	# en los metas del proxy: se vuelcan al modelo humano antes de simular.
 	st.health = clampf(float(b["health"]), 0.0, st.max_health)
