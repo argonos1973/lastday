@@ -35,6 +35,11 @@ class ColdManager extends FireManager:
 	func _nearest_safe_refuge(_b: Dictionary, _radius: float, _threat: Vector3 = Vector3.INF, _dry_roof_only := false) -> Vector3:
 		return Vector3.ZERO
 
+class CombatWorld extends SurvivalFixture.TestWorld:
+	var shots := 0
+	func _net_player_shot_rifle(_id: int, _origin: Vector3, _dir: Vector3, _wind: Vector3 = Vector3.ZERO) -> void:
+		shots += 1
+
 var errors := 0
 var checks := 0
 func check(ok: bool, message: String) -> void:
@@ -296,10 +301,89 @@ func test_cold_arrow_response() -> void:
 			"monitor credits only a recent unrecovered near-fatal arrow (%s)" % scenario)
 	arena.free()
 
+func test_full_tick_return_fire() -> void:
+	# The live decision loop can preempt an otherwise working rifle pipeline.
+	# Keep real survival, aim, reloads, projectiles and outbound animation.
+	for scenario in ["warm", "m4_distance", "sniper_distance", "cold", "cold_scope_tool", "reload", "dry", "dark_sniper", "cold_unseen"]:
+		seed(58291)
+		var arena := CombatWorld.new()
+		root.add_child(arena)
+		var net := SurvivalFixture.FakeNet.new()
+		arena.add_child(net)
+		arena.net = net
+		var day := SurvivalFixture.FakeDayCycle.new()
+		var cold: bool = scenario.begins_with("cold")
+		day.ambient_temp = -10.0 if cold else 15.0
+		arena.add_child(day)
+		arena.day_cycle = day
+		var mgr := FireManager.new()
+		arena.add_child(mgr)
+		mgr.world = arena
+		mgr.night = scenario == "dark_sniper"
+		mgr.set_process(false)
+		mgr._spawn_bot(mgr.BOT_CONFIGS[3])
+		var b: Dictionary = mgr.bots[904]
+		var proxy: Node3D = b.proxy
+		var scoped: bool = scenario in ["sniper_distance", "dark_sniper", "cold_scope_tool"]
+		var weapon := "Rifle francotirador" if scoped else "Fusil de asalto"
+		armed_bot(proxy, weapon)
+		b["held_item"] = weapon
+		b["has_rifle"] = true
+		proxy.set_meta("saved_held_item", weapon)
+		if scenario == "cold_scope_tool":
+			b["held_item"] = "Piedra afilada"
+			b["has_rifle"] = false
+			proxy.set_meta("saved_held_item", b.held_item)
+		var ammo: Dictionary = proxy.get_meta("bot_gun_ammo")
+		if scenario in ["reload", "dry"]:
+			ammo.m4_magazine = 0
+			ammo.m4_reserve = 30 if scenario == "reload" else 0
+		b["vstats"].body_temperature = 34.9 if cold else 37.0
+		b["vstats"].sleep = 90.0
+		b["hunger"] = 95.0
+		b["thirst"] = 95.0
+		b["sense_t"] = 100.0
+		var foe := Node3D.new()
+		arena.add_child(foe)
+		var distance := 65.0 if scoped else (50.0 if scenario == "m4_distance" else 35.0)
+		foe.position = Vector3(0, 0, -distance)
+		foe.set_meta("peer_id", 77)
+		foe.set_meta("saved_held_item", "Rifle francotirador")
+		arena.server_proxies[77] = foe
+		b["_s_foe"] = null if scenario == "cold_unseen" else foe
+		if scenario == "cold_unseen":
+			b["_foe_mem"] = {"pos": foe.position, "t": Time.get_ticks_msec(), "src": "heard", "conf": 0.5}
+		b["_last_attacker_msec"] = Time.get_ticks_msec()
+		b["_last_hit_weapon"] = "rifle"
+		var stance_changes := 0
+		var previous_crouch := false
+		var moving_ticks := 0
+		for tick in 160:
+			mgr._tick_bot(b, 0.05)
+			var crouched := mgr._bot_effective_net_anim(b) in ["sneak", "sneak_walk", "sit"]
+			if crouched != previous_crouch:
+				stance_changes += 1
+			previous_crouch = crouched
+			if mgr._bot_is_moving(b):
+				moving_ticks += 1
+		print("RETURN_FIRE %s shots=%d stance_changes=%d move_ticks=%d distance=%.1f ammo=%s" % [
+			scenario, arena.shots, stance_changes, moving_ticks, proxy.position.distance_to(foe.position), str(ammo)])
+		if scenario == "dry":
+			check(arena.shots == 0 and int(ammo.m4_magazine) == 0 and int(ammo.m4_reserve) == 0,
+				"dry rifle cannot create ammunition during defensive movement")
+		elif scenario in ["dark_sniper", "cold_unseen"]:
+			check(arena.shots == 0, "return fire still needs a visually recognized target (%s)" % scenario)
+		else:
+			check(arena.shots > 0, "full decision loop returns real rifle fire (%s)" % scenario)
+		check(stance_changes <= 1 and moving_ticks > 10,
+			"open-ground defence moves without repeated crouch/stand changes (%s: %d)" % [scenario, stance_changes])
+		arena.free()
+
 func run() -> void:
 	await test_armed_response()
 	test_night_watch()
 	test_cold_arrow_response()
+	test_full_tick_return_fire()
 	# -- 1) Serpentina impredecible: los quiebros no siguen el reloj de 900 ms
 	var mgr := FireManager.new()
 	var p1 := Node3D.new()
@@ -310,12 +394,15 @@ func run() -> void:
 	var last_side := 0.0
 	var last_flip_ms := Time.get_ticks_msec()
 	var sim_ms := 0
+	var fastest_flip := INF
 	# avanza el estado sin reloj real: cada llamada con delta fijo
 	for i in 600:
 		var side := mgr._bot_evade_side(b1, 0.05)
 		sides[side] = int(sides.get(side, 0)) + 1
 		if last_side != 0.0 and side != last_side:
 			intervals.append(sim_ms - last_flip_ms)
+			if intervals.size() > 1:
+				fastest_flip = minf(fastest_flip, sim_ms - last_flip_ms)
 			last_flip_ms = sim_ms
 		last_side = side
 		sim_ms += 50
@@ -325,6 +412,7 @@ func run() -> void:
 		distinct[iv] = true
 	check(intervals.size() >= 3, "hay suficientes quiebros para medir (%d)" % intervals.size())
 	check(distinct.keys().size() >= 3, "los intervalos de quiebro varian (impredecibles): %s" % str(distinct.keys()))
+	check(fastest_flip >= 850.0, "evasion commits to each leg instead of instantly reversing")
 	# nota: el azar usa el reloj real como semilla; sin avance real los quiebros
 	# solo ocurren cuando el flip programado expira — la varianza exigida es la
 	# de los intervalos programados, no la cadencia del harness.
@@ -397,7 +485,13 @@ func run() -> void:
 	check(mgr_src.count("func _bot_fire_cover_peek") == 1, "existe el combate con asomos")
 	check(mgr_src.count('b["_peek_phase"] = "peeking"') == 1, "el ciclo oculto/asomado existe")
 	check(mgr_src.count("randf_range(1.2, 2.4)") >= 1, "la fase oculta es irregular")
-	check(mgr_src.count('"_evade_pause_in"') >= 1, "las pausas agachadas irregulares existen")
+	# Evasion must keep moving away, not drop into random squat pauses.
+	p3.position = Vector3.ZERO
+	var crouch_ticks := 0
+	for i in 600:
+		mgr._bot_evade_move(b3, Vector3(0, 0, -30), 6.4, 0.05)
+		if bool(b3.get("crouching", false)): crouch_ticks += 1
+	check(crouch_ticks == 0 and p3.position.z > 50.0, "evasion maintains retreat without random squat pauses")
 	check(mgr_src.count('"_evade_speed_mul"') >= 1, "las rafagas de sprint existen")
 
 	print("BotUnderFireRegression: %d checks, %d errores" % [checks, errors])

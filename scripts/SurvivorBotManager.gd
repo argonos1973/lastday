@@ -5501,27 +5501,21 @@ func _cover_learning_tick(b: Dictionary, delta: float, protected: bool) -> void:
 func _bot_evade_side(b: Dictionary, delta: float) -> float:
 	if not b.has("_evade_side"):
 		b["_evade_side"] = 1.0 if (int(b.get("bot_id", 0)) % 2) == 0 else -1.0
-		b["_evade_flip_in"] = 0.5 + fmod(float(int(b.get("bot_id", 0))) * 0.13, 0.8)
+		b["_evade_flip_in"] = 0.9 + fmod(float(int(b.get("bot_id", 0))) * 0.13, 0.8)
 	b["_evade_flip_in"] = float(b.get("_evade_flip_in", 0.8)) - delta
 	if float(b["_evade_flip_in"]) <= 0.0:
 		var rng := RandomNumberGenerator.new()
 		rng.seed = int(Time.get_ticks_usec()) + int(b.get("bot_id", 0)) * 7919
 		b["_evade_side"] = -float(b.get("_evade_side", 1.0)) if rng.randf() < 0.82 else float(b.get("_evade_side", 1.0))
-		b["_evade_flip_in"] = rng.randf_range(0.5, 1.3)
-		if rng.randf() < 0.22:
-			# Quiebro doble ocasional: vuelve al lado anterior enseguida —
-			# el patron deja de ser una sinusoide predecible.
-			b["_evade_flip_in"] = rng.randf_range(0.14, 0.32)
-		# Rafagas y pausas irregulares: un tramo de sprint a fondo, o una
-		# caida agachada breve — el tirador no puede suponer velocidad fija.
+		# Commit to a leg long enough to travel it. Rapid double reversals
+		# and random squat pauses looked indecisive and stopped the escape.
+		b["_evade_flip_in"] = rng.randf_range(0.9, 1.7)
 		b["_evade_speed_mul"] = 1.32 if rng.randf() < 0.26 else 1.0
-		if rng.randf() < 0.16:
-			b["_evade_pause_in"] = rng.randf_range(0.25, 0.55)
 	return float(b.get("_evade_side", 1.0))
 
 # Huida en serpentina alejandose de una amenaza: la amplitud lateral crece
 # con la distancia (a 100 m el cruce de linea es lo unico que salva), con
-# rafagas de sprint y pausas agachadas decididas en cada quiebro. Devuelve
+# rafagas de sprint sin detenerse a agacharse al descubierto. Devuelve
 # false solo si no hay direccion de huida util.
 func _bot_evade_move(b: Dictionary, threat_pos: Vector3, base_speed: float, delta: float) -> bool:
 	var proxy: Node3D = b["proxy"]
@@ -5530,14 +5524,6 @@ func _bot_evade_move(b: Dictionary, threat_pos: Vector3, base_speed: float, delt
 	if away.length_squared() <= 0.01:
 		return false
 	away = away.normalized()
-	var pause := float(b.get("_evade_pause_in", 0.0))
-	if pause > 0.0:
-		# Caida agachada irregular: perfil minimo un instante, inmovil.
-		b["_evade_pause_in"] = maxf(0.0, pause - delta)
-		b["crouching"] = true
-		proxy.set_meta("crouching", true)
-		_stop_bot_motion(b)
-		return true
 	b["crouching"] = false
 	proxy.set_meta("crouching", false)
 	var dist := proxy.global_position.distance_to(threat_pos)
@@ -5822,7 +5808,7 @@ func _bot_seek_ballistic_cover(b: Dictionary, foe: Node3D, delta: float) -> bool
 	# Being hit must not disable a loaded firearm for five seconds after EVERY
 	# hit. In open ground a healthy rifleman bounds and returns aimed fire.
 	if not gun.is_empty() and float(b.get("health", 100.0)) > _bot_retreat_hp(b) \
-			and proxy.global_position.distance_to(foe.global_position) <= 48.0 \
+			and proxy.global_position.distance_to(foe.global_position) <= 130.0 \
 			and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)):
 		_engage_foe(b, foe, delta)
 		return true
@@ -5992,6 +5978,17 @@ func _bot_try_cold_disengage(b: Dictionary, delta: float) -> bool:
 	if ranged_hit or (foe != null and _actor_holds_ranged(foe)):
 		var clue := _bot_threat_direction_pos(b)
 		b["_act"] = "cover"
+		# The position-only path cannot fire. A cold bot that actually sees
+		# the shooter must retain the normal armed cover response.
+		# Equip first so a carried scope has the same recognition range as
+		# in the normal cover path, even if a tool was held before the hit.
+		var gun := _bot_usable_gun(proxy)
+		if foe != null and not gun.is_empty():
+			b["held_item"] = gun
+			b["has_rifle"] = true
+			proxy.set_meta("saved_held_item", gun)
+		if foe != null and _bot_within_aim_sight(b, foe, proxy.global_position.distance_to(foe.global_position)):
+			return _bot_seek_ballistic_cover(b, foe, delta)
 		return _bot_seek_cover_from_pos(b, clue if clue != Vector3.INF else threat_pos, delta)
 	# Desenganche real: deja de apuntar/perseguir y declara la huida para que
 	# otras ramas no lo devuelvan al intercambio en el mismo tramo crítico.
@@ -6614,15 +6611,14 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 		_bot_seek_ballistic_cover(b, foe, delta)
 		return
 
-	if wkind == "rifle" and dist > 1.0 and dist <= 48.0:
+	if wkind == "rifle" and dist > 1.0 and dist <= 130.0:
 		b["is_aiming"] = clear_los
 		if not clear_los:
 			_move_bot_towards(b, fpos, 6.4, delta, "run")
 		else:
+			# Keep one standing support through sidesteps and firing pauses.
+			# Crouching belongs to actual cover/watch, not every trigger pause.
 			_bot_combat_step(b, foe, delta)
-			# Stabilize long shots only during the firing pause, never sit
-			# indefinitely in the open while the player lines up another shot.
-			b["crouching"] = dist > 26.0 and not _bot_is_moving(b)
 		# Evaluar la mira después del movimiento y la postura de este tick.
 		var aim_err := _bot_aim_tick(b, foe, dist, clear_los, delta, "m4" if _bot_gun_is_m4(weapon) else "sniper")
 		# El gatillo pide mira asentada (tiempo de adquisicion) y alineada
@@ -6638,7 +6634,7 @@ func _engage_foe(b: Dictionary, foe: Node3D, delta: float) -> void:
 			var dmg := 26.0 if weapon == "Fusil de asalto" else 48.0
 			_bot_fire_rifle_at(b, foe, dmg, weapon)
 		return
-	if wkind == "rifle" and dist > 48.0:
+	if wkind == "rifle" and dist > 130.0:
 		# Demasiado lejos para el fusil: acercarse corriendo en zigzag
 		b["strafe_timer"] = float(b["strafe_timer"]) + delta
 		if float(b["strafe_timer"]) > 1.8:
